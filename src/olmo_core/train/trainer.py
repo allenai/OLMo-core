@@ -1329,7 +1329,12 @@ class Trainer:
         return self._metrics[self.global_step].get(name)
 
     def write_file(
-        self, name: str, contents: Union[str, bytes], dir: Optional[PathOrStr] = None
+        self,
+        name: str,
+        contents: str | bytes,
+        dir: PathOrStr | None = None,
+        *,
+        save_overwrite: bool | None = None,
     ) -> PathOrStr:
         """
         Write a file to the :data:`save_folder` or ``dir``, if provided.
@@ -1337,10 +1342,14 @@ class Trainer:
         :param fname: The name of the file to write, relative to the :data:`save_folder` or ``dir``.
         :param contents: The contents of the file to write.
         :param dir: The path/URL to a directory to write the file to. Defaults to :data:`save_folder`.
+        :param save_overwrite: Override the overwrite policy for this file only, without
+            changing checkpoint overwrite protection.
 
         :returns: The path/URL of the file.
         """
-        return self.checkpointer.write_file(dir or self.save_folder, name, contents)
+        return self.checkpointer.write_file(
+            dir or self.save_folder, name, contents, save_overwrite=save_overwrite
+        )
 
     def persist_working_file(self, name: PathOrStr) -> PathOrStr:
         """

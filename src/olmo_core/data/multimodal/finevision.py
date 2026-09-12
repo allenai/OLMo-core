@@ -56,6 +56,7 @@ from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 from .message_sequence import encode_sft_example
 from .sft_common import (
     SftMessageFormat,
+    count_image_placeholders,
     decode_pil_image,
     get_example_with_skip,
     load_hf_dataset,
@@ -83,6 +84,21 @@ _QUALITY_COLUMNS = {
     "min_image_correspondence": "image_correspondence_min",
     "min_relevance": "relevance_min",
 }
+
+
+def _parse_turn(turn: Any, *, first: bool, has_image: bool) -> tuple[str, str] | None:
+    """Normalize a usable turn, including an explicitly image-only first prompt."""
+    if not isinstance(turn, dict):
+        return None
+    raw_user, raw_assistant = turn.get("user"), turn.get("assistant")
+    if not isinstance(raw_user, str) or not isinstance(raw_assistant, str):
+        return None
+    user = strip_image_placeholders(raw_user)
+    assistant = raw_assistant.strip()
+    image_only = first and has_image and count_image_placeholders(raw_user) > 0
+    if not assistant or (not user and not image_only):
+        return None
+    return user, assistant
 
 
 @dataclass
@@ -299,8 +315,9 @@ class FineVisionDataset:
         It is intentionally opt-in through :attr:`FineVisionDatasetConfig.strict_annotations`
         so legacy instruction-tuning sources preserve their existing behavior.
 
-        :raises ValueError: If a selected row lacks exactly one image or one non-empty
-            ``(user, assistant)`` turn.
+        :raises ValueError: If a selected row lacks exactly one image or one usable
+            ``(user, assistant)`` turn. An image-only first prompt must explicitly contain
+            an image marker and have a non-empty answer.
         """
         if not self.config.strict_annotations:
             return
@@ -309,7 +326,8 @@ class FineVisionDataset:
 
         table = self._data.data
         try:
-            image_lengths = pc.list_value_length(table.column(self.config.images_column))
+            images = table.column(self.config.images_column)
+            image_lengths = pc.list_value_length(images)
             texts = table.column(self.config.texts_column)
         except (KeyError, ValueError) as error:
             raise ValueError("FineVision strict annotation columns are unavailable") from error
@@ -323,17 +341,14 @@ class FineVisionDataset:
         first_invalid: List[int] = []
         for dataset_index, position in enumerate(positions):
             image_count = image_lengths[position].as_py()
+            has_image = image_count == 1 and images[position].values[0].is_valid
             row_turns = texts[position].as_py()
             valid_turn = (
                 isinstance(row_turns, list)
                 and len(row_turns) == 1
-                and isinstance(row_turns[0], dict)
-                and isinstance(row_turns[0].get("user"), str)
-                and bool(row_turns[0]["user"].strip())
-                and isinstance(row_turns[0].get("assistant"), str)
-                and bool(row_turns[0]["assistant"].strip())
+                and _parse_turn(row_turns[0], first=True, has_image=has_image) is not None
             )
-            if image_count != 1 or not valid_turn:
+            if not has_image or not valid_turn:
                 invalid_count += 1
                 if len(first_invalid) < 8:
                     first_invalid.append(dataset_index)
@@ -368,22 +383,17 @@ class FineVisionDataset:
     def _build(self, i: int, epoch: int = 0) -> Dict[str, np.ndarray]:
         cfg = self.config
         row = self._row(i)
+        raw_images = row.get(cfg.images_column) or []
+        has_image = any(image is not None for image in raw_images)
 
         turns: List[Tuple[str, str]] = []
-        for turn in row[cfg.texts_column] or []:
-            # Any inline <image> marker is stripped: the image is supplied as an explicit
-            # token block inside the first user turn instead. Several configs carry no
-            # marker at all, which is equivalent here since the block comes from the
-            # `images` column.
-            user = strip_image_placeholders(turn.get("user"))
-            assistant = (turn.get("assistant") or "").strip()
-            if not user or not assistant:
-                continue
-            turns.append((user, assistant))
+        for turn_index, turn in enumerate(row[cfg.texts_column] or []):
+            parsed = _parse_turn(turn, first=turn_index == 0, has_image=has_image)
+            if parsed is not None:
+                turns.append(parsed)
         if not turns:
             raise ValueError("no usable (user, assistant) turn in row")
 
-        raw_images = row.get(cfg.images_column) or []
         pil_images = [decode_pil_image(im) for im in raw_images if im is not None]
 
         # One sequential conversation branch (turn k attends earlier turns).

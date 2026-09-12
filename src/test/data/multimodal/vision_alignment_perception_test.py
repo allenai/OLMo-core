@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import zlib
 from typing import Any, Dict, List
 
@@ -40,7 +41,8 @@ def _encoded_stub() -> Dict[str, np.ndarray]:
     }
 
 
-def test_ocr_document_uses_fixed_native_prompt_and_modal_answer(monkeypatch, tmp_path):
+@pytest.mark.parametrize("max_crops", [8, 12])
+def test_ocr_document_uses_fixed_native_prompt_and_modal_answer(monkeypatch, tmp_path, max_crops):
     image = tmp_path / "image.png"
     image.write_bytes(b"not decoded in this test")
     rows = {
@@ -75,6 +77,7 @@ def test_ocr_document_uses_fixed_native_prompt_and_modal_answer(monkeypatch, tmp
     config = perception.VisionAlignmentOcrDocumentDatasetConfig(
         source_names=("text_vqa", "doc_qa"),
         max_sequence_length=3,
+        max_crops=max_crops,
     )
     dataset = config.build(_Tokenizer())
     dataset.validate_required_annotations()
@@ -84,6 +87,7 @@ def test_ocr_document_uses_fixed_native_prompt_and_modal_answer(monkeypatch, tmp
     assert captured[0][1] == [("Question: What word is visible?\nAnswer:", "Blue")]
     assert captured[0][2]["message_format"] == "document"
     assert captured[0][2]["max_images"] == 1
+    assert captured[0][2]["max_crops"] == max_crops
     assert len(dataset.content_fingerprint) == 64
 
 
@@ -163,6 +167,133 @@ def test_finevision_strict_annotations_and_fingerprint(monkeypatch):
         dataset.validate_required_annotations()
 
 
+@pytest.mark.parametrize(
+    "prompt,expected",
+    [
+        ("<image>\n", ""),
+        ("  <image>  ", ""),
+        ("<image>\nDescribe it.", "Describe it."),
+        ("Describe it.", "Describe it."),
+    ],
+)
+def test_finevision_validation_and_runtime_share_prompt_rules(monkeypatch, prompt, expected):
+    arrow = _finevision_arrow(
+        texts=[[{"user": prompt, "assistant": " A triangle. "}]],
+        images=[[{"bytes": b"image", "path": None}]],
+    )
+    monkeypatch.setattr(finevision, "load_hf_dataset", lambda *args, **kwargs: arrow)
+    monkeypatch.setattr(finevision, "decode_pil_image", lambda image: image)
+    captured = []
+
+    def encode(_tokenizer, images, turns, **kwargs):
+        captured.append((images, turns))
+        return _encoded_stub()
+
+    monkeypatch.setattr(finevision, "encode_sft_example", encode)
+    dataset = finevision.FineVisionDatasetConfig(
+        message_format="document", strict_annotations=True, skip_bad_rows=False
+    ).build(_Tokenizer())
+    fingerprint = dataset.content_fingerprint
+    dataset.validate_required_annotations()
+    dataset.get(0, 0)
+
+    assert len(dataset) == 1
+    assert dataset.content_fingerprint == fingerprint
+    assert captured == [([{"bytes": b"image", "path": None}], [[(expected, "A triangle.")]])]
+
+
+@pytest.mark.parametrize(
+    "prompt,answer,images",
+    [
+        ("<image>", "Answer", []),
+        ("<image>", "Answer", [None]),
+        ("", "Answer", [{"bytes": b"image"}]),
+        ("  ", "Answer", [{"bytes": b"image"}]),
+        (None, "Answer", [{"bytes": b"image"}]),
+        ("<image>", "  ", [{"bytes": b"image"}]),
+        ("<image>", None, [{"bytes": b"image"}]),
+    ],
+)
+def test_finevision_image_only_prompt_does_not_admit_missing_data(
+    monkeypatch, prompt, answer, images
+):
+    arrow = _finevision_arrow(texts=[[{"user": prompt, "assistant": answer}]], images=[images])
+    monkeypatch.setattr(finevision, "load_hf_dataset", lambda *args, **kwargs: arrow)
+    dataset = finevision.FineVisionDatasetConfig(
+        message_format="document", strict_annotations=True, skip_bad_rows=False
+    ).build(_Tokenizer())
+
+    with pytest.raises(ValueError, match="exactly one image"):
+        dataset.validate_required_annotations()
+    with pytest.raises(ValueError, match=r"no usable \(user, assistant\) turn"):
+        dataset.get(0, 0)
+
+
+@pytest.mark.parametrize("first_prompt", ["Describe it.", ""])
+def test_finevision_image_only_prompt_is_only_allowed_in_first_turn(monkeypatch, first_prompt):
+    arrow = _finevision_arrow(
+        texts=[
+            [
+                {"user": first_prompt, "assistant": "First answer."},
+                {"user": "<image>\n", "assistant": "Second answer."},
+            ]
+        ],
+        images=[[{"bytes": b"image", "path": None}]],
+    )
+    monkeypatch.setattr(finevision, "load_hf_dataset", lambda *args, **kwargs: arrow)
+    monkeypatch.setattr(finevision, "decode_pil_image", lambda image: image)
+    captured = []
+
+    def encode(_tokenizer, images, turns, **kwargs):
+        captured.append(turns)
+        return _encoded_stub()
+
+    monkeypatch.setattr(finevision, "encode_sft_example", encode)
+    dataset = finevision.FineVisionDatasetConfig(
+        message_format="document", skip_bad_rows=False
+    ).build(_Tokenizer())
+    if first_prompt:
+        dataset.get(0, 0)
+        assert captured == [[[(first_prompt, "First answer.")]]]
+    else:
+        with pytest.raises(ValueError, match=r"no usable \(user, assistant\) turn"):
+            dataset.get(0, 0)
+
+
+def test_finevision_image_only_document_encoding(monkeypatch):
+    from PIL import Image
+
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (32, 32), "white").save(image_bytes, format="PNG")
+    answer = "A triangle."
+    arrow = _finevision_arrow(
+        texts=[[{"user": "<image>\n", "assistant": answer}]],
+        images=[[{"bytes": image_bytes.getvalue(), "path": None}]],
+    )
+    monkeypatch.setattr(finevision, "load_hf_dataset", lambda *args, **kwargs: arrow)
+    tokenizer = _Tokenizer()
+    config = finevision.FineVisionDatasetConfig(
+        message_format="document",
+        strict_annotations=True,
+        skip_bad_rows=False,
+        max_crops=1,
+        max_images=1,
+        max_sequence_length=8192,
+    )
+    dataset = config.build(tokenizer)
+    dataset.validate_required_annotations()
+    example = dataset.get(0, 0)
+
+    assert example["input_ids"][0] == tokenizer.eos_token_id
+    assert (example["input_ids"] == config.token_ids.im_patch_id).any()
+    assert example["images"].shape[0] > 0
+    assert example["labels"][example["loss_masks"] > 0].tolist() == [
+        *tokenizer.encode(" " + answer, add_special_tokens=False),
+        tokenizer.eos_token_id,
+    ]
+    assert not example["metadata"]["truncated"]
+
+
 def test_finevision_required_quality_column_fails_closed(monkeypatch):
     arrow = _finevision_arrow(
         texts=[[{"user": "Q", "assistant": "A"}]],
@@ -195,7 +326,8 @@ class _AlignmentChild:
         return {"source": self.name, "index": index, "epoch": epoch}
 
 
-def test_audited_alignment_combines_reviewed_sources(monkeypatch):
+@pytest.mark.parametrize("max_crops", [8, 12])
+def test_audited_alignment_combines_reviewed_sources(monkeypatch, max_crops):
     built = []
 
     def build(config, _tokenizer):
@@ -204,7 +336,7 @@ def test_audited_alignment_combines_reviewed_sources(monkeypatch):
         return child
 
     monkeypatch.setattr(finevision.FineVisionDatasetConfig, "build", build)
-    config = perception.VisionAlignmentAuditedAlignmentDatasetConfig()
+    config = perception.VisionAlignmentAuditedAlignmentDatasetConfig(max_crops=max_crops)
     dataset = config.build(_Tokenizer())
     dataset.validate_required_annotations()
 
@@ -215,7 +347,21 @@ def test_audited_alignment_combines_reviewed_sources(monkeypatch):
     assert all(child_config.strict_annotations for child_config, _ in built)
     assert all(child_config.message_format == "document" for child_config, _ in built)
     assert all(child_config.max_images == 1 for child_config, _ in built)
+    assert all(child_config.max_crops == max_crops for child_config, _ in built)
     assert len(dataset.content_fingerprint) == 64
+
+
+@pytest.mark.parametrize(
+    "config_type",
+    [
+        perception.VisionAlignmentOcrDocumentDatasetConfig,
+        perception.VisionAlignmentAuditedAlignmentDatasetConfig,
+    ],
+)
+@pytest.mark.parametrize("max_crops", [0, -1, True, False, 1.5, "12"])
+def test_alignment_sources_require_positive_integer_crop_budgets(config_type, max_crops):
+    with pytest.raises(ValueError, match="max_crops must be a positive integer"):
+        config_type(max_crops=max_crops).build(_Tokenizer())
 
 
 def test_source_registry_builds_all_missing_perception_adapters():

@@ -108,11 +108,20 @@ def test_points_blank_label_filter_is_strict_perception_only():
     assert dataset.annotation_filter_stats["blank_labels"] == 1
 
 
-def _build_count_example(monkeypatch, *, row, counting="both", mode="grounded", index=0):
+def _build_count_example(
+    monkeypatch,
+    *,
+    row,
+    counting="both",
+    mode="grounded",
+    scalar_count_replay=False,
+    index=0,
+):
     dataset = object.__new__(pixmo_points.PixMoCountDataset)
     dataset.config = pixmo_points.PixMoCountDatasetConfig(
         mode=mode,
         counting=counting,
+        scalar_count_replay=scalar_count_replay,
         message_format="document",
     )
     dataset.tokenizer = object()
@@ -168,6 +177,17 @@ def test_scalar_count_is_one_example_per_row_and_uses_the_same_declared_target(m
 def test_scalar_count_rejects_chat_serialization():
     with pytest.raises(ValueError, match="requires message_format='document'"):
         pixmo_points.PixMoCountDatasetConfig(mode="scalar_count").build(object())
+
+
+def test_scalar_count_rejects_redundant_replay(monkeypatch):
+    monkeypatch.setattr(pixmo_points, "_load_split", lambda *_args, **_kwargs: _RowsDataset())
+
+    with pytest.raises(ValueError, match="redundant"):
+        pixmo_points.PixMoCountDatasetConfig(
+            mode="scalar_count",
+            scalar_count_replay=True,
+            message_format="document",
+        ).build(object())
 
 
 @pytest.mark.parametrize(
@@ -236,6 +256,102 @@ def test_pixmo_count_keeps_zero_point_training_answer(monkeypatch):
     )
 
     assert branches[0][1] == "There are none."
+
+
+@pytest.mark.parametrize(
+    ("count", "points", "grounded_answer"),
+    [
+        (2, {"x": [10.0, 20.0], "y": [30.0, 40.0]}, "shows a total of 2."),
+        (0, {"x": [], "y": []}, "There are none."),
+    ],
+)
+def test_grounded_count_can_replay_the_scalar_interface(
+    monkeypatch, count, points, grounded_answer
+):
+    branches = _build_count_example(
+        monkeypatch,
+        row={
+            "image": "unused",
+            "label": "cows",
+            "count": count,
+            "points": points,
+        },
+        counting=True,
+        scalar_count_replay=True,
+    )
+
+    assert len(branches) == 2
+    assert branches[0][1].endswith(grounded_answer)
+    assert branches[1] == ("How many cows are there?", str(count))
+
+
+def test_grounded_count_replays_scalar_once_per_duplicated_raw_row(monkeypatch):
+    row = {
+        "image": "unused",
+        "label": "cows",
+        "count": 2,
+        "points": {"x": [10.0, 20.0], "y": [30.0, 40.0]},
+    }
+
+    point_count = _build_count_example(
+        monkeypatch,
+        row=row,
+        counting="both",
+        scalar_count_replay=True,
+        index=0,
+    )
+    pointing = _build_count_example(
+        monkeypatch,
+        row=row,
+        counting="both",
+        scalar_count_replay=True,
+        index=1,
+    )
+
+    assert len(point_count) == 2
+    assert point_count[1] == ("How many cows are there?", "2")
+    assert len(pointing) == 1
+
+
+def test_scalar_fallback_is_not_duplicated_by_replay(monkeypatch):
+    branches = _build_count_example(
+        monkeypatch,
+        row={
+            "image": "unused",
+            "label": "cows",
+            "count": 8,
+            "points": {"x": [], "y": []},
+        },
+        scalar_count_replay=True,
+    )
+
+    assert branches == [("How many cows are there?", "8")]
+
+
+def test_scalar_count_replay_changes_the_strict_source_fingerprint(monkeypatch):
+    row = {
+        "image": "unused",
+        "label": "cows",
+        "count": 2,
+        "points": {"x": [10.0, 20.0], "y": [30.0, 40.0]},
+    }
+    monkeypatch.setattr(
+        pixmo_points,
+        "_load_split",
+        lambda *_args, **_kwargs: _RowsDataset([row], "raw-count-v1"),
+    )
+
+    baseline = pixmo_points.PixMoCountDatasetConfig(
+        require_split=True,
+        message_format="document",
+    ).build(object())
+    replay = pixmo_points.PixMoCountDatasetConfig(
+        require_split=True,
+        scalar_count_replay=True,
+        message_format="document",
+    ).build(object())
+
+    assert replay.content_fingerprint != baseline.content_fingerprint
 
 
 def test_points_content_fingerprint_binds_raw_source_config_and_derived_index(monkeypatch):

@@ -14,6 +14,10 @@ from olmo_core.eval import (
     matched_wrong_image_pairing_sha256,
     validate_matched_wrong_image_pairing,
 )
+from olmo_core.eval.multimodal_image_pairing import (
+    MultimodalImagePairDataset,
+    build_bounded_image_pairs,
+)
 from olmo_core.exceptions import OLMoConfigurationError
 
 
@@ -78,6 +82,56 @@ def test_multimodal_blank_image_control_changes_only_images():
     torch.testing.assert_close(transformed["images"], torch.zeros_like(images))
     torch.testing.assert_close(transformed["input_ids"], batch["input_ids"])
     torch.testing.assert_close(batch["images"], images)
+
+
+def test_response_prefix_masks_only_first_valid_supervised_positions():
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 4, 5, 6]]),
+        "labels": torch.tensor([[2, 3, -100, 5, 6, -100]]),
+        "loss_masks": torch.tensor([[0.0, 0.5, 1.0, 0.25, 2.0, 1.0]]),
+    }
+    evaluator = MultimodalLMEvaluator(
+        name="early", batches=[batch], response_prefix_tokens=2, device=torch.device("cpu")
+    )
+    [masked] = list(evaluator)
+    torch.testing.assert_close(masked["loss_masks"], torch.tensor([[0, 0.5, 0, 0.25, 0, 0]]))
+    assert torch.equal(masked["input_ids"], batch["input_ids"])
+    assert torch.equal(masked["labels"], batch["labels"])
+    assert batch["loss_masks"][0, 4] == 2
+
+
+def test_bounded_image_pairs_use_distinct_exact_geometry_and_no_extra_rows():
+    rows = [_row(i) for i in range(8)]
+    rows[2] = _row(2, image_value=0)
+    rows[3] = _row(3, pooled=(1, 0))
+    rows[4] = _row(4, pooled=(1, 0))
+    rows[5] = _row(5, pooled=(2, 3))
+
+    class BoundedDataset(_MutableMultimodalDataset):
+        def get(self, index, epoch=0):
+            assert index < 6, "Read beyond the configured candidate bound"
+            return super().get(index, epoch)
+
+    dataset = BoundedDataset(rows)
+    pairs = build_bounded_image_pairs(dataset, examples=4, max_candidates=6, seed=19)
+    assert pairs == build_bounded_image_pairs(dataset, examples=4, max_candidates=6, seed=19)
+    assert len({recipient for recipient, _ in pairs}) == 4
+    assert len({donor for _, donor in pairs}) == 4
+    assert {recipient for recipient, _ in pairs} == {0, 1, 3, 4}
+    correct = MultimodalImagePairDataset(dataset, pairs, wrong_images=False)
+    wrong = MultimodalImagePairDataset(dataset, pairs, wrong_images=True)
+    for i, (recipient, donor) in enumerate(pairs):
+        assert recipient != donor
+        assert np.array_equal(correct[i]["pooled_patches_idx"], wrong[i]["pooled_patches_idx"])
+        assert not np.array_equal(correct[i]["images"], wrong[i]["images"])
+        for name in rows[recipient]:
+            if name != "images":
+                assert np.array_equal(correct[i][name], wrong[i][name])
+    with pytest.raises(OLMoConfigurationError, match="requested 5"):
+        build_bounded_image_pairs(dataset, examples=5, max_candidates=6)
+    rows[pairs[0][1]]["pooled_patches_idx"] += 100
+    with pytest.raises(OLMoConfigurationError, match="geometry or distinctness changed"):
+        wrong[0]
 
 
 class _MutableMultimodalDataset:

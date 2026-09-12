@@ -49,6 +49,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, move_to_device, warn_once
@@ -97,6 +98,133 @@ def _matched_component_grad_norm_patterns(
     }
 
 
+def _validate_loss_group_weights(weights: Optional[Dict[str, float]]) -> Dict[str, float]:
+    if weights is None:
+        return {}
+    if (
+        not weights
+        or any(
+            not isinstance(name, str) or not name or not math.isfinite(value) or value <= 0
+            for name, value in weights.items()
+        )
+        or abs(sum(weights.values()) - 1.0) > 1e-6
+    ):
+        raise OLMoConfigurationError("loss_group_weights must be positive and sum to one")
+    return dict(sorted(weights.items()))
+
+
+def _normalize_loss_groups(
+    batch: Dict[str, Any],
+    group_weights: Dict[str, float],
+    *,
+    label_ignore_index: int,
+    device: torch.device,
+    dp_process_group: Optional[dist.ProcessGroup],
+) -> Tuple[Dict[str, Any], torch.Tensor]:
+    """Rescale annotation weights to a globally normalized sum of group objectives.
+
+    This runs once for the full optimizer batch, before accumulation splits it. If ``M_g``
+    is global active annotation mass for group ``g``, use ``w * alpha_g * M / M_g``.
+    The existing global divisor and averaged DP gradients then yield
+    ``sum_g alpha_g * sum_i(w_i * CE_i) / M_g``. LM z-loss uses the same weights;
+    router auxiliary losses retain their independent valid-token normalization.
+    """
+    masks = batch.get("loss_masks")
+    labels = batch.get("labels")
+    names = batch.get("loss_group_names")
+    shape = batch["input_ids"].shape
+    error = None
+    if (
+        not isinstance(masks, torch.Tensor)
+        or not isinstance(labels, torch.Tensor)
+        or masks.shape != shape
+        or labels.shape != shape
+        or not isinstance(names, list)
+        or len(names) != shape[0]
+        or any(not isinstance(name, str) or name not in group_weights for name in names)
+    ):
+        error = "Group-normalized loss requires aligned labels, loss_masks, and loss_group_names"
+    elif not bool(torch.isfinite(masks).all()) or bool((masks < 0).any()):
+        error = "Group-normalized loss requires finite nonnegative annotation weights"
+    # Even malformed metadata on one rank must fail before peers enter mass reductions.
+    if reduce_distributed_failure_flag(error is not None, device, group=dp_process_group):
+        raise OLMoConfigurationError(error or "Invalid loss-group batch on another DP rank")
+    assert isinstance(masks, torch.Tensor) and isinstance(labels, torch.Tensor)
+    assert isinstance(names, list)
+    active_weights = masks.to(device=device, dtype=torch.float32) * (
+        labels.to(device) != label_ignore_index
+    )
+    row_groups = torch.tensor(
+        [list(group_weights).index(name) for name in names], device=device, dtype=torch.long
+    )
+    local_mass = torch.stack(
+        [active_weights[row_groups == index].sum() for index in range(len(group_weights))]
+    )
+    global_mass = local_mass.clone()
+    if is_distributed():
+        dist.all_reduce(global_mass, group=dp_process_group)
+    if not bool(torch.isfinite(global_mass).all()) or bool((global_mass <= 0).any()):
+        raise OLMoConfigurationError(
+            "Every configured loss group must have positive finite supervised mass globally "
+            "in every optimizer batch (ignored labels do not count)"
+        )
+    # Both train modules guard the divisor against zero; one clamps before dividing by
+    # DP size and one afterwards. Keep the per-rank reference mass >= 1 so either path
+    # preserves the objective, even with very small fractional annotation weights.
+    reference_mass = global_mass.sum().clamp_min(float(get_world_size(dp_process_group)))
+    coefficients = torch.tensor(list(group_weights.values()), device=device)
+    scales = coefficients * reference_mass / global_mass
+    normalized_batch = dict(batch)
+    normalized_batch["loss_masks"] = active_weights * scales[row_groups, None]
+    return normalized_batch, global_mass
+
+
+def _trim_microbatch_image_padding(batch: dict[str, Any]) -> dict[str, Any]:
+    """Remove unused trailing crop/pooling slots while retaining one dummy slot."""
+    images = batch.get("images")
+    pooled = batch.get("pooled_patches_idx")
+    if not isinstance(images, torch.Tensor) or images.ndim != 4:
+        raise OLMoConfigurationError("Image-padding trimming requires rank-4 images")
+    if not isinstance(pooled, torch.Tensor) or pooled.ndim != 3:
+        raise OLMoConfigurationError("Image-padding trimming requires rank-3 pooled_patches_idx")
+    size, crops, patches, _ = images.shape
+    if size == 0 or crops == 0 or patches == 0 or pooled.shape[0] != size or pooled.shape[1] == 0:
+        raise OLMoConfigurationError(
+            "Image-padding trimming requires aligned nonempty image tensors"
+        )
+    counts = []
+    for name, limit in (("image_crop_counts", crops), ("pooled_token_counts", pooled.shape[1])):
+        value = batch.get(name)
+        if (
+            not isinstance(value, torch.Tensor)
+            or value.shape != (size,)
+            or value.dtype not in (torch.int32, torch.int64)
+            or bool((value < 0).any())
+            or bool((value > limit).any())
+        ):
+            raise OLMoConfigurationError(
+                f"Image-padding trimming requires integer {name} with shape ({size},) "
+                f"and values in [0, {limit}]"
+            )
+        counts.append(value.to(device=pooled.device))
+    crop_counts, pooled_counts = counts
+    if pooled.dtype not in (torch.int32, torch.int64) or bool((pooled < -1).any()):
+        raise OLMoConfigurationError("pooled_patches_idx must contain integer patch indices or -1")
+    if bool((pooled >= crop_counts[:, None, None] * patches).any()):
+        raise OLMoConfigurationError(
+            "Pooled patch indices reference crops outside image_crop_counts"
+        )
+    trailing = (
+        torch.arange(pooled.shape[1], device=pooled.device)[None, :] >= pooled_counts[:, None]
+    )
+    if bool(((pooled >= 0) & trailing[:, :, None]).any()):
+        raise OLMoConfigurationError("pooled_token_counts would discard non-padding pooled rows")
+    out = dict(batch)
+    out["images"] = images[:, : max(int(crop_counts.max()), 1)]
+    out["pooled_patches_idx"] = pooled[:, : max(int(pooled_counts.max()), 1)]
+    return out
+
+
 class MultimodalTransformerTrainModule(TransformerTrainModule):
     """A :class:`TrainModule` for :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training."""
 
@@ -122,6 +250,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         connector_activation_checkpointing: bool = True,
         label_ignore_index: int = -100,
         response_logits_only: bool = False,
+        loss_group_weights: Optional[Dict[str, float]] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
@@ -198,6 +327,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self._ep_config = None
         self.label_ignore_index = label_ignore_index
         self.response_logits_only = response_logits_only
+        self.loss_group_weights = _validate_loss_group_weights(loss_group_weights)
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -285,6 +415,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         batch.pop("pack_source_names", None)
         batch.pop("image_crop_counts", None)
         batch.pop("pooled_token_counts", None)
+        batch.pop("loss_group_names", None)
         return input_ids, labels, loss_masks, batch
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
@@ -318,6 +449,14 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._set_model_mode("train")
+        if self.loss_group_weights:
+            batch, _ = _normalize_loss_groups(
+                batch,
+                self.loss_group_weights,
+                label_ignore_index=self.label_ignore_index,
+                device=self.device,
+                dp_process_group=self.dp_process_group,
+            )
 
         # Global loss-weight divisor (mm_olmo BatchDivisor.global_batch): the sum of
         # positive loss weights over the whole global batch, divided by DP world size.
@@ -550,6 +689,15 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     autocast_precision: Optional[DType] = None
     label_ignore_index: int = -100
     response_logits_only: bool = False
+    loss_group_weights: Optional[Dict[str, float]] = None
+    """Opt-in coefficients for separately normalized full-update group CE objectives.
+
+    Positive coefficients must sum to one. Batches require one ``loss_group_names`` entry
+    per homogeneous packed sequence (emitted by grouped mixture-loader quotas). Annotation
+    weights remain relative within each group; ignored labels never add to its denominator.
+    Every group must have positive supervised weight globally on every update. LM z-loss
+    shares these weights; router auxiliary normalization is unchanged.
+    """
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
@@ -581,6 +729,8 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         diagnostics_interval: Optional[int] = None,
         train_embedding_rows: Optional[List[int]] = None,
         source_loss_mass_targets: Optional[Dict[str, float]] = None,
+        loss_group_weights: Optional[Dict[str, float]] = None,
+        trim_microbatch_image_padding: bool = False,
         **kwargs,
     ):
         from olmo_core.nn.vision import MultimodalOLMoDDPModel
@@ -603,6 +753,16 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             )
         if diagnostics_interval is not None and diagnostics_interval <= 0:
             raise OLMoConfigurationError("diagnostics_interval must be positive or None")
+        self.trim_microbatch_image_padding = trim_microbatch_image_padding
+        if trim_microbatch_image_padding:
+            if model.cfg.vision.attention_dropout or model.cfg.vision.residual_dropout:
+                raise OLMoConfigurationError(
+                    "Image-padding trimming requires zero vision attention and residual dropout"
+                )
+            log.warning(
+                "Image-padding trimming is enabled; vision FLOP estimates still use untrimmed "
+                "collator shapes. Compare measured throughput and profiles, not estimated MFU."
+            )
 
         self.freeze_params = freeze_params or []
         frozen = []
@@ -626,6 +786,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             model.connector.apply_activation_checkpointing()
             log.info("Applied activation checkpointing to the vision connector")
         self.response_logits_only = response_logits_only
+        self.loss_group_weights = _validate_loss_group_weights(loss_group_weights)
         self.diagnostics_interval = diagnostics_interval
         self.source_loss_mass_targets = dict(source_loss_mass_targets or {})
         if self.source_loss_mass_targets and (
@@ -680,9 +841,15 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
     def _prepare_batch(
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        if (
+            getattr(self, "trim_microbatch_image_padding", False)
+            and batch.get("images") is not None
+        ):
+            batch = _trim_microbatch_image_padding(batch)
         input_ids, labels, model_kwargs = super()._prepare_batch(batch, labels)
         model_kwargs.pop("image_crop_counts", None)
         model_kwargs.pop("pooled_token_counts", None)
+        model_kwargs.pop("loss_group_names", None)
         # A full microbatch needs no routing override and remains compatible with the ordinary
         # sync/no-EP paths used by small tests and evaluation. A mask containing padding is kept
         # and the routed block enforces the production rowwise path.
@@ -708,13 +875,16 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
 
     @contextlib.contextmanager
     def _multimodal_eval_batch_context(self):
-        # Multimodal eval batches have the same fixed, padded shape and router token mask as
-        # training batches. Keep the routed blocks on their proven no-sync rowwise path and in the
-        # same grad-enabled compile regime. On B300 with torch 2.11, compiled no-grad attention can
-        # produce wrong logits and compiled EP can access memory illegally. Setting only the
-        # block's dispatch flag does not recursively enable training behavior in its children, and
-        # OLMoDDP blocks do not support dropout. Returned losses are detached below so the
-        # unconsumed graph is released before control returns to the evaluator.
+        # A training-topology evaluation has the same fixed, padded shape and router token mask as
+        # training. Keep those routed blocks on their proven no-sync rowwise path and in the same
+        # grad-enabled compile regime. A standalone evaluator can deliberately replace that path
+        # with synchronized EP; those blocks must remain in eval dispatch because the synchronized
+        # path is the safe variable-token-count fallback and does not use rowwise scratch buffers.
+        # On B300 with torch 2.11, compiled no-grad attention can produce wrong logits and compiled
+        # EP can access memory illegally. Setting only a block's dispatch flag does not recursively
+        # enable training behavior in its children, and OLMoDDP blocks do not support dropout.
+        # Returned losses are detached below so the unconsumed graph is released before control
+        # returns to the evaluator.
         block_modes = []
         for block in self.multimodal_model.lm.routed_blocks():
             block_modes.append(
@@ -724,10 +894,15 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                     block._ep_no_sync_force_scratch_lifetime_buffers,
                 )
             )
-            block.training = True
-            # This is a forward-only graph, so no backward pass exists to release the rowwise
-            # lifetime leases used by training. Use the prewarmed static scratch buffers instead.
-            block._ep_no_sync_force_scratch_lifetime_buffers = True
+            use_training_dispatch = (
+                block.ep_enabled
+                and block.ep.no_sync
+                and block.ep.path == ExpertParallelPath.rowwise_nvshmem
+            )
+            block.training = use_training_dispatch
+            # A forward-only rowwise graph has no backward pass to release the training lifetime
+            # leases. Use the prewarmed static scratch buffers only for that dispatch path.
+            block._ep_no_sync_force_scratch_lifetime_buffers = use_training_dispatch
         try:
             with torch.enable_grad():
                 yield
@@ -919,12 +1094,16 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 ReduceType.mean,
                 namespace="data",
             )
-            self.record_metric(
-                f"source/{source_name}/loss_mass_target_abs_error",
-                (realized_share - target).abs(),
-                ReduceType.mean,
-                namespace="data",
-            )
+            # Explicit quotas make sampling targets relative within each group, not
+            # expected global source shares. Keep raw exposure metrics without treating
+            # their departure from the old global targets as a delivery error.
+            if "loss_group_names" not in batch:
+                self.record_metric(
+                    f"source/{source_name}/loss_mass_target_abs_error",
+                    (realized_share - target).abs(),
+                    ReduceType.mean,
+                    namespace="data",
+                )
 
     def _diagnostics_enabled_for_step(self) -> bool:
         return bool(
@@ -934,8 +1113,31 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         )
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        original_batch = batch
+        if self.loss_group_weights:
+            batch, global_mass = _normalize_loss_groups(
+                batch,
+                self.loss_group_weights,
+                label_ignore_index=self.label_ignore_index,
+                device=self.device,
+                dp_process_group=self.dp_process_group,
+            )
+            if not dry_run:
+                for index, group in enumerate(self.loss_group_weights):
+                    self.record_metric(
+                        f"group/{group}/active_loss_weight",
+                        global_mass[index],
+                        ReduceType.mean,
+                        namespace="data",
+                    )
+                    self.record_metric(
+                        f"group/{group}/objective_weight",
+                        self.loss_group_weights[group],
+                        ReduceType.mean,
+                        namespace="data",
+                    )
         if not dry_run:
-            self._record_data_metrics(batch)
+            self._record_data_metrics(original_batch)
         collect_diagnostics = not dry_run and self._diagnostics_enabled_for_step()
         if collect_diagnostics:
             self.multimodal_model.set_input_diagnostics(True)
@@ -1028,7 +1230,11 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             optim.set_component_grad_norm_patterns(None)
 
     def extra_flops_per_batch(self, batch: Dict[str, Any]) -> int:
-        """Return vision and connector FLOPs for speed-monitor MFU accounting."""
+        """Estimate vision/connector FLOPs from untrimmed collator tensor shapes.
+
+        This estimate does not account for optional microbatch image-padding trimming
+        or subsequent cross-rank crop padding; it is not a measurement of optimized work.
+        """
         images = batch.get("images")
         if images is None:
             return 0
@@ -1332,6 +1538,17 @@ class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
     """Embedding rows allowed to receive gradients; all other rows are held fixed."""
     source_loss_mass_targets: Optional[Dict[str, float]] = None
     """Optional expected source loss-mass shares that enable online delivery telemetry."""
+    loss_group_weights: Optional[Dict[str, float]] = None
+    """Opt-in separately normalized group CE weights; see
+    :class:`MultimodalTransformerTrainModuleConfig` for the batch contract.
+    """
+    trim_microbatch_image_padding: bool = False
+    """Opt in to removing trailing image-crop and pooled-row padding per microbatch.
+
+    When images are supplied, requires collator ``image_crop_counts`` / ``pooled_token_counts``
+    metadata and zero vision dropout. Retains at least one dummy crop and pooled row, existing
+    vision collectives, and all LM token slots. FLOP estimates retain untrimmed batch shapes.
+    """
 
     def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
         return MultimodalOLMoDDPTrainModule(**kwargs)

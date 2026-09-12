@@ -711,7 +711,7 @@ def test_mixture_data_loader_v5_validates_source_content_fingerprints(tmp_path):
 
 def test_mixture_data_loader_recognizes_native_text_replay_fingerprint():
     dataset = object.__new__(NativeTextReplayDataset)
-    setattr(dataset, "manifest", SimpleNamespace(content_fingerprint="a" * 64))
+    setattr(dataset, "manifest", SimpleNamespace(version=2, content_fingerprint="a" * 64))
 
     fingerprint = MixtureDataLoader._dataset_fingerprint(dataset, "native-replay")
 
@@ -1041,6 +1041,49 @@ def test_pixmo_cap_can_fail_closed_when_named_split_is_required():
         _pixmo_cap("caption", split="validation", require_split=True)
 
 
+def test_pixmo_cap_strict_source_has_config_bound_content_fingerprint(monkeypatch):
+    from olmo_core.data.multimodal import dataset_compat
+    from olmo_core.data.multimodal.pixmo_cap import PixMoCapDatasetConfig
+
+    class ArrowSplit:
+        _fingerprint = "cap-arrow-v1"
+
+        def __len__(self):
+            return 7
+
+    split = ArrowSplit()
+    monkeypatch.setattr(dataset_compat, "load_from_disk_compat", lambda _path: {"train": split})
+
+    baseline = PixMoCapDatasetConfig(
+        dataset_path="unused",
+        split="train",
+        require_split=True,
+        mode="transcript_and_caption",
+        message_format="document",
+    ).build(_FakeTok())
+    changed = PixMoCapDatasetConfig(
+        dataset_path="unused",
+        split="train",
+        require_split=True,
+        mode="caption",
+        message_format="document",
+    ).build(_FakeTok())
+
+    assert len(baseline.content_fingerprint) == 64
+    assert baseline.content_fingerprint_version == "pixmo-cap-adapter-v1"
+    assert baseline.content_fingerprint != changed.content_fingerprint
+
+    split._fingerprint = "cap-arrow-v2"
+    changed_raw = PixMoCapDatasetConfig(
+        dataset_path="unused",
+        split="train",
+        require_split=True,
+        mode="transcript_and_caption",
+        message_format="document",
+    ).build(_FakeTok())
+    assert baseline.content_fingerprint != changed_raw.content_fingerprint
+
+
 def test_pixmo_cap_style_length_prefix_format():
     ds = _pixmo_cap("caption")
     rng = np.random.RandomState(0)
@@ -1116,29 +1159,36 @@ def test_pixmo_cap_validates_strict_transcript_completeness_without_loading_imag
         message_format="document",
     ).build(_FakeTok())
 
-    with pytest.raises(ValueError, match=r"found 2 invalid rows out of 3.*\[1, 2\]"):
+    with pytest.raises(ValueError, match=r"has 2 invalid annotation rows out of 3.*1:.*2:"):
         dataset.validate_required_annotations()
 
 
 def test_pixmo_cap_validates_arrow_and_synthetic_transcripts_without_image_access():
     class TranscriptOnlyArrow:
+        column_names = ["caption", "transcripts"]
+
         def __init__(self):
             self.transcript_column_reads = 0
 
-        def __getitem__(self, column):
-            assert column == "transcripts"
+        def __getitem__(self, index):
+            if not 0 <= index < len(self):
+                raise IndexError(index)
             self.transcript_column_reads += 1
-            return [["spoken a"], ["spoken b"]]
+            return {"caption": f"caption {index}", "transcripts": [f"spoken {index}"]}
 
         def __len__(self):
             return 2
+
+        def select_columns(self, columns):
+            assert columns == ["caption", "transcripts"]
+            return self
 
     arrow = TranscriptOnlyArrow()
     dataset = _pixmo_cap("transcript", require_transcript=True)
     dataset._kind = "arrow"
     dataset._hf = arrow
     dataset.validate_required_annotations()
-    assert arrow.transcript_column_reads == 1
+    assert arrow.transcript_column_reads == 2
 
     _pixmo_cap("transcript", require_transcript=True).validate_required_annotations()
 

@@ -15,13 +15,26 @@ from __future__ import annotations
 import itertools
 import logging
 import math
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
+import torch.distributed as dist
 
+from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 
-from ..data_loader import DataLoaderBase
+from ..data_loader import DataLoaderBase, DataLoaderConfig
 from .collator import MultimodalCollator
 from .packing import (
     _select_buffered_pack_indices,
@@ -32,6 +45,9 @@ from .packing import (
 from .prefetch import prefetch_map
 from .rng import make_random_state
 
+if TYPE_CHECKING:
+    from .alignment import MultimodalDatasetMixture
+
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
@@ -39,10 +55,115 @@ DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 PACKED_LOADER_STATE_VERSION = 5
 LEGACY_PACKED_LOADER_STATE_VERSIONS = (3, 4)
 
-__all__ = ["MixtureDataLoader"]
+__all__ = ["MixtureDataLoader", "MixtureDataLoaderConfig"]
 
 ExampleRef = Tuple[int, int, int]
 LoadedExample = Tuple[ExampleRef, Optional[Dict[str, Any]], Optional[Exception]]
+
+
+@DataLoaderConfig.register("multimodal_mixture")
+@dataclass
+class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
+    """Configuration for a stateful, token-batched multimodal mixture loader."""
+
+    global_batch_size: int
+    """Global batch size in padded token positions."""
+
+    sequence_length: int
+    """Fixed length to which each packed sequence is padded."""
+
+    work_dir: str
+    seed: int = 0
+    text_only: bool = False
+    """Omit image tensors on every rank for text-only training; reject visual examples."""
+    epoch_instances: Optional[int] = None
+    pack: bool = False
+    pack_max_crops: Optional[int] = None
+    pack_buffer_size: int = 0
+    pack_image_weight: float = 1.0
+    est_tokens_per_example: int = 1400
+    prefetch_workers: int = 0
+    prefetch_max_in_flight: int | None = None
+    """Maximum submitted-but-unconsumed examples per source group.
+
+    Defaults to ``max(2 * prefetch_workers, 4)`` when prefetching is enabled.
+    This bounds prepared-example read-ahead without changing packing or resume state.
+    """
+    defer_packed_image_copy: bool | None = None
+    """Copy packed float32 images directly into the final batch; disabled by default."""
+    max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS
+    max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS
+    allow_legacy_state_without_dataset_fingerprints: bool = False
+    source_groups: Optional[Dict[str, str]] = None
+    """Optional assignment of every source name to an independently packed group."""
+    group_sequence_quotas: Optional[Dict[str, int]] = None
+    """Global padded sequence slots per group in every optimizer batch.
+
+    Quotas must sum to ``global_batch_size / sequence_length`` and each be a positive
+    multiple of the DP world size. These are exposure quotas, not supervised-token or
+    loss-weight fractions. Both this field and ``source_groups`` must be set together.
+    """
+
+    def build(
+        self,
+        dataset: "MultimodalDatasetMixture",
+        *,
+        dp_process_group: Optional[dist.ProcessGroup] = None,
+    ) -> "MixtureDataLoader":
+        """Build the loader for the given data-parallel process group.
+
+        :param dataset: Built source datasets, weights, and tokenizer.
+        :param dp_process_group: The data-parallel process group.
+        """
+        dp_world_size = get_world_size(dp_process_group)
+        if (
+            self.sequence_length <= 0
+            or self.global_batch_size <= 0
+            or self.global_batch_size % (self.sequence_length * dp_world_size)
+        ):
+            raise OLMoConfigurationError(
+                "global_batch_size must be a positive multiple of sequence_length "
+                "times the data-parallel world size"
+            )
+        pad_token_id = dataset.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = dataset.tokenizer.eos_token_id
+        if pad_token_id is None:
+            raise OLMoConfigurationError("The tokenizer must define a pad or EOS token")
+
+        return MixtureDataLoader(
+            dataset.datasets,
+            dataset.weights,
+            MultimodalCollator(
+                pad_token_id=pad_token_id,
+                pad_sequence_length=self.sequence_length,
+                text_only=self.text_only,
+            ),
+            work_dir=self.work_dir,
+            global_batch_size=self.global_batch_size,
+            seed=self.seed,
+            epoch_instances=self.epoch_instances,
+            pack=self.pack,
+            pack_max_crops=self.pack_max_crops,
+            pack_buffer_size=self.pack_buffer_size,
+            pack_image_weight=self.pack_image_weight,
+            est_tokens_per_example=self.est_tokens_per_example,
+            prefetch_workers=self.prefetch_workers,
+            prefetch_max_in_flight=self.prefetch_max_in_flight,
+            defer_packed_image_copy=(
+                False if self.defer_packed_image_copy is None else self.defer_packed_image_copy
+            ),
+            max_consecutive_data_errors=self.max_consecutive_data_errors,
+            max_total_data_errors=self.max_total_data_errors,
+            dp_world_size=dp_world_size,
+            dp_rank=get_rank(dp_process_group),
+            dataset_names=dataset.names,
+            allow_legacy_state_without_dataset_fingerprints=(
+                self.allow_legacy_state_without_dataset_fingerprints
+            ),
+            source_groups=self.source_groups,
+            group_sequence_quotas=self.group_sequence_quotas,
+        )
 
 
 class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
@@ -63,6 +184,7 @@ class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
                 loader._try_load_ref,
                 loader._rank_refs_from_cursor(refs_consumed),
                 num_workers=loader.prefetch_workers,
+                max_in_flight=loader.prefetch_max_in_flight,
             )
         )
 
@@ -98,6 +220,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
         max_crops_per_pack: int,
         buffer_size: int,
         image_weight: float = 1.0,
+        defer_image_copy: bool = False,
         buffer: Optional[Sequence[Tuple[ExampleRef, Dict[str, Any]]]] = None,
         packs_emitted: int = 0,
     ):
@@ -106,6 +229,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
         self.max_crops_per_pack = max_crops_per_pack
         self.buffer_size = buffer_size
         self.image_weight = image_weight
+        self.defer_image_copy = defer_image_copy
         self.buffer = list(buffer or [])
         self.packs_emitted = packs_emitted
 
@@ -123,7 +247,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
             ) // token_granularity
             if at_token_capacity or crops > self.max_crops_per_pack:
                 self.packs_emitted += 1
-                return pack_examples([example])
+                return pack_examples([example], defer_image_copy=self.defer_image_copy)
             if len(self.buffer) < self.buffer_size:
                 self.buffer.append((ref, example))
                 continue
@@ -144,7 +268,7 @@ class _BufferedPackingIterator(Iterator[Dict[str, Any]]):
                 self.buffer.pop(i)
             self.buffer.append((ref, example))
             self.packs_emitted += 1
-            return pack_examples(packed)
+            return pack_examples(packed, defer_image_copy=self.defer_image_copy)
 
     def state_dict(self) -> Dict[str, Any]:
         return {
@@ -166,12 +290,20 @@ class MixtureDataLoader(DataLoaderBase):
     :param global_batch_size: global batch size in *tokens* (= global instances × seq len).
     :param epoch_instances: number of (global) instances that make up one epoch; defaults to
         the sum of the source lengths.
+    :param prefetch_max_in_flight: Maximum prepared examples in flight per source group.
+        Defaults to ``max(2 * prefetch_workers, 4)``. Ignored when prefetching is disabled.
+    :param defer_packed_image_copy: Copy packed float32 images directly into the final batch.
     :param allow_legacy_state_without_dataset_fingerprints: Allow restoring version 3 or 4
         buffered-packing cursor state, which predates per-source content fingerprints. This
         remains enabled by default for existing recipes and emits a warning. New recipes that
         require exact content validation should disable it explicitly. State from before
         buffered cursor support is still replayed from the beginning for backwards
         compatibility; that fallback is not an exact content-validated resume.
+    :param source_groups: Optional source-name to group-name mapping, covering all sources.
+    :param group_sequence_quotas: Global padded sequence slots per group per optimizer batch.
+        Each quota must be divisible by DP size, giving every rank at least one sequence
+        from every group. Groups are packed independently and sampling weights only choose
+        sources within a group. Explicit quotas do not support dynamic batch-size changes.
     """
 
     _epoch: Optional[int]
@@ -192,6 +324,8 @@ class MixtureDataLoader(DataLoaderBase):
         pack_image_weight: float = 1.0,
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
+        prefetch_max_in_flight: int | None = None,
+        defer_packed_image_copy: bool = False,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
         max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS,
         dp_world_size: int = 1,
@@ -199,6 +333,8 @@ class MixtureDataLoader(DataLoaderBase):
         fs_local_rank: Optional[int] = None,
         dataset_names: Optional[Sequence[str]] = None,
         allow_legacy_state_without_dataset_fingerprints: bool = True,
+        source_groups: Optional[Dict[str, str]] = None,
+        group_sequence_quotas: Optional[Dict[str, int]] = None,
     ):
         super().__init__(
             work_dir=work_dir,
@@ -225,6 +361,14 @@ class MixtureDataLoader(DataLoaderBase):
             )
         if not math.isfinite(pack_image_weight) or pack_image_weight < 0:
             raise OLMoConfigurationError("pack_image_weight must be finite and non-negative")
+        if prefetch_max_in_flight is not None and (
+            isinstance(prefetch_max_in_flight, bool)
+            or not isinstance(prefetch_max_in_flight, int)
+            or prefetch_max_in_flight <= 0
+        ):
+            raise OLMoConfigurationError("prefetch_max_in_flight must be a positive integer")
+        if not isinstance(defer_packed_image_copy, bool):
+            raise OLMoConfigurationError("defer_packed_image_copy must be a boolean")
         self.datasets = list(datasets)
         if dataset_names is None:
             self.dataset_names = [str(i) for i in range(len(datasets))]
@@ -257,6 +401,8 @@ class MixtureDataLoader(DataLoaderBase):
         self.pack_image_weight = pack_image_weight
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
+        self.prefetch_max_in_flight = prefetch_max_in_flight
+        self.defer_packed_image_copy = defer_packed_image_copy
         self.max_consecutive_data_errors = max_consecutive_data_errors
         self.max_total_data_errors = max_total_data_errors
         self._consecutive_data_errors = 0
@@ -266,6 +412,75 @@ class MixtureDataLoader(DataLoaderBase):
         self._order: Optional[List[ExampleRef]] = None
         self._active_packer: Optional[_BufferedPackingIterator] = None
         self._packing_state: Optional[Dict[str, Any]] = None
+        self._group_loaders: Dict[str, MixtureDataLoader] = {}
+        self.source_groups = dict(source_groups or {})
+        self.group_sequence_quotas = dict(group_sequence_quotas or {})
+        if source_groups is not None or group_sequence_quotas is not None:
+            if not self.source_groups or not self.group_sequence_quotas:
+                raise OLMoConfigurationError(
+                    "source_groups and group_sequence_quotas must be nonempty and set together"
+                )
+            if len(set(self.dataset_names)) != len(self.dataset_names) or set(
+                self.source_groups
+            ) != set(self.dataset_names):
+                raise OLMoConfigurationError(
+                    "source_groups must assign every unique dataset name exactly once"
+                )
+            if any(
+                not isinstance(group, str) or not group for group in self.source_groups.values()
+            ) or set(self.source_groups.values()) != set(self.group_sequence_quotas):
+                raise OLMoConfigurationError(
+                    "source_groups must cover exactly the nonempty group_sequence_quotas names"
+                )
+            if (
+                any(
+                    isinstance(quota, bool)
+                    or not isinstance(quota, int)
+                    or quota <= 0
+                    or quota % self.dp_world_size
+                    for quota in self.group_sequence_quotas.values()
+                )
+                or sum(self.group_sequence_quotas.values()) * self.seq_len != global_batch_size
+            ):
+                raise OLMoConfigurationError(
+                    "Group sequence quotas must be positive multiples of the DP world size "
+                    "and sum to global_batch_size / sequence_length"
+                )
+            # Reuse the ordinary source stream, error handling, packing, and checkpointing.
+            # Sorting group names makes dictionary insertion order irrelevant. Source order
+            # within each group remains the explicitly configured dataset order.
+            for group in sorted(self.group_sequence_quotas):
+                indices = [
+                    i
+                    for i, name in enumerate(self.dataset_names)
+                    if self.source_groups[name] == group
+                ]
+                self._group_loaders[group] = MixtureDataLoader(
+                    [self.datasets[i] for i in indices],
+                    [self.weights[i] for i in indices],
+                    self.collator,
+                    work_dir=self.work_dir,
+                    global_batch_size=self.group_sequence_quotas[group] * self.seq_len,
+                    seed=self.seed,
+                    epoch_instances=self.epoch_instances,
+                    pack=self.pack,
+                    pack_max_crops=self.pack_max_crops,
+                    pack_buffer_size=self.pack_buffer_size,
+                    pack_image_weight=self.pack_image_weight,
+                    est_tokens_per_example=self.est_tokens_per_example,
+                    prefetch_workers=self.prefetch_workers,
+                    prefetch_max_in_flight=self.prefetch_max_in_flight,
+                    defer_packed_image_copy=self.defer_packed_image_copy,
+                    max_consecutive_data_errors=self.max_consecutive_data_errors,
+                    max_total_data_errors=self.max_total_data_errors,
+                    dp_world_size=self.dp_world_size,
+                    dp_rank=self.dp_rank,
+                    fs_local_rank=self.fs_local_rank,
+                    dataset_names=[self.dataset_names[i] for i in indices],
+                    allow_legacy_state_without_dataset_fingerprints=(
+                        self.allow_legacy_state_without_dataset_fingerprints
+                    ),
+                )
 
     @staticmethod
     def _dataset_fingerprint(dataset: Any, dataset_name: str) -> Optional[Dict[str, Any]]:
@@ -330,6 +545,17 @@ class MixtureDataLoader(DataLoaderBase):
     def _global_instances(self) -> int:
         return self.global_batch_size // self.seq_len
 
+    @DataLoaderBase.global_batch_size.setter  # type: ignore[attr-defined]
+    def global_batch_size(self, new_global_batch_size: int):
+        if (
+            getattr(self, "_group_loaders", None)
+            and new_global_batch_size != self.global_batch_size
+        ):
+            raise OLMoConfigurationError(
+                "Explicit group sequence quotas do not support dynamic batch-size changes"
+            )
+        DataLoaderBase.global_batch_size.__set__(self, new_global_batch_size)  # type: ignore[attr-defined]
+
     @property
     def _rank_instances(self) -> int:
         return self.rank_batch_size // self.seq_len
@@ -352,12 +578,18 @@ class MixtureDataLoader(DataLoaderBase):
     @property
     def total_data_errors(self) -> int:
         """Return the cumulative number of data errors consumed by this rank."""
+        if self._group_loaders:
+            return sum(loader.total_data_errors for loader in self._group_loaders.values())
         return self._total_data_errors
 
     def reshuffle(self, epoch: Optional[int] = None, **kwargs):
         if epoch is not None:
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
+        if self._group_loaders:
+            for loader in self._group_loaders.values():
+                loader.reshuffle(epoch=epoch, **kwargs)
+            return
         if self.pack and self.pack_buffer_size:
             self._order = None
             return
@@ -394,6 +626,47 @@ class MixtureDataLoader(DataLoaderBase):
         self._order = order
 
     def _iter_batches(self) -> Iterable[Dict[str, Any]]:
+        if self._group_loaders:
+            iterators = {
+                group: iter(loader._iter_example_batches())
+                for group, loader in self._group_loaders.items()
+            }
+            try:
+                total_batches = self.total_batches
+                steps = (
+                    itertools.count(self.batches_processed)
+                    if total_batches is None
+                    else range(self.batches_processed, total_batches)
+                )
+                for _ in steps:
+                    examples = []
+                    group_names = []
+                    for group, loader in self._group_loaders.items():
+                        group_examples = next(iterators[group])
+                        if self.total_data_errors > self.max_total_data_errors:
+                            raise OLMoConfigurationError(
+                                "Exceeded aggregate grouped-loader data error tolerance "
+                                f"(total_data_errors={self.total_data_errors}, "
+                                f"max_total_data_errors={self.max_total_data_errors})"
+                            )
+                        examples.extend(group_examples)
+                        group_names.extend([group] * len(group_examples))
+                    batch = self.collator(examples)
+                    batch["loss_group_names"] = group_names
+                    for loader in self._group_loaders.values():
+                        loader.batches_processed += 1
+                    yield batch
+            finally:
+                for iterator in iterators.values():
+                    close = getattr(iterator, "close", None)
+                    if close is not None:
+                        close()
+            return
+        for examples in self._iter_example_batches():
+            yield self.collator(examples)
+
+    def _iter_example_batches(self) -> Iterable[List[Dict[str, Any]]]:
+        """Yield uncollated sequence batches, also reused by explicit group quotas."""
         ri = self._rank_instances
         if self.pack and self.pack_buffer_size:
             packer = self._build_buffered_packer()
@@ -410,7 +683,7 @@ class MixtureDataLoader(DataLoaderBase):
                     for _ in range(packs_to_replay):
                         next(packer)
                 while True:
-                    yield self.collator([next(packer) for _ in range(ri)])
+                    yield [next(packer) for _ in range(ri)]
             finally:
                 self._packing_state = self._buffered_packing_state(packer)
                 self._active_packer = None
@@ -428,11 +701,12 @@ class MixtureDataLoader(DataLoaderBase):
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
                 image_weight=self.pack_image_weight,
+                defer_image_copy=self.defer_packed_image_copy,
             )
             for _ in range(self.batches_processed * ri):  # resume: replay consumed packs
                 next(gen)
             for _ in range(self.batches_processed, n_batches):
-                yield self.collator([next(gen) for _ in range(ri)])
+                yield [next(gen) for _ in range(ri)]
             return
         gi = self._global_instances
         for b in range(self.batches_processed, n_batches):
@@ -440,7 +714,7 @@ class MixtureDataLoader(DataLoaderBase):
             rank_slice = global_slice[self.dp_rank * ri : (self.dp_rank + 1) * ri]
             ref_iter: Iterator = itertools.chain(rank_slice, itertools.cycle(self._order))
             examples = [self._load_example(ref_iter) for _ in range(ri)]
-            yield self.collator(examples)
+            yield examples
 
     def _try_load_example(self, ref) -> Dict[str, Any]:
         src_idx, example_idx, source_epoch = ref
@@ -561,6 +835,7 @@ class MixtureDataLoader(DataLoaderBase):
                 self._try_load_ref,
                 itertools.cycle(rank_refs),
                 num_workers=self.prefetch_workers,
+                max_in_flight=self.prefetch_max_in_flight,
             )
         )
         try:
@@ -587,6 +862,7 @@ class MixtureDataLoader(DataLoaderBase):
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
                 image_weight=self.pack_image_weight,
+                defer_image_copy=self.defer_packed_image_copy,
             )
 
         state = self._packing_state
@@ -670,6 +946,7 @@ class MixtureDataLoader(DataLoaderBase):
             max_crops_per_pack=self.pack_max_crops,
             buffer_size=self.pack_buffer_size,
             image_weight=self.pack_image_weight,
+            defer_image_copy=self.defer_packed_image_copy,
             buffer=buffer,
             packs_emitted=packs_emitted,
         )
@@ -707,6 +984,22 @@ class MixtureDataLoader(DataLoaderBase):
         return state
 
     def get_mock_batch(self) -> Dict[str, Any]:
+        if self._group_loaders:
+            examples = []
+            group_names = []
+            for group, loader in self._group_loaders.items():
+                src = next(i for i, size in enumerate(loader._sizes) if size)
+                for i in range(loader._rank_instances):
+                    example = loader._try_load_example((src, i % loader._sizes[src], 0))
+                    examples.append(
+                        pack_examples([example], defer_image_copy=self.defer_packed_image_copy)
+                        if self.pack
+                        else example
+                    )
+                    group_names.append(group)
+            batch = self.collator(examples)
+            batch["loss_group_names"] = group_names
+            return batch
         ri = max(self._rank_instances, 1)
         # Pull from the first non-empty source.
         src = next((i for i, s in enumerate(self._sizes) if s), 0)
@@ -719,6 +1012,7 @@ class MixtureDataLoader(DataLoaderBase):
                 max_crops_per_pack=self.pack_max_crops,
                 buffer_size=self.pack_buffer_size,
                 image_weight=self.pack_image_weight,
+                defer_image_copy=self.defer_packed_image_copy,
             )
             return self.collator([next(gen) for _ in range(ri)])
         examples = [self._try_load_example((src, i % size, 0)) for i in range(ri)]
@@ -729,6 +1023,18 @@ class MixtureDataLoader(DataLoaderBase):
         return self.global_batch_size
 
     def state_dict(self) -> Dict[str, Any]:
+        if self._group_loaders:
+            return {
+                "grouped_version": 1,
+                "batches_processed": self.batches_processed,
+                "epoch": self._epoch,
+                "source_groups": self.source_groups,
+                "group_sequence_quotas": self.group_sequence_quotas,
+                "grouped_config": self._grouped_resume_config(),
+                "groups": {
+                    group: loader.state_dict() for group, loader in self._group_loaders.items()
+                },
+            }
         state: Dict[str, Any] = {
             "batches_processed": self.batches_processed,
             "epoch": self._epoch,
@@ -742,7 +1048,55 @@ class MixtureDataLoader(DataLoaderBase):
             state["packing_state"] = self._packing_state
         return state
 
+    def _grouped_resume_config(self) -> Dict[str, Any]:
+        """Identity checks for all grouped modes, including non-buffered loaders."""
+        return {
+            "seed": self.seed,
+            "dp_world_size": self.dp_world_size,
+            "dp_rank": self.dp_rank,
+            "global_batch_size": self.global_batch_size,
+            "seq_len": self.seq_len,
+            "epoch_instances": self.epoch_instances,
+            "pack": self.pack,
+            "pack_buffer_size": self.pack_buffer_size,
+            "pack_max_crops": self.pack_max_crops,
+            "pack_image_weight": self.pack_image_weight,
+            "est_tokens_per_example": self.est_tokens_per_example,
+            "dataset_names": self.dataset_names,
+            "dataset_sizes": self._sizes,
+            "dataset_fingerprints": self.dataset_fingerprints,
+            "weights": self.weights,
+        }
+
     def load_state_dict(self, state_dict: Dict[str, Any]):
+        if self._group_loaders:
+            if (
+                state_dict.get("grouped_version") != 1
+                or any(
+                    state_dict.get(key) != expected
+                    for key, expected in (
+                        ("source_groups", self.source_groups),
+                        ("group_sequence_quotas", self.group_sequence_quotas),
+                        ("grouped_config", self._grouped_resume_config()),
+                    )
+                )
+                or set(state_dict.get("groups", {})) != set(self._group_loaders)
+            ):
+                raise OLMoConfigurationError(
+                    "Grouped-loader resume requires matching source groups and sequence quotas"
+                )
+            self.batches_processed = int(state_dict["batches_processed"])
+            self._epoch = state_dict["epoch"]
+            for group, loader in self._group_loaders.items():
+                loader.load_state_dict(state_dict["groups"][group])
+                if (
+                    loader.batches_processed != self.batches_processed
+                    or loader._epoch != self._epoch
+                ):
+                    raise OLMoConfigurationError("Grouped-loader child batch/epoch cursor mismatch")
+            return
+        if "grouped_version" in state_dict:
+            raise OLMoConfigurationError("Cannot load grouped-loader state without group quotas")
         self.batches_processed = state_dict.get("batches_processed", 0)
         epoch = state_dict.get("epoch")
         self._epoch = None if epoch is None else int(epoch)
@@ -754,3 +1108,5 @@ class MixtureDataLoader(DataLoaderBase):
     def reset(self):
         super().reset()
         self._packing_state = None
+        for loader in self._group_loaders.values():
+            loader.reset()

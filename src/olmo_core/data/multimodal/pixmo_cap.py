@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -73,6 +73,8 @@ TRANSCRIPT_PROMPTS = (
 )
 
 _MODES = ("caption", "transcript", "transcript_and_caption", "sft_demo")
+_CONTENT_FINGERPRINT_VERSION = "pixmo-cap-adapter-v1"
+_CONTENT_FINGERPRINT_DOMAIN = b"pixmo-cap-adapter-v1\0"
 
 # mm_olmo's ``system_prompt='style_and_length_v2'`` (data_formatter.py): every response
 # branch is preceded, in its user turn, by a ``"<style>[ <bucket>]:"`` length-conditioning
@@ -133,6 +135,8 @@ class PixMoCapDatasetConfig(Config):
 class PixMoCapDataset:
     """Map-style dataset yielding packed Molmo2 caption-pretraining examples."""
 
+    content_fingerprint_version = _CONTENT_FINGERPRINT_VERSION
+
     def __init__(self, config: PixMoCapDatasetConfig, tokenizer):
         if config.mode not in _MODES:
             raise ValueError(f"Unknown mode {config.mode!r}; expected one of {_MODES}")
@@ -170,7 +174,37 @@ class PixMoCapDataset:
                 raise ValueError(f"PixMoCap dataset {path!r} lacks required split {config.split!r}")
             self._hf = ds[config.split] if config.split in ds else ds
 
+        if config.require_split:
+            if self._kind != "arrow" or self._hf is None:
+                raise ValueError("Strict PixMoCap sources require a named Arrow split")
+            arrow_fingerprint = getattr(self._hf, "_fingerprint", None)
+            if callable(arrow_fingerprint):
+                arrow_fingerprint = arrow_fingerprint()
+            if not isinstance(arrow_fingerprint, str) or not arrow_fingerprint:
+                raise ValueError(f"PixMoCap split {config.split!r} has no stable Arrow fingerprint")
+            payload = {
+                "adapter": type(self).__name__,
+                "config": asdict(config),
+                "source": {
+                    "arrow_fingerprint": arrow_fingerprint,
+                    "num_rows": len(self._hf),
+                    "split": config.split,
+                },
+                "version": self.content_fingerprint_version,
+            }
+            encoded = json.dumps(
+                payload,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            self.content_fingerprint = hashlib.sha256(
+                _CONTENT_FINGERPRINT_DOMAIN + encoded
+            ).hexdigest()
+
         self._eos_id = tokenizer.eos_token_id
+        self._annotations_validated = False
 
     # -- length -----------------------------------------------------------------
 
@@ -263,49 +297,74 @@ class PixMoCapDataset:
         raise TypeError(f"Unsupported image field type: {type(img)}")
 
     def validate_required_annotations(self) -> None:
-        """Validate annotations required by this dataset's strict mode.
+        """Validate every annotation that the configured branch selector can supervise.
 
-        This performs a dataset-wide transcript completeness check without reading or
-        decoding image fields. Synthetic data is known to generate one non-blank
-        transcript per example; JSONL and Arrow sources are scanned directly.
+        The scan never reads or decodes image fields. Captions must be non-blank whenever
+        they can be selected. Transcript entries used by bundled Cap must all be non-blank;
+        strict transcript-only mode requires at least one usable transcript per row.
 
         :raises ValueError: If strict transcript mode is enabled and any row lacks a
             non-blank transcript.
         """
-        if self.config.mode != "transcript" or not self.config.require_transcript:
+        if getattr(self, "_annotations_validated", False):
             return
         if self._kind == "synthetic":
+            self._annotations_validated = True
             return
 
-        transcripts_by_row: Any
         if self._kind == "jsonl":
             assert self._rows is not None
-            transcripts_by_row = (row.get("transcripts") for row in self._rows)
+            rows: Any = iter(self._rows)
         else:
             assert self._hf is not None
-            try:
-                transcripts_by_row = iter(self._hf["transcripts"])
-            except (KeyError, ValueError):
-                raise ValueError(
-                    "PixMoCap transcript mode requires a 'transcripts' annotation column"
-                ) from None
+            columns = ["caption", "transcripts"]
+            missing = sorted(set(columns) - set(self._hf.column_names))
+            if missing:
+                raise ValueError(f"PixMoCap lacks required annotation columns: {missing}")
+            rows = iter(self._hf.select_columns(columns))
 
         invalid_count = 0
-        first_invalid_indices: List[int] = []
-        for index, transcripts in enumerate(transcripts_by_row):
-            if not isinstance(transcripts, (list, tuple)) or not any(
-                isinstance(transcript, str) and transcript.strip() for transcript in transcripts
+        first_errors: List[str] = []
+        for index, row in enumerate(rows):
+            caption = row.get("caption")
+            transcripts = row.get("transcripts")
+            error: str | None = None
+            caption_required = self.config.mode in ("caption", "transcript_and_caption")
+            if caption_required and (not isinstance(caption, str) or not caption.strip()):
+                error = "caption must be non-blank"
+            elif not isinstance(transcripts, (list, tuple)):
+                error = "transcripts must be a sequence"
+            elif self.config.mode == "transcript_and_caption" and any(
+                not isinstance(transcript, str) or not transcript.strip()
+                for transcript in transcripts
             ):
+                error = "bundled transcript entries must be non-blank strings"
+            elif (
+                self.config.mode == "transcript"
+                and self.config.require_transcript
+                and not any(
+                    isinstance(transcript, str) and transcript.strip() for transcript in transcripts
+                )
+            ):
+                error = "strict transcript mode requires a non-blank transcript"
+            elif (
+                self.config.mode == "transcript"
+                and not self.config.require_transcript
+                and not transcripts
+                and (not isinstance(caption, str) or not caption.strip())
+            ):
+                error = "transcript fallback caption must be non-blank"
+            if error is not None:
                 invalid_count += 1
-                if len(first_invalid_indices) < 8:
-                    first_invalid_indices.append(index)
+                if len(first_errors) < 8:
+                    first_errors.append(f"{index}: {error}")
 
         if invalid_count:
             raise ValueError(
-                "PixMoCap transcript mode requires at least one non-blank transcript on every "
-                f"row; found {invalid_count} invalid rows out of {len(self)} "
-                f"(first indices: {first_invalid_indices})"
+                f"PixMoCap has {invalid_count} invalid annotation rows out of {len(self)}; "
+                f"first errors: {first_errors}"
             )
+        self._annotations_validated = True
 
     # -- core -------------------------------------------------------------------
 

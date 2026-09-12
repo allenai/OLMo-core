@@ -15,6 +15,8 @@ import torch
 
 from olmo_core.config import Config
 
+from .packing import _PackedImageParts
+
 __all__ = ["MultimodalCollator", "MultimodalCollatorConfig"]
 
 
@@ -33,11 +35,19 @@ class MultimodalCollatorConfig(Config):
     per-batch max. Use this to give every batch a constant token count (required by
     the token-based :class:`~olmo_core.train.Trainer` batching)."""
 
+    text_only: bool = False
+    """Omit image tensors for a globally text-only run; reject visual examples.
+
+    Do not enable this for individual ranks or batches of a mixed run: all ranks must
+    execute the same vision collectives, even when a local batch contains only text.
+    """
+
     def build(self) -> "MultimodalCollator":
         return MultimodalCollator(
             pad_token_id=self.pad_token_id,
             label_ignore_index=self.label_ignore_index,
             pad_sequence_length=self.pad_sequence_length,
+            text_only=self.text_only,
         )
 
 
@@ -46,7 +56,8 @@ class MultimodalCollator:
 
     Each example is a dict of ``np.ndarray`` with (at least) ``input_ids``,
     ``labels``, ``loss_masks``, ``position_ids``, ``token_type_ids``, ``images``,
-    ``pooled_patches_idx`` and optionally ``subsegment_ids``.
+    ``pooled_patches_idx`` and optionally ``subsegment_ids``. Packed examples may retain
+    their original float32 image parts for direct assembly into the final batch.
 
     Token fields are right-padded to the batch's max sequence length; ``images`` is
     padded along the crop axis and ``pooled_patches_idx`` along the pooled-token axis
@@ -58,10 +69,12 @@ class MultimodalCollator:
         pad_token_id: int,
         label_ignore_index: int = -100,
         pad_sequence_length: Optional[int] = None,
+        text_only: bool = False,
     ):
         self.pad_token_id = pad_token_id
         self.label_ignore_index = label_ignore_index
         self.pad_sequence_length = pad_sequence_length
+        self.text_only = text_only
 
     def _pad_1d(self, arrays: List[np.ndarray], value, max_len: int, dtype) -> torch.Tensor:
         out = np.full((len(arrays), max_len), value, dtype=dtype)
@@ -79,6 +92,10 @@ class MultimodalCollator:
             max_len = self.pad_sequence_length
         max_crops = max(ex["images"].shape[0] for ex in examples)
         max_pool = max(ex["pooled_patches_idx"].shape[0] for ex in examples)
+        if self.text_only and (max_crops or max_pool):
+            raise ValueError(
+                "A text-only collator cannot accept image crops or pooled image tokens"
+            )
         n_patches = examples[0]["images"].shape[1]
         patch_dim = examples[0]["images"].shape[2]
         pool_size = examples[0]["pooled_patches_idx"].shape[1]
@@ -119,28 +136,27 @@ class MultimodalCollator:
             ),
         }
 
-        # Images. Text-only examples contribute 0 real crops / 0 pooled rows. We *always*
-        # emit an images tensor (never None): a fully text-only batch gets a single dummy
-        # zero crop whose pooled indices are all -1, so it splices no features into the
-        # sequence. This keeps the vision + connector forward running on every rank every
-        # step, so their FSDP all-gather / reduce-scatter collectives stay in lockstep even
-        # when a rank's whole microbatch is text-only (a mismatch there deadlocks NCCL).
-        # ``MultimodalLM.forward`` adds a 0-weighted tie so the connector also participates
-        # in the backward pass for these dummy crops.
-        crops = max(max_crops, 1)
-        images = np.zeros((len(examples), crops, n_patches, patch_dim), dtype=np.float32)
-        # Pooled patch indices: (B, max_pool, pool_size), pad with -1 (connector ignores;
-        # text-only rows are entirely -1 -> contribute no spliced features).
-        pooled = np.full((len(examples), max(max_pool, 1), pool_size), -1, dtype=np.int64)
-        for i, ex in enumerate(examples):
-            im = ex["images"]
-            if im.shape[0]:
-                images[i, : im.shape[0]] = im
-            pp = ex["pooled_patches_idx"]
-            if pp.shape[0]:
-                pooled[i, : pp.shape[0]] = pp
-        batch["images"] = torch.from_numpy(images)
-        batch["pooled_patches_idx"] = torch.from_numpy(pooled)
+        if not self.text_only:
+            # Dummy crops keep vision/connector collectives aligned across mixed-run ranks.
+            # Their pooled indices are -1, so they add no features to the token sequence.
+            crops = max(max_crops, 1)
+            images = np.zeros((len(examples), crops, n_patches, patch_dim), dtype=np.float32)
+            pooled = np.full((len(examples), max(max_pool, 1), pool_size), -1, dtype=np.int64)
+            for i, ex in enumerate(examples):
+                im = ex["images"]
+                if isinstance(im, _PackedImageParts):
+                    offset = 0
+                    for part in im.parts:
+                        end = offset + part.shape[0]
+                        images[i, offset:end] = part
+                        offset = end
+                elif im.shape[0]:
+                    images[i, : im.shape[0]] = im
+                pp = ex["pooled_patches_idx"]
+                if pp.shape[0]:
+                    pooled[i, : pp.shape[0]] = pp
+            batch["images"] = torch.from_numpy(images)
+            batch["pooled_patches_idx"] = torch.from_numpy(pooled)
 
         # Subsegment ids only when at least one example is multi-branch (packed). For
         # padded / single-branch positions a uniform id leaves attention unrestricted.

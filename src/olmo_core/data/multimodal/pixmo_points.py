@@ -742,12 +742,21 @@ class PixMoPointsDataset:
 class PixMoCountDatasetConfig(Config):
     """Configure PixMo Count grounding or scalar-count document continuations."""
 
+    dataset_path: str = f"{PIXMO_DATASETS}/count"
+    """Arrow ``DatasetDict`` containing the requested count split."""
     split: str = "train"
     require_split: bool = False
     """Require ``split`` to exist in the saved Arrow ``DatasetDict``."""
     mode: Literal["grounded", "scalar_count"] = "grounded"
     """``scalar_count`` always supervises the declared integer using document layout."""
     counting: str | bool = "both"  # "both" interleaves point_count (even) / pointing (odd)
+    scalar_count_replay: bool = False
+    """Replay the scalar integer interface once per grounded raw row.
+
+    With ``counting="both"`` the scalar branch is attached only to the deterministic
+    ``point_count`` variant, so duplicated grounding styles do not silently double its dose.
+    A single-style grounded dataset attaches the branch to its sole variant.
+    """
     max_crops: int = 8
     high_res_max_crops: int = 24
     max_sequence_length: int | None = None
@@ -780,6 +789,8 @@ class PixMoCountDataset:
                     "PixMo scalar_count mode does not use grounded counting styles; leave "
                     "counting='both'"
                 )
+            if config.scalar_count_replay:
+                raise ValueError("scalar_count_replay is redundant in scalar_count mode")
         if not isinstance(config.split, str) or not config.split:
             raise ValueError("PixMo Count split must be a non-empty string")
         if config.max_crops <= 0 or config.high_res_max_crops <= 0:
@@ -796,7 +807,7 @@ class PixMoCountDataset:
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(
-            f"{PIXMO_DATASETS}/count",
+            config.dataset_path,
             config.split,
             require_split=config.require_split,
         )
@@ -915,19 +926,19 @@ class PixMoCountDataset:
         }
 
         def build_branches(branch_rng: np.random.RandomState) -> list[tuple[str, str]]:
+            scalar_branch = (_SCALAR_COUNT_PROMPT.format(label=label), str(count))
             if style == "scalar_count":
-                return [(_SCALAR_COUNT_PROMPT.format(label=label), str(count))]
+                return [scalar_branch]
             # PixMo Count validation/test retain the declared count but omit point
             # annotations. Those rows support count-only evaluation, not grounding.
             if len(xy) == 0 and count > 0:
-                return [
-                    (
-                        f"How many {label} are there?",
-                        pointing_answer(xy, label, "count", count=count),
-                    )
-                ]
+                return [scalar_branch]
             prompt, answer = fmt.format_turns(sub, index=i, rng=branch_rng)[0]
-            return [(prompt, answer)]
+            branches = [(prompt, answer)]
+            replay_on_this_variant = self.config.counting != "both" or style == "point_count"
+            if self.config.scalar_count_replay and replay_on_this_variant:
+                branches.append(scalar_branch)
+            return branches
 
         return _build_example(
             self.tokenizer,

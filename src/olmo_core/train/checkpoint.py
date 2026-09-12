@@ -7,7 +7,7 @@ from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Generator, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, Generator, Optional, Tuple
 
 import torch
 import torch.distributed as dist
@@ -285,18 +285,28 @@ class Checkpointer:
 
         return trainer_state
 
-    def write_file(self, dir: PathOrStr, fname: str, contents: Union[str, bytes]) -> PathOrStr:
+    def write_file(
+        self,
+        dir: PathOrStr,
+        fname: str,
+        contents: str | bytes,
+        *,
+        save_overwrite: bool | None = None,
+    ) -> PathOrStr:
         """
         Write something to a file in a local or remote directory.
 
         :param dir: The path/URL of the directory to write the file to.
         :param fname: The name of the file to write, relative to ``dir``.
         :param contents: The contents of the file to write.
+        :param save_overwrite: Override the overwrite policy for this file only. By default,
+            use the checkpointer's policy; checkpoint writes are unaffected.
 
         :returns: The path/URL of the file.
         """
         dir = normalize_path(dir)
         fname = normalize_path(fname)
+        save_overwrite = self.save_overwrite if save_overwrite is None else save_overwrite
 
         if not is_url(dir):
             Path(dir).mkdir(exist_ok=True, parents=True)
@@ -318,10 +328,10 @@ class Checkpointer:
             target: PathOrStr
             if is_url(dir):
                 target = f"{dir}/{fname}"
-                upload(tmp_path, target, save_overwrite=self.save_overwrite)
+                upload(tmp_path, target, save_overwrite=save_overwrite)
             else:
                 target = Path(dir) / fname
-                if target.is_file() and not self.save_overwrite:
+                if target.is_file() and not save_overwrite:
                     raise FileExistsError(target)
                 target.parent.mkdir(exist_ok=True, parents=True)
                 tmp_path.replace(target)

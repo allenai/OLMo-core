@@ -10,12 +10,14 @@ the separate vision-alignment continued-pretraining recipe:
   into batches for :class:`~olmo_core.nn.vision.MultimodalLM`.
 * :func:`~olmo_core.data.multimodal.sequence_builder.build_packed_sequence` — the
   core multi-annotation (branch-packing) sequence assembly with float loss weights.
-* :class:`~olmo_core.data.multimodal.native_text_replay.NativeTextReplayDataset` — bounded,
-  exact-token replay from a pinned parent-pretraining manifest.
+* :class:`~olmo_core.data.multimodal.pretraining_replay.PretrainingReplayDataset` — native
+  text replay resolved from the parent checkpoint or an explicit dataset config.
 
 Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
 """
+
+from typing import Any
 
 from .academic_dataset import AcademicDataset, AcademicDatasetConfig
 from .collator import MultimodalCollator, MultimodalCollatorConfig
@@ -34,13 +36,6 @@ from .mmfinereason import (
     MMFineReasonDataset,
     MMFineReasonDatasetConfig,
     extract_answer_text,
-)
-from .native_text_replay import (
-    NativeTextReplayDataset,
-    NativeTextReplayDatasetConfig,
-    NativeTextReplayManifest,
-    NativeTextReplaySource,
-    NativeTextReplayVerificationReceipt,
 )
 from .packing import pack_examples
 from .paths import (
@@ -75,11 +70,36 @@ from .vision_alignment_perception import (
     VisionAlignmentOcrDocumentDataset,
     VisionAlignmentOcrDocumentDatasetConfig,
 )
-from .vision_alignment_perception_sources import (
-    VisionAlignmentPerceptionSourceSpec,
-    build_vision_alignment_perception_dataset,
-    build_vision_alignment_perception_dataset_config,
-)
+
+_LEGACY_REPLAY_EXPORTS = {
+    "NativeTextReplayDataset",
+    "NativeTextReplayDatasetConfig",
+    "NativeTextReplayManifest",
+    "NativeTextReplaySource",
+    "NativeTextReplayVerificationReceipt",
+}
+_LEGACY_PERCEPTION_EXPORTS = {
+    "VisionAlignmentPerceptionSourceSpec",
+    "build_vision_alignment_perception_dataset",
+    "build_vision_alignment_perception_dataset_config",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Load retained legacy exports only on explicit access."""
+    if name in _LEGACY_REPLAY_EXPORTS:
+        from . import native_text_replay
+
+        value = getattr(native_text_replay, name)
+    elif name in _LEGACY_PERCEPTION_EXPORTS:
+        from . import vision_alignment_perception_sources
+
+        value = getattr(vision_alignment_perception_sources, name)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
 
 __all__ = [
     "FineVisionDataset",

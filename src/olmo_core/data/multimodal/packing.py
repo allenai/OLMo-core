@@ -26,7 +26,8 @@ per example (and hence for the pack).
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 
@@ -40,6 +41,14 @@ __all__ = [
     "DynamicPacker",
     "iter_dynamic_packs",
 ]
+
+
+@dataclass(frozen=True)
+class _PackedImageParts:
+    """Float32 crop arrays copied directly into the collator's final allocation."""
+
+    parts: tuple[np.ndarray, ...]
+    shape: tuple[int, int, int]
 
 
 def example_has_images(ex: Dict[str, np.ndarray]) -> bool:
@@ -150,7 +159,9 @@ def _pop_buffered_pack(
     return packed
 
 
-def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
+def pack_examples(
+    examples: List[Dict[str, np.ndarray]], *, defer_image_copy: bool = False
+) -> Dict[str, Any]:
     """Concatenate several example dicts into one packed example.
 
     Each input is a dict as produced by the stage-1 datasets (``input_ids``, ``labels``,
@@ -160,13 +171,17 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
     crop axis for images), plus an ``example_ids`` vector. It is **not** padded — the
     collator pads to the batch/seq length.
 
+    :param defer_image_copy: Retain float32 image parts for direct final-batch assembly by
+        :class:`~olmo_core.data.multimodal.collator.MultimodalCollator`. Other image dtypes
+        retain the ordinary concatenation path and its dtype-promotion behavior. Input
+        image arrays must remain unmodified until collation when this option is enabled.
     :raises ValueError: if ``examples`` is empty.
     """
     if not examples:
         raise ValueError("pack_examples requires at least one example")
 
     tok_keys = ["input_ids", "labels", "loss_masks", "position_ids", "token_type_ids"]
-    out: Dict[str, np.ndarray] = {}
+    out: Dict[str, Any] = {}
     for k in tok_keys:
         out[k] = np.concatenate([ex[k] for ex in examples], axis=0)
 
@@ -209,11 +224,22 @@ def pack_examples(examples: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray
             pooled_parts.append(pp)
         crop_offset += im.shape[0]
 
-    out["images"] = (
-        np.concatenate([im for im in images if im.shape[0]], axis=0)
-        if any(im.shape[0] for im in images)
-        else np.zeros((0, n_patches, patch_dim), dtype=np.float32)
-    )
+    image_parts = tuple(im for im in images if im.shape[0])
+    if (
+        defer_image_copy
+        and image_parts
+        and all(
+            im.dtype == np.float32 and im.ndim == 3 and im.shape[1:] == (n_patches, patch_dim)
+            for im in image_parts
+        )
+    ):
+        out["images"] = _PackedImageParts(image_parts, (crop_offset, n_patches, patch_dim))
+    else:
+        out["images"] = (
+            np.concatenate(image_parts, axis=0)
+            if image_parts
+            else np.zeros((0, n_patches, patch_dim), dtype=np.float32)
+        )
     out["pooled_patches_idx"] = (
         np.concatenate(pooled_parts, axis=0)
         if pooled_parts
@@ -229,7 +255,8 @@ def iter_packs(
     max_crops_per_pack: Optional[int] = None,
     buffer_size: int = 0,
     image_weight: float = 1.0,
-) -> Iterator[Dict[str, np.ndarray]]:
+    defer_image_copy: bool = False,
+) -> Iterator[Dict[str, Any]]:
     """Pack a stream of example dicts into ``<= seq_len`` sequences.
 
     ``examples`` is an iterator of example dicts — typically an infinite, cycled (and
@@ -253,6 +280,7 @@ def iter_packs(
         keeps the original next-fit policy.
     :param image_weight: objective value assigned to each image crop by the buffered
         solver. Molmo2 Stage 1 uses 1 and Stage 2 uses 30.
+    :param defer_image_copy: Retain float32 image parts for direct final-batch collation.
     """
     if buffer_size < 0:
         raise ValueError("buffer_size must be non-negative")
@@ -274,7 +302,7 @@ def iter_packs(
             # datasets are bounded by these constraints, but emitting alone is safer than
             # allowing an invalid item to stall an infinite stream.
             if at_token_capacity or crops > max_crops_per_pack:
-                yield pack_examples([ex])
+                yield pack_examples([ex], defer_image_copy=defer_image_copy)
                 continue
             if len(buffer) < buffer_size:
                 buffer.append(ex)
@@ -283,11 +311,12 @@ def iter_packs(
                 buffer, seq_len, max_crops_per_pack, image_weight=image_weight
             )
             buffer.append(ex)
-            yield pack_examples(packed)
+            yield pack_examples(packed, defer_image_copy=defer_image_copy)
 
         while buffer:
             yield pack_examples(
-                _pop_buffered_pack(buffer, seq_len, max_crops_per_pack, image_weight=image_weight)
+                _pop_buffered_pack(buffer, seq_len, max_crops_per_pack, image_weight=image_weight),
+                defer_image_copy=defer_image_copy,
             )
         return
 
@@ -310,13 +339,13 @@ def iter_packs(
         if cur and (
             over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])
         ):
-            yield pack_examples(cur)
+            yield pack_examples(cur, defer_image_copy=defer_image_copy)
             cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
         cur_len += length
         cur_crops += crops
     if cur:
-        yield pack_examples(cur)
+        yield pack_examples(cur, defer_image_copy=defer_image_copy)
 
 
 # ---------------------------------------------------------------------------

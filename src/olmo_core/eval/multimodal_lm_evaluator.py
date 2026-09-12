@@ -1,4 +1,5 @@
-from typing import Any, Dict, Iterable, Iterator, Optional
+from collections.abc import Iterable, Iterator
+from typing import Any
 
 import torch
 import torch.distributed as dist
@@ -14,25 +15,52 @@ class MultimodalLMEvaluator(Evaluator):
     This evaluator pairs with a multimodal train module whose ``eval_batch()`` returns
     the summed, per-token-weighted CE loss. Keeping that loss reduced avoids materializing
     full-sequence vocabulary logits during Stage 1 evaluation.
+
+    :param response_prefix_tokens: Optionally score only the first N supervised positions
+        of each sequence, retaining the full teacher-forced input.
+    :param reference_evaluator: An already evaluated correct-image control with identical
+        recipients and loss weights. Adds ``CE gap`` (this CE minus the reference CE), so
+        a positive wrong-image gap indicates useful image content.
     """
 
     def __init__(
         self,
         *,
         name: str,
-        batches: Iterable[Dict[str, Any]],
-        device: Optional[torch.device] = None,
-        process_group: Optional[dist.ProcessGroup] = None,
+        batches: Iterable[dict[str, Any]],
+        device: torch.device | None = None,
+        process_group: dist.ProcessGroup | None = None,
         deterministic: bool = True,
+        response_prefix_tokens: int | None = None,
+        reference_evaluator: "MultimodalLMEvaluator | None" = None,
     ):
         super().__init__(name=name, batches=batches, device=device, deterministic=deterministic)
+        if response_prefix_tokens is not None and response_prefix_tokens <= 0:
+            raise OLMoConfigurationError("response_prefix_tokens must be positive or None")
         self.ce_loss = MeanMetric(device=device, process_group=process_group)
+        self.response_prefix_tokens = response_prefix_tokens
+        self.reference_evaluator = reference_evaluator
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        """Optionally score only the first N supervised positions of each sequence.
+
+        The full teacher-forced input and original labels are retained. Only loss weights
+        are masked, so the prefix diagnostic uses exactly the same attention context.
+        """
+        for batch in super().__iter__():
+            if self.response_prefix_tokens is not None:
+                weights = batch["loss_masks"]
+                valid = (weights > 0) & (batch["labels"] != -100)
+                prefix = valid & (valid.long().cumsum(dim=-1) <= self.response_prefix_tokens)
+                batch = dict(batch)
+                batch["loss_masks"] = weights * prefix
+            yield batch
 
     def update_metrics(
         self,
-        batch: Dict[str, Any],
-        ce_loss: Optional[torch.Tensor],
-        logits: Optional[torch.Tensor],
+        batch: dict[str, Any],
+        ce_loss: torch.Tensor | None,
+        logits: torch.Tensor | None,
     ) -> None:
         del logits
         if ce_loss is None:
@@ -50,9 +78,13 @@ class MultimodalLMEvaluator(Evaluator):
         weight = loss_weights.masked_select(valid).sum()
         self.ce_loss.update(ce_loss.detach() / weight.clamp_min(1.0), weight)
 
-    def compute_metrics(self) -> Dict[str, torch.Tensor]:
+    def compute_metrics(self) -> dict[str, torch.Tensor]:
+        """Return response CE and, when configured, its gap from the preceding paired control."""
         ce_loss = self.ce_loss.compute()
-        return {"CE loss": ce_loss, "PPL": torch.exp(ce_loss)}
+        metrics = {"CE loss": ce_loss, "PPL": torch.exp(ce_loss)}
+        if self.reference_evaluator is not None:
+            metrics["CE gap"] = ce_loss - self.reference_evaluator.ce_loss.compute()
+        return metrics
 
     def reset_metrics(self) -> None:
         self.ce_loss.reset()
@@ -73,7 +105,7 @@ class MultimodalBlankImageEvaluator(MultimodalLMEvaluator):
     :raises OLMoConfigurationError: If a batch lacks an image tensor.
     """
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         for batch in super().__iter__():
             images = batch.get("images")
             if not isinstance(images, torch.Tensor):

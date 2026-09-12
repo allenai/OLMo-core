@@ -183,8 +183,12 @@ class VisionAlignmentOcrDocumentDataset:
             raise ValueError(
                 f"OCR source_names must be selected from {VISION_ALIGNMENT_OCR_SOURCES}"
             )
-        if config.max_crops <= 0 or config.max_crops > 9:
-            raise ValueError("Vision-alignment OCR max_crops must be in [1, 9]")
+        if (
+            isinstance(config.max_crops, bool)
+            or not isinstance(config.max_crops, int)
+            or config.max_crops <= 0
+        ):
+            raise ValueError("Vision-alignment OCR max_crops must be a positive integer")
         if config.max_sequence_length <= 0:
             raise ValueError("Vision-alignment OCR max_sequence_length must be positive")
 
@@ -396,8 +400,12 @@ class VisionAlignmentAuditedAlignmentDataset:
         )
         if config.message_format != "document":
             raise ValueError("Audited alignment requires message_format='document'")
-        if config.max_crops <= 0 or config.max_crops > 9:
-            raise ValueError("Audited-alignment max_crops must be in [1, 9]")
+        if (
+            isinstance(config.max_crops, bool)
+            or not isinstance(config.max_crops, int)
+            or config.max_crops <= 0
+        ):
+            raise ValueError("Audited-alignment max_crops must be a positive integer")
         if min(config.min_formatting, config.min_visual_dependency, config.min_relevance) < 1:
             raise ValueError("Audited-alignment quality thresholds must be positive")
 

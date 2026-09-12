@@ -1,8 +1,10 @@
 import contextlib
+from types import SimpleNamespace
 
 import torch
 
 from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.train.train_module import (
     MultimodalOLMoDDPTrainModule,
     OLMoDDPTrainModule,
@@ -183,6 +185,8 @@ def test_multimodal_olmo_ddp_eval_uses_training_routing_dispatch_only():
     class Block:
         training = False
         _ep_no_sync_force_scratch_lifetime_buffers = False
+        ep_enabled = True
+        ep = SimpleNamespace(no_sync=True, path=ExpertParallelPath.rowwise_nvshmem)
 
     block = Block()
 
@@ -200,6 +204,37 @@ def test_multimodal_olmo_ddp_eval_uses_training_routing_dispatch_only():
         with train_module._multimodal_eval_batch_context():
             assert block.training is True
             assert block._ep_no_sync_force_scratch_lifetime_buffers is True
+            assert torch.is_grad_enabled()
+
+    assert block.training is False
+    assert block._ep_no_sync_force_scratch_lifetime_buffers is False
+
+
+def test_multimodal_olmo_ddp_eval_keeps_synchronized_ep_in_eval_dispatch():
+    train_module = object.__new__(MultimodalOLMoDDPTrainModule)
+
+    class Block:
+        training = False
+        _ep_no_sync_force_scratch_lifetime_buffers = False
+        ep_enabled = True
+        ep = SimpleNamespace(no_sync=False, path=ExpertParallelPath.sync_1d)
+
+    block = Block()
+
+    class LM:
+        @staticmethod
+        def routed_blocks():
+            yield block
+
+    class ModelPart:
+        lm = LM()
+
+    object.__setattr__(train_module, "model_parts", [ModelPart()])
+
+    with torch.no_grad():
+        with train_module._multimodal_eval_batch_context():
+            assert block.training is False
+            assert block._ep_no_sync_force_scratch_lifetime_buffers is False
             assert torch.is_grad_enabled()
 
     assert block.training is False
