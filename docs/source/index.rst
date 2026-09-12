@@ -32,6 +32,9 @@ specific to your environment. Then you can install OLMo-core from PyPI with:
    guides/data_loading.rst
    guides/data_mixing.rst
    guides/generation.rst
+   guides/vision_alignment.md
+   guides/mixed_midtraining.md
+   guides/vision_alignment_router_audit.md
 
 .. toctree::
    :hidden:

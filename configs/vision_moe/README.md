@@ -6,18 +6,17 @@ jobs, must target workspace `ai2/molmofication`. Direct YAML/spec submissions mu
 `beaker experiment create` is prohibited for this tree. The supported Python training launchers
 independently fail closed unless their final workspace is exactly `ai2/molmofication`.
 
-## Vision alignment (new continued-pretraining recipe)
+## Vision alignment and mixed midtraining
 
-The new [`vision_alignment/`](vision_alignment/README.md) tree is independent from the
-historical Molmo2 Stage 1/2 recipes below. It starts from the bare s002 pretrained LM, uses
-native document serialization, separates connector/vision/joint unfreezing into model-only
-phase forks, and replaces Tulu retention data with fingerprinted native `OLMo-mix-0925`
-replay when the LM is unfrozen. Its mixture is calibrated by supervised-loss mass and its
-profiles select the Holmes cluster without pinning individual nodes.
+[`Vision-Align.py`](../../src/scripts/train/Vision-Align.py) runs bridge, perception and
+joint alignment from a compatible pretrained LM. [`Mixed-Midtraining.py`](../../src/scripts/train/Mixed-Midtraining.py)
+continues the aligned model with 90% text / 10% vision supervised-loss mass by default;
+`--recipe.text_loss_share=1` selects text-only training. Both use the standard experiment CLI
+and component overrides, without router-input RMS repair or per-arm launch profiles.
 
-Only a synthetic bridge smoke profile is currently launchable. Real bridge, perception, and
-joint profiles remain intentionally absent until their exact data audits and manifests are
-pinned.
+See the [alignment](../../docs/source/guides/vision_alignment.md) and
+[mixed-midtraining](../../docs/source/guides/mixed_midtraining.md) guides for current recipes.
+The historical Molmo2 Stage 1/2 profiles below are separate experiments.
 
 ## Stage 1
 
