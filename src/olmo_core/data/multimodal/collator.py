@@ -29,6 +29,11 @@ class MultimodalCollatorConfig(Config):
     """Pad value for ``labels`` (ignored by the loss)."""
 
     pad_sequence_length: Optional[int] = None
+    pad_multiple_of: Optional[int] = None
+    """
+    Pad each batch up to a multiple of this many tokens rather than all the way to
+    :data:`pad_sequence_length`. ``None`` keeps the fixed-length behaviour.
+    """
     """If set, pad every batch's token fields to this fixed length instead of the
     per-batch max. Use this to give every batch a constant token count (required by
     the token-based :class:`~olmo_core.train.Trainer` batching)."""
@@ -38,6 +43,7 @@ class MultimodalCollatorConfig(Config):
             pad_token_id=self.pad_token_id,
             label_ignore_index=self.label_ignore_index,
             pad_sequence_length=self.pad_sequence_length,
+            pad_multiple_of=self.pad_multiple_of,
         )
 
 
@@ -58,10 +64,12 @@ class MultimodalCollator:
         pad_token_id: int,
         label_ignore_index: int = -100,
         pad_sequence_length: Optional[int] = None,
+        pad_multiple_of: Optional[int] = None,
     ):
         self.pad_token_id = pad_token_id
         self.label_ignore_index = label_ignore_index
         self.pad_sequence_length = pad_sequence_length
+        self.pad_multiple_of = pad_multiple_of
 
     def _pad_1d(self, arrays: List[np.ndarray], value, max_len: int, dtype) -> torch.Tensor:
         out = np.full((len(arrays), max_len), value, dtype=dtype)
@@ -76,7 +84,21 @@ class MultimodalCollator:
             # Truncate over-long examples to the fixed length (tail-cut). The image block
             # is always at the front, so <im_patch> tokens (and their pooled-row count) are
             # preserved; only trailing branch/response tokens are dropped.
-            max_len = self.pad_sequence_length
+            max_len = min(max_len, self.pad_sequence_length)
+            if self.pad_multiple_of:
+                # Round up to a bucket instead of always padding to the full
+                # pad_sequence_length. The crop budget usually closes a pack long before
+                # the token budget does, so a batch's real content can be a fraction of
+                # the sequence -- and every padded position still costs a full pass
+                # through QKV, MLP, norms and RoPE, which are the bulk of LM compute.
+                # Bucketing bounds the number of distinct shapes so torch.compile sees a
+                # small, reusable set of graphs rather than one per batch.
+                max_len = min(
+                    self.pad_sequence_length,
+                    -(-max_len // self.pad_multiple_of) * self.pad_multiple_of,
+                )
+            else:
+                max_len = self.pad_sequence_length
         max_crops = max(ex["images"].shape[0] for ex in examples)
         max_pool = max(ex["pooled_patches_idx"].shape[0] for ex in examples)
         n_patches = examples[0]["images"].shape[1]
