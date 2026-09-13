@@ -13,9 +13,21 @@ from torch._inductor.runtime import triton_helpers
 
 
 @triton.jit
-def _document_pool_mask(sums, pools, segments, output, T: tl.constexpr, E: tl.constexpr):
-    batch = tl.program_id(0)
-    document = tl.program_id(1)
+def _document_pool_mask(
+    sums,
+    pools,
+    segments,
+    output,
+    T: tl.constexpr,
+    E: tl.constexpr,
+    FLAT_GRID: tl.constexpr = False,
+):
+    if FLAT_GRID:
+        batch = tl.program_id(0) // T
+        document = tl.program_id(0) % T
+    else:
+        batch = tl.program_id(0)
+        document = tl.program_id(1)
     last_document = tl.load(segments + batch * T + T - 1)
     if document <= last_document:
         offsets = tl.arange(0, E)
@@ -51,8 +63,19 @@ def document_pool_keep_mask(scores, segment_ids, pool_sizes):
     document_pools = torch.zeros_like(pool_sizes)
     document_pools.scatter_(1, segment_ids, pool_sizes)
     document_mask = torch.empty_like(scores, dtype=torch.bool)
-    _document_pool_mask[(batch, length)](
-        sums, document_pools, segment_ids, document_mask, length, experts, num_warps=4
+    # CUDA grid.y is limited to 65535: a 65536-token LC sequence needs grid.x.
+    # Keep the previously qualified short-context launch unchanged.
+    flat_grid = length > 65535
+    grid = (batch * length,) if flat_grid else (batch, length)
+    _document_pool_mask[grid](
+        sums,
+        document_pools,
+        segment_ids,
+        document_mask,
+        length,
+        experts,
+        FLAT_GRID=flat_grid,
+        num_warps=4,
     )
     # Unwritten slots correspond only to nonexistent documents and are never read.
     return document_mask.gather(1, indices)

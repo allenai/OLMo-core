@@ -21,7 +21,26 @@ from olmoe3_lr_sweep_watch import replace_env, status
 UPLOADER_REF = "50069318bd7b6bcfed655a8a01d2892e56b7abff"
 
 
-def build_spec(beaker, commit, stage, gate=None):
+def build_spec(beaker, commit, stage, gate=None, kernel_gate=None):
+    if stage == "qualify":
+        original = beaker.experiment.get_spec(beaker.workload.get(MT_JOBS["emo"])).to_json()
+        spec = training_spec(original, runs()[0], commit, "smoke")
+        task = spec["tasks"][0]
+        task.pop("replicas")
+        task.pop("leaderSelection")
+        task.update(name="lc-kernel-qualification", timeout="2h")
+        task["resources"] = dict(gpuCount=2, sharedMemory="16 GiB")
+        task["context"]["autoResume"] = False
+        task["datasets"] = [d for d in task["datasets"] if d["mountPath"] == "/gantry"]
+        task["arguments"] = ["python", "-u", "src/examples/olmo_ddp/olmoe3_lc_recompute_qualify.py"]
+        replace_env(
+            task,
+            {"NUM_NODES": "1", "WANDB_MODE": "disabled", "RESULTS_DIR": "/tmp/lc-qualification"},
+        )
+        spec["description"] = (
+            "Two-GPU recomputation/65K EMO parity and old-vs-fixed ownership timing; no checkpoint writes"
+        )
+        return spec
     template = "01M29363936Y2BSJYTPPZFMV9X" if stage == "validate" else "01M2938WCZRD02WRGKBP158RSE"
     spec = copy.deepcopy(beaker.experiment.get_spec(beaker.workload.get(template)).to_json())
     assert len(spec["tasks"]) == 1
@@ -65,6 +84,7 @@ def build_spec(beaker, commit, stage, gate=None):
             "OLMO35_HERO_ALLOW_CONTINUATION": "1",
             "OLMO35_DECAY_CPU_VALIDATE": "1" if stage == "validate" else None,
             "OLMO35_LC_GATE": gate,
+            "OLMO35_LC_KERNEL_GATE": kernel_gate,
             "OLMO35_LC_LOAD": None,
             "OLMO35_DECAY_LOAD": None,
             "WANDB_RUN_ID": None,
@@ -85,8 +105,9 @@ def main():
     from beaker.exceptions import BeakerNotFoundError
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", choices=("validate", "watch"))
+    parser.add_argument("stage", choices=("validate", "qualify", "watch"))
     parser.add_argument("--gate")
+    parser.add_argument("--kernel-gate")
     parser.add_argument("--apply", action="store_true")
     args = parser.parse_args()
     assert not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
@@ -108,9 +129,13 @@ def main():
                 BeakerExperimentSpec.from_json(copy.deepcopy(spec))
         if args.stage == "watch":
             assert args.gate and status(b.workload.get(args.gate)) == "STATUS_SUCCEEDED"
-        spec = build_spec(b, commit, args.stage, args.gate)
+            assert (
+                args.kernel_gate and status(b.workload.get(args.kernel_gate)) == "STATUS_SUCCEEDED"
+            )
+        spec = build_spec(b, commit, args.stage, args.gate, args.kernel_gate)
         parsed = BeakerExperimentSpec.from_json(copy.deepcopy(spec))
-        assert not parsed.to_json()["tasks"][0].get("resources")
+        if args.stage != "qualify":
+            assert not parsed.to_json()["tasks"][0].get("resources")
         name = f"{CAMPAIGN}-{args.stage}-{commit[:8]}"
         print(
             json.dumps(
@@ -118,7 +143,7 @@ def main():
                     name=name,
                     commit=commit,
                     worker_specs_validated=16,
-                    resources="omitted",
+                    resources="2 GPUs" if args.stage == "qualify" else "omitted",
                     stage=args.stage,
                 )
             ),

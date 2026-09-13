@@ -7,6 +7,7 @@ The explicit DDP completion callback runs after the real accumulation is enqueue
 """
 
 import importlib.metadata
+import weakref
 from functools import lru_cache
 
 import torch
@@ -109,6 +110,13 @@ class _RoundedWeightGemm(torch.autograd.Function):
         )
 
         ctx.save_for_backward(x, weight, cumulative)
+        # Checkpoint/saved-tensor hooks may unpack `weight` as a Tensor wrapper
+        # without its Python attributes or Parameter identity. DDP owns the
+        # original leaf and keys its bucket/epoch checks by that exact object.
+        # Keep bookkeeping separate from the saved tensor used for dgrad and
+        # version checks; do not retain another activation or weight allocation.
+        ctx.weight_owner = weakref.ref(weight)
+        ctx.begin_external_grad = weight._olmo_profile_begin_external_grad
         ctx.transpose = transpose
         ctx.input_grad_out = input_grad_out
         rhs = weight.transpose(1, 2) if transpose else weight
@@ -131,7 +139,10 @@ class _RoundedWeightGemm(torch.autograd.Function):
                 "Rounded weight-gradient accumulation does not support higher derivatives"
             )
         grad = grad.contiguous()
-        destination, done = weight._olmo_profile_begin_external_grad(weight)
+        owner = ctx.weight_owner()
+        if owner is None:
+            raise RuntimeError("Rounded weight GEMM lost its original DDP parameter owner")
+        destination, done = ctx.begin_external_grad(owner)
         if ctx.transpose:
             rounded_wgrad_add(grad.T, x.T, destination, cumulative)
         else:

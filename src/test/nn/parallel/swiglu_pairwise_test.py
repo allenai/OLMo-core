@@ -9,6 +9,7 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from torch.distributed.device_mesh import init_device_mesh
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.config import DType
 from olmo_core.nn.moe.v2.routed_experts import RoutedExperts
@@ -50,7 +51,7 @@ def test_compiled_pairwise_activation():
     torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0)
 
 
-def _run_routed_adam_parity(candidate="activation", reduction="all-reduce"):
+def _run_routed_adam_parity(candidate="activation", reduction="all-reduce", recompute=False):
     rank, world = dist.get_rank(), dist.get_world_size()
     torch.cuda.set_device(rank)
     device = torch.device("cuda", rank)
@@ -73,6 +74,10 @@ def _run_routed_adam_parity(candidate="activation", reduction="all-reduce"):
             for param in model.parameters():
                 param.normal_(std=0.02)
         model.compile(dynamic=False)
+        if recompute:
+            # Recompute the inner module, never the outer DDP wrapper: its
+            # forward epoch must advance only once per real microbatch.
+            model.forward = partial(checkpoint, model.forward, use_reentrant=False)
         ddp = MultiGroupDistributedDataParallel(
             model,
             init_sync=False,
@@ -148,11 +153,12 @@ def test_pairwise_routed_experts_sharded_adam():
 @pytest.mark.parametrize(
     "reduction", ("all-reduce", "reduce-scatter-packed", "reduce-scatter-direct")
 )
-def test_rounded_wgrad_routed_experts_sharded_adam(reduction):
+@pytest.mark.parametrize("recompute", [False, True])
+def test_rounded_wgrad_routed_experts_sharded_adam(reduction, recompute):
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two CUDA devices")
     run_distributed_test(
-        partial(_run_routed_adam_parity, "rounded-wgrad", reduction),
+        partial(_run_routed_adam_parity, "rounded-wgrad", reduction, recompute),
         backend="nccl",
         start_method="spawn",
     )

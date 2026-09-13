@@ -18,6 +18,10 @@ CAMPAIGN = "olmo35-small-2t-lc100b-20260913"
 BRANCH = "codex/small-hero-lc-20260913"
 ROOT = MOUNT / "production-hero-small-lc" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
+# Retain the failed deployment's immutable plans and submissions for audit.
+DEPLOYMENT = "recompute-owner-r2"
+DEPLOYMENT_AUTOMATION = AUTOMATION / "deployments" / DEPLOYMENT
+REPLACED_SMOKES = ("01M2C7DE8GXXXQZYJJSNZNPWF1", "01M2CD1FRFN2JG1HJC4P3N7DMK")
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
 DATA_WORK = ROOT / "data-work"
 METADATA_CACHE = DATA_WORK / "cached-path-metadata"

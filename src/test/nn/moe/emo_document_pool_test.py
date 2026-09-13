@@ -15,6 +15,30 @@ from olmo_core.ops.moe import doc_sum_scatter, pool_keep_mask_inverse_scatter
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("length", [65535, 65536])
+def test_document_masks_at_cuda_grid_boundary(length):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA required")
+    torch.manual_seed(918)
+    boundaries = torch.rand(2, length, device="cuda") < 0.01
+    boundaries[:, 0] = False
+    boundaries[1, 1:] = True  # Include the last live document at the grid boundary.
+    segments = boundaries.long().cumsum(1)
+    pools = torch.randint(16, 513, (2, length), device="cuda").gather(1, segments)
+    # Exact integer scatter sums, with ties, isolate launch/mask semantics from
+    # floating point scatter order. This checks all tokens in both batch rows.
+    scores = torch.randint(-2, 3, (2, length, 512), device="cuda").float()
+    reference = torch.compile(
+        lambda x, s, p: pool_keep_mask_inverse_scatter(doc_sum_scatter(x, s), p),
+        fullgraph=True,
+    )
+    candidate = torch.compile(document_pool_keep_mask, fullgraph=True)
+    torch.testing.assert_close(
+        reference(scores, segments, pools), candidate(scores, segments, pools), rtol=0, atol=0
+    )
+
+
+@pytest.mark.gpu
 def test_mixed_document_masks():
     if not torch.cuda.is_available():
         pytest.skip("CUDA required")

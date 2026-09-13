@@ -13,11 +13,14 @@ from olmoe3_hero_lc_plan import (
     BRANCH,
     CAMPAIGN,
     CONTROL,
+    DEPLOYMENT,
+    DEPLOYMENT_AUTOMATION,
     END,
     GATE_END,
     METADATA_CACHE,
     MOUNT,
     MT_JOBS,
+    REPLACED_SMOKES,
     SOURCE_STEP,
     STATE,
     TRAINING_MOUNT,
@@ -36,7 +39,7 @@ class LCController(Controller):
         self.workspace = beaker.workspace.get(WORKSPACE)
         self.commit = commit
         self.last_status = {}
-        self.automation = AUTOMATION
+        self.automation = DEPLOYMENT_AUTOMATION
 
 
 def mount_lc(task):
@@ -107,9 +110,18 @@ def main():
     assert MOUNT.is_mount()
     commit = os.environ["GIT_REF"]
     AUTOMATION.mkdir(parents=True, exist_ok=True)
+    DEPLOYMENT_AUTOMATION.mkdir(parents=True, exist_ok=True)
     with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert status(b.workload.get(os.environ["OLMO35_LC_GATE"])) == "STATUS_SUCCEEDED"
+        kernel_gate = b.workload.get(os.environ["OLMO35_LC_KERNEL_GATE"])
+        assert status(kernel_gate) == "STATUS_SUCCEEDED"
+        for gate_id in (os.environ["OLMO35_LC_GATE"], os.environ["OLMO35_LC_KERNEL_GATE"]):
+            gate_spec = b.experiment.get_spec(b.workload.get(gate_id)).to_json()
+            assert all(
+                any(v["name"] == "GIT_REF" and v.get("value") == commit for v in t["envVars"])
+                for t in gate_spec["tasks"]
+            )
         control = LCController(b, commit)
         training = {
             r.arm: {
@@ -148,11 +160,23 @@ def main():
                     delete_grace_seconds=3600,
                 )
             )
-        plan = dict(source_commit=commit, runs=[r.as_dict() for r in runs()])
-        path = AUTOMATION / "plan.json"
+        plan = dict(
+            source_commit=commit,
+            deployment=DEPLOYMENT,
+            replaced_smokes=REPLACED_SMOKES,
+            kernel_gate=kernel_gate.experiment.id,
+            runs=[r.as_dict() for r in runs()],
+        )
+        # Normalize tuples to JSON arrays before comparing a durable plan.
+        plan = json.loads(json.dumps(plan))
+        path = DEPLOYMENT_AUTOMATION / "plan.json"
         if path.exists():
             assert json.loads(path.read_text()) == plan
         else:
+            assert all(status(b.workload.get(w)) == "STATUS_FAILED" for w in REPLACED_SMOKES)
+            assert not any(
+                p.is_dir() and p.name[4:].isdigit() for r in runs() for p in r.root.glob("step*")
+            ), "Repair expected both original LC smokes to fail before saving any step"
             atomic_json(path, plan)
         previous = None
         log("LC_WATCHER_ARMED", **plan, gpu_resources=0)
@@ -190,7 +214,9 @@ def main():
                     if fs.f_bavail * fs.f_frsize < 12_000_000_000_000:
                         snapshot[r.arm] = dict(state="waiting_for_storage")
                         continue
-                    smoke = control.ensure(r.run_id + "-smoke", training[r.arm]["smoke"])
+                    smoke = control.ensure(
+                        r.run_id + "-smoke-" + DEPLOYMENT, training[r.arm]["smoke"]
+                    )
                     smoke_state = control.report(smoke)
                     row = dict(
                         state="gpu_gate_" + smoke_state,
@@ -202,7 +228,7 @@ def main():
                     gate = json.loads((r.root / "audit/lc-gate-success.json").read_text())
                     assert gate["step"] == GATE_END and gate["all_64_ranks_verified"]
                     assert gate["source_commit"] == commit
-                    w = control.ensure(r.run_id + "-train", training[r.arm]["train"])
+                    w = control.ensure(r.run_id + "-train-" + DEPLOYMENT, training[r.arm]["train"])
                     state = control.report(w)
                     row.update(state=state, experiment=w.experiment.id if w else None)
                     if state == "STATUS_SUCCEEDED":
@@ -221,7 +247,9 @@ def main():
                     snapshot[r.arm] = dict(
                         state="needs_attention", error=f"{type(error).__name__}: {error}"
                     )
-            atomic_json(AUTOMATION / "status.json", dict(updated_at=time.time(), runs=snapshot))
+            atomic_json(
+                DEPLOYMENT_AUTOMATION / "status.json", dict(updated_at=time.time(), runs=snapshot)
+            )
             if snapshot != previous:
                 log("LC_WATCHER_STATUS", runs=snapshot)
                 previous = snapshot
