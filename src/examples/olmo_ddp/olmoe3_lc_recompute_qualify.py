@@ -58,18 +58,30 @@ def benchmark():
         dy = torch.randn(rows, outputs, device="cuda", dtype=torch.bfloat16)
         functions = dict(old=old._RoundedWeightGemm, fixed=rounded_wgrad._RoundedWeightGemm)
 
+        # Match the real training engine: native CUDA backward runs before the
+        # expert callback. This initializes its worker thread's primary context
+        # before CuTe's driver-only hardware query (which cannot initialize it).
+        native = torch.nn.functional.grouped_mm(
+            x, weight.transpose(1, 2) if transpose else weight, offs=cumulative[1:]
+        )
+        native.backward(dy)
+        snapshots = [(native.detach().clone(), x.grad.clone(), weight.grad.float().clone())]
+        weight.grad = None
+        x.grad = None
+        del native
+
         def execute(label):
             x.grad = None
             y = functions[label].apply(x, weight, cumulative, transpose, None, None)
             y.backward(dy)
             return y
 
-        snapshots = []
         for label in functions:
             destination.zero_()
             y = execute(label)
             snapshots.append((y.detach().clone(), x.grad.clone(), destination.clone()))
         torch.testing.assert_close(snapshots[0], snapshots[1], rtol=0, atol=0)
+        torch.testing.assert_close(snapshots[0], snapshots[2], rtol=0, atol=0)
         del snapshots, y
         for label in functions:
             for _ in range(5):
@@ -113,7 +125,7 @@ def main():
             sys.executable,
             "-m",
             "pytest",
-            "-q",
+            "-v",
             "--tb=short",
             "src/test/ops/rounded_wgrad_checkpoint_test.py",
             "src/test/nn/parallel/swiglu_pairwise_test.py",
