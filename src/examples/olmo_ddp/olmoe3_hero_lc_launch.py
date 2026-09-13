@@ -28,6 +28,8 @@ def build_spec(beaker, commit, stage, gate=None, kernel_gate=None):
         task = spec["tasks"][0]
         task.pop("replicas")
         task.pop("leaderSelection")
+        for key in ("synchronizedStartTimeout", "propagateFailure", "propagatePreemption"):
+            task.pop(key, None)
         task.update(name="lc-kernel-qualification", timeout="2h")
         task["resources"] = dict(gpuCount=2, sharedMemory="16 GiB")
         task["context"]["autoResume"] = False
