@@ -16,19 +16,17 @@ class Checks(unittest.TestCase):
         control.report.side_effect = states
         with (
             tempfile.TemporaryDirectory() as tmp,
-            (
-                patch.object(campaign, "available", return_value=available),
-                patch.object(campaign.stable, "output_root", return_value=Path(tmp)),
-                patch.object(
-                    campaign.os,
-                    "statvfs",
-                    return_value=SimpleNamespace(f_bavail=20_000_000_000_000, f_frsize=1),
-                ),
-                patch.object(campaign.stable, "converted"),
-                patch.object(campaign.stable, "qualified"),
-                patch.object(campaign.stable, "completed_bundle"),
-                patch.object(campaign.ruler, "verify_success"),
+            patch.object(campaign, "available", return_value=available),
+            patch.object(campaign.stable, "output_root", return_value=Path(tmp)),
+            patch.object(
+                campaign.os,
+                "statvfs",
+                return_value=SimpleNamespace(f_bavail=20_000_000_000_000, f_frsize=1),
             ),
+            patch.object(campaign.stable, "converted"),
+            patch.object(campaign.stable, "qualified"),
+            patch.object(campaign.stable, "completed_bundle"),
+            patch.object(campaign.ruler, "verify_success"),
         ):
             result = campaign.advance(control, "non-emo", {s: {} for s in campaign.STAGES})
         return result, control.ensure.call_count
