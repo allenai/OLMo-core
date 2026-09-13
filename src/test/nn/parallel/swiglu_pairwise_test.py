@@ -23,6 +23,17 @@ def _activation(x):
     return up * F.silu(gate)
 
 
+class _RecomputedExperts(torch.nn.Module):
+    """Match production: an eager checkpoint boundary around a compiled child."""
+
+    def __init__(self, experts):
+        super().__init__()
+        self.experts = experts
+
+    def forward(self, x, counts):
+        return checkpoint(self.experts, x, counts, use_reentrant=False)
+
+
 @pytest.mark.gpu
 def test_compiled_pairwise_activation():
     if not torch.cuda.is_available():
@@ -77,7 +88,7 @@ def _run_routed_adam_parity(candidate="activation", reduction="all-reduce", reco
         if recompute:
             # Recompute the inner module, never the outer DDP wrapper: its
             # forward epoch must advance only once per real microbatch.
-            model.forward = partial(checkpoint, model.forward, use_reentrant=False)
+            model = _RecomputedExperts(model)
         ddp = MultiGroupDistributedDataParallel(
             model,
             init_sync=False,
