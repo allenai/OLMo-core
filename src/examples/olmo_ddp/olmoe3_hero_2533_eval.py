@@ -23,13 +23,13 @@ from olmoe3_hero_stable_control import identity
 from olmoe3_hero_stable_launch import TEMPLATE
 from olmoe3_hero_stable_launch import controller_spec as old_controller_spec
 from olmoe3_lr_sweep_watch import Controller, atomic_json, log, replace_env, status
-from olmoe3_small_hero_plan import BATCH, BUCKET, CONTROL, MOUNT, Run
+from olmoe3_small_hero_plan import BATCH, BUCKET, MOUNT, STATE
 
 CAMPAIGN = "olmo35-small-stable2533t-20260913"
 BRANCH = "codex/hero-2533t-evals-20260913"
 STEP = 151000
 ROOT = MOUNT / "scratch" / CAMPAIGN
-AUTOMATION = CONTROL / "automation" / CAMPAIGN
+AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 ARMS = ("emo", "non-emo")
 STAGES = ("convert", "qualify", "gen_mc", "math", "code", "ruler")
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
@@ -56,7 +56,7 @@ def available(arm):
     run = stable.parent(arm)
     if ready(run, STEP):
         return True
-    path = CONTROL / "state/checkpoints" / run.run_id / f"step-{STEP:012d}.json"
+    path = STATE / "checkpoints" / run.run_id / f"step-{STEP:012d}.json"
     if not path.is_file():
         return False
     row = json.loads(path.read_text())

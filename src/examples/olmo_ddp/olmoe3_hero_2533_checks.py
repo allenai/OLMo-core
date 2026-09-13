@@ -54,6 +54,8 @@ class Checks(unittest.TestCase):
 
     def test_exact_identity_and_step(self):
         self.assertEqual(campaign.STEP * 16777216, 2533359616000)
+        self.assertEqual(campaign.AUTOMATION.parent, campaign.MOUNT / "uploader/automation")
+        self.assertEqual(campaign.STATE, campaign.MOUNT / "uploader/state")
         self.assertNotIn("decay2t", str(campaign.ROOT))
         for arm in campaign.ARMS:
             self.assertEqual(
