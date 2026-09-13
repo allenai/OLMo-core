@@ -30,7 +30,16 @@ from typing import Dict, Iterable, Iterator, List, Optional, Sequence
 
 import numpy as np
 
+REF_CURSOR_KEY = "_ref_cursor"
+"""Key stamped on each pack with the producing worker's consumed-ref count.
+
+Carried through the collator so :class:`~olmo_core.data.multimodal.MixtureDataLoader`
+can persist it and resume in O(1) instead of replaying the consumed stream. It is
+not model input; the loader strips it before the batch reaches the train module."""
+
+
 __all__ = [
+    "REF_CURSOR_KEY",
     "pack_examples",
     "greedy_pack_indices",
     "iter_packs",
@@ -81,9 +90,7 @@ def greedy_pack_indices(
         crops = int(crop_counts[i]) if crop_counts is not None else 0
         over_tokens = cur and cur_len + n > seq_len
         over_crops = (
-            max_crops_per_pack is not None
-            and cur
-            and cur_crops + crops > max_crops_per_pack
+            max_crops_per_pack is not None and cur and cur_crops + crops > max_crops_per_pack
         )
         if over_tokens or over_crops:
             groups.append(cur)
@@ -205,7 +212,9 @@ def iter_packs(
             and example_has_images(cur[0])
             and cur_crops + crops > max_crops_per_pack
         )
-        if cur and (over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])):
+        if cur and (
+            over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])
+        ):
             yield pack_examples(cur)
             cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
@@ -281,7 +290,9 @@ class PackingConstraint:
     :param granularity: quantization step for the DP table.
     """
 
-    def __init__(self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int):
+    def __init__(
+        self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int
+    ):
         self.key = key
         self.max_len = max_len
         self.allow_shortcut = allow_shortcut
@@ -433,7 +444,9 @@ def iter_dynamic_packs(
         buffer_size,
         [
             PackingConstraint("input_ids", seq_len, True, text_weight, max(1, seq_len // 512)),
-            PackingConstraint("images", max_crops_per_pack, shortcut_max_len_images, image_weight, 1),
+            PackingConstraint(
+                "images", max_crops_per_pack, shortcut_max_len_images, image_weight, 1
+            ),
         ],
     )
     for ex in examples:
