@@ -15,6 +15,7 @@ from olmoe3_hero_decay_plan import EVAL_ROOT, HELPER_REF, MOUNT
 from olmoe3_lr_sweep_watch import atomic_json, log
 
 CAMPAIGN = "olmo35-small-ruler-20260911"
+MILESTONES = ("1267b", "decay2t")
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 SELECTORS = tuple(f"ruler_all__{length}" for length in LENGTHS)
 RECIPE = Path(__file__).with_name("hero_ruler_baseline_recipe.json")
@@ -124,7 +125,7 @@ def verify_success(model):
 def main():
     """Operationally test 4K through 128K before executing the full six-length benchmark."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--milestone", choices=("1267b", "decay2t"), required=True)
+    parser.add_argument("--milestone", choices=MILESTONES, required=True)
     parser.add_argument("--arm", choices=("emo", "non-emo"), required=True)
     parser.add_argument("--helper", type=Path, default=Path("/tmp/hero-ladder"))
     parser.add_argument("--instances", type=int, default=4)
@@ -149,9 +150,7 @@ def main():
 
     model = model_path(args.milestone, args.arm)
     assert model.resolve() == model and model.is_dir()
-    runtime.FAST_MODELS = {
-        model_path(m, a) for m in ("1267b", "decay2t") for a in ("emo", "non-emo")
-    }
+    runtime.FAST_MODELS = {model_path(m, a) for m in MILESTONES for a in ("emo", "non-emo")}
     conversion_sha = runtime.validate_source(model, True)
     if success_path(model).exists():
         verify_success(model)

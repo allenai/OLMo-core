@@ -1,5 +1,6 @@
 """CPU checks for the exact two-arm milestone and bounded dependency fan-out."""
 
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,7 +62,7 @@ class Checks(unittest.TestCase):
             self.assertEqual(
                 campaign.stable.parent(arm).run_id, "olmo35-small-hero-20260907-" + arm
             )
-            self.assertIn("step151000", str(campaign.model_path("1267b", arm)))
+            self.assertIn("step151000", str(campaign.model_path("2533t", arm)))
         with self.assertRaises(ValueError):
             campaign.available("unknown")
 
@@ -72,6 +73,9 @@ class Checks(unittest.TestCase):
             self.assertNotIn("resources", task)
             self.assertEqual(task["constraints"], {"cluster": ["ai2/phobos"]})
             self.assertEqual(task["result"], {"path": "/noop-results"})
+            command = shlex.split(task["arguments"][-1])
+            self.assertEqual(command[-1], "preflight" if check else "watch")
+            self.assertTrue(command[-2].endswith("/olmoe3_hero_2533_eval.py"))
 
 
 if __name__ == "__main__":

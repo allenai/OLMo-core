@@ -39,11 +39,12 @@ FILE = Path(__file__).name
 stable.CAMPAIGN, stable.END, stable.ROOT = CAMPAIGN, STEP, ROOT
 stable.WRAPPER = "/tmp/hero-decay-wrapper/src/examples/olmo_ddp/" + FILE
 ruler.CAMPAIGN = CAMPAIGN + "-ruler"
+ruler.MILESTONES = ("2533t",)
 
 
 def model_path(milestone, arm):
     """Resolve only this campaign's two stable checkpoints."""
-    if milestone not in ("1267b", "decay2t") or arm not in ARMS:
+    if milestone != "2533t" or arm not in ARMS:
         raise ValueError((milestone, arm))
     return stable.output_root(arm) / "hf"
 
@@ -92,7 +93,7 @@ def build_specs(beaker, arm, commit):
             step=STEP,
             tokens=STEP * BATCH,
             stage="ruler",
-            model=str(model_path("1267b", arm)),
+            model=str(model_path("2533t", arm)),
             source_commit=commit,
             helper_ref=HELPER_REF,
             profile="bf16-grouped-fla-pilot-v1",
@@ -107,7 +108,7 @@ def run_worker(args):
     stable.prepare_scratch()
     if args.mode == "ruler":
         stable.qualified(args.arm)
-        sys.argv = [ruler.__file__, "--milestone", "1267b", "--arm", args.arm, "--instances", "4"]
+        sys.argv = [ruler.__file__, "--milestone", "2533t", "--arm", args.arm, "--instances", "4"]
         ruler.main()
         return
     expected = CORE_REF if args.mode == "convert" else HELPER_REF
@@ -188,7 +189,7 @@ def advance(control, arm, specs):
             return result
         if state == "STATUS_SUCCEEDED" and stage not in ("convert", "qualify"):
             if stage == "ruler":
-                ruler.verify_success(model_path("1267b", arm))
+                ruler.verify_success(model_path("2533t", arm))
             else:
                 stable.completed_bundle(arm, stage)
     states = [row["status"] for row in result["jobs"].values()]
@@ -266,7 +267,7 @@ def controller_spec(template, commit, check=False):
     task = spec["tasks"][0]
     task["arguments"][-1] = (
         "exec uv run --no-project --with 'beaker-py==2.7.2' python -u "
-        "src/examples/olmo_ddp/" + FILE + (" preflight" if check else "watch")
+        "src/examples/olmo_ddp/" + FILE + (" preflight" if check else " watch")
     )
     replace_env(task, {"GIT_BRANCH": BRANCH})
     spec["description"] = (
