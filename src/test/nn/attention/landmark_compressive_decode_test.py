@@ -480,3 +480,24 @@ def test_gate_temperature_config_rejected_for_unsupported_types():
                 mem_freq=15,
                 gate_temperature=True,
             ).build(16, layer_idx=0, n_layers=1, init_device="cpu")
+
+
+@pytest.mark.parametrize("top_k", [None, 1])
+@pytest.mark.parametrize("qpos", [126, 127, 128, 191, 192])
+def test_periodic_eval_decode_completes_new_blocks(top_k, qpos):
+    """Generated landmark queries exclude self; subsequent blocks can retrieve their new landmark."""
+    total = qpos + 1
+    attn = _build(mem_freq=63, head_dim=total, nonselected_landmark_mass=0.25)
+    attn.set_landmark_eval_decode(prompt_len=87, mode="periodic", top_k=top_k)
+    torch.manual_seed(0)
+    q = torch.randn(1, 1, 1, total)
+    k = torch.randn(1, 1, total, total)
+    probs = _decode_probs(attn, q, k, total).double()
+    keys_used = qpos if qpos % 64 == 63 else total
+    scores = (q @ k.transpose(-1, -2)).view(-1)[:keys_used] * attn.softmax_scale
+    reference = _brute_compressive_probs(scores, 64, (qpos // 64) * 64, top_k, 0.25)
+    torch.testing.assert_close(probs[:keys_used], reference, rtol=1e-5, atol=1e-6)
+    if keys_used < total:
+        assert probs[-1] == 0  # forced landmark has no self-value path, matching SFT
+    assert attn._eval_prompt_len is None and attn._eval_top_k == top_k
+    attn.clear_landmark_eval_decode()

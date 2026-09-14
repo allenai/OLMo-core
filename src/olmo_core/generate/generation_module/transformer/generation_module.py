@@ -116,7 +116,8 @@ def _build_landmark_prompt(
     In ``"generation_only"`` mode the final partial block is padded with ``pad_id`` up to the next
     landmark position, so the prompt always ends with a landmark run (keeping landmarks at the
     trained periodic positions). In ``"extend_last_block"`` mode a trailing partial block is left
-    as-is (it stays part of the growing local block during decode).
+    as-is (it stays part of the growing local block during decode). ``"periodic"`` also leaves it
+    as-is, but finishes that block with a forced landmark when output fills it.
     """
     content = input_ids
     if mode == "generation_only":
@@ -125,6 +126,35 @@ def _build_landmark_prompt(
             pad_block = content.new_full((content.shape[0], pad_len), pad_id)
             content = torch.cat([content, pad_block], dim=1)
     return _insert_landmark_tokens(content, mem_freq, mem_id, num_landmarks)
+
+
+def _periodic_landmark_budget(
+    content_prompt_len: int,
+    mem_freq: int,
+    max_new_tokens: Optional[int],
+    max_length: Optional[int],
+) -> Tuple[int, int]:
+    """Return (physical cache length, visible completion budget) for single-landmark SFT layout.
+
+    A landmark is needed between completed content blocks, but not after the final output token.
+    Unlike the legacy content-space max_length adjustment, a supplied max_length is a hard bound
+    on physical positions in this mode. Reject an oversized requested completion before prefill.
+    """
+    if max_new_tokens is None:
+        if max_length is None:
+            raise OLMoConfigurationError("Periodic generation needs max_length or max_new_tokens")
+        blocks, tail = divmod(max_length, mem_freq + 1)
+        max_new_tokens = max(0, blocks * mem_freq + min(tail, mem_freq) - content_prompt_len)
+    content_length = content_prompt_len + max_new_tokens
+    prompt_length = content_prompt_len + content_prompt_len // mem_freq
+    physical_length = max(prompt_length, content_length + max(0, (content_length - 1) // mem_freq))
+    if max_length is not None and physical_length > max_length:
+        raise OLMoConfigurationError(
+            f"Periodic landmark generation needs {physical_length} physical token positions "
+            f"(including landmarks), exceeding max_length={max_length}. Increase max_length "
+            "or reduce the content-token budget; prompts are never truncated."
+        )
+    return physical_length, max_new_tokens
 
 
 class TransformerGenerationModule(GenerationModule):
@@ -353,12 +383,14 @@ class TransformerGenerationModule(GenerationModule):
 
         input_ids = move_to_device(input_ids, self.device)
 
-        # Landmark attention: insert landmark tokens into the *prompt* every ``mem_freq`` content
-        # tokens (so prefill sees the trained block structure) and decode plain content tokens as
-        # "one long local block". This keeps the eval harness landmark-agnostic -- it only ever sees
-        # content tokens in and content tokens out.
+        # Insert the trained landmark structure into the prompt. The default keeps one growing
+        # local output block; periodic mode continues inserting landmarks during output. Both
+        # expose only content tokens to the eval harness.
         landmark_layers = self._landmark_attention_layers()
         landmark_active = len(landmark_layers) > 0
+        periodic_landmarks = generation_config.landmark_decode_mode == "periodic"
+        if periodic_landmarks and not landmark_active:
+            raise OLMoConfigurationError("Periodic landmark generation requires a landmark model")
         orig_input_ids = input_ids
         if landmark_active:
             if generation_config.landmark_mem_id is None:
@@ -393,6 +425,17 @@ class TransformerGenerationModule(GenerationModule):
                 pad_id = generation_config.pad_token_id
             mem_freq = mem_freqs.pop()
             num_landmarks = nums_landmarks.pop()
+            if periodic_landmarks:
+                if num_landmarks != 1:
+                    raise OLMoConfigurationError(
+                        "Periodic landmark generation currently requires one landmark per block"
+                    )
+                if generation_config.landmark_mem_id in (eos, pad):
+                    raise OLMoConfigurationError("The landmark token must differ from EOS and pad")
+                if bool((input_ids == generation_config.landmark_mem_id).any()):
+                    raise OLMoConfigurationError(
+                        "Periodic generation expects a content-only prompt"
+                    )
             input_ids = _build_landmark_prompt(
                 input_ids,
                 mem_freq,
@@ -457,7 +500,15 @@ class TransformerGenerationModule(GenerationModule):
         setup_time = None
         tokens_generated = 0
 
-        if generation_config.max_new_tokens is not None:
+        content_budget = None
+        if periodic_landmarks:
+            max_length, content_budget = _periodic_landmark_budget(
+                orig_input_ids.shape[1],
+                mem_freq,
+                generation_config.max_new_tokens,
+                generation_config.max_length,
+            )
+        elif generation_config.max_new_tokens is not None:
             max_length = prompt_len + generation_config.max_new_tokens
         elif generation_config.max_length is not None:
             max_length = generation_config.max_length
@@ -515,11 +566,14 @@ class TransformerGenerationModule(GenerationModule):
         _STOP_DECODE_WINDOW = 256  # completion-tail tokens scanned for a freshly-closed anchor line
         step_idx = 0
         all_finished = False
+        completion_positions: List[int] = []
 
         pbar = tqdm(
             desc="Generating tokens",
             unit="tokens",
-            total=(max_length - prompt_len) if max_length is not None else None,
+            total=content_budget
+            if periodic_landmarks
+            else ((max_length - prompt_len) if max_length is not None else None),
             disable=not log_timing,
             miniters=10,
             colour="blue",
@@ -559,38 +613,56 @@ class TransformerGenerationModule(GenerationModule):
             if landmark_active and landmark_gate_analysis.is_enabled():
                 landmark_gate_analysis.finalize_token()
 
-            next_tokens = select_next_token(
-                next_token_logits.squeeze(1),
-                do_sample=generation_config.do_sample,
-                temperature=generation_config.temperature,
-                top_k=generation_config.top_k,
-                top_p=generation_config.top_p,
-            )
-
-            if all_logits is not None:
-                all_logits.append(next_token_logits)
-            if all_logprobs is not None:
-                all_logprobs.append(
-                    selective_log_softmax(next_token_logits, next_tokens.unsqueeze(-1))
+            force_landmark = periodic_landmarks and generated.shape[1] % (mem_freq + 1) == mem_freq
+            if force_landmark:
+                # The preceding content token has just been processed. Feed this forced landmark
+                # through the next forward before sampling the next block's first content token.
+                next_tokens = generated.new_full((batch_size,), generation_config.landmark_mem_id)
+            else:
+                if periodic_landmarks:
+                    # A reserved landmark may only occur at its structural slot, even if the
+                    # unconstrained model would sample it as an ordinary output token.
+                    next_token_logits[..., generation_config.landmark_mem_id] = float("-inf")
+                next_tokens = select_next_token(
+                    next_token_logits.squeeze(1),
+                    do_sample=generation_config.do_sample,
+                    temperature=generation_config.temperature,
+                    top_k=generation_config.top_k,
+                    top_p=generation_config.top_p,
                 )
 
-            # Force EOS for (previously) finished sequences
-            next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
+            if not force_landmark:
+                completion_positions.append(generated.shape[1])
+                if all_logits is not None:
+                    all_logits.append(next_token_logits)
+                if all_logprobs is not None:
+                    all_logprobs.append(
+                        selective_log_softmax(next_token_logits, next_tokens.unsqueeze(-1))
+                    )
 
-            # Handle finished sequences
-            stop_hit = next_tokens.eq(eos)
-            if stop_tokens is not None:
-                stop_hit |= next_tokens.unsqueeze(-1).eq(stop_tokens).any(dim=-1)
-            finished |= stop_hit
+                # Finished rows still receive structural landmarks at the same positions as live
+                # rows, but emit EOS at content positions. Forced landmarks cannot trigger stops.
+                next_tokens = torch.where(finished, torch.full_like(next_tokens, eos), next_tokens)
+                stop_hit = next_tokens.eq(eos)
+                if stop_tokens is not None:
+                    stop_hit |= next_tokens.unsqueeze(-1).eq(stop_tokens).any(dim=-1)
+                finished |= stop_hit
 
-            # Append next tokens
             generated = torch.cat([generated, next_tokens.unsqueeze(-1)], dim=1)
+            if force_landmark:
+                continue
 
-            # Periodic string-level early-stop + finished-all sync (every check_interval steps).
+            # Periodic string-level early-stop + finished-all sync (in content-token steps).
             step_idx += 1
             if step_idx % check_interval == 0:
                 if do_string_stop and not bool(finished.all().item()):
-                    comp_tail = generated[:, prompt_len:][:, -_STOP_DECODE_WINDOW:].tolist()
+                    # Strip landmarks before detokenization, including when a marker splits a
+                    # stop-string's token sequence. Scan the last 256 *content* tokens.
+                    comp_tail = (
+                        generated[:, completion_positions[-_STOP_DECODE_WINDOW:]]
+                        if periodic_landmarks
+                        else generated[:, prompt_len:][:, -_STOP_DECODE_WINDOW:]
+                    ).tolist()
                     for i in range(batch_size):
                         if finished[i]:
                             continue
@@ -636,7 +708,7 @@ class TransformerGenerationModule(GenerationModule):
                 "GENERATION STATISTICS",
                 f"  Batch size: {batch_size:,} | Prompt len: {prompt_len:,} tokens",
                 f"  Tokens generated: {tokens_generated:,} per sequence | Total: {total_tokens:,}",
-                f"  Seq length: {prompt_len:,} → {prompt_len + tokens_generated:,}",
+                f"  Seq length: {prompt_len:,} → {generated.shape[1]:,}",
                 f"  Padding stats: {pad_count:,} / {total_tokens:,} ({pad_percentage:.1f}%)",
             ]
             if decode_start_time and forward_start_time and time_to_first_token:
@@ -654,12 +726,16 @@ class TransformerGenerationModule(GenerationModule):
             log_or_print(log, "\n".join(stats_lines))
 
         if landmark_active:
-            # ``generated`` holds the landmark-inserted prompt followed by plain content tokens; the
-            # caller never asked for landmarks, so report the prompt in its original content space.
+            # Restore the original prompt and strip structural completion slots before the caller
+            # detokenizes or scores anything. Logits/logprobs already exclude forced slots.
             self._clear_landmark_eval_decode()
             if landmark_gate_analysis.is_enabled():
                 landmark_gate_analysis.end_example()
-            completion = generated[:, prompt_len:]
+            completion = (
+                generated[:, completion_positions]
+                if periodic_landmarks
+                else generated[:, prompt_len:]
+            )
             generated = (
                 completion if completions_only else torch.cat([orig_input_ids, completion], dim=1)
             )
@@ -786,6 +862,11 @@ class TransformerGenerationModule(GenerationModule):
 
         :returns: One generated **content**-token id list per input prompt (EOS/pad not trimmed).
         """
+        if decode_mode == "periodic" or self._generation_config.landmark_decode_mode == "periodic":
+            raise OLMoConfigurationError(
+                "Periodic landmarks require generate_batch with unpadded, equal-length rows "
+                "(use batch_size=1 for variable-length prompts)"
+            )
         if not self.supports_landmark_ragged_batch():
             raise OLMoConfigurationError(
                 "generate_landmark_batch requires a landmark model whose layers support ragged "

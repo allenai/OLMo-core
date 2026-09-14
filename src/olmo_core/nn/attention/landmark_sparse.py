@@ -203,24 +203,26 @@ class SparseLandmarkAttention(Attention):
     def set_landmark_eval_decode(
         self, prompt_len: int, mode: str = "extend_last_block", top_k: Optional[int] = None
     ) -> None:
-        """Enable "one long local block" decoding (see :class:`GenerationConfig.landmark_decode_mode`).
+        """Configure local-block decoding (see :class:`GenerationConfig.landmark_decode_mode`).
 
         :param prompt_len: Length of the (landmark-inserted) prompt. Generated tokens occupy absolute
-            positions ``>= prompt_len`` and are never treated as landmarks.
-        :param mode: ``"extend_last_block"`` or ``"generation_only"``.
+            positions ``>= prompt_len``; periodic mode continues the trained block geometry.
+        :param mode: ``"extend_last_block"``, ``"generation_only"``, or ``"periodic"``.
         :param top_k: If set, decode restricts past-chunk access to the ``top_k`` highest-scoring
             chunks per head (a chunk's score is the max over its landmark keys' scores); all other
             past chunks' landmarks are masked out and the softmax renormalizes over the local block
             plus the retrieved chunks' landmarks. ``None`` keeps all past chunks' landmarks visible.
         """
-        if mode not in ("extend_last_block", "generation_only"):
+        if mode not in ("extend_last_block", "generation_only", "periodic"):
             raise OLMoConfigurationError(
                 f"Unknown landmark decode mode {mode!r} "
-                "(expected 'extend_last_block' or 'generation_only')."
+                "(expected 'extend_last_block', 'generation_only', or 'periodic')."
             )
         if top_k is not None and top_k < 1:
             raise OLMoConfigurationError(f"top_k must be >= 1 or None (got {top_k})")
-        self._eval_prompt_len = prompt_len
+        # A None boundary selects the existing periodic per-block decode path.
+        # Keep retrieval settings independent of the token-layout choice.
+        self._eval_prompt_len = None if mode == "periodic" else prompt_len
         self._eval_decode_mode = mode
         self._eval_top_k = top_k
 

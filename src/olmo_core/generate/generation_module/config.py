@@ -21,7 +21,8 @@ class GenerationConfig(Config):
     """Maximum length of input + newly generated tokens."""
 
     max_new_tokens: Optional[int] = None
-    """Maximum number of new tokens to generate. If provided, this takes precedence over max_length."""
+    """Maximum number of new tokens to generate. Takes precedence over max_length except in
+    periodic landmark mode, where max_length also bounds physical positions including landmarks."""
 
     do_sample: bool = True
     """Whether to use sampling for generation. If False, greedy decoding is used. This overrides temperature, top_k, and top_p."""
@@ -81,7 +82,8 @@ class GenerationConfig(Config):
     model uses a landmark attention variant (``fast_landmark`` / ``sparse_landmark``), generation
     automatically inserts this token into the *prompt* every ``mem_freq`` content tokens (so the
     prefill sees the same block structure the model was trained on) while decoding plain content
-    tokens (no landmarks). This must be set for landmark models; it is ignored otherwise.
+    tokens (no landmarks) by default. Periodic decode also inserts landmarks in the completion.
+    This must be set for landmark models; it is ignored otherwise.
     """
 
     landmark_decode_mode: str = "extend_last_block"
@@ -96,6 +98,11 @@ class GenerationConfig(Config):
       reachable only through the prompt's landmarks. To keep landmarks at the trained (periodic)
       positions, the prompt's final partial block is padded with :data:`landmark_pad_id` up to the
       next landmark position so the prompt always ends with a landmark token.
+    - ``"periodic"``: preserve the SFT layout across prompt and completion. Force a landmark after
+      every ``mem_freq`` content tokens, including during generation; generated blocks become past
+      blocks once completed. Returned IDs, logits and logprobs contain only content positions.
+      ``max_new_tokens`` counts content tokens, while ``max_length`` (when set) is a hard cap in
+      physical token positions, including all inserted landmarks. Currently single-landmark only.
     """
 
     landmark_pad_id: Optional[int] = None
@@ -196,9 +203,9 @@ class GenerationConfig(Config):
             raise ValueError(f"top_k must be positive or -1, got {self.top_k}")
         if self.top_p <= 0.0 or self.top_p > 1.0:
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
-        if self.landmark_decode_mode not in ("extend_last_block", "generation_only"):
+        if self.landmark_decode_mode not in ("extend_last_block", "generation_only", "periodic"):
             raise ValueError(
-                "landmark_decode_mode must be 'extend_last_block' or 'generation_only', "
+                "landmark_decode_mode must be 'extend_last_block', 'generation_only', or 'periodic', "
                 f"got {self.landmark_decode_mode!r}"
             )
         if self.landmark_top_k_blocks is not None and self.landmark_top_k_blocks < 1:

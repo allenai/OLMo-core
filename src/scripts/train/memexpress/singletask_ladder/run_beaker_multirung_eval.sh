@@ -70,6 +70,16 @@ DECODE_GATE_ARGS=""
 # write to DISTINCT dirs/files instead of overwriting each other. Set by the launcher; empty (all
 # existing callers) -> byte-identical paths to before.
 EVAL_TAG="${EVAL_TAG:-}"
+if [ "${LANDMARK_PERIODIC_OUTPUT:-0}" = "1" ]; then
+  case "$VARIANT" in
+    landmark|compressive) ;;
+    *) echo "ERROR: periodic landmark output requires landmark/compressive" >&2; exit 2 ;;
+  esac
+  case "$EVAL_TAG" in
+    *periodic-lm*) ;;
+    *) EVAL_TAG="periodic-lm${EVAL_TAG:+_$EVAL_TAG}" ;;
+  esac
+fi
 SUF="${EVAL_TAG:+_$EVAL_TAG}"
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
@@ -79,6 +89,12 @@ case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 LANDMARK_TOP_K_BLOCKS="${LANDMARK_TOP_K_BLOCKS:-}"
 LANDMARK_NONSELECTED_MASS="${LANDMARK_NONSELECTED_MASS:-}"
 LANDMARK_FLAGS=""
+if [ "${LANDMARK_DISABLE_TOP_K:-0}" = "1" ]; then
+  LANDMARK_FLAGS="--landmark-disable-top-k"
+fi
+if [ "${LANDMARK_PERIODIC_OUTPUT:-0}" = "1" ]; then
+  LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-periodic-output"
+fi
 [ -n "$LANDMARK_TOP_K_BLOCKS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-top-k-blocks $LANDMARK_TOP_K_BLOCKS"
 [ -n "$LANDMARK_NONSELECTED_MASS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-nonselected-mass $LANDMARK_NONSELECTED_MASS"
 

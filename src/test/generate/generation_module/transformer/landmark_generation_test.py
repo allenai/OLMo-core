@@ -141,7 +141,7 @@ def test_build_landmark_prompt_generation_only_ends_with_landmark():
         assert o[0, -1].item() == 999
 
 
-def _build_module(decode_mode="extend_last_block", **gen_overrides):
+def _build_module(decode_mode="extend_last_block", mem_freq=MEM_FREQ, **gen_overrides):
     seed_all(0)
     cfg = TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
     assert not isinstance(cfg.block, dict)
@@ -151,7 +151,7 @@ def _build_module(decode_mode="extend_last_block", **gen_overrides):
         name=AttentionType.sparse_landmark,
         n_heads=4,
         head_dim=32,
-        mem_freq=MEM_FREQ,
+        mem_freq=mem_freq,
         num_landmarks=1,
         rope=sm.rope,
     )

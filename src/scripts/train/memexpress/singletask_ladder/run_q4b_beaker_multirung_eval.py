@@ -103,6 +103,8 @@ def build_eval_launch_config(
     landmark_flat_softmax=False,
     num_summary_tokens=5,
     rungs="",
+    landmark_disable_top_k=False,
+    landmark_periodic_output=False,
 ):
     root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
@@ -111,7 +113,18 @@ def build_eval_launch_config(
 
     # The on-node runner reads its inputs from env; gantry torchrun wrapping is disabled so the runner
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
-    landmark_env = ""
+    if landmark_periodic_output:
+        if variant not in ("landmark", "compressive"):
+            raise ValueError("Periodic landmark output requires a landmark/compressive model")
+        eval_tag = "periodic-lm" + (f"_{eval_tag}" if eval_tag else "")
+    if landmark_disable_top_k and landmark_top_k_blocks is not None:
+        raise ValueError("Disabling top-k conflicts with a fixed top-k block count")
+    if landmark_disable_top_k and variant not in ("landmark", "compressive"):
+        raise ValueError("Disabling landmark top-k requires a landmark/compressive model")
+    if landmark_disable_top_k and not eval_tag.startswith("no-topk"):
+        eval_tag = "no-topk" + (f"_{eval_tag}" if eval_tag else "")
+    landmark_env = f"LANDMARK_DISABLE_TOP_K={int(landmark_disable_top_k)} "
+    landmark_env += f"LANDMARK_PERIODIC_OUTPUT={int(landmark_periodic_output)} "
     # Model families do NOT share a vocabulary: Qwen3.5 checkpoints need Qwen/Qwen3.5-0.8B
     # (vocab 248320), not the runner's Qwen/Qwen3-4B default. Empty -> keep the runner default.
     if tokenizer:
@@ -316,6 +329,10 @@ def main():
         "256k needs a YaRN serving copy (past Qwen3.5's native 262,144) and more "
         "than one 80GB GPU (KV ~32KB/token: 2M alone is ~69GB).",
     )
+    ap.add_argument("--landmark-disable-top-k", action="store_true",
+                    help="Soft-gate over all context blocks; adds a no-topk output tag.")
+    ap.add_argument("--landmark-periodic-output", action="store_true",
+                    help="Preserve SFT landmark positions through output; adds a periodic-lm tag.")
     ap.add_argument(
         "--landmark-top-k-blocks",
         type=int,
@@ -464,6 +481,8 @@ def main():
             landmark_flat_softmax=args.landmark_flat_softmax,
             num_summary_tokens=args.num_summary_tokens,
             rungs=args.rungs,
+            landmark_disable_top_k=args.landmark_disable_top_k,
+            landmark_periodic_output=args.landmark_periodic_output,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
