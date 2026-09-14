@@ -1001,6 +1001,7 @@ class Transformer(nn.Module):
         pp_enabled: bool = False,
         prefetch_factor: int = 0,
         wrapping_strategy: TransformerDataParallelWrappingStrategy = TransformerDataParallelWrappingStrategy.full,
+        reshard_after_forward: Optional[bool] = None,
     ):
         """
         Apply FSDP(2) to the model.
@@ -1013,6 +1014,11 @@ class Transformer(nn.Module):
         :param param_dtype: The data type to materialize params in. Defaults to the current param dtype.
         :param reduce_dtype: The data type for gradient reduction.
         :pp_enabled: If pipeline parallelism is also enabled.
+        :param reshard_after_forward: Whether to reshard parameters after the forward pass.
+            ``None`` (default) keeps the standard behaviour: reshard, except under pipeline
+            parallelism, where per-microbatch all-gathers are expensive and non-overlapped.
+            Passing ``False`` trades roughly double the FSDP parameter memory for fewer
+            all-gathers; only callers that have measured that trade should set it.
         :prefetch_factor: For tuning the prefetch settings. 0 is the default, and higher values result
             in more aggressive prefetching.
         :wrapping_strategy: The wrapping strategy.
@@ -1021,9 +1027,16 @@ class Transformer(nn.Module):
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
-        from olmo_core.distributed.utils import fsdp_reshard_after_forward
-
-        reshard_after_forward = fsdp_reshard_after_forward(pp_enabled=pp_enabled)
+        if reshard_after_forward is None:
+            # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
+            # which can be expensive and non-overlapped.
+            #
+            # Deliberately *not* read from the environment here: this is the shared LM
+            # path for every text-only OLMo2/OLMo3 run, so an `MM_FSDP_*` env var set in
+            # a shell or inherited from a launch template would silently double a 32B
+            # run's FSDP parameter memory with nothing in its config to explain it.
+            # Callers that want the tuned value pass it explicitly.
+            reshard_after_forward = not pp_enabled
 
         for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
