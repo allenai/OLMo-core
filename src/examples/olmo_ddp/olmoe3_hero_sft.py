@@ -432,7 +432,8 @@ def prepare():
         assert config.train_module.z_loss_multiplier is None
         assert not config.trainer.load_optim_state and not config.trainer.load_trainer_state
         assert config.model.recompute_each_block
-        current = config.as_dict(json_safe=True)
+        # Match on-disk JSON's string keys (e.g. integer block override indices).
+        current = json.loads(json.dumps(config.as_dict(json_safe=True)))
         old_name = r.run_id.replace(CAMPAIGN, BASELINE_CAMPAIGN)
         baseline = json.loads((baseline_automation / "configs" / f"{old_name}.json").read_text())
         old_model = baseline["model"]
