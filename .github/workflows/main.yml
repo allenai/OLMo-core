@@ -8,8 +8,6 @@ on:
   pull_request:
     branches:
       - main
-      # TEMP: run CI on PRs into the integration branch; revert before merge.
-      - akshitab/moe-v2-core
   push:
     branches:
       - main
