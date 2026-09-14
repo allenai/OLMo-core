@@ -15,10 +15,11 @@ from __future__ import annotations
 import itertools
 import logging
 import threading
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from olmo_core.config import StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase
@@ -36,7 +37,78 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS = 10
 DEFAULT_MAX_TOTAL_DATA_ERRORS = 1000
 
-__all__ = ["MixtureDataLoader"]
+__all__ = ["MixtureDataLoader", "MixtureLoaderStrategy", "resolve_loader_strategy"]
+
+
+class MixtureLoaderStrategy(StrEnum):
+    """How a :class:`MixtureDataLoader` turns examples into collated batches.
+
+    The two prefetch mechanisms are mutually exclusive, and only some combinations of
+    ``pack`` / ``prefetch_workers`` / ``dl_num_workers`` are legal. Naming the three valid
+    outcomes lets :func:`resolve_loader_strategy` reject the rest in one place instead of
+    scattering the rules across the constructor.
+    """
+
+    synchronous = "synchronous"
+    """Pack and collate inline on the iterator thread."""
+
+    threads = "threads"
+    """Preprocess examples on a background thread pool (``prefetch_workers``)."""
+
+    processes = "processes"
+    """Pack and collate in PyTorch DataLoader worker processes (``dl_num_workers``).
+
+    Requires ``pack=True`` and a ``pack_max_crops`` budget, because the workers run the
+    dynamic 2D-knapsack packer themselves.
+    """
+
+
+def resolve_loader_strategy(
+    *,
+    pack: bool,
+    pack_max_crops: Optional[int],
+    prefetch_workers: int,
+    dl_num_workers: int,
+) -> Tuple[MixtureLoaderStrategy, int, int]:
+    """Validate a loader configuration and reduce it to one strategy.
+
+    :returns: ``(strategy, prefetch_workers, dl_num_workers)`` with the counts normalized
+        so exactly one mechanism is active.
+    :raises OLMoConfigurationError: If the combination cannot be satisfied.
+    """
+    if dl_num_workers < 0 or prefetch_workers < 0:
+        raise OLMoConfigurationError(
+            f"worker counts must be >= 0 (got prefetch_workers={prefetch_workers}, "
+            f"dl_num_workers={dl_num_workers})"
+        )
+
+    if dl_num_workers > 0:
+        if not pack:
+            raise OLMoConfigurationError(
+                f"dl_num_workers={dl_num_workers} requires pack=True: the worker processes "
+                "run the dynamic packer. Set --pack_sequences=true, or --dl_num_workers=0 "
+                "to pack synchronously."
+            )
+        if pack_max_crops is None:
+            raise OLMoConfigurationError(
+                f"dl_num_workers={dl_num_workers} requires pack_max_crops — the workers run "
+                "the dynamic 2D knapsack packer, which needs a crop budget."
+            )
+        if prefetch_workers > 0:
+            # Both mechanisms would preprocess the same examples. Processes win because
+            # they also do the packing; say so rather than silently ignoring the request.
+            log.info(
+                "dl_num_workers=%d: ignoring prefetch_workers=%d (packing and collation "
+                "already run in worker processes)",
+                dl_num_workers,
+                prefetch_workers,
+            )
+        return MixtureLoaderStrategy.processes, 0, dl_num_workers
+
+    if prefetch_workers > 0:
+        return MixtureLoaderStrategy.threads, prefetch_workers, 0
+
+    return MixtureLoaderStrategy.synchronous, 0, 0
 
 
 class MixtureDataLoader(DataLoaderBase):
@@ -129,20 +201,14 @@ class MixtureDataLoader(DataLoaderBase):
         self.pack_image_weight = pack_image_weight
         self.pack_shortcut_max_len_images = pack_shortcut_max_len_images
         self.est_tokens_per_example = est_tokens_per_example
-        if dl_num_workers > 0 and not pack:
-            raise OLMoConfigurationError(
-                "dl_num_workers > 0 requires pack=True (multiprocess workers run dynamic packing)."
-            )
-        if dl_num_workers > 0 and pack_max_crops is None:
-            raise OLMoConfigurationError(
-                "dl_num_workers > 0 requires pack_max_crops (dynamic 2D knapsack packer)."
-            )
-        if dl_num_workers > 0 and prefetch_workers > 0:
-            log.info(
-                "dl_num_workers=%d: disabling thread prefetch_workers (packing runs in worker processes)",
-                dl_num_workers,
-            )
-            prefetch_workers = 0
+        # One place decides which of the two prefetch mechanisms is active and rejects
+        # the illegal combinations, so the rules aren't spread across the constructor.
+        self.loader_strategy, prefetch_workers, dl_num_workers = resolve_loader_strategy(
+            pack=pack,
+            pack_max_crops=pack_max_crops,
+            prefetch_workers=prefetch_workers,
+            dl_num_workers=dl_num_workers,
+        )
         self.prefetch_workers = prefetch_workers
         self.dl_num_workers = dl_num_workers
         self.dl_prefetch_factor = dl_prefetch_factor
@@ -417,7 +483,8 @@ class MixtureDataLoader(DataLoaderBase):
             )
             if not self.ignore_shuffle_algo_version_mismatch:
                 raise RuntimeError(
-                    msg + " Set ignore_shuffle_algo_version_mismatch=True to resume anyway."
+                    msg + " Pass --ignore_shuffle_algo_version_mismatch=true to resume anyway "
+                    "(the alternative is restarting the run)."
                 )
             log.warning(msg + " Ignored since ignore_shuffle_algo_version_mismatch=True.")
 
