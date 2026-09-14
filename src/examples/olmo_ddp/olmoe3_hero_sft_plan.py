@@ -14,8 +14,9 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
     WORKSPACE,
 )
 
-CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-BRANCH = "codex/small-hero-sft-20260914"
+BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
+CAMPAIGN = "olmo35-small-gptoss-sft-only-noemo-20260914"
+BRANCH = "codex/hero-sft-only-noemo-20260914"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
@@ -30,7 +31,7 @@ GPUS = 8
 SEED = 1729
 LRS = {"1em5": 1e-5, "5em5": 5e-5, "1em4": 1e-4}
 LC_CAMPAIGN = "olmo35-small-2t-lc100b-20260913"
-LC_JOBS = {"emo": "01M2CJ0D247DDJF8C5CV66SRZ5", "non-emo": "01M2CKNMBW4WV21HCJQV5FTJAX"}
+LC_JOBS = {"emo": "01M2CJ0D247DDJF8C5CV66SRZ5"}
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,8 @@ class SFTRun:
 
     @property
     def emo(self):
-        return self.arm == "emo"
+        # Arm denotes the immutable PT/MT/LC source, not the SFT routing setting.
+        return False
 
     @property
     def lr(self):
@@ -83,6 +85,9 @@ class SFTRun:
         return {
             "run_id": self.run_id,
             "arm": self.arm,
+            "source_emo": True,
+            "sft_emo": self.emo,
+            "baseline_campaign": BASELINE_CAMPAIGN,
             "lr": self.lr,
             "smoke": self.smoke,
             "source": str(self.source),
@@ -103,7 +108,7 @@ class SFTRun:
 
 
 def runs(smoke=False):
-    """Return only the approved six trials or the two bounded qualification runs."""
+    """Return the three approved SFT-only ablations or one restart smoke."""
     return [SFTRun(arm, label, smoke) for arm in LC_JOBS for label in (["5em5"] if smoke else LRS)]
 
 

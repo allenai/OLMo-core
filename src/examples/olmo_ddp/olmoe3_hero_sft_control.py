@@ -1,4 +1,4 @@
-"""Zero-GPU submit-once controller: data gate -> two restart smokes -> six SFT trials."""
+"""Zero-GPU submit-once controller: matched config -> restart smoke -> three SFT trials."""
 
 import copy
 import fcntl
@@ -202,7 +202,12 @@ def main():
                     ]
                     from olmoe3_hero_sft_convert import advance_conversions
 
-                    row["conversions"] = advance_conversions(b, control, r, commit)
+                    previous_workspace = control.workspace
+                    try:
+                        control.workspace = b.workspace.get("ai2/OLMo-3-moe-experiments")
+                        row["conversions"] = advance_conversions(b, control, r, commit)
+                    finally:
+                        control.workspace = previous_workspace
                 snapshot[r.run_id] = row
             atomic_json(AUTOMATION / "status.json", {"updated_at": time.time(), "runs": snapshot})
             if snapshot != previous:

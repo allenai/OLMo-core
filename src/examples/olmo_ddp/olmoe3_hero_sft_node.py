@@ -10,7 +10,7 @@ import sys
 from olmoe3_hero_decay_plan import inventory
 from olmoe3_hero_decay_plan import validate_checkpoint as validate_parent
 from olmoe3_hero_decay_runtime import verify_runtime
-from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, SFTRun, data_plan, find_run
+from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, data_plan, find_run, runs
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 
@@ -75,9 +75,9 @@ def main():
         )
     target = 4 if r.smoke else data_plan()["total_steps"]
     if not r.smoke:
-        for arm in ("emo", "non-emo"):
+        for smoke in runs(True):
             gate = json.loads(
-                (SFTRun(arm, "5em5", True).root / "audit/sft-gate-success.json").read_text()
+                (smoke.root / "audit/sft-gate-success.json").read_text()
             )
             assert gate["all_8_ranks_verified"] and gate["source_commit"] == os.environ["GIT_REF"]
     choices = [(0, r.source)] + [

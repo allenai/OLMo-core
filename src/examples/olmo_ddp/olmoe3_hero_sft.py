@@ -16,6 +16,7 @@ import torch.distributed as dist
 from olmoe3_hero_sft_data import SFTPackedDatasetConfig, self_test
 from olmoe3_hero_sft_plan import (
     AUTOMATION,
+    BASELINE_CAMPAIGN,
     BATCH,
     CACHE,
     CAMPAIGN,
@@ -214,6 +215,15 @@ class SFTAudit(Callback):
             assert "doc_lens" in batch and mask.dtype == torch.bool
             assert mask.any() and (~mask).any() and not mask[ids == 100277].any()
             assert not mask[:, 0].any()
+            input_sha256 = hashlib.sha256(ids.detach().cpu().numpy().tobytes()).hexdigest()
+            if self.step == 1:
+                old_run = f"{BASELINE_CAMPAIGN}-emo-lr{find_run(self.run_id).lr_label}"
+                baseline = json.loads(
+                    (MOUNT / "production-hero-small-sft" / BASELINE_CAMPAIGN / old_run
+                     / "audit" / f"batch-step1-rank{get_rank()}.json").read_text()
+                )
+                assert input_sha256 == baseline["input_sha256"], "Changed packed SFT data order"
+                assert int(mask.sum()) == baseline["supervised_tokens"]
             atomic_json(
                 find_run(self.run_id).root
                 / "audit"
@@ -221,9 +231,7 @@ class SFTAudit(Callback):
                 {
                     "supervised_tokens": int(mask.sum()),
                     "doc_lengths_present": True,
-                    "input_sha256": hashlib.sha256(
-                        ids.detach().cpu().numpy().tobytes()
-                    ).hexdigest(),
+                    "input_sha256": input_sha256,
                 },
             )
             self.first_batch = False
@@ -338,6 +346,8 @@ def trainer_config(common):
     wb.group = CAMPAIGN + ("-smoke" if r.smoke else "")
     wb.tags = [
         r.arm,
+        "source-emo",
+        "sft-emo-disabled",
         "sft",
         "gptoss120b-deduped",
         "2-epochs",
@@ -405,6 +415,11 @@ def prepare():
         "manifest_sha256": hashlib.sha256((DATA / "manifest.json").read_bytes()).hexdigest(),
     }
     atomic_json(DATA_PLAN, plan)
+    baseline_automation = MOUNT / "uploader/automation" / BASELINE_CAMPAIGN
+    previous = json.loads((baseline_automation / "data-plan.json").read_text())
+    assert {k: v for k, v in plan.items() if k != "source_commit"} == {
+        k: v for k, v in previous.items() if k != "source_commit"
+    }, "SFT data plan differs from the original sweep"
     for r in runs() + runs(True):
         config = config_builder()(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
         assert (
@@ -417,7 +432,31 @@ def prepare():
         assert config.train_module.z_loss_multiplier is None
         assert not config.trainer.load_optim_state and not config.trainer.load_trainer_state
         assert config.model.recompute_each_block
-        atomic_json(AUTOMATION / "configs" / f"{r.run_id}.json", config.as_dict(json_safe=True))
+        current = config.as_dict(json_safe=True)
+        old_name = r.run_id.replace(CAMPAIGN, BASELINE_CAMPAIGN)
+        baseline = json.loads((baseline_automation / "configs" / f"{old_name}.json").read_text())
+        old_model = baseline["model"]
+        old_emo = []
+
+        def disable_emo(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "emo":
+                        old_emo.append(child)
+                        value[key] = None
+                    else:
+                        disable_emo(child)
+            elif isinstance(value, list):
+                for child in value:
+                    disable_emo(child)
+
+        disable_emo(old_model)
+        assert old_emo and all(value is not None for value in old_emo)
+        assert current["model"] == old_model, "Model differs beyond disabling EMO"
+        for section in ("train_module", "dataset", "data_loader"):
+            normalized = json.loads(json.dumps(current[section]).replace(CAMPAIGN, BASELINE_CAMPAIGN))
+            assert normalized == baseline[section], f"Unexpected {section} change"
+        atomic_json(AUTOMATION / "configs" / f"{r.run_id}.json", current)
     atomic_json(
         AUTOMATION / "config-success.json",
         {

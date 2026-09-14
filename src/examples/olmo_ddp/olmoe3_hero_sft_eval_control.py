@@ -16,7 +16,6 @@ from olmoe3_lr_sweep_watch import atomic_json, log, replace_env
 DEPLOYMENT = AUTOMATION / "deployments/posteval-r1"
 ALPACA_PIN = "cd543a149df89434d8a54582c0151c0b945c3d20"
 BUNDLES = ("math500", "ifbench", "humaneval", "alpaca")
-QUALIFICATION_PIN = "6f1ef188ded568f7535e081429287a7308dba695"
 
 
 def model_path(run):
@@ -108,7 +107,7 @@ def spec_for(template, stage, run, commit):
 
 
 def main():
-    """Wait for conversions; one real four-task smoke gates the 24 full suites."""
+    """Wait for new conversions; one real four-task smoke gates the 12 full suites."""
     from beaker import Beaker
 
     assert MOUNT.is_mount()
@@ -140,9 +139,8 @@ def main():
                 if pilot_ok:
                     stages += list(BUNDLES)
                 for stage in stages:
-                    # Preserve already-submitted qualification/smoke intents byte-for-byte.
-                    # Full-suite workers have not been released yet and use this revision.
-                    stage_commit = QUALIFICATION_PIN if stage in ("qualify", "smoke") else commit
+                    # New campaign: every worker must understand this source/EMO split.
+                    stage_commit = commit
                     control.commit = stage_commit
                     template = templates["qualify" if stage == "qualify" else "gen_mc"]
                     name = run.run_id + "-epoch2-" + stage + "-r1"
@@ -171,7 +169,7 @@ def main():
                 all(row.get(bundle, {}).get("status") == "STATUS_SUCCEEDED" for bundle in BUNDLES)
                 for row in snapshot.values()
             ):
-                log("SFT_POSTTRAIN_COMPLETE", models=6, suites=24)
+                log("SFT_POSTTRAIN_COMPLETE", models=len(all_runs), suites=4 * len(all_runs))
                 return
             time.sleep(60)
 
