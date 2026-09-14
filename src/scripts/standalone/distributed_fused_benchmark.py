@@ -31,8 +31,9 @@ from dataclasses import asdict, dataclass
 
 import torch
 import torch.distributed as dist
-
 from fused_model import FusedModelOptions, build_fused_config
+from model_configs import GEOMETRIES
+
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.lm_head import LMOutputWithLoss
@@ -154,7 +155,7 @@ class BenchmarkResult:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-size", choices=("30m", "3p5b"), default="3p5b")
+    parser.add_argument("--model-size", choices=tuple(GEOMETRIES), default="tiny")
     parser.add_argument(
         "--ep-degree",
         type=int,
@@ -409,9 +410,7 @@ def main() -> None:
         )
         if dist.get_rank() == 0:
             print(json.dumps(asdict(result), indent=2))
-            print(
-                f"model params: total={config.num_params:,}, active={config.num_active_params:,}"
-            )
+            print(f"model params: total={config.num_params:,}, active={config.num_active_params:,}")
     finally:
         dist.destroy_process_group()
 
