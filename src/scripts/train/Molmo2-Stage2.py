@@ -164,7 +164,30 @@ DEFAULT_LOAD_PATH = (
 SHIP_STACK_ENV: Dict[str, str] = {
     "VIT_CROP_MICROBATCH": "32",  # +3.0% TPS (20,185 vs 19,594, 8-GPU mb2)
     "MM_FSDP_RESHARD_AFTER_FORWARD": "0",  # +2.4% TPS (13,281 vs 12,973, 8-GPU)
-    "MM_FSDP_IMAGE_ALIGN_HACK": "0",  # redundant since DP max-crop padding landed
+    # MM_FSDP_IMAGE_ALIGN_HACK is deliberately NOT set here (i.e. the align tie stays on).
+    #
+    # Review flagged that disabling it could deadlock: `tulu4` is ~14% of
+    # image-only-v9/v10 and text-only, so a rank can draw an all-text pack, and FSDP2
+    # skips a param group's reduce-scatter when none of its parameters has a gradient.
+    # An asymmetry there hangs the DP group — reproduced on 2 gloo processes, so it needs
+    # neither multiple nodes nor GPUs, only two DP ranks.
+    #
+    # For *this* forward it turns out not to fire: the splice runs unconditionally when
+    # `images is not None` (the collator always supplies a dummy zero crop) and a masked
+    # index_put keeps the autograd edge, so the vision params get present-but-zero
+    # gradients and the collective is issued on every rank. See
+    # `src/test/nn/vision/align_tie_test.py`.
+    #
+    # Turning it off is *safe* — confirmed on 2 GPUs under real FSDP2 + torch.compile
+    # (holmes experiment 01M2622FH6WTMHZAD6A9WT5D7F): tie off with asymmetric batches gave
+    # [10, 10] symmetric collectives and no None gradients.
+    #
+    # It is just not worth anything here. The 8-GPU A/Bs: baseline 12,973 TPS; no-reshard
+    # alone 13,281 (+2.4%); align-hack-off alone 13,299 (+2.5%); **both together 13,106**.
+    # The two do not stack, so on top of MM_FSDP_RESHARD_AFTER_FORWARD=0 (which is shipped)
+    # disabling the tie measured slightly *worse*, not better. Single runs with no repeats,
+    # so read that as "no measured benefit" rather than a real regression — either way
+    # there is no throughput case for turning it off.
 }
 
 # Beaker.
