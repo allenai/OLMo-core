@@ -7,7 +7,15 @@ import subprocess
 
 from olmoe3_hero_mt_control import training_spec
 from olmoe3_hero_mt_eval import eval_specs
-from olmoe3_hero_mt_plan import BRANCH, CAMPAIGN, DECAY_JOBS, END, METADATA_CACHE, WORKSPACE, runs
+from olmoe3_hero_mt_plan import (
+    BRANCH,
+    CAMPAIGN,
+    DECAY_JOBS,
+    END,
+    METADATA_CACHE,
+    WORKSPACE,
+    runs,
+)
 from olmoe3_lr_sweep_watch import replace_env, status
 
 UPLOADER_REF = "50069318bd7b6bcfed655a8a01d2892e56b7abff"
@@ -65,9 +73,9 @@ def build_spec(beaker, commit, stage, gate=None, repair=False):
         },
     )
     spec["retry"] = {"allowedTaskRetries": 0}
-    spec["description"] = (
-        f"{CAMPAIGN}: {stage}; resource-free CPU controller; two independent 64GPU cosine MT jobs with upload/conversion/evals."
-    )
+    spec[
+        "description"
+    ] = f"{CAMPAIGN}: {stage}; resource-free CPU controller; EMO PT -> no-EMO 64GPU cosine MT, upload/conversion/evals."
     assert "resources" not in t
     return spec
 

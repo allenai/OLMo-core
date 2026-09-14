@@ -1,12 +1,20 @@
-"""Scoped 100B cosine MT pair from the two approved 2T decay endpoints."""
+"""EMO-pretrained 2T decay -> 100B MT with EMO explicitly disabled."""
 
 from dataclasses import dataclass
 
 from olmoe3_hero_decay_plan import DecayRun
-from olmoe3_small_hero_plan import BATCH, BUCKET, CONTROL, MOUNT, STATE, UPLOADER, WORKSPACE
+from olmoe3_small_hero_plan import (
+    BATCH,
+    BUCKET,
+    CONTROL,
+    MOUNT,
+    STATE,
+    UPLOADER,
+    WORKSPACE,
+)
 
-CAMPAIGN = "olmo35-small-2t-mt20-20260912"
-BRANCH = "codex/small-hero-2t-midtrain-20260912"
+CAMPAIGN = "olmo35-small-2t-mt20-noemo-20260914"
+BRANCH = "codex/hero-posttrain-noemo-20260914"
 ROOT = MOUNT / "production-hero-small-midtrain" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
@@ -20,7 +28,17 @@ END = (REQUESTED_TOKENS + BATCH - 1) // BATCH
 SMOKE_END = 2
 SEED = 103_117_110_100_105 % (2**31 - 1)
 MIX_SHA256 = "1ed52c81c3f33fb864157f8e01ed0d0aff24548149c2ca4376182578181c25ba"
-DECAY_JOBS = {"emo": "01M2939WZK87EE84CY52NR4BAQ", "non-emo": "01M29945TQSYQND9RRTXW1FA8H"}
+DECAY_JOBS = {"emo": "01M2939WZK87EE84CY52NR4BAQ"}
+
+
+def assert_no_emo(model):
+    """Fail closed on every configured router, including block overrides."""
+    routers = [
+        block.routed_experts_router
+        for block in [model.block, *model.block_overrides.values()]
+        if getattr(block, "routed_experts_router", None) is not None
+    ]
+    assert routers and all(router.emo is None for router in routers)
 
 
 @dataclass(frozen=True)
@@ -35,7 +53,8 @@ class MTRun:
 
     @property
     def emo(self):
-        return self.arm == "emo"
+        # arm describes the immutable PT source, NOT the current training policy.
+        return False
 
     @property
     def run_id(self):
@@ -59,12 +78,14 @@ class MTRun:
 
     @property
     def prefix(self):
-        return f"mt20-after-decay2t/{self.arm}"
+        return f"posttrain-noemo-20260914/mt20/{self.arm}"
 
     def as_dict(self):
         return dict(
             run_id=self.run_id,
             arm=self.arm,
+            pretrain_emo=True,
+            posttrain_emo=False,
             checkpoint_root=str(self.root),
             parent=self.parent.run_id,
             parent_experiment=DECAY_JOBS[self.arm],

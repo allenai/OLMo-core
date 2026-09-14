@@ -14,7 +14,7 @@ from pathlib import Path
 from olmoe3_hero_decay_plan import EVAL_ROOT, HELPER_REF, MOUNT
 from olmoe3_lr_sweep_watch import atomic_json, log
 
-CAMPAIGN = "olmo35-small-lc100b-ruler-20260913"
+CAMPAIGN = "olmo35-small-lc100b-noemo-ruler-20260914"
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 SELECTORS = tuple(f"ruler_all__{length}" for length in LENGTHS)
 RECIPE = Path(__file__).with_name("hero_ruler_baseline_recipe.json")

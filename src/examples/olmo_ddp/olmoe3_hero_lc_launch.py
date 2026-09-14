@@ -13,6 +13,7 @@ from olmoe3_hero_lc_plan import (
     END,
     METADATA_CACHE,
     MT_JOBS,
+    MT_TEMPLATE,
     WORKSPACE,
     runs,
 )
@@ -23,7 +24,7 @@ UPLOADER_REF = "50069318bd7b6bcfed655a8a01d2892e56b7abff"
 
 def build_spec(beaker, commit, stage, gate=None, kernel_gate=None):
     if stage == "qualify":
-        original = beaker.experiment.get_spec(beaker.workload.get(MT_JOBS["emo"])).to_json()
+        original = beaker.experiment.get_spec(beaker.workload.get(MT_TEMPLATE)).to_json()
         spec = training_spec(original, runs()[0], commit, "smoke")
         task = spec["tasks"][0]
         task.pop("replicas")
@@ -39,9 +40,9 @@ def build_spec(beaker, commit, stage, gate=None, kernel_gate=None):
             task,
             {"NUM_NODES": "1", "WANDB_MODE": "disabled", "RESULTS_DIR": "/tmp/lc-qualification"},
         )
-        spec["description"] = (
-            "Two-GPU recomputation/65K EMO parity and old-vs-fixed ownership timing; no checkpoint writes"
-        )
+        spec[
+            "description"
+        ] = "Two-GPU recomputation/65K EMO parity and old-vs-fixed ownership timing; no checkpoint writes"
         return spec
     template = "01M29363936Y2BSJYTPPZFMV9X" if stage == "validate" else "01M2938WCZRD02WRGKBP158RSE"
     spec = copy.deepcopy(beaker.experiment.get_spec(beaker.workload.get(template)).to_json())
@@ -95,9 +96,9 @@ def build_spec(beaker, commit, stage, gate=None, kernel_gate=None):
         },
     )
     spec["retry"] = {"allowedTaskRetries": 0}
-    spec["description"] = (
-        f"{CAMPAIGN}: {stage}; resource-free CPU controller; gated 64GPU linear LC jobs with upload/conversion/evals."
-    )
+    spec[
+        "description"
+    ] = f"{CAMPAIGN}: {stage}; resource-free CPU controller; gated 64GPU linear LC jobs with upload/conversion/evals."
     assert "resources" not in t
     return spec
 
@@ -120,7 +121,7 @@ def main():
     assert remote == commit
     with Beaker.from_env(check_for_upgrades=False) as b:
         for run in runs():
-            original = b.experiment.get_spec(b.workload.get(MT_JOBS[run.arm])).to_json()
+            original = b.experiment.get_spec(b.workload.get(MT_TEMPLATE)).to_json()
             plans = dict(
                 smoke=training_spec(original, run, commit, "smoke"),
                 train=training_spec(original, run, commit, "train"),
@@ -130,6 +131,9 @@ def main():
             for spec in plans.values():
                 BeakerExperimentSpec.from_json(copy.deepcopy(spec))
         if args.stage == "watch":
+            # The named new MT job must already exist before arming the LC watcher.
+            for parent in MT_JOBS.values():
+                b.workload.get(parent)
             assert args.gate and status(b.workload.get(args.gate)) == "STATUS_SUCCEEDED"
             assert (
                 args.kernel_gate and status(b.workload.get(args.kernel_gate)) == "STATUS_SUCCEEDED"

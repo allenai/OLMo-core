@@ -219,7 +219,10 @@ def trainer_config(common):
 
 def model_config(common):
     """Preserve hero weights/architecture, with the successful ladder's block recompute."""
+    from olmoe3_hero_mt_plan import assert_no_emo
+
     config = hero.model_config(common)
+    assert_no_emo(config)
     config.recompute_each_block = True
     config.recompute_all_blocks_by_chunk = False
     assert not config.two_batch_overlap
