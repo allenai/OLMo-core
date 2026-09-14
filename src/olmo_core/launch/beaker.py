@@ -42,6 +42,7 @@ from ..utils import (
     prepare_cli_environment,
 )
 from ..version import VERSION
+from .beaker_presets import PRESETS, get_preset
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ __all__ = [
 ]
 
 _LOCAL = threading.local()
-_DEFAULT_TORCH = "2.10.0".replace(".", "")
-_DEFAULT_CUDA = "12.8".replace(".", "")
+_DEFAULT_TORCH = "2.13.0".replace(".", "")
+_DEFAULT_CUDA = "12.9".replace(".", "")
 
 
 def is_running_in_beaker() -> bool:
@@ -138,17 +139,14 @@ class OLMoCoreBeakerImage(StrEnum):
     """
 
     # NOTE: when updating default images here, should also update images used in tests at .github/workflows/main.yml
-    stable = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-sm80-2026-08-25"
+    stable = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu{_DEFAULT_CUDA}-sm80-2026-09-11"
     """
-    Built with the latest compatible stable version of PyTorch.
+    Built with the latest compatible stable version of PyTorch (torch 2.13 / CUDA 12.9).
     """
-    stable_cu130 = "akshitab/olmo-core-tch2110cu130-2026-07-28"
+    stable_cu130 = "akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11"
     """
-    The stable image with CUDA pinned to 13.0.
-    """
-    stable_cu128 = f"akshitab/olmo-core-tch{_DEFAULT_TORCH}cu128-sm80-2026-08-25"
-    """
-    The stable image with CUDA pinned to 12.8.
+    The stable image with CUDA pinned to 13.0 (torch 2.13). Serves H100 + B200 + B300 (sm_103), and
+    includes the flash_4 attention backend and the symm-mem/RMA stack.
     """
 
     #
@@ -964,6 +962,25 @@ def _parse_args():
         help="""Environment variables to add to the Beaker experiment from Beaker secrets.
         Should be in the form '{NAME}={SECRET_NAME}'. Multiple allowed, space separated.""",
     )
+    parser.add_argument(
+        "--preset",
+        type=str,
+        nargs="*",
+        choices=sorted(PRESETS),
+        help="""Named launch preset(s) to apply (env vars + setup steps). Multiple allowed;
+        later presets win on env-name conflicts and setup steps are chained. Explicit
+        --env/--pre-setup/--post-setup override the preset.""",
+    )
+    parser.add_argument(
+        "--pre-setup",
+        type=str,
+        help="""A shell command to run before the repo clone + package install.""",
+    )
+    parser.add_argument(
+        "--post-setup",
+        type=str,
+        help="""A shell command to run after the package install (e.g. build a runtime extension).""",
+    )
 
     if len(sys.argv) < 3 or "--" not in sys.argv:
         parser.print_help()
@@ -977,21 +994,49 @@ def _parse_args():
 
 
 def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchConfig:
-    env_vars: list[BeakerEnvVar] = []
+    presets = [get_preset(name) for name in (opts.preset or [])]
+
+    # Env vars: preset(s) first (later preset wins on name conflicts), then explicit --env
+    # overrides by name. The launcher's built-in default_env_vars still fill any remaining gaps.
+    env_map: dict[str, str] = {}
     if opts.debug:
-        env_vars.append(BeakerEnvVar(name="CUDA_LAUNCH_BLOCKING", value="1"))
-        env_vars.append(BeakerEnvVar(name="NCCL_DEBUG", value="INFO"))
+        env_map["CUDA_LAUNCH_BLOCKING"] = "1"
+        env_map["NCCL_DEBUG"] = "INFO"
+    for preset in presets:
+        env_map.update(dict(preset.env_vars))
     for e in opts.env or []:
         if "=" not in e:
             raise ValueError(f"Invalid env var '{e}', must be in the form NAME=VALUE")
         name, value = e.split("=", 1)
-        env_vars.append(BeakerEnvVar(name=name, value=value))
-    env_secrets: list[BeakerEnvSecret] = []
+        env_map[name] = value
+    env_vars = [BeakerEnvVar(name=name, value=value) for name, value in env_map.items()]
+
+    secret_map: dict[str, str] = {}
+    for preset in presets:
+        secret_map.update(dict(preset.env_secrets))
     for e in opts.env_secret or []:
         if "=" not in e:
             raise ValueError(f"Invalid env secret '{e}', must be in the form NAME=SECRET_NAME")
         name, secret = e.split("=", 1)
-        env_secrets.append(BeakerEnvSecret(name=name, secret=secret))
+        secret_map[name] = secret
+    env_secrets = [BeakerEnvSecret(name=name, secret=secret) for name, secret in secret_map.items()]
+
+    # Setup steps: chain preset step(s) then the explicit flag, joined with '&&'.
+    def _chain(*parts: str | None) -> str | None:
+        return " && ".join(p for p in parts if p) or None
+
+    pre_setup = _chain(*[preset.pre_setup for preset in presets], opts.pre_setup)
+    post_setup = _chain(*[preset.post_setup for preset in presets], opts.post_setup)
+
+    # Image precedence: explicit --beaker-image > preset > stable default. --beaker-image defaults
+    # to the stable image, so treat "still equal to stable" as "not explicitly set" and let a
+    # preset's image win; an explicit non-stable value always wins.
+    beaker_image = opts.beaker_image
+    if beaker_image == OLMoCoreBeakerImage.stable:
+        for preset in presets:
+            if preset.beaker_image:
+                beaker_image = preset.beaker_image
+
     return BeakerLaunchConfig(
         name=f"{opts.name}-{generate_uuid()[:8]}",
         budget=opts.budget,
@@ -1007,7 +1052,7 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
         num_gpus=opts.gpus,
         preemptible=opts.preemptible,
         priority=opts.priority,
-        beaker_image=opts.beaker_image,
+        beaker_image=beaker_image,
         slack_notifications=opts.slack_notifications,
         workspace=opts.workspace,
         allow_dirty=opts.allow_dirty,
@@ -1016,6 +1061,8 @@ def _build_config(opts: argparse.Namespace, command: list[str]) -> BeakerLaunchC
             BeakerWekaBucket(bucket=bucket, mount=f"/weka/{bucket}") for bucket in (opts.weka or [])
         ],
         torchrun=opts.torchrun,
+        pre_setup=pre_setup,
+        post_setup=post_setup,
     )
 
 
