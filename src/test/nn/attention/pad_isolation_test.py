@@ -82,3 +82,46 @@ def test_sparse_pack_costs_far_fewer_blocks_than_it_did():
     # full one. Before the fix the sparse pack cost *more* blocks than the dense one,
     # because its pad tail was a single large causal segment.
     assert sparse < dense
+
+
+def test_real_positions_are_bitwise_unchanged_by_the_fix():
+    """The fix must not perturb any position the model actually trains on.
+
+    Reconstructs the pre-fix rule (plain ``example_id`` equality, which let the whole pad
+    tail attend to itself) and compares LM outputs against the shipped rule on the same
+    weights and inputs. Real positions must match bitwise; pad positions are expected to
+    differ, since that is precisely the discarded work being removed.
+    """
+    import torch as t
+
+    from olmo_core.nn.attention import AttentionBackendName
+    from olmo_core.nn.transformer.config import TransformerConfig
+
+    t.manual_seed(0)
+    vocab, seq, real = 256, 64, 20
+    lm = TransformerConfig.olmo2_1M(
+        vocab_size=vocab, attn_backend=AttentionBackendName("torch")
+    ).build(init_device="cpu")
+    lm.eval()
+
+    ids = t.randint(3, vocab, (1, seq))
+    eid = t.full((1, seq), -1, dtype=t.long)
+    eid[0, :12] = 0
+    eid[0, 12:real] = 1  # two packed examples, then a 44-token pad tail
+
+    def run(pad_self_only: bool, tokens=ids):
+        same = eid[:, :, None] == eid[:, None, :]
+        if pad_self_only:
+            same = same & ((eid >= 0)[:, :, None] | t.eye(seq, dtype=t.bool)[None])
+        with t.no_grad():
+            return lm(tokens, and_mask=same.unsqueeze(1))
+
+    new, old = run(True), run(False)
+    assert t.equal(new[:, :real], old[:, :real])
+    # Sanity: the pad tail really was computing something, so this is not a no-op test.
+    assert not t.equal(new[:, real:], old[:, real:])
+
+    # And the pad tail cannot leak into real positions even if its contents change.
+    other = ids.clone()
+    other[0, real:] = t.randint(3, vocab, (seq - real,))
+    assert t.equal(run(True)[:, :real], run(True, other)[:, :real])
