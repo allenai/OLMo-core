@@ -1,4 +1,4 @@
-"""Bounded matched SFT sweep on the two final small hero LC checkpoints."""
+"""Matched SFT sweep from EMO PT followed by EMO-disabled MT and LC."""
 
 import json
 from dataclasses import dataclass
@@ -15,8 +15,8 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 )
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-CAMPAIGN = "olmo35-small-gptoss-sft-only-noemo-20260914"
-BRANCH = "codex/hero-sft-only-noemo-20260914"
+CAMPAIGN = "olmo35-small-gptoss-sft-posttrain-noemo-20260914"
+BRANCH = "codex/hero-sft-posttrain-noemo-20260914"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
@@ -30,8 +30,8 @@ SEQUENCE = 65536
 GPUS = 8
 SEED = 1729
 LRS = {"1em5": 1e-5, "5em5": 5e-5, "1em4": 1e-4}
-LC_CAMPAIGN = "olmo35-small-2t-lc100b-20260913"
-LC_JOBS = {"emo": "01M2CJ0D247DDJF8C5CV66SRZ5"}
+LC_CAMPAIGN = "olmo35-small-2t-lc100b-noemo-20260914"
+LC_JOBS = {"emo": "01M2FV97BETNXMM08QS0WYE02G"}
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ class SFTRun:
 
     @property
     def emo(self):
-        # Arm denotes the immutable PT/MT/LC source, not the SFT routing setting.
+        # Arm denotes PT lineage. MT, LC and SFT all have EMO disabled.
         return False
 
     @property
@@ -85,7 +85,10 @@ class SFTRun:
         return {
             "run_id": self.run_id,
             "arm": self.arm,
-            "source_emo": True,
+            "pretrain_emo": True,
+            "midtrain_emo": False,
+            "long_context_emo": False,
+            "source_emo": False,
             "sft_emo": self.emo,
             "baseline_campaign": BASELINE_CAMPAIGN,
             "lr": self.lr,
@@ -108,7 +111,7 @@ class SFTRun:
 
 
 def runs(smoke=False):
-    """Return the three approved SFT-only ablations or one restart smoke."""
+    """Return three matched trials from the new native LC source or one restart smoke."""
     return [SFTRun(arm, label, smoke) for arm in LC_JOBS for label in (["5em5"] if smoke else LRS)]
 
 
