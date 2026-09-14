@@ -106,6 +106,8 @@ def train_module_config(common):
     config.optim.weight_decay = 0.0
     config.scheduler = LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0)
     config.z_loss_multiplier = None
+    if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
+        config.compile_model = False
     config.reset_optimizer_states_on_load = (
         Path(os.environ.get("HERO_SFT_LOAD", str(r.source))) == r.source
     )
@@ -240,6 +242,8 @@ class SFTValidation(Callback):
     run_id: str = ""
 
     def pre_train(self):
+        if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
+            install_diagnostic_hooks(self.trainer.train_module.model)
         self.dataset = dataset_config(
             (
                 self.trainer.data_loader.dataset.tokenizer
@@ -270,6 +274,17 @@ class SFTValidation(Callback):
                 batch = move_to_device(batch, self.trainer.device)
                 labels = get_labels(batch, label_ignore_index=-100)
                 output = self.trainer.train_module.eval_batch(batch, labels=labels)
+                if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
+                    valid = labels != -100
+                    log(
+                        "SFT_DIAGNOSTIC_LOSS",
+                        rank=get_rank(),
+                        labels=int(valid.sum()),
+                        nonfinite=int((~torch.isfinite(output.ce_loss[valid])).sum()),
+                        total=int(valid.sum()),
+                    )
+                    dist.barrier()
+                    raise SystemExit(0)
                 if index < n:
                     valid = labels != -100
                     totals[0] += output.ce_loss[valid].double().sum()
@@ -333,6 +348,8 @@ def trainer_config(common):
         "lr-" + r.lr_label,
     ]
     wb.notes = json.dumps(r.as_dict())
+    if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
+        wb.enabled = False
     return config
 
 
@@ -456,6 +473,52 @@ def attention_smoke():
         gradient_relative_rms=errors,
         maximum_output_error=float((out.detach().cpu().double() - ref.detach()).abs().max()),
     )
+
+
+def install_diagnostic_hooks(model):
+    """Read-only eager forward diagnostics; never accepted as a training smoke."""
+    import olmo_core.nn.attention.kda as kda_module
+
+    def stats(name, tensor):
+        if isinstance(tensor, (tuple, list)):
+            tensor = tensor[0]
+        if not torch.is_tensor(tensor):
+            return
+        finite = torch.isfinite(tensor)
+        clean = torch.where(finite, tensor.float(), 0.0)
+        log(
+            "SFT_DIAGNOSTIC_ACTIVATION",
+            rank=get_rank(),
+            name=name,
+            shape=list(tensor.shape),
+            dtype=str(tensor.dtype),
+            nonfinite=int((~finite).sum()),
+            minimum=float(clean.min()),
+            maximum=float(clean.max()),
+        )
+
+    original = kda_module.dispatch_chunk_kda
+    calls = 0
+
+    def kda_probe(**kwargs):
+        nonlocal calls
+        number = calls
+        calls += 1
+        for name in ("q", "k", "v", "g", "beta", "A_log", "dt_bias", "cu_seqlens"):
+            stats(f"kda{number}/input/{name}", kwargs.get(name))
+        result = original(**kwargs)
+        stats(f"kda{number}/output", result)
+        return result
+
+    kda_module.dispatch_chunk_kda = kda_probe
+    for name, module in model.named_modules():
+        if (
+            name == "lm_head"
+            or name == "embeddings"
+            or name.count(".") == 1
+            and name.startswith("blocks.")
+        ):
+            module.register_forward_hook(lambda _module, _args, result, n=name: stats(n, result))
 
 
 if __name__ == "__main__":
