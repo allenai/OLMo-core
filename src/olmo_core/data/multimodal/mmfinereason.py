@@ -42,6 +42,7 @@ from .message_sequence import encode_sft_example
 from .sequence_builder import example_rng
 from .sft_common import (
     decode_pil_image,
+    extract_reasoning_text,
     get_example_with_skip,
     load_hf_dataset,
     strip_image_placeholders,
@@ -119,10 +120,33 @@ class MMFineReasonDatasetConfig(Config):
     require_consistent: Optional[bool] = None
     """If set, keep only rows whose ``is_consistent`` flag matches."""
 
+    supervise_cot: bool = False
+    """Supervise the ``<think>`` derivation instead of only the ``<answer>`` content.
+
+    The trace is already in :attr:`answer_column`, so this costs no staging -- unlike
+    ChartVerse, whose derivation had to be dropped to keep the staged corpus to 1.19 TB.
+    That makes this the cheapest available test of whether process supervision helps at
+    all, against a control curve (the answer-only ``mmfinereason`` 10k diet) that differs
+    in nothing but this flag.
+
+    Only ~49% of rows carry a ``<think>`` block; the rest fall back to the answer text, so
+    the realized mixture is roughly half derivations. Traces average ~1.1k tokens (p99
+    ~3.4k), about a quarter of ChartVerse's, so the packing cost is correspondingly milder.
+    """
+
     max_crops: int = 8
     max_sequence_length: int = 4096
     loss_token_weighting: str = "root_subsegments"
     seed: int = 0
+
+    skip_overlong: bool = False
+    """Skip over-budget rows instead of right-truncating them (see
+    :attr:`~olmo_core.data.multimodal.chartverse.ChartVerseDatasetConfig.skip_overlong`).
+    Defaults on with :attr:`supervise_cot`."""
+
+    def __post_init__(self):
+        if self.supervise_cot:
+            self.skip_overlong = True
 
     def build(self, tokenizer) -> "MMFineReasonDataset":
         """Construct the dataset.
@@ -193,7 +217,12 @@ class MMFineReasonDataset:
         row = self._row(i)
 
         question = strip_image_placeholders(row[cfg.question_column])
-        answer = extract_answer_text(row[cfg.answer_column])
+        raw = row[cfg.answer_column]
+        answer = extract_answer_text(raw)
+        if cfg.supervise_cot:
+            # extract_reasoning_text falls back to the plain text when there is no <think>
+            # block, so the ~51% of rows without a trace behave exactly as they do today.
+            answer = extract_reasoning_text(raw, final_answer=answer) or answer
         if not question or not answer:
             raise ValueError("empty question or answer after parsing")
 
@@ -208,6 +237,11 @@ class MMFineReasonDataset:
             loss_token_weighting=cfg.loss_token_weighting,
             shuffle_rng=example_rng(cfg.seed, i),
         )
+        if cfg.skip_overlong and len(seq["input_ids"]) > cfg.max_sequence_length:
+            raise ValueError(
+                f"MMFineReason row {i}: {len(seq['input_ids'])} tokens exceeds "
+                f"max_sequence_length={cfg.max_sequence_length}"
+            )
         return truncate_example(seq, cfg.max_sequence_length)
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:

@@ -219,6 +219,12 @@ class ExperimentConfig(Config):
     mmfinereason_rate: float = MMFINEREASON_RATE
     """Mixture fraction for MMFineReason-SFT (0 disables). The official image-only-v9
     sources are scaled by ``1 - (mmfinereason_rate + finevision_rate)``."""
+    mmfinereason_supervise_cot: bool = False
+    """Supervise MMFineReason's ``<think>`` derivation instead of only its ``<answer>``.
+
+    Needs no staging -- the trace is already in the column the loader reads -- so this is
+    the cheap half of the process-supervision question, with the answer-only mmfinereason
+    10k diet curve as an exact control."""
     finevision_rate: float = 0.0
     """Total mixture fraction for the five verified FineVision configs, split evenly
     across them via ``FINEVISION_RATES`` keys (0 disables)."""
@@ -235,6 +241,15 @@ class ExperimentConfig(Config):
     """ChartVerse subset directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartverse/``.
     The loader default pins the 250k copy, so the larger staged copies
     (``sft_600k-full``, ``sft_1800k``) are unreachable without this knob."""
+    chartverse_supervise_cot: bool = False
+    """Supervise ChartVerse's ``cot_solution`` derivation instead of the bare ``answer``.
+
+    Needs a row-aligned derivation sidecar (``<subset>-cot``, built by
+    ``launch_scripts/donovan/dev/stage_chartverse_cot.py``). The supervised target goes
+    from ~8 characters to ~4k tokens, so ChartVerse rows per step fall roughly 3x at fixed
+    GPU-hours: compare against an answer-only arm at matched rows consumed, not steps."""
+    chartverse_cot_sidecar: Optional[str] = None
+    """Explicit derivation-sidecar directory (defaults to ``<subset path>-cot``)."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -566,6 +581,8 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 subset=config.chartverse_subset,
                 max_crops=MAX_CROPS,
                 max_sequence_length=SEQUENCE_LENGTH,
+                supervise_cot=config.chartverse_supervise_cot,
+                cot_sidecar=config.chartverse_cot_sidecar,
             ).build(tokenizer)
         )
         weights.append(cv_rate)
@@ -583,7 +600,9 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     if mmfr_rate > 0:
         datasets.append(
             MMFineReasonDatasetConfig(
-                max_crops=MAX_CROPS, max_sequence_length=SEQUENCE_LENGTH
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+                supervise_cot=config.mmfinereason_supervise_cot,
             ).build(tokenizer)
         )
         weights.append(mmfr_rate)

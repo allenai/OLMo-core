@@ -42,6 +42,7 @@ __all__ = [
     "encode_corpus_text",
     "truncate_example",
     "get_example_with_skip",
+    "extract_reasoning_text",
 ]
 
 
@@ -256,3 +257,52 @@ def get_example_with_skip(dataset, index: int, size: int) -> Dict[str, np.ndarra
     raise RuntimeError(
         f"{type(dataset).__name__}: {MAX_ROW_SKIP} consecutive rows from {index} were unusable"
     ) from last
+
+
+_THINK_BLOCK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+_ANSWER_BLOCK_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
+_STRAY_REASONING_TAGS_RE = re.compile(r"</?(?:think|answer)>")
+
+
+def extract_reasoning_text(raw: Optional[str], final_answer: str = "") -> str:
+    """Turn a ``<think>…</think>…<answer>…</answer>`` trace into plain supervised text.
+
+    ChartVerse ``cot_solution`` and MMFineReason ``original_answer`` share this markup, so
+    this is the inverse of :func:`~olmo_core.data.multimodal.mmfinereason.extract_answer_text`:
+    that one keeps the answer and drops the derivation, this one keeps the derivation and
+    renders the answer as prose.
+
+    The tags are stripped rather than supervised. Training them in would teach the model to
+    emit ``<answer>…</answer>`` at inference, and nothing in the CharXiv / MMMU harness
+    unwraps that — the GPT judge would grade the markup. A plain ``Final answer:`` line is
+    both judge-legible and the format the short-answer half of the mixture already uses.
+
+    :param raw: The raw trace (``None`` / empty yields ``""``).
+    :param final_answer: Graded short answer, appended when the trace does not already end
+        with it. Pass ``""`` to leave the trace exactly as written.
+
+    :returns: Derivation text ending in the final answer, or ``""`` if there is no trace.
+    """
+    if not raw:
+        return ""
+    text = raw
+    think = _THINK_BLOCK_RE.search(text)
+    if think:
+        # Keep only the reasoning body; anything outside the block is the tag scaffolding
+        # plus the <answer> wrapper, which is re-rendered below.
+        answer_block = _ANSWER_BLOCK_RE.search(text)
+        text = think.group(1)
+        if answer_block and not final_answer:
+            final_answer = answer_block.group(1).strip()
+    else:
+        answer_block = _ANSWER_BLOCK_RE.search(text)
+        if answer_block:
+            if not final_answer:
+                final_answer = answer_block.group(1).strip()
+            text = _ANSWER_BLOCK_RE.sub("", text)
+    text = _STRAY_REASONING_TAGS_RE.sub("", text).strip()
+    if not text:
+        return final_answer.strip()
+    if final_answer and final_answer not in text[-200:]:
+        text = f"{text}\n\nFinal answer: {final_answer}"
+    return text
