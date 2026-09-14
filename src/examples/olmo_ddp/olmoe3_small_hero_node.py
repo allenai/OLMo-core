@@ -9,12 +9,14 @@ import time
 
 from olmoe3_profile_node import resolve_ready_leader
 from olmoe3_small_hero_plan import ROOT, find_run, runs
+from olmoe3_small_hero_runtime import verify_runtime
 
 
 def main():
     """Use current replica assignments; run both arm smokes on one 64-GPU allocation."""
     from beaker import Beaker
 
+    verify_runtime()
     name, cluster = sys.argv[1:]
     experiment, job = os.environ["BEAKER_EXPERIMENT_ID"], os.environ["BEAKER_JOB_ID"]
     rank = int(os.environ["BEAKER_REPLICA_RANK"])
