@@ -1,6 +1,7 @@
 """Standalone, readable PyTorch implementation of the OLMoE3 partner family.
 
-Setup after copying this file and model_configs.py into an empty directory::
+Setup after copying this file, model_configs.py and standalone_configs.py
+into an empty directory::
 
     python -m venv .venv
     . .venv/bin/activate

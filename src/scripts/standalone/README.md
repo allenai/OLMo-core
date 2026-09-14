@@ -2,8 +2,9 @@
 
 This directory updates `akshitab/standalone` with our current **0.794B-active hero
 architecture as Tiny**, the previous **3.781B-active Large as Small**, and two
-proposed approximately 4x-active rungs above Small. Copy the files
-together; no scaling-ladders repository is needed. These names are partner-family
+proposed approximately 4x-active rungs above Small. For the specification, copy only
+`standalone_configs.py`; for the reference/benchmark, copy the files together.
+No scaling-ladders repository is needed. These names are partner-family
 names: **Small here is not the existing 0.8B hero**, and Medium here is not our
 existing 2.388B production candidate.
 
@@ -28,6 +29,56 @@ Tiny is the trained hero architecture; Small reuses the previous Large candidate
 Medium/Large are best guesses: parameter counts and configuration structure
 are checked, but no GPU speed, memory, convergence or kernel-shape qualification
 has been run for them. No learning rate or deployment topology is implied.
+
+## Single-file architecture and training handoff
+
+**Send `standalone_configs.py` to compute partners.** It contains the four selected
+architectures plus the current Tiny hero training recipe in one dependency-free
+file. It needs only Python 3.10+ and prints JSON; it does not launch training or
+allocate model weights. It is a portable specification, not a TPU implementation.
+
+```bash
+python standalone_configs.py
+python standalone_configs.py --model-size tiny
+python standalone_configs.py --model-size small --no-emo
+```
+
+The names/dimensions remain unchanged: partner Small is **3.781B active, not 3.2B**.
+The Tiny recipe was checked against the running hero's saved step-197500 config
+on September 14. Its implementation reference is pinned to core commit
+`92976e128937ea1660257de80692079c7e2162c0`.
+
+| Setting | Tiny: observed hero recipe | Small / Medium / Large |
+| --- | --- | --- |
+| Data / sequence length | Dolma 3.5, `dolma2-tokenizer`, 8192 tokens | Same reference recipe; partner data location TODO |
+| Global batch | 16,777,216 tokens (2048 sequences) | TODO: batch/CBS qualification |
+| Peak LR | 1.1e-3 | TODO: transfer and tune |
+| Schedule | WSD trunk: linear 2000-step warmup from 0, then constant | Same provisional shape; qualify warmup |
+| AdamW | beta=(0.9,0.95), epsilon=1e-8, WD=0.1 | Inherited starting point, unvalidated |
+| WD exemptions | Input embedding only; norms and untied output head retain WD | Same provisional policy |
+| Gradient controls | Global norm clip=1; skip-step loss/grad outlier check, 128-step history, 6 sigma | Same provisional policy |
+| Initialization | Truncated N(0,0.02), bounds +/-0.06; no depth rescaling; gains=1 | Same provisional policy |
+| Precision | BF16 compute, FP32 master/moments/gradient accumulation and reduction; no FP8 | Same reference policy |
+| Activation checkpointing | Off | TODO: memory/throughput qualification |
+| Horizon | 14T target, rounded up to 834,466 steps | TODO: token budget |
+| NVIDIA topology | 64 B300s, DP64, EP/PP/TP/CP=1, distributed optimizer | TODO; not a TPU topology requirement |
+| Microbatch / accumulation | 4 sequences/device, 8 accumulation steps | TODO |
+| Checkpoints | Synchronous, full resumable state; every 100 steps through 18k, 250 through 60k, then 500 | TODO: storage and cadence |
+
+**The trunk does not automatically decay.** Decays are separate full-state forks.
+The file records the actual Tiny 2T example (step 108k to 120k, 12k-step linear
+decay) as a historical example only; the final 14T decay is explicitly TODO.
+EMO-on/off are selectable and both Tiny arms exist; no winner is implied.
+
+The file includes KDA-specific initialization, tokenizer IDs, auxiliary losses,
+data filtering, resume requirements and validation cadence. In the current hero,
+EOS boundaries constrain EMO pools but do not reset attention/KDA within an 8K
+sequence; this is separate from optional document masking in the reference model.
+Unknown larger-model batch, LR,
+budget and execution fields are `None`/JSON `null`, with corresponding TODOs;
+they are not silently filled with Tiny's values. Shared inherited defaults are
+explicitly marked unvalidated. TPU kernels, collectives and numerical validation
+remain partner integration work, not claims of this handoff.
 
 ## Shared architecture
 
@@ -55,7 +106,9 @@ They are conventional active-parameter counts, not literal embedding rows read p
 
 ## Files
 
-- `model_configs.py` is the dependency-free shared dimension/count table.
+- `standalone_configs.py` is the single-file architecture/training specification
+  and canonical shared dimension/count table.
+- `model_configs.py` re-exports that dimension table for the reference/benchmark.
 - `standalone_model.py` is a readable, unfused PyTorch reference implementation
   of all four rungs. It includes document-aware KDA, attention, EMo and
   standard routers, latent MoE, parameter accounting, and OLMo-style
@@ -213,6 +266,10 @@ Local verification checks all four PyTorch meta-module counts against native
 OLMo-core config counts, both EMO choices, and the updated attention's packed
 document isolation/gradients. This is structural validation, **not** end-to-end
 numerical equivalence or distributed GPU qualification.
+
+The single-file JSON export is additionally checked with isolated Python (no
+sibling imports), all four rungs and both EMO flags, exact parameter arithmetic,
+Tiny batch/step arithmetic, and explicit unknowns on larger rungs.
 
 Native fused module construction could not be exercised in the local CPU-only
 environment because the required FLA runtime is not installed there. Config-only
