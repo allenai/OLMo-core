@@ -49,6 +49,10 @@ def training_spec(original, run, commit, prepare=False):
     task.pop("synchronizedStartTimeout", None)
     task["propagateFailure"] = False
     task["propagatePreemption"] = False
+    # Removed from Beaker after the LC jobs were submitted; preserve all other exclusions.
+    task["constraints"]["hostname"] = [
+        host for host in task["constraints"]["hostname"] if host != "holmes-cs-aus-520.reviz.ai2.in"
+    ]
     task["arguments"] = (
         ["python", "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"]
         if prepare
