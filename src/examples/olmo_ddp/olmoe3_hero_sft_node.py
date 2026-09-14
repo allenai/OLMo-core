@@ -68,6 +68,11 @@ def main():
     r = find_run(sys.argv[1])
     assert int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]) == GPUS
     assert int(os.environ.get("BEAKER_REPLICA_COUNT", "1")) == 1
+    if r.smoke:
+        subprocess.run(
+            [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--attention-smoke"],
+            check=True,
+        )
     target = 4 if r.smoke else data_plan()["total_steps"]
     if not r.smoke:
         for arm in ("emo", "non-emo"):

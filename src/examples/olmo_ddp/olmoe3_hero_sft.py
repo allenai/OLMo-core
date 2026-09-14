@@ -145,6 +145,7 @@ class SFTAudit(Callback):
             keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
             assert keys and all(actual["tensors"][k] == saved["tensors"][k] for k in keys)
             assert self.step == self.trainer.global_train_tokens_seen == 0
+            assert self.trainer.data_loader.tokens_processed == 0
             optim = self.trainer.train_module.optim
             assert not optim._losses and not optim._grad_norms
             moments = 0
@@ -409,9 +410,59 @@ def prepare():
     log("SFT_CONFIG_DATA_GATE_PASSED", **plan)
 
 
+def attention_smoke():
+    """Check packed FA4 against independent documents and a float64 SDPA reference."""
+    import torch.nn.functional as F
+
+    from olmo_core.nn.attention.flash_attn_api import dispatch_flash_attn_4
+
+    torch.manual_seed(SEED)
+    q = torch.randn(1, 13, 8, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    k = torch.randn(1, 13, 4, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    v = torch.randn_like(k, requires_grad=True)
+    cu = torch.tensor([0, 4, 13], device="cuda", dtype=torch.int32)
+    out = dispatch_flash_attn_4(q, k, v, cu_seqlens=cu, max_seqlen=9, causal=True)
+    out = out.reshape_as(q)
+    pieces = [
+        dispatch_flash_attn_4(q[:, a:b], k[:, a:b], v[:, a:b], causal=True)
+        for a, b in ((0, 4), (4, 13))
+    ]
+    torch.testing.assert_close(out, torch.cat(pieces, dim=1), atol=2e-2, rtol=2e-2)
+    qr, kr, vr = [x.detach().cpu().double().requires_grad_() for x in (q, k, v)]
+    refs = [
+        F.scaled_dot_product_attention(
+            qr[:, a:b].transpose(1, 2),
+            kr[:, a:b].transpose(1, 2),
+            vr[:, a:b].transpose(1, 2),
+            is_causal=True,
+            enable_gqa=True,
+        ).transpose(1, 2)
+        for a, b in ((0, 4), (4, 13))
+    ]
+    ref = torch.cat(refs, dim=1)
+    torch.testing.assert_close(out.detach().cpu().double(), ref, atol=2e-2, rtol=2e-2)
+    out.float().square().sum().backward()
+    ref.square().sum().backward()
+    errors = {}
+    for name, actual, expected in zip(("q", "k", "v"), (q, k, v), (qr, kr, vr)):
+        grad = actual.grad.cpu().double()
+        relative_rms = float(
+            ((grad - expected.grad).square().mean() / expected.grad.square().mean()).sqrt()
+        )
+        assert torch.isfinite(grad).all() and relative_rms < 0.02, (name, relative_rms)
+        errors[name] = relative_rms
+    log(
+        "SFT_PACKED_FA4_GATE_PASSED",
+        gradient_relative_rms=errors,
+        maximum_output_error=float((out.detach().cpu().double() - ref.detach()).abs().max()),
+    )
+
+
 if __name__ == "__main__":
     hero.qualified.apply_policy()
     if sys.argv[1:] == ["--prepare"]:
         prepare()
+    elif sys.argv[1:] == ["--attention-smoke"]:
+        attention_smoke()
     else:
         main(config_builder=config_builder())

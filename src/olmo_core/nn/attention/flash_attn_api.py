@@ -499,10 +499,12 @@ def dispatch_flash_attn_4(
             _flatten_batch_dim(q),
             _flatten_batch_dim(k),
             _flatten_batch_dim(v),
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
+            # FA4 added qv before these arguments; positional calls silently shift
+            # the document boundaries into unrelated slots on newer releases.
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
             softmax_scale=softmax_scale,
             causal=causal,
             window_size=window_size,
