@@ -75,6 +75,7 @@ def main():
     parser.add_argument("--run", required=True)
     parser.add_argument("--step", type=int, required=True)
     parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--qualify-only", action="store_true")
     args = parser.parse_args()
     run = find_run(args.run)
     assert not run.smoke and args.step in (
@@ -137,6 +138,51 @@ def main():
         return result
 
     hf_converter.convert_checkpoint_to_hf = convert_sft
+    if args.qualify_only:
+        # Recovery is limited to the inspected, fully serialized failed final export.
+        # Repeat the original stock validation, then all frozen full reference/cache gates.
+        assert run.arm == "emo" and run.lr_label == "1em4" and args.step == 1810
+        assert not (root / "hf").exists()
+        diagnostic = json.loads((root / "conversion-diagnostic-r1.json").read_text())
+        assert len(diagnostic) == 5
+        assert all(r["logits"]["max_abs"] == 0 for r in diagnostic)
+        import gc
+
+        import torch
+        from hero_hf_reference_ops import install
+
+        from olmo_core.config import DType
+        from olmo_core.nn.transformer.config import TransformerConfig
+
+        install()
+        import os
+
+        os.environ["OLMO_HF_MOE_CORE_REFERENCE"] = "1"
+        saved = hf_converter.load_config(root / "olmo-core")
+        model = TransformerConfig.from_dict(convert.reference_config(saved["model"])).build(
+            init_device="meta"
+        )
+        model.to_empty(device="cpu")
+        hf_converter._load_ddp_optimizer_model_state(
+            root / "olmo-core/model_and_optim",
+            model,
+            work_dir=str(root / "recovery-load"),
+            return_state_dict=False,
+        )
+        hf_converter.validate_conversion(
+            root / "hf.partial",
+            model,
+            saved["dataset"]["tokenizer"]["vocab_size"],
+            dtype=DType.bfloat16,
+            device=torch.device("cuda"),
+        )
+        del model
+        gc.collect()
+        torch.cuda.empty_cache()
+        print("SFT_STOCK_CONVERSION_REVALIDATION_PASSED", flush=True)
+        from olmoe3_hero_sft_metadata import install_metadata
+
+        install_metadata(root / "hf.partial", DATA / "train/tokenizer")
     convert.SCRATCH, convert.TARGETS, convert.BATCH = scratch, {100: args.step}, BATCH
     convert.prepare_scratch = lambda: None  # The scoped ownership/mount check above replaces PT's.
     sys.argv = [
@@ -149,6 +195,8 @@ def main():
         "--portable-reference",
         "--precise",
     ]
+    if args.qualify_only:
+        sys.argv.append("--qualify-only")
     convert.main()
     config = json.loads((root / "hf/config.json").read_text())
     assert config["max_position_embeddings"] == 65536
