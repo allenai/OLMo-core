@@ -129,7 +129,12 @@ def main():
         keywords["max_sequence_length"] = 65536
         # Use the exact saved tokenizer/template, before qualification and checksums.
         keywords["tokenizer_id"] = str(DATA / "train/tokenizer")
-        return original(*positional, **keywords)
+        result = original(*positional, **keywords)
+        from olmoe3_hero_sft_metadata import install_metadata
+
+        # Do this before strict qualification, serialization hashes and atomic publication.
+        install_metadata(positional[1], DATA / "train/tokenizer")
+        return result
 
     hf_converter.convert_checkpoint_to_hf = convert_sft
     convert.SCRATCH, convert.TARGETS, convert.BATCH = scratch, {100: args.step}, BATCH
@@ -147,9 +152,13 @@ def main():
     convert.main()
     config = json.loads((root / "hf/config.json").read_text())
     assert config["max_position_embeddings"] == 65536
-    assert (root / "hf/chat_template.jinja").read_text() == (
-        DATA / "train/tokenizer/chat_template.jinja"
-    ).read_text()
+    from olmoe3_hero_sft_metadata import check_tokenizer
+    from transformers import AutoTokenizer
+
+    check_tokenizer(
+        AutoTokenizer.from_pretrained(root / "hf", local_files_only=True),
+        AutoTokenizer.from_pretrained(DATA / "train/tokenizer", local_files_only=True),
+    )
 
 
 if __name__ == "__main__":
