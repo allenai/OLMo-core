@@ -16,6 +16,7 @@ from olmoe3_lr_sweep_watch import atomic_json, log, replace_env
 DEPLOYMENT = AUTOMATION / "deployments/posteval-r1"
 ALPACA_PIN = "cd543a149df89434d8a54582c0151c0b945c3d20"
 BUNDLES = ("math500", "ifbench", "humaneval", "alpaca")
+QUALIFICATION_PIN = "6f1ef188ded568f7535e081429287a7308dba695"
 
 
 def model_path(run):
@@ -139,9 +140,13 @@ def main():
                 if pilot_ok:
                     stages += list(BUNDLES)
                 for stage in stages:
+                    # Preserve already-submitted qualification/smoke intents byte-for-byte.
+                    # Full-suite workers have not been released yet and use this revision.
+                    stage_commit = QUALIFICATION_PIN if stage in ("qualify", "smoke") else commit
+                    control.commit = stage_commit
                     template = templates["qualify" if stage == "qualify" else "gen_mc"]
                     name = run.run_id + "-epoch2-" + stage + "-r1"
-                    work = control.ensure(name, spec_for(template, stage, run, commit))
+                    work = control.ensure(name, spec_for(template, stage, run, stage_commit))
                     state = control.report(work) if work else "ambiguous_submission"
                     states[stage] = {
                         "status": state,

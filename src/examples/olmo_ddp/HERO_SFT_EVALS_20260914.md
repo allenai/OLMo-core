@@ -59,6 +59,13 @@ allocated (1h minimum runtime), Jupiter/Ceres, in
 `ai2/OLMo-3-moe-experiments`; normally one GPU per benchmark, two for qualification.
 No checkpoint or model payload goes into a Beaker results dataset.
 
+Full suites use the established fast-profile concurrency of 32 sequences per
+GPU (the initial smoke uses 16) and enable vLLM throughput/progress logs. Sampling,
+weights, context length and kernels are unchanged. At 64K context, 32 sequences'
+full-attention KV state is about 8.6 GB, well below the available cache budget on
+the 80 GB evaluation GPUs. Already-submitted qualification/smoke jobs keep their
+original immutable worker pin; a controller revision must not resubmit them.
+
 Durable per-stage submission intents prevent duplicate submissions; failures stay
 visible and are not automatically retried indefinitely. Results and raw/final
 responses go under each final export's `posttrain-evals-r1` directory. A success

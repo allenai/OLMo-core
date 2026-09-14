@@ -167,6 +167,7 @@ def main():
         assert alpaca_eval is not None
     os.environ["OLMO_VLLM_TORCH_GROUPED_MOE"] = "1"
     os.environ["OLMO_VLLM_FLA_KDA"] = "1"
+    os.environ.setdefault("VLLM_LOGGING_LEVEL", "INFO")
     for forbidden in (
         "OLMO_HERO_PRECISE_INFERENCE",
         "OLMO_HF_MOE_CORE_REFERENCE",
@@ -194,7 +195,10 @@ def main():
         "provider.kwargs.language_model_only=true",
         "provider.kwargs.gpu_memory_utilization=0.75",
         "provider.kwargs.max_num_batched_tokens=4096",
-        "provider.kwargs.max_num_seqs=16",
+        "provider.kwargs.max_num_seqs=16"
+        if args.bundle == "smoke"
+        else "provider.kwargs.max_num_seqs=32",
+        "provider.kwargs.disable_log_stats=false",
         "provider.kwargs.enable_prefix_caching=false",
         "provider.kwargs.model_impl=vllm",
         "provider.kwargs.tensor_parallel_size=1",
