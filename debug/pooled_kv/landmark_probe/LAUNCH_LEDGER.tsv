@@ -1,2 +1,4 @@
 job_id	experiment_id	launched_utc	ckpt	mem_freq	rungs	rows	keeps	status	notes
-01M2GWTZQMS0KYHRY01DG4357G	01M2GWTZQMS0KYHRY01DG4357G	2026-09-14T21:23:22Z	q4b-comp-block128-5task-dolci25-nocpt/step8550	127	2k,32k	48	0,0.125	LAUNCHED	primary; commit 90ec255f4
+01M2GWTZQMS0KYHRY01DG4357G	01M2GWTZQMS0KYHRY01DG4357G	2026-09-14T21:23:22Z	q4b-comp-block128-5task-dolci25-nocpt/step8550	127	2k,32k	48	0,0.125	FAILED	RoPE cu_doc_lens+position_ids conflict in block-local pass; fixed in 5d4628e
+01M2GXHJ7FCQT48BYE8ZF9C5M6	01M2GXHJ7FCQT48BYE8ZF9C5M6	2026-09-14T21:35:44Z	q4b-comp-block128-5task-dolci25-nocpt/step8550	127	2k,32k	48	0,0.125	DONE	primary; commit 5d4628e; NO-GO (both rungs); results ds 01M2GXHJ7S5BF8MJVY6C0WCQJ0
+-	-	-	q4b-comp-block64-5task-dolci25-nocpt/step8550	63	-	-	-	NOT RUN	kill-switch arm fired on block128; block size does not change the pass-2 control
