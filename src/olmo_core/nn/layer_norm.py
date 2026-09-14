@@ -16,6 +16,7 @@ __all__ = [
     "LayerNorm",
     "RMSNorm",
     "QwenRMSNorm",
+    "NemotronRMSNorm",
     "CuTeRMSNorm",
     "FusedRMSNorm",
     "L2Norm",
@@ -38,6 +39,10 @@ class LayerNormType(StrEnum):
     qwen_rms = "qwen_rms"
     """
     ➡️ :class:`QwenRMSNorm`
+    """
+    nemotron_rms = "nemotron_rms"
+    """
+    ➡️ :class:`NemotronRMSNorm`
     """
     cute_rms = "cute_rms"
     """
@@ -109,6 +114,8 @@ class LayerNormConfig(ModuleConfig):
                 return RMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.qwen_rms:
                 return QwenRMSNorm(size=size, init_device=init_device, **kwargs)
+            elif self.name == LayerNormType.nemotron_rms:
+                return NemotronRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.cute_rms:
                 return CuTeRMSNorm(size=size, init_device=init_device, **kwargs)
             elif self.name == LayerNormType.fused_rms:
@@ -260,6 +267,28 @@ class QwenRMSNorm(RMSNorm):
                 x = x + self.bias.type_as(x)
 
             return x
+
+
+class NemotronRMSNorm(RMSNorm):
+    """
+    RMSNorm variant matching HuggingFace's Nemotron-H norm: the variance is always computed in
+    fp32, then the normalized activations are cast back to the input dtype before the affine
+    weight (and optional bias) are applied.
+    """
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.autocast(enabled=False, device_type=x.device.type):
+            input_dtype = x.dtype
+            y = x.to(torch.float32)
+            variance = y.pow(2).mean(-1, keepdim=True)
+            y = y * torch.rsqrt(variance + self.eps)
+            if self.weight is not None:
+                y = self.weight.type_as(x) * y.to(input_dtype)
+            else:
+                y = y.to(input_dtype)
+            if self.bias is not None:
+                y = y + self.bias.type_as(y)
+            return y
 
 
 class CuTeRMSNorm(RMSNorm):

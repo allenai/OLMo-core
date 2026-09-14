@@ -9,8 +9,17 @@ except ImportError:
 
 
 def has_fla() -> bool:
-    """Check if flash-linear-attention (fla) is installed."""
-    return fla is not None
+    """Check if flash-linear-attention (fla) is installed and usable.
+
+    fla >= 0.5 imports ``triton`` at import time, so a CPU-only torch wheel that doesn't bundle
+    triton can have fla installed yet unimportable. Treat a missing triton as fla being unavailable
+    so callers skip rather than fail on ``import triton``.
+    """
+    if fla is None:
+        return False
+    from olmo_core.nn.moe.utils import has_triton
+
+    return has_triton()
 
 
 def dispatch_chunk_gated_delta_rule(

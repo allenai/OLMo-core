@@ -14,7 +14,10 @@ from olmo_core.data import (
     NumpyVSLDataset,
     TokenizerConfig,
 )
-from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
+from olmo_core.data.numpy_dataset import (
+    NumpyFSLDatasetMixture,
+    NumpyInterleavedFSLDataset,
+)
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
@@ -22,6 +25,7 @@ from olmo_core.data.source_mixture import (
 )
 from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.data.utils import get_document_indices, write_document_indices
+from olmo_core.io import get_file_size
 
 from .utils import mk_mmaps
 
@@ -944,3 +948,40 @@ def test_guess_dtype():
         paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
     )
     assert config.get_dtype() == np.uint32
+
+
+def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Path):
+    # A path duplicated in a mixture shares one indices file, but each occurrence keeps its own
+    # token allocation in `path_offset_index`. If a later occurrence has a larger allocation than
+    # the first, the shared file must be sized for the larger one, or reads for that occurrence's
+    # tail run past the end of the generated file.
+    npdtype = np.uint16
+    seq_len = 4
+    ((path, _),) = mk_mmaps(tmp_path, "dup", 1, 20 * 1000, npdtype, eos=0, seq_length=seq_len)
+
+    small_tokens = 10 * seq_len  # occurrence idx=0
+    large_tokens = 40 * seq_len  # occurrence idx=1 (the larger, later duplicate)
+
+    ds = NumpyFSLDatasetMixture(
+        path,
+        path,
+        path_offset_index={(str(path), 0): small_tokens, (str(path), 1): large_tokens},
+        seed=42,
+        sequence_length=seq_len,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        dtype=npdtype,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    # The shared index file holds enough instances for the larger occurrence.
+    item_size = ds.indices_dtype(0).itemsize
+    file_instances = get_file_size(ds._get_instance_indices_path(path)) // (item_size * 2)
+    assert file_instances >= large_tokens // seq_len
+
+    # The last global instance falls in the larger occurrence and must be readable (out of bounds
+    # before the fix, which sized the file from the first occurrence's smaller allocation).
+    assert len(ds) == small_tokens // seq_len + large_tokens // seq_len
+    assert len(ds[len(ds) - 1]["input_ids"]) == seq_len
