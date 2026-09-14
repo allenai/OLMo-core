@@ -302,6 +302,13 @@ class ExperimentConfig(Config):
     dl_persistent_workers: bool = DL_PERSISTENT_WORKERS
     """Keep DataLoader workers alive across epochs (only used when ``dl_num_workers > 0``)."""
 
+    ignore_shuffle_algo_version_mismatch: bool = False
+    """Resume a checkpoint whose mixture shuffle algorithm predates
+    ``MixtureDataLoader.SHUFFLE_ALGO_VERSION``. Off by default: such a resume regenerates a
+    different epoch and skips into it at the old batch offset, silently repeating some
+    examples and omitting others. Set it to accept that for a checkpoint written before
+    the version field existed (the alternative is restarting the run)."""
+
     pack_max_crops: int = PACK_MAX_CROPS
     """Image-crop budget per pack — the knapsack's second dimension."""
 
@@ -659,9 +666,16 @@ def _init_weights_from_scratch(
 
     log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")
     hf_vit = SiglipVisionModel.from_pretrained(SCRATCH_VIT_ID, dtype=torch.float32)
+    # Derive both prefixes from the module tree rather than hardcoding a layout: the
+    # vision modules live under `vision_backbone.` today, and `load_state_dict` matches
+    # (and reports missing/unexpected keys under) the model's *registered* names.
+    vision_prefix = next(
+        (f"{name}." for name, mod in model.named_modules() if mod is model.vision),
+        "vision.",
+    )
     converted.update(
         siglip_state_dict_to_vision_encoder(
-            hf_vit.state_dict(), n_blocks=len(model.vision.blocks), prefix="vision."
+            hf_vit.state_dict(), n_blocks=len(model.vision.blocks), prefix=vision_prefix
         )
     )
     del hf_vit
@@ -670,9 +684,6 @@ def _init_weights_from_scratch(
     missing, unexpected = model.load_state_dict(converted, strict=False)
     del converted
     # Everything except the connector must have been covered by the two base checkpoints.
-    # `load_state_dict` reports missing keys under the model's *registered* names, which the
-    # legacy-key remap deliberately leaves alone (it only rewrites the dicts it is handed).
-    # So derive the connector's prefix from the module tree rather than assuming a layout.
     connector_prefix = next(
         (f"{name}." for name, mod in model.named_modules() if mod is model.connector),
         "connector.",
@@ -757,6 +768,7 @@ def train(config: ExperimentConfig):
             work_dir=config.trainer.save_folder,
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
+            ignore_shuffle_algo_version_mismatch=config.ignore_shuffle_algo_version_mismatch,
             pack=config.pack_sequences,
             pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
             pack_buffer_size=config.pack_buffer_size,
