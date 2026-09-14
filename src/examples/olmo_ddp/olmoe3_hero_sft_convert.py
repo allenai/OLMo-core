@@ -152,9 +152,11 @@ def main():
         from hero_hf_reference_ops import install
 
         from olmo_core.config import DType
+        from olmo_core.nn.hf.config import _register_olmo3moe_auto_classes
         from olmo_core.nn.transformer.config import TransformerConfig
 
         install()
+        _register_olmo3moe_auto_classes()
         import os
 
         os.environ["OLMO_HF_MOE_CORE_REFERENCE"] = "1"
@@ -169,13 +171,25 @@ def main():
             work_dir=str(root / "recovery-load"),
             return_state_dict=False,
         )
-        hf_converter.validate_conversion(
-            root / "hf.partial",
-            model,
-            saved["dataset"]["tokenizer"]["vocab_size"],
-            dtype=DType.bfloat16,
-            device=torch.device("cuda"),
-        )
+        from unittest.mock import patch
+
+        original_randint = torch.randint
+
+        def recorded_randint(*positional, **keywords):
+            result = original_randint(*positional, **keywords)
+            atomic_json(
+                root / "stock-revalidation-inputs.json", {"input_ids": result.cpu().tolist()}
+            )
+            return result
+
+        with patch.object(torch, "randint", recorded_randint):
+            hf_converter.validate_conversion(
+                root / "hf.partial",
+                model,
+                saved["dataset"]["tokenizer"]["vocab_size"],
+                dtype=DType.bfloat16,
+                device=torch.device("cuda"),
+            )
         del model
         gc.collect()
         torch.cuda.empty_cache()
