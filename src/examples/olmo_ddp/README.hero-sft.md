@@ -1,7 +1,9 @@
 # Small hero LC → matched SFT sweep
 
 Branch: `codex/small-hero-sft-20260914`, based on the qualified LC branch.
-Only campaign-specific example files are added; existing PT/MT/LC code is unchanged.
+Campaign-specific example files are added, plus a compatibility fix that passes FA4
+variable-length boundaries by keyword (FA4 4.0.0b16 inserted a positional argument).
+The non-packed PT/LC attention path and original jobs are unchanged.
 
 Six runs: each arm's final LC step5961 × learning rates **1e-5, 5e-5, 1e-4**.
 The former proposed2.5e-5 point is replaced by1e-5. Sources, split, seed, batches,
@@ -16,7 +18,7 @@ schedule, masks, precision and training duration match between arms.
 | Schedule | Linear decay to zero;3% warmup over the two-epoch horizon |
 | Optimizer | Fresh qualified AdamW, weight decay0; no inherited PT/MT/LC moments |
 | Loss | Assistant-only masks; global supervised-token normalization; no z-loss |
-| Memory / kernels | Block recomputation; FLA0.5.2 packed-document KDA, not the non-varlen custom KDA path |
+| Memory / kernels | Eager model execution, block recomputation; FLA0.5.2 packed-document KDA, not the non-varlen custom KDA path |
 | Data | `allenai/gptoss120b-deduped`@`f105cae040563c3b43801dbeab356293c146510d` |
 | Template | Open Instruct `olmo_thinker_no_think_sft_tokenization`; reasoning and final responses retained |
 | Train / validation |106,952 /1,024 prompt-disjoint conversations;474,855,664 /4,427,480 input tokens |
@@ -37,6 +39,13 @@ The independent CPU controller then runs two four-update qualification jobs, one
 resume → step4. It checks all eight ranks, assistant masks, finite train/validation loss,
 save invariance, model/buffer samples, RNG and data-loader restoration. Only after both
 pass does it submit all six runs. Failed jobs are reported, not blindly resubmitted.
+
+The packed compiled path produced nonfinite initial CE on both sources. An eager
+diagnostic of the same EMO batch had finite KDA inputs/outputs and assistant losses
+on all eight ranks. SFT therefore disables model compilation; training/restart
+smokes must still qualify that execution mode before full trials are submitted.
+The early GPU attention test compares packed vs separate-document FA4 and float64
+SDPA, checking both forward values and gradients without changing precision.
 
 Packing uses the existing OLMo-core bin packer with the converter's authoritative CSV
 boundaries. Original tokenization shards cut one conversation; the local consolidated

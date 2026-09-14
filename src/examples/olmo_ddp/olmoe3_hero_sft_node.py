@@ -73,9 +73,6 @@ def main():
             [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--attention-smoke"],
             check=True,
         )
-        if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
-            log("SFT_DIAGNOSTIC_COMPLETE", run=r.run_id)
-            return
     target = 4 if r.smoke else data_plan()["total_steps"]
     if not r.smoke:
         for arm in ("emo", "non-emo"):
@@ -120,6 +117,9 @@ def main():
             env=env,
             check=True,
         )
+        if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
+            log("SFT_DIAGNOSTIC_COMPLETE", run=r.run_id)
+            return
         validate_checkpoint(r.root / f"step{stop}", stop)
         check_restore(r, start, start == 0)
         start, source = stop, r.root / f"step{stop}"

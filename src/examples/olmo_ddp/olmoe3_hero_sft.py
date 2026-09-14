@@ -106,8 +106,10 @@ def train_module_config(common):
     config.optim.weight_decay = 0.0
     config.scheduler = LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0)
     config.z_loss_multiplier = None
-    if os.environ.get("HERO_SFT_DIAGNOSTIC") == "1":
-        config.compile_model = False
+    # The compiled packed path produced nonfinite startup CE on both LC sources;
+    # the identical eager diagnostic was finite on all eight ranks. Keep SFT eager
+    # until this compiler/variable-length interaction is separately qualified.
+    config.compile_model = False
     config.reset_optimizer_states_on_load = (
         Path(os.environ.get("HERO_SFT_LOAD", str(r.source))) == r.source
     )
