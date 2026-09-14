@@ -1,14 +1,14 @@
 """Distributed fused OLMoE3 forward/backward benchmark.
 
-Place this file beside ``fused_model.py``. On a Linux CUDA system, follow the
+Place this file beside ``partner_fused_model.py``. On a Linux CUDA system, follow the
 installation instructions at the top of that file, then launch, for example::
 
-    torchrun --standalone --nproc-per-node=8 distributed_fused_benchmark.py \
+    torchrun --standalone --nproc-per-node=8 partner_distributed_fused_benchmark.py \
         --ep-degree -1 --sequence-length 8192 --microbatch-sequences 1
 
 For a single-GPU installation test, use the 30M smoke rung::
 
-    torchrun --standalone --nproc-per-node=1 distributed_fused_benchmark.py \
+    torchrun --standalone --nproc-per-node=1 partner_distributed_fused_benchmark.py \
         --model-size 30m --ep-degree 1 --sequence-length 512 \
         --microbatch-sequences 1 --warmup 1 --iterations 2 --no-compile
 
@@ -31,8 +31,9 @@ from dataclasses import asdict, dataclass
 
 import torch
 import torch.distributed as dist
+from partner_fused_model import FusedModelOptions, build_fused_config
+from standalone_configs import GEOMETRIES
 
-from fused_model import FusedModelOptions, build_fused_config
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.nn.lm_head import LMOutputWithLoss
@@ -154,7 +155,7 @@ class BenchmarkResult:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-size", choices=("30m", "3p5b"), default="3p5b")
+    parser.add_argument("--model-size", choices=tuple(GEOMETRIES), default="tiny")
     parser.add_argument(
         "--ep-degree",
         type=int,
@@ -409,9 +410,7 @@ def main() -> None:
         )
         if dist.get_rank() == 0:
             print(json.dumps(asdict(result), indent=2))
-            print(
-                f"model params: total={config.num_params:,}, active={config.num_active_params:,}"
-            )
+            print(f"model params: total={config.num_params:,}, active={config.num_active_params:,}")
     finally:
         dist.destroy_process_group()
 

@@ -1,11 +1,11 @@
-"""Standalone, readable PyTorch implementation of the OLMoE3 3.5B-active rung.
+"""Standalone, readable PyTorch implementation of the OLMoE3 partner family.
 
-Setup in an empty directory after copying this file there::
+Setup after copying this file and standalone_configs.py into an empty directory::
 
     python -m venv .venv
     . .venv/bin/activate
     pip install torch
-    python standalone_model.py
+    python partner_model.py
 
 Only Python 3.12+ and PyTorch are required. No OLMo-core checkout, Triton,
 FlashAttention, FLA, or NVSHMEM is needed.
@@ -16,39 +16,40 @@ checkpointing, metrics, and training orchestration; those change execution, not 
 model layers.  The KDA recurrence and expert dispatch below are unfused reference
 implementations and are meant for inspection and small-shape tests, not production.
 
-Importing this module creates ``largest_model`` on the meta device.  This instantiates
-the complete 62.86B-parameter module hierarchy without allocating parameter storage.
-Call ``OLMoE3(largest_config, device=...)`` only on appropriately sharded hardware.
+The CLI defaults to Tiny on the meta device (no parameter storage). Importing the
+module does not instantiate a model. Larger rungs are untrained proposals, not
+validated hardware or performance configurations.
 """
 
 from __future__ import annotations
 
+import argparse
 import math
 from dataclasses import dataclass
 
 import torch
 import torch.nn.functional as F
+from standalone_configs import FAMILY
 from torch import Tensor, nn
 
 
 @dataclass(frozen=True)
 class OLMoE3Config:
     vocab_size: int = 100_352
-    d_model: int = 1792
-    n_layers: int = 30
+    d_model: int = 1024
+    n_layers: int = 16
     n_heads: int = 8
     n_kv_heads: int = 4
-    head_dim: int = 256
-    expert_hidden_size: int = 1792
+    head_dim: int = 128
+    expert_hidden_size: int = 1024
     num_routed_experts: int = 512
     top_k: int = 16
-    latent_dim: int = 768
+    latent_dim: int = 512
     kda_expand_v: float = 2.0
     kda_conv_size: int = 4
     rms_norm_eps: float = 1e-6
     kda_norm_eps: float = 1e-5
     init_std: float = 0.02
-    embed_scale: float = math.sqrt(1792)
     tie_word_embeddings: bool = False
     """
     EMO settings: https://arxiv.org/abs/2605.06663
@@ -61,21 +62,26 @@ class OLMoE3Config:
     emo_eval_document_expert_pool: int = 512
 
     @property
+    def embed_scale(self) -> float:
+        return math.sqrt(self.d_model)
+
+    @property
     def full_attention_layers(self) -> tuple[int, ...]:
-        return tuple(range(4, self.n_layers, 5))
+        return tuple(range(7, self.n_layers, 8))
 
     def validate(self) -> None:
-        # TPU MXU alignment (256x256 systolic array): every reduction/output
-        # dimension that appears in a GEMM must be a multiple of 256, or the
-        # matmul pads out to the next tile and burns cycles on zeros.
+        # Preserve the trained head geometry; align the main/expert/latent GEMMs.
+        # Divisibility alone is not a hardware performance guarantee.
         for name, dim in (
             ("d_model", self.d_model),
-            ("head_dim", self.head_dim),
             ("expert_hidden_size", self.expert_hidden_size),
             ("latent_dim", self.latent_dim),
         ):
-            assert dim % 256 == 0, f"{name}={dim} must be a multiple of 256 for MXU alignment"
-        assert self.n_heads % self.n_kv_heads == 0
+            assert dim % 256 == 0, f"{name}={dim} must be a multiple of 256"
+        assert self.head_dim == 128
+        assert self.latent_dim * 2 == self.d_model
+        assert self.n_heads == 2 * self.n_kv_heads
+        assert self.n_layers % 8 == 0
         assert self.top_k <= self.num_routed_experts
         if self.emo_enabled:
             assert self.emo_min_document_expert_pool >= self.top_k
@@ -95,10 +101,26 @@ class OLMoE3Config:
         return (self.n_layers - 1) * (self.num_routed_experts - self.top_k) * params_per_expert
 
 
+def config_for(model_size: str = "tiny", **overrides) -> OLMoE3Config:
+    """Build a family rung; optional overrides include emo_enabled=False."""
+    geometry = FAMILY[model_size]
+    fields = (
+        "d_model",
+        "n_layers",
+        "n_heads",
+        "n_kv_heads",
+        "head_dim",
+        "expert_hidden_size",
+        "num_routed_experts",
+        "latent_dim",
+    )
+    return OLMoE3Config(**({key: getattr(geometry, key) for key in fields} | overrides))
+
+
 class RMSNorm(nn.Module):
     """OLMo-core RMSNorm: learned scale, no bias, fp32 variance."""
 
-    def __init__(self, size: int, eps: float, *, device=None, dtype=None):
+    def __init__(self, size: int | tuple[int, ...], eps: float, *, device=None, dtype=None):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(size, device=device, dtype=dtype))
@@ -165,9 +187,15 @@ class KimiDeltaAttention(nn.Module):
         self.w_q = nn.Linear(cfg.d_model, key_width, **kw)
         self.w_k = nn.Linear(cfg.d_model, key_width, **kw)
         self.w_v = nn.Linear(cfg.d_model, value_width, **kw)
-        self.q_conv = CausalDepthwiseConv1d(key_width, cfg.kda_conv_size, device=device, dtype=dtype)
-        self.k_conv = CausalDepthwiseConv1d(key_width, cfg.kda_conv_size, device=device, dtype=dtype)
-        self.v_conv = CausalDepthwiseConv1d(value_width, cfg.kda_conv_size, device=device, dtype=dtype)
+        self.q_conv = CausalDepthwiseConv1d(
+            key_width, cfg.kda_conv_size, device=device, dtype=dtype
+        )
+        self.k_conv = CausalDepthwiseConv1d(
+            key_width, cfg.kda_conv_size, device=device, dtype=dtype
+        )
+        self.v_conv = CausalDepthwiseConv1d(
+            value_width, cfg.kda_conv_size, device=device, dtype=dtype
+        )
         self.f_proj_1 = nn.Linear(cfg.d_model, v, **kw)
         self.f_proj_2 = nn.Linear(v, key_width, **kw)
         self.w_b = nn.Linear(cfg.d_model, h, **kw)
@@ -226,8 +254,13 @@ class GatedNoPEAttention(nn.Module):
         self.w_v = nn.Linear(cfg.d_model, kv_width, **kw)
         self.w_g = nn.Linear(cfg.d_model, q_width, **kw)
         self.w_out = nn.Linear(q_width, cfg.d_model, **kw)
-        self.q_norm = RMSNorm(cfg.head_dim, cfg.rms_norm_eps, device=device, dtype=dtype)
-        self.k_norm = RMSNorm(cfg.head_dim, cfg.rms_norm_eps, device=device, dtype=dtype)
+        self.q_norm = RMSNorm(
+            (cfg.n_heads, cfg.head_dim), cfg.rms_norm_eps, device=device, dtype=dtype
+        )
+        self.k_norm = RMSNorm(
+            (cfg.n_kv_heads, cfg.head_dim), cfg.rms_norm_eps, device=device, dtype=dtype
+        )
+        self.ssmax_scale = nn.Parameter(torch.ones(cfg.n_heads, device=device, dtype=dtype))
 
     def forward(self, x: Tensor, segment_ids: Tensor | None = None) -> Tensor:
         b, t, _ = x.shape
@@ -236,6 +269,16 @@ class GatedNoPEAttention(nn.Module):
         v = self.w_v(x).view(b, t, self.n_kv_heads, self.head_dim).transpose(1, 2)
         repeats = self.n_heads // self.n_kv_heads
         k, v = k.repeat_interleave(repeats, 1), v.repeat_interleave(repeats, 1)
+        # Match native scalable-softmax: ln(number of visible document tokens)
+        # times a learned per-query-head gain, before ordinary 1/sqrt(head_dim).
+        positions = torch.arange(t, device=x.device).expand(b, -1)
+        starts = torch.zeros_like(positions)
+        if segment_ids is not None:
+            boundary = F.pad(segment_ids[:, 1:].ne(segment_ids[:, :-1]), (1, 0), value=True)
+            starts = positions.masked_fill(~boundary, 0).cummax(dim=1).values
+        scale = (positions - starts + 1).log().to(q.dtype)
+        scale = scale[:, None, :, None] * self.ssmax_scale.to(q.dtype)[None, :, None, None]
+        q = q * scale
         mask = torch.ones((t, t), dtype=torch.bool, device=x.device).tril()
         if segment_ids is not None:
             same_doc = segment_ids[:, :, None].eq(segment_ids[:, None, :])
@@ -251,8 +294,12 @@ class MoERouter(nn.Module):
     def __init__(self, cfg: OLMoE3Config, *, device=None, dtype=None):
         super().__init__()
         self.cfg = cfg
-        self.weight = nn.Parameter(torch.empty(cfg.num_routed_experts, cfg.d_model, device=device, dtype=dtype))
-        nn.init.trunc_normal_(self.weight, std=cfg.init_std, a=-3 * cfg.init_std, b=3 * cfg.init_std)
+        self.weight = nn.Parameter(
+            torch.empty(cfg.num_routed_experts, cfg.d_model, device=device, dtype=dtype)
+        )
+        nn.init.trunc_normal_(
+            self.weight, std=cfg.init_std, a=-3 * cfg.init_std, b=3 * cfg.init_std
+        )
 
     def scores_and_logits(self, x: Tensor) -> tuple[Tensor, Tensor]:
         logits = F.linear(x.float(), self.weight.float())
@@ -314,7 +361,9 @@ class EMoRouter(MoERouter):
             lo, hi = self.cfg.emo_min_document_expert_pool, self.cfg.emo_max_document_expert_pool
             pool_sizes = torch.randint(lo, hi + 1, document_scores.shape[:2], device=x.device)
         else:
-            pool_sizes = torch.full(document_scores.shape[:2], self.cfg.emo_eval_document_expert_pool, device=x.device)
+            pool_sizes = torch.full(
+                document_scores.shape[:2], self.cfg.emo_eval_document_expert_pool, device=x.device
+            )
         rank = document_scores.argsort(-1, descending=True).argsort(-1)
         keep_by_doc = rank < pool_sizes[..., None]
         keep = keep_by_doc.gather(1, segment_ids[..., None].expand(-1, -1, e))
@@ -340,37 +389,60 @@ class RoutedExperts(nn.Module):
         for expert in flat_i.unique().tolist():
             token, slot = torch.where(flat_i == expert)
             expert_x = flat_x[token]
-            hidden = F.linear(expert_x, self.up[expert]) * F.silu(F.linear(expert_x, self.gate[expert]))
-            out.index_add_(0, token, F.linear(hidden, self.down[expert]) * flat_w[token, slot, None])
+            hidden = F.linear(expert_x, self.up[expert]) * F.silu(
+                F.linear(expert_x, self.gate[expert])
+            )
+            out.index_add_(
+                0, token, F.linear(hidden, self.down[expert]) * flat_w[token, slot, None]
+            )
         return out.view_as(x)
 
 
 class OLMoE3Block(nn.Module):
     def __init__(self, cfg: OLMoE3Config, layer_idx: int, *, device=None, dtype=None):
         super().__init__()
+
         def norm():
             return RMSNorm(cfg.d_model, cfg.rms_norm_eps, device=device, dtype=dtype)
 
         self.attn_in_norm, self.attn_out_norm = norm(), norm()
         self.ffn_in_norm, self.ffn_out_norm = norm(), norm()
-        self.mixer = (GatedNoPEAttention if layer_idx in cfg.full_attention_layers else KimiDeltaAttention)(cfg, device=device, dtype=dtype)
-        self.shared = SwiGLU(cfg.d_model, 8 * cfg.d_model if layer_idx == 0 else cfg.expert_hidden_size, cfg.d_model, device=device, dtype=dtype)
+        self.mixer = (
+            GatedNoPEAttention if layer_idx in cfg.full_attention_layers else KimiDeltaAttention
+        )(cfg, device=device, dtype=dtype)
+        self.shared = SwiGLU(
+            cfg.d_model,
+            8 * cfg.d_model if layer_idx == 0 else cfg.expert_hidden_size,
+            cfg.d_model,
+            device=device,
+            dtype=dtype,
+        )
         self.router = self.routed = self.latent_down = self.latent_up = None
         if layer_idx > 0:
             router_type = EMoRouter if cfg.emo_enabled else StandardRouter
             self.router = router_type(cfg, device=device, dtype=dtype)
             self.routed = RoutedExperts(cfg, device=device, dtype=dtype)
-            self.latent_down = nn.Linear(cfg.d_model, cfg.latent_dim, bias=False, device=device, dtype=dtype)
-            self.latent_up = nn.Linear(cfg.latent_dim, cfg.d_model, bias=False, device=device, dtype=dtype)
+            self.latent_down = nn.Linear(
+                cfg.d_model, cfg.latent_dim, bias=False, device=device, dtype=dtype
+            )
+            self.latent_up = nn.Linear(
+                cfg.latent_dim, cfg.d_model, bias=False, device=device, dtype=dtype
+            )
 
     def forward(self, x: Tensor, segment_ids: Tensor | None = None) -> Tensor:
         x = x + self.attn_out_norm(self.mixer(self.attn_in_norm(x), segment_ids))
         ffn_in = self.ffn_in_norm(x)
         ffn_out = self.shared(ffn_in)
         if self.router is not None:
-            assert self.routed is not None and self.latent_down is not None and self.latent_up is not None
+            assert (
+                self.routed is not None
+                and self.latent_down is not None
+                and self.latent_up is not None
+            )
             weights, indices = self.router(ffn_in, segment_ids)
-            ffn_out = ffn_out + self.latent_up(self.routed(self.latent_down(ffn_in), weights, indices))
+            ffn_out = ffn_out + self.latent_up(
+                self.routed(self.latent_down(ffn_in), weights, indices)
+            )
         return x + self.ffn_out_norm(ffn_out)
 
 
@@ -381,9 +453,13 @@ class OLMoE3(nn.Module):
         self.config = cfg
         self.embedding = nn.Embedding(cfg.vocab_size, cfg.d_model, device=device, dtype=dtype)
         self.embedding_norm = RMSNorm(cfg.d_model, cfg.rms_norm_eps, device=device, dtype=dtype)
-        self.blocks = nn.ModuleList(OLMoE3Block(cfg, i, device=device, dtype=dtype) for i in range(cfg.n_layers))
+        self.blocks = nn.ModuleList(
+            OLMoE3Block(cfg, i, device=device, dtype=dtype) for i in range(cfg.n_layers)
+        )
         self.lm_norm = RMSNorm(cfg.d_model, cfg.rms_norm_eps, device=device, dtype=dtype)
-        self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False, device=device, dtype=dtype)
+        self.lm_head = nn.Linear(
+            cfg.d_model, cfg.vocab_size, bias=False, device=device, dtype=dtype
+        )
         if self.embedding.weight.device.type != "meta":
             self.init_weights()
 
@@ -445,6 +521,7 @@ class OLMoE3(nn.Module):
                     trunc_normal(linear.weight)
                 nn.init.ones_(mixer.q_norm.weight)
                 nn.init.ones_(mixer.k_norm.weight)
+                nn.init.ones_(mixer.ssmax_scale)
 
             if block.router is not None:
                 trunc_normal(block.router.weight)
@@ -509,12 +586,16 @@ def print_parameter_counts(model: OLMoE3) -> None:
     print(f"active non-embedding params: {counts.active_non_embedding:,}")
 
 
-# Largest canonical ladder rung. Meta instantiation is allocation-free but preserves
-# every layer, shape, parameter, and the exact KDA/full-attention override pattern.
-largest_config = OLMoE3Config()
-largest_model = OLMoE3(largest_config, device="meta")
-
-
 if __name__ == "__main__":
-    print(largest_model)
-    print_parameter_counts(largest_model)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-size", choices=tuple(FAMILY), default="tiny")
+    parser.add_argument("--show-model", action="store_true")
+    args = parser.parse_args()
+    model = OLMoE3(config_for(args.model_size), device="meta")
+    expected = FAMILY[args.model_size]
+    counts = parameter_counts(model)
+    assert counts.total == expected.expected_total_params
+    assert counts.active == expected.expected_active_params
+    if args.show_model:
+        print(model)
+    print_parameter_counts(model)

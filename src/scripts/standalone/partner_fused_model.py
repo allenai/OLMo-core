@@ -1,17 +1,17 @@
-"""Build the smallest or largest OLMoE3 ladder model with production fused kernels.
+"""Build an OLMoE3 partner-family config with native OLMo-core modules.
 
 Setup in an empty directory on a Linux CUDA machine::
 
     python -m venv .venv
     . .venv/bin/activate
-    pip install 'ai2-olmo-core[fa4,fla] @ git+https://github.com/allenai/OLMo-core.git@f2cf93839a823b88955e94a851c808829c5201ba'
-    python fused_model.py
+    pip install 'ai2-olmo-core[fa4,fla] @ git+https://github.com/allenai/OLMo-core.git@2610a90ced51542c10848a7d82e9534f3ef65923'
+    python partner_fused_model.py
 
 PyTorch supplies its compatible Triton build; ``fa4`` installs FlashAttention 4 and
 ``fla`` installs flash-linear-attention. NVSHMEM is additionally required only when
 running the configured multi-GPU rowwise expert-parallel path.
 
-Unlike ``standalone_model.py``, this script deliberately uses OLMo-core's native
+Unlike ``partner_model.py``, this script deliberately uses OLMo-core's native
 implementations:
 
 * Kimi Delta Attention -> flash-linear-attention's fused KDA kernel
@@ -20,11 +20,12 @@ implementations:
 * expert dispatch/combine -> the configured rowwise NVSHMEM EP path after EP setup
 
 By default the script validates and reports the config without building modules.
-Pass ``--device meta`` to construct shapes without parameter storage, or ``--device
-cuda`` on appropriately sharded hardware. Module construction requires the production
+Pass ``--device meta`` to construct shapes without parameter storage. ``--device
+cuda`` constructs an UNSHARDED model; use the distributed harness to apply EP
+before materialization. Module construction requires the production
 FLA, FlashAttention 4, Triton, and (for expert parallelism) NVSHMEM environment.
 Use ``--model-size 30m`` for the single-GPU smoke configuration; the default is
-the 3.5B-active / 63B-stored target configuration.
+the trained Tiny architecture. Larger rungs are proposals, not benchmarked recipes.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ import argparse
 import math
 from copy import deepcopy
 from dataclasses import dataclass
+
+from standalone_configs import GEOMETRIES
 
 from olmo_core.config import DType
 from olmo_core.nn.attention import (
@@ -74,36 +77,8 @@ TOP_K = 16
 
 
 @dataclass(frozen=True)
-class Geometry:
-    d_model: int
-    n_layers: int
-    n_heads: int
-    n_kv_heads: int
-    head_dim: int
-    expert_hidden_size: int
-    num_routed_experts: int
-    latent_dim: int
-    expected_total_params: int
-    expected_active_params: int
-
-    @property
-    def full_attention_layers(self) -> tuple[int, ...]:
-        return tuple(range(4, self.n_layers, 5))
-
-
-GEOMETRIES = {
-    # Left unaligned: a fast plumbing/correctness check, not performance-representative.
-    "30m": Geometry(128, 5, 1, 1, 128, 192, 32, 64, 32_323_588, 29_964_292),
-    # head_dim/expert_hidden_size/latent_dim are all multiples of 256 for TPU MXU
-    # alignment (tpu-optimizations-guide.md, Principle 1); see PR description for
-    # the parameter-count trade-off this implies relative to the prior geometry.
-    "3p5b": Geometry(1792, 30, 8, 4, 256, 1792, 512, 768, 62_864_102_080, 3_475_903_168),
-}
-
-
-@dataclass(frozen=True)
 class FusedModelOptions:
-    model_size: str = "3p5b"
+    model_size: str = "tiny"
     emo_enabled: bool = True
     global_load_balancing: bool = True
     device: str | None = None
@@ -124,9 +99,7 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
         geometry = GEOMETRIES[options.model_size]
     except KeyError as exc:
         raise ValueError(f"model_size must be one of {tuple(GEOMETRIES)}") from exc
-    norm = LayerNormConfig(
-        name=LayerNormType.rms, eps=1e-6, bias=False, dtype=DType.float32
-    )
+    norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=DType.float32)
     kda = KimiDeltaAttentionConfig(
         n_heads=geometry.n_heads,
         n_v_heads=geometry.n_heads,
@@ -150,6 +123,8 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
         backend=AttentionBackendName.flash_4,
         dtype=DType.float32,
         use_head_qk_norm=True,
+        qk_norm_per_head_gains=True,
+        scalable_softmax=True,
     )
     shared = SharedExpertsConfig(
         d_model=geometry.d_model,
@@ -164,7 +139,7 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
         num_experts=geometry.num_routed_experts,
         bias=False,
         dtype=DType.float32,
-        rowwise_fp8=MoERowwiseFP8Config(enabled=False),
+        rowwise_fp8=MoERowwiseFP8Config(enabled=False, fused_autograd_recompute_swiglu=False),
     )
     router = MoERouterConfigV2(
         d_model=geometry.d_model,
@@ -212,8 +187,13 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
             checkpoint_attn=False,
             checkpoint_permute_moe_unpermute=False,
             checkpoint_second_unpermute=False,
-            ep=ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem),
-            rowwise_fp8=MoERowwiseFP8Config(enabled=False),
+            ep=ExpertParallelConfig(
+                path=ExpertParallelPath.rowwise_nvshmem,
+                capacity_factor=1.25,
+                share_dispatch_out=False,
+                share_combine_out=False,
+            ),
+            rowwise_fp8=MoERowwiseFP8Config(enabled=False, fused_autograd_recompute_swiglu=False),
         )
 
     dense_first = OLMoDDPTransformerBlockConfig(
@@ -241,10 +221,7 @@ def build_fused_config(options: FusedModelOptions) -> OLMoDDPModelConfig:
         block=block(kda),
         block_overrides={
             0: dense_first,
-            **{
-                idx: block(deepcopy(full_attention))
-                for idx in geometry.full_attention_layers
-            },
+            **{idx: block(deepcopy(full_attention)) for idx in geometry.full_attention_layers},
         },
         lm_head=LMHeadConfig(layer_norm=deepcopy(norm), bias=False, dtype=DType.float32),
         embedding_norm=deepcopy(norm),
@@ -284,6 +261,8 @@ def verify_fused_config(config, options: FusedModelOptions) -> None:
         if layer_idx in geometry.full_attention_layers:
             assert isinstance(block.sequence_mixer, AttentionConfig)
             assert block.sequence_mixer.backend == AttentionBackendName.flash_4
+            assert block.sequence_mixer.qk_norm_per_head_gains
+            assert block.sequence_mixer.scalable_softmax
         else:
             assert isinstance(block.sequence_mixer, KimiDeltaAttentionConfig)
         if layer_idx == 0:
@@ -306,7 +285,8 @@ def build_fused_model(options: FusedModelOptions) -> tuple[object, Transformer |
 def verify_fused_modules(model: Transformer, options: FusedModelOptions) -> None:
     """Verify that config resolution produced the intended runtime module classes."""
     geometry = GEOMETRIES[options.model_size]
-    for layer_idx, block in enumerate(model.blocks):
+    for block_key, block in model.blocks.items():
+        layer_idx = int(block_key)
         assert isinstance(block, OLMoDDPTransformerBlock)
         if layer_idx not in geometry.full_attention_layers:
             assert isinstance(block.attention, KimiDeltaAttention)
@@ -326,7 +306,7 @@ def print_parameter_counts(config) -> None:
 
 def parse_args() -> FusedModelOptions:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-size", choices=tuple(GEOMETRIES), default="3p5b")
+    parser.add_argument("--model-size", choices=tuple(GEOMETRIES), default="tiny")
     parser.add_argument(
         "--device",
         help="Build fused runtime modules on this device (e.g. meta or cuda)",
