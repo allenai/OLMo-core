@@ -21,7 +21,9 @@ def load_embedding(root, suffix):
     meta = metadata.state_dict_metadata[key]
     state = {key: torch.empty(meta.size, dtype=meta.properties.dtype)}
     dcp.load(state, storage_reader=reader)
-    return state[key].float()
+    # Optimizer-owned state is serialized flat, unlike the model's 2-D parameter.
+    assert state[key].numel() == 100352 * 1024, (key, state[key].shape)
+    return state[key].float().reshape(100352, 1024)
 
 
 if __name__ == "__main__":
