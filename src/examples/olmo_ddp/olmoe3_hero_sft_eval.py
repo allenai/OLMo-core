@@ -167,7 +167,7 @@ def main():
         assert alpaca_eval is not None
     os.environ["OLMO_VLLM_TORCH_GROUPED_MOE"] = "1"
     os.environ["OLMO_VLLM_FLA_KDA"] = "1"
-    os.environ.setdefault("VLLM_LOGGING_LEVEL", "INFO")
+    os.environ["VLLM_LOGGING_LEVEL"] = "INFO"
     for forbidden in (
         "OLMO_HERO_PRECISE_INFERENCE",
         "OLMO_HF_MOE_CORE_REFERENCE",

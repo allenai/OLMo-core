@@ -81,3 +81,26 @@ Local checks: metadata round-trip tests, Think extraction, full-function code
 extraction, prompt/sampling checks, native evaluator mock run, all dataset counts,
 real GPT-4.1 annotation request, and synthetic length-correction compatibility.
 The real model's GPU chat/scoring smoke remains the gate before full fan-out.
+
+## First GPU smoke, September 14
+
+Experiment `01M2FEY0FXX3Z082SJPFE1HT9R` completed all 12 responses and all four
+scoring paths. Eleven responses closed reasoning; one IFBench response exhausted
+32768 tokens without closing and was correctly scored as an empty final answer.
+That long response dominated the approximately 26-minute generation time on one
+H100. Full-suite evaluations can therefore take hours, not the sub-hour runtime
+of short base-model tasks. Raw responses and token counts are retained.
+
+Manual review found recognizable chat answers, complete code functions, and
+ordinary model errors/repetition. One mathematically correct unboxed response
+was not accepted by the canonical extraction rules; those rules match the
+reference evaluator and were not loosened after seeing the answer. Smoke scores
+from three examples per task are not benchmark estimates. An off-topic Alpaca
+answer is also retained, not discarded or regenerated to improve the score.
+
+All 12 exports passed strict core/HF conversion. Five final models also passed
+independent HF/vLLM qualification. Non-EMO LR 1e-4 repeated a long-context
+distribution mismatch (max absolute log-probability error 0.6631, mean 0.03167;
+mean KL 7.03e-6, greedy tokens equal). Its evaluations remain held. One bounded
+prefill-512 recheck, `01M2FGNNE03PA0DCPCHJ76RT0R`, uses the same saved oracle and
+unchanged gates; it does not automatically release the held model.
