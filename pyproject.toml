@@ -79,6 +79,7 @@ fa4 = [
 # `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13. The <2.14 ceiling matches the
 # torch we build/test images with and stops `.[all]` from floating up to an unshipped torch (2.14).
 fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0,<2.14"]
+kernel-fun = ["kernel-fun==0.2.0 ; sys_platform == 'linux'"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
