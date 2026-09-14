@@ -19,7 +19,6 @@ three ways:
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from typing import Any, Dict, List, Literal, Optional, Tuple, cast
@@ -40,28 +39,27 @@ from olmo_core.distributed.utils import (
     get_rank,
     get_world_size,
     is_distributed,
+    log_fsdp_topology,
     reduce_distributed_failure_flag,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
-from olmo_core.utils import get_default_device, move_to_device, warn_once
+from olmo_core.utils import env_bool, get_default_device, move_to_device, warn_once
 
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerActivationCheckpointingConfig, TransformerDataParallelConfig
+from .config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerDataParallelConfig,
+)
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
 __all__ = ["MultimodalTransformerTrainModule", "MultimodalTransformerTrainModuleConfig"]
-
-
-def _mm_train_verbose_logs() -> bool:
-    """Per-step batch/optim diagnostics (forces CUDA sync via ``.item()``)."""
-    return os.environ.get("MM_TRAIN_VERBOSE_LOGS", "0").lower() in ("1", "true", "yes")
 
 
 class MultimodalTransformerTrainModule(TransformerTrainModule):
@@ -92,6 +90,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
+        fsdp_reshard_after_forward: Optional[bool] = None,
+        fsdp_nest_connector: Optional[bool] = None,
+        log_fsdp_topology: Optional[bool] = None,
+        verbose_step_logs: Optional[bool] = None,
     ):
         # NOTE: deliberately bypass ``TransformerTrainModule.__init__`` (which calls
         # ``parallelize_model``, requiring a ``Transformer``); call the grandparent.
@@ -126,19 +128,42 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         # optimizer so frozen params are excluded from optimizer groups.
         self.freeze_params = freeze_params or []
         n_frozen = 0
+        matched_patterns: set = set()
         for name, p in model.named_parameters():
-            if any(fnmatch(name, pat) for pat in self.freeze_params):
-                p.requires_grad_(False)
-                n_frozen += 1
+            for pat in self.freeze_params:
+                if fnmatch(name, pat):
+                    p.requires_grad_(False)
+                    n_frozen += 1
+                    matched_patterns.add(pat)
+                    break
         if self.freeze_params:
             log.info(f"Froze {n_frozen} parameter tensors matching {self.freeze_params}")
+            # Unlike optimizer group overrides (which are strict), an unmatched freeze glob
+            # would otherwise leave the params trainable with no signal at all.
+            for pat in self.freeze_params:
+                if pat not in matched_patterns:
+                    log.warning(
+                        f"freeze_params pattern '{pat}' does not match any parameter — "
+                        "nothing was frozen for it"
+                    )
 
         model.to(self.device)
-        if vision_activation_checkpointing and hasattr(
-            model.vision, "apply_activation_checkpointing"
+        # A fully-frozen submodule has no trainable params, so wrapping it in activation
+        # checkpointing buys no backward-memory savings — and under compile, checkpointing a
+        # frozen (eval-mode) submodule has been observed to hit "RNG ops in recompute regions"
+        # (dropout inside a recompute region the AC/dynamo partitioner can't handle for a
+        # no-grad path). Skip AC entirely for a submodule with zero trainable parameters.
+        vision_params = list(model.vision.parameters())
+        vision_is_frozen = bool(vision_params) and not any(p.requires_grad for p in vision_params)
+        if (
+            vision_activation_checkpointing
+            and not vision_is_frozen
+            and hasattr(model.vision, "apply_activation_checkpointing")
         ):
             model.vision.apply_activation_checkpointing()
             log.info("Applied per-block activation checkpointing to model.vision")
+        elif vision_activation_checkpointing and vision_is_frozen:
+            log.info("Skipping vision activation checkpointing: encoder is fully frozen")
         if connector_activation_checkpointing and hasattr(
             model.connector, "apply_activation_checkpointing"
         ):
@@ -188,7 +213,43 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, strict=True
         )
-        self.load_key_mapping = load_key_mapping
+        # Always accept checkpoints written before the vision modules moved under
+        # `vision_backbone`. `swap_param_keys` skips entries whose checkpoint-side key is
+        # missing from the checkpoint metadata, so this is a no-op for newer checkpoints
+        # and doesn't need a flag. Caller-supplied entries win on conflict.
+        #
+        # Must be derived before `_parallelize`: FSDP replaces the parameters with
+        # DTensors, but the *names* are unchanged, so ordering only matters for reading
+        # the module tree cheaply on unsharded params.
+        # Parallelism / logging knobs that used to be `MM_*` environment variables read
+        # at their call sites. `MultimodalTransformerTrainModuleConfig.__post_init__`
+        # normally resolves these, so they arrive concrete; the env fallback here only
+        # covers direct construction of the train module without a config.
+        self.fsdp_reshard_after_forward = (
+            env_bool("MM_FSDP_RESHARD_AFTER_FORWARD", True)
+            if fsdp_reshard_after_forward is None
+            else fsdp_reshard_after_forward
+        )
+        self.fsdp_nest_connector = (
+            env_bool("MM_FSDP_NEST_CONNECTOR", True)
+            if fsdp_nest_connector is None
+            else fsdp_nest_connector
+        )
+        self.log_fsdp_topology = (
+            env_bool("MM_FSDP_LOG_TOPOLOGY", True)
+            if log_fsdp_topology is None
+            else log_fsdp_topology
+        )
+        self.verbose_step_logs = (
+            env_bool("MM_TRAIN_VERBOSE_LOGS", False)
+            if verbose_step_logs is None
+            else verbose_step_logs
+        )
+
+        legacy_mapping: Dict[str, str] = {}
+        if hasattr(self.model, "legacy_vision_key_mapping"):
+            legacy_mapping = self.model.legacy_vision_key_mapping()
+        self.load_key_mapping = {**legacy_mapping, **(load_key_mapping or {})}
 
         # Apply data parallelism IN-PLACE *before* building the optimizer: composable
         # DDP/FSDP keep the model's type, attributes, and (prefix-free) parameter names,
@@ -216,20 +277,35 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 dp_config.param_dtype.as_pt() if dp_config.param_dtype is not None else None
             )
             reduce_dtype = dp_config.reduce_dtype.as_pt()
-            # Shard the language model with its own (per-block) FSDP wrapping.
+            raf = self.fsdp_reshard_after_forward
+            # Shard the language model with its own (per-block) FSDP wrapping. `raf` is
+            # passed explicitly: `Transformer.apply_fsdp` no longer reads MM_FSDP_* from
+            # the environment, because it is the shared LM path for every text-only
+            # OLMo2/OLMo3 run. Passing it here keeps the tuned multimodal behaviour while
+            # leaving text-only runs on the standard default.
             self.model.lm.apply_fsdp(
                 dp_mesh=dp_mesh,
                 param_dtype=param_dtype,
                 reduce_dtype=reduce_dtype,
                 wrapping_strategy=dp_config.wrapping_strategy,
                 prefetch_factor=dp_config.prefetch_factor,
+                reshard_after_forward=raf,
             )
-            # Shard the vision encoder + connector, then the root so ``self.model`` is an
-            # FSDPModule (the inherited micro-batch / gradient-sync handling keys off this).
+            # Match mm_olmo's FSDP2 topology: each ViT block is its own FSDP
+            # unit before sharding the remaining encoder parameters.
             mp = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
-            fully_shard(self.model.vision, mesh=dp_mesh, mp_policy=mp)
-            fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp)
-            fully_shard(self.model, mesh=dp_mesh, mp_policy=mp)
+            vb = self.model.vision_backbone
+            if self.fsdp_nest_connector:
+                vb.apply_fsdp(dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            else:
+                if hasattr(vb.vision, "apply_fsdp"):
+                    vb.vision.apply_fsdp(dp_mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+                else:
+                    fully_shard(vb.vision, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+                fully_shard(vb.connector, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            fully_shard(self.model, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
+            if self.log_fsdp_topology:
+                log_fsdp_topology(self.model, label="multimodal")
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
@@ -262,15 +338,22 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         batch.pop("pack_source_names", None)
         return input_ids, labels, loss_masks, batch
 
+    def _vision_is_frozen(self) -> bool:
+        """True when no vision-encoder parameter requires grad (encoder fully frozen)."""
+        params = list(self._multimodal.vision.parameters())
+        return bool(params) and not any(p.requires_grad for p in params)
+
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         super()._set_model_mode(mode)
         # Frozen vision should stay in eval mode (mm_olmo trains the ViT; stage-1 freezes it).
-        if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
+        # Checked against the module's own params rather than the freeze globs so this stays
+        # correct regardless of where the encoder is registered (`vision_backbone.vision.*`).
+        if mode == "train" and self._vision_is_frozen():
             self._multimodal.vision.eval()
 
     def _log_batch_sources(self, batch: Dict[str, Any], local_weight: torch.Tensor) -> None:
-        """Log per-rank packed source names (enable with ``MM_TRAIN_VERBOSE_LOGS=1``)."""
-        if not _mm_train_verbose_logs():
+        """Log per-rank packed source names (enable with ``verbose_step_logs``)."""
+        if not self.verbose_step_logs:
             return
         sources = batch.get("pack_source_names")
         if sources is None:
@@ -294,6 +377,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._set_model_mode("train")
+        self._multimodal.clear_embedding_step_cache()
 
         # Global loss-weight divisor (mm_olmo BatchDivisor.global_batch): the sum of
         # positive loss weights over the whole global batch, divided by DP world size.
@@ -329,7 +413,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
 
-        if get_rank() == 0 and not dry_run and _mm_train_verbose_logs():
+        if get_rank() == 0 and not dry_run and self.verbose_step_logs:
             images = batch.get("images")
             bsz, seq_len = batch["input_ids"].shape[:2]
             n_crops = int(images.shape[1]) if images is not None else 0
@@ -420,18 +504,18 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                         f"Training failed on another rank (rank {get_rank()} had finite CE)"
                     )
 
-                if dry_run:
-                    continue
-
                 loss = ce_loss / div_factor
                 if z_loss is not None:
                     loss = loss + z_loss / div_factor
 
-                ce_batch_loss += get_local_tensor(ce_loss.detach())
-                weight_total += get_local_tensor((flat_weights > 0).sum().detach()).float()
-                if z_batch_loss is not None and z_loss is not None:
-                    z_batch_loss += get_local_tensor(z_loss.detach())
+                if not dry_run:
+                    ce_batch_loss += get_local_tensor(ce_loss.detach())
+                    weight_total += get_local_tensor((flat_weights > 0).sum().detach()).float()
+                    if z_batch_loss is not None and z_loss is not None:
+                        z_batch_loss += get_local_tensor(z_loss.detach())
 
+                # Run backward even during the trainer dry-run so FSDP reshards between
+                # microbatches and peak memory reflects a real training step.
                 loss.backward()
 
         del batch
@@ -442,6 +526,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if dry_run:
             if hasattr(self._lm, "reset_auxiliary_metrics"):
                 self._lm.reset_auxiliary_metrics()
+            self._multimodal.clear_embedding_step_cache()
             return
 
         # Record a per-weighted-token CE loss (comparable across steps).
@@ -458,12 +543,13 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
 
-        if not dry_run and _mm_train_verbose_logs():
+        if not dry_run and self.verbose_step_logs:
             log.info(
                 "train_batch rank=%d complete local_weight=%.1f",
                 get_rank(),
                 float(local_weight.item()),
             )
+        self._multimodal.clear_embedding_step_cache()
 
     def optim_step(self):
         if self.max_grad_norm is not None:
@@ -537,6 +623,38 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
+
+    fsdp_reshard_after_forward: Optional[bool] = None
+    """Reshard FSDP parameters after each forward (default on). ``False`` keeps them
+    unsharded across a step's microbatches: fewer all-gathers, roughly double the FSDP
+    parameter memory. Applies to the multimodal stack only — the shared
+    ``Transformer.apply_fsdp`` path takes this as an explicit argument."""
+
+    fsdp_nest_connector: Optional[bool] = None
+    """Shard the ViT and connector as one FSDP subtree (mm_olmo ``vision_backbone``
+    layout, default). ``False`` gives the connector its own unit."""
+
+    log_fsdp_topology: Optional[bool] = None
+    """Log the resulting FSDP module topology once at startup (default on)."""
+
+    verbose_step_logs: Optional[bool] = None
+    """Per-step batch/optim diagnostics (default off). Forces a CUDA sync via ``.item()``."""
+
+    def __post_init__(self):
+        # Resolve the legacy env vars HERE rather than in the train module, so the values
+        # are concrete by the time the config is serialized. `build()` drops `None` fields
+        # (`as_dict(exclude_none=True)`), so leaving them unresolved would record
+        # `fsdp_reshard_after_forward: null` in a saved config for a run that actually
+        # used `False` — which is precisely the "not serialized into the saved config"
+        # problem these fields exist to fix.
+        if self.fsdp_reshard_after_forward is None:
+            self.fsdp_reshard_after_forward = env_bool("MM_FSDP_RESHARD_AFTER_FORWARD", True)
+        if self.fsdp_nest_connector is None:
+            self.fsdp_nest_connector = env_bool("MM_FSDP_NEST_CONNECTOR", True)
+        if self.log_fsdp_topology is None:
+            self.log_fsdp_topology = env_bool("MM_FSDP_LOG_TOPOLOGY", True)
+        if self.verbose_step_logs is None:
+            self.verbose_step_logs = env_bool("MM_TRAIN_VERBOSE_LOGS", False)
 
     def build(
         self, model: torch.nn.Module, device: Optional[torch.device] = None

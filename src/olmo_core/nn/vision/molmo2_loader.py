@@ -76,6 +76,12 @@ __all__ = [
     "ensure_hf_masking_compat",
     "retie_word_embeddings",
     "reinit_rope_buffers",
+    # Vision key-layout compatibility. Public because they are the contract other
+    # repos use to read OLMo-core checkpoints across the `vision_backbone.` rename —
+    # olmo-eval's checkpoint loader imports `canonicalize_vision_keys` directly.
+    "VISION_BACKBONE_PREFIX",
+    "canonicalize_vision_keys",
+    "strip_vision_backbone_prefix",
 ]
 
 
@@ -204,6 +210,47 @@ def reinit_rope_buffers(model: "torch.nn.Module") -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+VISION_BACKBONE_PREFIX = "vision_backbone."
+"""Prefix the vision encoder and connector are registered under on :class:`MultimodalLM`."""
+
+
+def canonicalize_vision_keys(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Move legacy ``vision.*`` / ``connector.*`` keys under :data:`VISION_BACKBONE_PREFIX`.
+
+    The converters below build keys from ``vision.``/``connector.`` literals, which was
+    the registered layout before the modules moved into a ``VisionBackbone`` submodule.
+    ``MultimodalLM`` used to paper over that with a ``load_state_dict`` override, but that
+    override also rewrote *saved* model keys while leaving optimizer FQNs alone, so it was
+    removed in favour of one canonical key space (see
+    :meth:`~olmo_core.nn.vision.MultimodalLM.legacy_vision_key_mapping`). Converter output
+    is normalized here instead, so ``load_state_dict(converted, strict=False)`` still
+    covers the ViT and connector rather than silently reporting them as unexpected keys
+    and leaving them randomly initialized.
+
+    Idempotent: keys already carrying the prefix are passed through.
+    """
+    out: Dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        if key.startswith(("vision.", "connector.")):
+            out[VISION_BACKBONE_PREFIX + key] = value
+        else:
+            out[key] = value
+    return out
+
+
+def strip_vision_backbone_prefix(
+    state_dict: Dict[str, torch.Tensor],
+) -> Dict[str, torch.Tensor]:
+    """Inverse of :func:`canonicalize_vision_keys` — accept either layout on read."""
+    out: Dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        if key.startswith(VISION_BACKBONE_PREFIX):
+            out[key[len(VISION_BACKBONE_PREFIX) :]] = value
+        else:
+            out[key] = value
+    return out
 
 
 def _require(hf_sd: Dict[str, torch.Tensor], key: str) -> torch.Tensor:
@@ -462,7 +509,7 @@ def molmo2_hf_state_dict_to_multimodal_lm(
             hf_state_dict, f"model.vision_backbone.image_projector.{proj}.weight"
         )
 
-    return out
+    return canonicalize_vision_keys(out)
 
 
 def multimodal_lm_state_dict_to_hf(
@@ -475,7 +522,12 @@ def multimodal_lm_state_dict_to_hf(
 
     This is the inverse of :func:`molmo2_hf_state_dict_to_multimodal_lm` for
     weight export (e.g. before running olmo-eval's HF multimodal provider).
+
+    Accepts either vision key layout: current ``vision_backbone.*`` state dicts and
+    checkpoints predating that rename both work, since the lookups below are written
+    against the legacy names.
     """
+    oc_state_dict = strip_vision_backbone_prefix(oc_state_dict)
     out: Dict[str, torch.Tensor] = {}
     lm_cfg = cfg.lm
     n_layers = lm_cfg.n_layers

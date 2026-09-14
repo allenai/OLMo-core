@@ -32,6 +32,32 @@ TORCH_MASTER_PORT_ENV_VAR = "MASTER_PORT"
 log = logging.getLogger(__name__)
 
 
+def log_fsdp_topology(model: torch.nn.Module, *, label: str = "model") -> None:
+    """Log FSDP2 unit count and per-unit parameter totals (rank 0 only)."""
+    if not dist.is_available() or not dist.is_initialized() or dist.get_rank() != 0:
+        return
+    try:
+        from torch.distributed.fsdp import FSDPModule
+    except ImportError:
+        return
+
+    units: list[tuple[str, int]] = []
+    for name, module in model.named_modules():
+        if isinstance(module, FSDPModule):
+            nparams = sum(p.numel() for p in module.parameters(recurse=True))
+            units.append((name or "<root>", nparams))
+
+    units.sort(key=lambda x: x[0])
+    log.info(
+        "FSDP topology %s: %d units, %d total params",
+        label,
+        len(units),
+        sum(p.numel() for p in model.parameters()),
+    )
+    for unit_name, nparams in units:
+        log.info("  fsdp unit %s: %d params", unit_name, nparams)
+
+
 def _find_free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

@@ -76,6 +76,18 @@ def image_only_v9_dataset_names() -> list[str]:
     return [src.name for group in IMAGE_ONLY_V9_SUBMIXTURES for src in group.datasets]
 
 
+def image_only_v10_dataset_names() -> list[str]:
+    from olmo_core.data.multimodal.mixtures.image_only_v10 import image_only_v10_dataset_names as _names
+
+    return _names()
+
+
+def image_only_v10_new_dataset_names() -> list[str]:
+    """v10-only sources (FineVision + DynaMath), excluding the v9 superset."""
+    v9 = set(image_only_v9_dataset_names())
+    return [name for name in image_only_v10_dataset_names() if name not in v9]
+
+
 def _artifact_stem(dataset: str, index: int, seed: int) -> str:
     safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in dataset)
     return f"{safe}-{index}-{seed}"
@@ -247,8 +259,14 @@ def _run_parity(args: argparse.Namespace) -> int:
         if datasets:
             raise SystemExit("--dataset and --sweep cannot be combined")
         datasets = image_only_v9_dataset_names()
+    if getattr(args, "sweep_v10", False):
+        if datasets:
+            raise SystemExit("--dataset and --sweep-v10 cannot be combined")
+        if args.sweep:
+            raise SystemExit("--sweep and --sweep-v10 cannot be combined")
+        datasets = image_only_v10_new_dataset_names()
     if not datasets:
-        raise SystemExit("Either --dataset or --sweep is required")
+        raise SystemExit("Either --dataset, --sweep, or --sweep-v10 is required")
 
     artifact_dir = Path(args.artifact_dir) if args.artifact_dir else Path(
         tempfile.mkdtemp(prefix="molmo2-parity.")
@@ -693,11 +711,15 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
         build_academic_data,
         format_academic_example,
     )
+    from olmo_core.data.multimodal.mixtures.image_only_v10 import build_image_only_v10_datasets
     from olmo_core.data.multimodal.mixtures.image_only_v9 import build_image_only_v9_datasets
     from olmo_core.data.multimodal.sft_formatter import SftFormatter
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/Molmo2-4B", trust_remote_code=True)
-    datasets = build_image_only_v9_datasets(tokenizer, seed=args.seed)
+    if args.dataset in image_only_v10_dataset_names():
+        datasets = build_image_only_v10_datasets(tokenizer, seed=args.seed)
+    else:
+        datasets = build_image_only_v9_datasets(tokenizer, seed=args.seed)
     example = datasets[args.dataset][args.index]
     diagnostics = None
     if args.dataset in ACADEMIC_REGISTRY:
@@ -763,6 +785,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     )
     run_parser.add_argument("--dataset", action="append", help="image-only-v9 dataset name (repeatable)")
     run_parser.add_argument("--sweep", action="store_true", help="compare index 0 of all image-only-v9 datasets")
+    run_parser.add_argument(
+        "--sweep-v10",
+        action="store_true",
+        help="compare index 0 of v10-only datasets (FineVision + DynaMath)",
+    )
     run_parser.add_argument("--index", type=int, default=0)
     run_parser.add_argument("--seed", type=int, default=0)
     run_parser.add_argument("--seq_len", type=int, default=16384)

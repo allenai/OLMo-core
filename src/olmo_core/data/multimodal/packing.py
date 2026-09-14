@@ -407,20 +407,25 @@ def iter_dynamic_packs(
     buffer_size: int = 48,
     text_weight: float = 1.0,
     image_weight: float = 30.0,
+    shortcut_max_len_images: bool = False,
     flush: bool = True,
 ) -> Iterator[Dict[str, np.ndarray]]:
     """2D-knapsack-pack a stream of example dicts (mm_olmo SFT packing parity).
 
-    mm_olmo stage-2 uses ``PackingConfig(buffer_size=48, image_weight=30,
-    shortcut_max_len_images=False)`` with capacities = (sequence length, per-sequence
-    crop capacity) and quantization ``(seq_len // 512, 1)``. Text-only examples pack
-    together with image examples.
+    mm_olmo ``image-only-v9`` uses ``PackingConfig(buffer_size=48, image_weight=30,
+    shortcut_max_len_images=True)`` with image capacity from ``get_output_shapes()`` (≈25
+    crops for one high-res image). OLMo-core defaults to ``shortcut_max_len_images=False``
+    and ``max_crops_per_pack=125`` for dense multi-example packs. For mm_olmo-like
+    packing (fewer ViT crops / higher TPS), use ``max_crops_per_pack=25`` and
+    ``shortcut_max_len_images=True``.
 
     :param seq_len: token capacity per pack.
     :param max_crops_per_pack: crop capacity per pack. Use the max crops a single
         example can produce (global crop + locals; the high-res budget if any dataset
         uses ``p_high_res > 0``) or more.
     :param buffer_size: candidate buffer size (mm_olmo: 48).
+    :param shortcut_max_len_images: mm_olmo ``shortcut_max_len_images`` — emit examples
+        that alone reach the crop capacity without buffering.
     :param flush: drain the buffer once ``examples`` is exhausted (set False to match
         mm_olmo's ``packed_iterator``, which drops the tail of infinite streams).
     """
@@ -428,7 +433,7 @@ def iter_dynamic_packs(
         buffer_size,
         [
             PackingConstraint("input_ids", seq_len, True, text_weight, max(1, seq_len // 512)),
-            PackingConstraint("images", max_crops_per_pack, False, image_weight, 1),
+            PackingConstraint("images", max_crops_per_pack, shortcut_max_len_images, image_weight, 1),
         ],
     )
     for ex in examples:
