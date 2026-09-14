@@ -1,1 +1,2 @@
 job_id	experiment_id	launched_utc	ckpt	mem_freq	rungs	rows	keeps	status	notes
+01M2GWTZQMS0KYHRY01DG4357G	01M2GWTZQMS0KYHRY01DG4357G	2026-09-14T21:23:22Z	q4b-comp-block128-5task-dolci25-nocpt/step8550	127	2k,32k	48	0,0.125	LAUNCHED	primary; commit 90ec255f4

@@ -229,10 +229,17 @@ class KVStash:
         self.lm: Dict[int, tuple] = {}
         self.mean: Dict[int, tuple] = {}
         self.on = False
+        # Block-local pass: ``cu_doc_lens`` must reach the BACKEND (block-diagonal masking) but not
+        # RoPE, which would reset each block's positions to 0..block-1 and destroy the absolute
+        # frame the captured landmark keys are injected in. Dropping it here (and any position_ids)
+        # leaves RoPE on the default absolute 0..T-1 while the backend still masks per block.
+        self.rope_absolute = False
         self._orig = Attention._prepare_qkv
         stash = self
 
         def wrapper(attn, x, **kw):
+            if stash.rope_absolute:
+                kw = {**kw, "cu_doc_lens": None, "position_ids": None}
             q, k, v = stash._orig(attn, x, **kw)
             if stash.on and id(attn) in stash.layers:
                 li = stash.layers[id(attn)]
@@ -377,15 +384,10 @@ def run_rung(lm_model, pl_model, stash, rows, mem_freq, keeps, seed, res, rung, 
         # (the landmark forward would reset RoPE per document when given ``cu_doc_lens``).
         stash.clear()
         stash.on = True
+        stash.rope_absolute = True
         doc_lens = torch.full((1, lay["n_blocks"]), block, dtype=torch.int32, device="cuda")
-        abs_pos = torch.arange(T, device="cuda")[None]
-        pl_model(
-            lm_ids,
-            logits_to_keep=pred_l[None],
-            doc_lens=doc_lens,
-            max_doc_lens=[block],
-            position_ids=abs_pos,
-        )
+        pl_model(lm_ids, logits_to_keep=pred_l[None], doc_lens=doc_lens, max_doc_lens=[block])
+        stash.rope_absolute = False
         stash.on = False
         bl_kv = {li: (a.clone(), b.clone()) for li, (a, b) in stash.lm.items()}
 
