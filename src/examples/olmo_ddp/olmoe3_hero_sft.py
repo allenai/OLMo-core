@@ -1,0 +1,417 @@
+"""Exact small LC architecture with packed assistant-only SFT and matched LR sweeps."""
+
+import hashlib
+import json
+import math
+import os
+import sys
+from dataclasses import dataclass
+from functools import partial
+from pathlib import Path
+from typing import ClassVar
+
+import olmoe3_small_hero as hero
+import torch
+import torch.distributed as dist
+from olmoe3_hero_sft_data import SFTPackedDatasetConfig, self_test
+from olmoe3_hero_sft_plan import (
+    AUTOMATION,
+    BATCH,
+    CACHE,
+    CAMPAIGN,
+    CONTROL,
+    DATA,
+    DATA_PLAN,
+    GPUS,
+    MOUNT,
+    SEED,
+    SEQUENCE,
+    data_plan,
+    find_run,
+    runs,
+)
+from olmoe3_lr_sweep_watch import atomic_json, log
+
+from olmo_core.data import NumpyDataLoaderConfig, TokenizerConfig
+from olmo_core.data.utils import get_labels
+from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.internal.experiment import CliContext, DataComponents, SubCmd, build_config, main
+from olmo_core.optim.scheduler import LinearWithWarmup
+from olmo_core.train import Duration
+from olmo_core.train.callbacks import Callback
+from olmo_core.train.common import LoadStrategy
+from olmo_core.train.utils import EnvRngStates
+from olmo_core.utils import move_to_device
+
+hero.find_run = find_run
+
+
+def dataset_config(tokenizer, split):
+    """Keep whole conversations, supervised masks and recurrent/attention boundaries."""
+    assert split in ("train", "validation")
+    directory = DATA / ("train-single-source" if split == "train" else split)
+    return SFTPackedDatasetConfig.glob(
+        str(directory / "token_ids_part_*.npy"),
+        tokenizer=tokenizer,
+        label_mask_paths=[str(directory / "labels_mask_part_*.npy")],
+        sequence_length=SEQUENCE,
+        generate_doc_lengths=True,
+        source_group_size=8,
+        work_dir=str(CACHE / split),
+        instance_filter_config=None,
+    )
+
+
+def common_components(context, **kwargs):
+    common = hero.common_components(context, **kwargs)
+    common.work_dir = str(ROOT_WORK / common.run_name)
+    assert common.tokenizer.bos_token_id is None
+    return common
+
+
+ROOT_WORK = CACHE.parent / "work"
+
+
+def data_components(common):
+    return DataComponents(
+        dataset=dataset_config(common.tokenizer, "train"),
+        data_loader=NumpyDataLoaderConfig(
+            global_batch_size=BATCH,
+            work_dir=str(ROOT_WORK / common.run_name / "loader"),
+            seed=SEED,
+            num_workers=4,
+            prefetch_factor=2,
+            num_threads=2,
+        ),
+    )
+
+
+def model_config(common):
+    config = hero.model_config(common)
+    config.recompute_each_block = True
+    config.recompute_all_blocks_by_chunk = False
+    for block in [config.block, *config.block_overrides.values()]:
+        mixer = block.sequence_mixer
+        if hasattr(mixer, "use_cute_kernel"):
+            mixer.use_cute_kernel = False
+    assert not config.two_batch_overlap
+    return config
+
+
+def train_module_config(common):
+    r = find_run(common.run_name)
+    config = hero.train_module_config(common)
+    config.rank_microbatch_size = SEQUENCE
+    config.optim.lr = r.lr
+    config.optim.weight_decay = 0.0
+    config.scheduler = LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0)
+    config.z_loss_multiplier = None
+    config.reset_optimizer_states_on_load = (
+        Path(os.environ.get("HERO_SFT_LOAD", str(r.source))) == r.source
+    )
+    return config
+
+
+def same(a, b):
+    """Compare saved RNG/loader containers without ambiguous tensor truth values."""
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(same(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)):
+        return (
+            isinstance(b, (list, tuple))
+            and len(a) == len(b)
+            and all(same(x, y) for x, y in zip(a, b))
+        )
+    if torch.is_tensor(a):
+        return torch.equal(a.cpu(), b.cpu())
+    if hasattr(a, "shape"):
+        return bool((a == b).all())
+    return a == b
+
+
+@dataclass
+class SFTAudit(Callback):
+    """Check 64->8 weights-only transfer, later full-state resumes and finite updates."""
+
+    priority: ClassVar[int] = 10
+    run_id: str = ""
+
+    def post_checkpoint_loaded(self, path):
+        r = find_run(self.run_id)
+        actual = hero.state_sample(self.trainer)
+        if Path(path) == r.source:
+            saved = json.loads((r.source / "resume_audit/rank0.json").read_text())
+            keys = {k for k in actual["tensors"] if k.startswith("model_param/")}
+            keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
+            assert keys and all(actual["tensors"][k] == saved["tensors"][k] for k in keys)
+            assert self.step == self.trainer.global_train_tokens_seen == 0
+            optim = self.trainer.train_module.optim
+            assert not optim._losses and not optim._grad_norms
+            moments = 0
+            for name, value in optim.states.items():
+                if name.endswith((".exp_avg", ".exp_avg_sq", ".step")):
+                    value = value.to_local() if hasattr(value, "to_local") else value
+                    assert not torch.count_nonzero(value).item(), name
+                    moments += 1
+            assert moments > 0
+            proof = {
+                "weights_and_buffers_sampled_exact": True,
+                "optimizer_reset": True,
+                "data_reset": True,
+            }
+        else:
+            assert Path(path).parent == r.root
+            saved = json.loads((Path(path) / f"resume_audit/rank{get_rank()}.json").read_text())
+            assert same(saved, actual), "SFT full-state sample changed on resume"
+            trainer_saved = torch.load(
+                Path(path) / "train" / f"rank{get_rank()}.pt",
+                map_location="cpu",
+                weights_only=False,
+            )
+            assert same(trainer_saved["rng"], EnvRngStates.current_state().as_dict())
+            assert same(trainer_saved["data_loader"], self.trainer.data_loader.state_dict())
+            proof = {"sampled_state_exact": True, "rng_exact": True, "data_state_exact": True}
+        atomic_json(r.root / "audit" / f"restore-step{self.step}-rank{get_rank()}.json", proof)
+
+    def pre_train(self):
+        r = find_run(self.run_id)
+        assert get_world_size() == GPUS and MOUNT.is_mount()
+        assert self.trainer.data_loader.total_batches == data_plan()["steps_per_epoch"]
+        registration = json.loads((CONTROL / "registrations" / f"{r.run_id}.json").read_text())
+        assert registration["checkpoint_root"] == str(r.root) and registration["enabled"]
+        assert registration["bucket_id"] == r.bucket and registration["remote_prefix"] == r.prefix
+        tm = self.trainer.train_module
+        original_save = tm.save_state_dict_direct
+
+        def audited_save(directory, **kwargs):
+            before = hero.state_sample(self.trainer)
+            original_save(directory, **kwargs)
+            after = hero.state_sample(self.trainer)
+            assert same(before, after), "Synchronous save mutated state"
+            atomic_json(Path(directory).parent / "resume_audit" / f"rank{get_rank()}.json", after)
+
+        tm.save_state_dict_direct = audited_save
+        self.first_batch = True
+        if get_rank() == 0:
+            atomic_json(
+                r.root / "audit" / f"session-{os.environ.get('BEAKER_JOB_ID')}-{self.step}.json",
+                dict(
+                    **r.as_dict(),
+                    source_commit=os.environ.get("GIT_REF"),
+                    start=self.step,
+                    data_plan=data_plan(),
+                ),
+            )
+
+    def pre_step(self, batch):
+        if self.first_batch:
+            ids, mask = batch["input_ids"], batch["label_mask"]
+            assert "doc_lens" in batch and mask.dtype == torch.bool
+            assert mask.any() and (~mask).any() and not mask[ids == 100277].any()
+            assert not mask[:, 0].any()
+            atomic_json(
+                find_run(self.run_id).root
+                / "audit"
+                / f"batch-step{self.step}-rank{get_rank()}.json",
+                {
+                    "supervised_tokens": int(mask.sum()),
+                    "doc_lengths_present": True,
+                    "input_sha256": hashlib.sha256(
+                        ids.detach().cpu().numpy().tobytes()
+                    ).hexdigest(),
+                },
+            )
+            self.first_batch = False
+
+    def log_metrics(self, step, metrics):
+        for key, value in metrics.items():
+            if key in ("train/CE loss", "optim/total grad norm"):
+                assert math.isfinite(float(value)), (step, key, value)
+        if get_rank() == 0:
+            with (find_run(self.run_id).root / "audit/metrics.jsonl").open("a") as handle:
+                handle.write(json.dumps(dict(step=step, **metrics)) + "\n")
+
+
+@dataclass
+class SFTValidation(Callback):
+    """Global assistant-token-weighted CE with packed document isolation, no dropped tail."""
+
+    run_id: str = ""
+
+    def pre_train(self):
+        self.dataset = dataset_config(
+            (
+                self.trainer.data_loader.dataset.tokenizer
+                if hasattr(self.trainer.data_loader.dataset, "tokenizer")
+                else TokenizerConfig.dolma2()
+            ),
+            "validation",
+        ).build()
+        self.dataset.prepare()
+        self.evaluate()
+
+    def post_step(self):
+        if self.step % 200 == 0 or self.step == data_plan()["steps_per_epoch"]:
+            self.evaluate()
+
+    def post_train(self):
+        self.evaluate()
+
+    def evaluate(self):
+        r = find_run(self.run_id)
+        totals = torch.zeros(2, dtype=torch.float64, device=self.trainer.device)
+        n = len(self.dataset)
+        batches = 1 if r.smoke else math.ceil(n / GPUS)
+        with torch.no_grad():
+            for batch_index in range(batches):
+                index = batch_index * GPUS + get_rank()
+                batch = self.trainer.data_loader.collator([self.dataset[index % n]])
+                batch = move_to_device(batch, self.trainer.device)
+                labels = get_labels(batch, label_ignore_index=-100)
+                output = self.trainer.train_module.eval_batch(batch, labels=labels)
+                if index < n:
+                    valid = labels != -100
+                    totals[0] += output.ce_loss[valid].double().sum()
+                    totals[1] += valid.sum()
+                del output
+        dist.all_reduce(totals, group=self.trainer.dp_process_group)
+        assert totals[1] > 0 and torch.isfinite(totals).all()
+        ce = float((totals[0] / totals[1]).item())
+        self.trainer.record_metric("eval/sft-validation/assistant CE loss", ce)
+        if get_rank() == 0:
+            with (r.root / "audit/validation.jsonl").open("a") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "step": self.step,
+                            "ce_loss": ce,
+                            "supervised_tokens": int(totals[1]),
+                            "packed_batches": batches,
+                            "smoke": r.smoke,
+                        }
+                    )
+                    + "\n"
+                )
+        log("SFT_VALIDATION", run=r.run_id, step=self.step, ce_loss=ce)
+
+
+def trainer_config(common):
+    r = find_run(common.run_name)
+    plan = data_plan()
+    config = hero.trainer_config(common)
+    for key in ("hero_audit", "hero_complete", "lm_evaluator"):
+        config.callbacks.pop(key, None)
+    source = Path(os.environ.get("HERO_SFT_LOAD", str(r.source)))
+    fresh = source == r.source
+    config.load_path = str(source)
+    config.load_strategy = LoadStrategy.always
+    config.load_optim_state = not fresh
+    config.load_trainer_state = not fresh
+    config.max_duration = Duration.epochs(2)
+    stop = int(os.environ.get("HERO_SFT_STOP", str(4 if r.smoke else plan["total_steps"])))
+    config.hard_stop = Duration.steps(stop)
+    config.metrics_collect_interval = 1 if r.smoke else 10
+    cp = config.callbacks["checkpointer"]
+    cp.save_interval = None
+    cp.fixed_steps = [2, 4] if r.smoke else [plan["steps_per_epoch"], plan["total_steps"]]
+    config.callbacks["sft_audit"] = SFTAudit(run_id=r.run_id)
+    config.callbacks["sft_validation"] = SFTValidation(run_id=r.run_id)
+    wb = config.callbacks["wandb"]
+    wb.group = CAMPAIGN + ("-smoke" if r.smoke else "")
+    wb.tags = [
+        r.arm,
+        "sft",
+        "gptoss120b-deduped",
+        "2-epochs",
+        "8g",
+        "512ki",
+        "64k-packed",
+        "fla",
+        "assistant-masks",
+        "block-recompute",
+        "lr-" + r.lr_label,
+    ]
+    wb.notes = json.dumps(r.as_dict())
+    return config
+
+
+def config_builder():
+    return partial(
+        build_config,
+        global_batch_size=BATCH,
+        max_sequence_length=SEQUENCE,
+        num_nodes=1,
+        common_config_builder=common_components,
+        data_config_builder=data_components,
+        model_config_builder=model_config,
+        train_module_config_builder=train_module_config,
+        trainer_config_builder=trainer_config,
+        beaker_image=hero.qualified.base.BEAKER_IMAGE,
+        beaker_workspace=hero.WORKSPACE,
+        include_default_evals=False,
+        num_execution_units=1,
+    )
+
+
+def prepare():
+    """Prepare packing once and verify the actual six configs in the qualified image."""
+    assert MOUNT.is_mount() and DATA.is_dir()
+    self_test()
+    manifest = json.loads((DATA / "manifest.json").read_text())
+    assert manifest["status"] == "complete"
+    assert json.loads((DATA / "train-single-source/READY.json").read_text())["passed"]
+    tok = TokenizerConfig.dolma2()
+    lengths = {}
+    for split in ("train", "validation"):
+        dataset = dataset_config(tok, split).build()
+        dataset.prepare()
+        lengths[split] = len(dataset)
+        for idx in {0, len(dataset) - 1, len(dataset) // 2}:
+            item = dataset[idx]
+            assert item["input_ids"].shape == (SEQUENCE,)
+            assert item["label_mask"].dtype == torch.bool and item["label_mask"].any()
+            assert "doc_lens" in item
+    steps = lengths["train"] // GPUS
+    plan = {
+        "passed": True,
+        "source_commit": os.environ["GIT_REF"],
+        "batch_tokens": BATCH,
+        "sequence_length": SEQUENCE,
+        "packed_instances": lengths,
+        "steps_per_epoch": steps,
+        "total_steps": steps * 2,
+        "raw_training_tokens": manifest["splits"]["train"]["input_tokens"],
+        "dropped_packed_instances_per_epoch": lengths["train"] % GPUS,
+        "manifest_sha256": hashlib.sha256((DATA / "manifest.json").read_bytes()).hexdigest(),
+    }
+    atomic_json(DATA_PLAN, plan)
+    for r in runs() + runs(True):
+        config = config_builder()(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
+        assert (
+            config.model.num_active_params == 794233472 and config.model.num_params == 12496341632
+        )
+        assert config.data_loader.global_batch_size == BATCH
+        assert config.train_module.rank_microbatch_size == SEQUENCE
+        assert config.dataset.generate_doc_lengths and config.dataset.label_mask_paths
+        assert config.train_module.optim.lr == r.lr and config.train_module.optim.weight_decay == 0
+        assert config.train_module.z_loss_multiplier is None
+        assert not config.trainer.load_optim_state and not config.trainer.load_trainer_state
+        assert config.model.recompute_each_block
+        atomic_json(AUTOMATION / "configs" / f"{r.run_id}.json", config.as_dict(json_safe=True))
+    atomic_json(
+        AUTOMATION / "config-success.json",
+        {
+            "passed": True,
+            "source_commit": os.environ["GIT_REF"],
+            "runs": [r.as_dict() for r in runs()],
+        },
+    )
+    log("SFT_CONFIG_DATA_GATE_PASSED", **plan)
+
+
+if __name__ == "__main__":
+    hero.qualified.apply_policy()
+    if sys.argv[1:] == ["--prepare"]:
+        prepare()
+    else:
+        main(config_builder=config_builder())
