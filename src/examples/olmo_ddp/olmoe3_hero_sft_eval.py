@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import fcntl
 import hashlib
 import json
 import math
@@ -10,7 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from olmoe3_hero_sft_resume import install_resume_cache
 from olmoe3_hero_sft_tasks import TASKS
+
+# Multiprocessing spawn imports this module before entering the inference worker.
+install_resume_cache()
 
 
 def code_preflight():
@@ -154,7 +159,15 @@ def main():
     model = export_root(run) / run.arm / "step1810/hf"
     conversion = validate_export(model)
     output = model.parent / "posttrain-evals-r1" / args.bundle
-    output.mkdir(parents=True, exist_ok=False)
+    resume = os.environ.get("HERO_SFT_RESUME") == "1"
+    if resume:
+        assert args.bundle in ("math500", "alpaca")
+        assert (output / "recipe.json").is_file(), "Resume needs the original recipe"
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+    # Retain the lock until this main invocation and its evaluator subprocess finish.
+    output_lock = (output / "RESUME.lock").open("a")
+    fcntl.flock(output_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     bundles = list(TASKS) if args.bundle == "smoke" else [args.bundle]
     if "humaneval" in bundles:
         code_preflight()
@@ -247,7 +260,25 @@ def main():
         "note": "Think chat adapters; no PT few-shot prompts; unfinished reasoning scores as empty final answer.",
     }
     recipe = output / "recipe.json"
-    recipe.write_text(json.dumps(receipt, indent=2) + "\n")
+    if resume:
+        assert json.loads(recipe.read_text()) == json.loads(
+            json.dumps(receipt)
+        ), "Refuse model/recipe drift on resume"
+        if (output / "success.json").is_file():
+            proof = json.loads((output / "success.json").read_text())
+            assert (
+                proof["passed"] and proof["model"] == str(model) and proof["bundle"] == args.bundle
+            )
+            assert proof["recipe_sha256"] == hashlib.sha256(recipe.read_bytes()).hexdigest()
+            assert (
+                proof["metrics_sha256"]
+                == hashlib.sha256((output / "metrics.json").read_bytes()).hexdigest()
+            )
+            print("SFT_POSTTRAIN_ALREADY_COMPLETE", flush=True)
+            return
+        os.environ["HERO_SFT_RESUME_RECIPE"] = str(recipe)
+    else:
+        recipe.write_text(json.dumps(receipt, indent=2) + "\n")
     print("SFT_POSTTRAIN_EVAL_START", json.dumps(cmd), flush=True)
     subprocess.run([sys.executable, __file__, "--execute", str(recipe)], check=True)
     metrics_path = output / "metrics.json"

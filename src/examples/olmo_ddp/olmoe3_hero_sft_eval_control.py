@@ -16,6 +16,33 @@ from olmoe3_lr_sweep_watch import atomic_json, log, replace_env
 DEPLOYMENT = AUTOMATION / "deployments/posteval-r1"
 ALPACA_PIN = "cd543a149df89434d8a54582c0151c0b945c3d20"
 BUNDLES = ("math500", "ifbench", "humaneval", "alpaca")
+ORIGINAL_PIN = "89e7dcb739e2168f5f1022c49f35eec2167383b8"
+
+
+def resume_spec(original, commit):
+    """Change only wrapper revision and preemption policy, preserving inference/recipe."""
+    spec = copy.deepcopy(original)
+    assert len(spec["tasks"]) == 1
+    task = spec["tasks"][0]
+    command = task["arguments"][0]
+    assert command.count(ORIGINAL_PIN) == 2
+    task["arguments"] = [command.replace(ORIGINAL_PIN, commit)]
+    task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
+    replace_env(task, {"GIT_REF": commit, "HERO_SFT_RESUME": "1"})
+    spec["retry"] = {"allowedTaskRetries": 0}  # Runtime failures still require review.
+    return spec
+
+
+def is_system_preemption(beaker, work):
+    """Never retry manual cancellation, qualification failure or inference exceptions."""
+    from google.protobuf.json_format import MessageToDict
+
+    jobs = [next(iter(beaker.job.list(task=t, limit=1))) for t in work.experiment.tasks]
+    statuses = [MessageToDict(j.status) for j in jobs]
+    return bool(statuses) and all(
+        s.get("finalized") and s.get("canceledCode") == "CANCELATION_CODE_SYSTEM_PREEMPTION"
+        for s in statuses
+    )
 
 
 def model_path(run):
@@ -140,16 +167,29 @@ def main():
                     stages += list(BUNDLES)
                 for stage in stages:
                     # New campaign: every worker must understand this source/EMO split.
-                    stage_commit = commit
+                    stage_commit = ORIGINAL_PIN
                     control.commit = stage_commit
                     template = templates["qualify" if stage == "qualify" else "gen_mc"]
                     name = run.run_id + "-epoch2-" + stage + "-r1"
                     work = control.ensure(name, spec_for(template, stage, run, stage_commit))
                     state = control.report(work) if work else "ambiguous_submission"
+                    replaces = None
+                    if (
+                        stage in ("math500", "alpaca")
+                        and state == "STATUS_CANCELED"
+                        and is_system_preemption(b, work)
+                    ):
+                        replaces = work.experiment.id
+                        spec = resume_spec(b.experiment.get_spec(work).to_json(), commit)
+                        control.commit = commit
+                        work = control.ensure(name.removesuffix("-r1") + "-r2-preemption", spec)
+                        state = control.report(work) if work else "ambiguous_submission"
                     states[stage] = {
                         "status": state,
                         "experiment": work.experiment.id if work else None,
                     }
+                    if replaces:
+                        states[stage]["replaces"] = replaces
                     if stage == "qualify" and state != "STATUS_SUCCEEDED":
                         break
                     if stage not in ("qualify", "smoke") and state == "STATUS_SUCCEEDED":
