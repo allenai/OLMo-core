@@ -46,6 +46,9 @@ def training_spec(original, run, commit, prepare=False):
         leaderSelection=False,
         timeout="3h" if prepare or run.smoke else "24h",
     )
+    task.pop("synchronizedStartTimeout", None)
+    task["propagateFailure"] = False
+    task["propagatePreemption"] = False
     task["arguments"] = (
         ["python", "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"]
         if prepare
