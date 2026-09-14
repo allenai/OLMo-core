@@ -66,7 +66,7 @@ def main():
     for i, block in model.blocks.items():
         block.register_forward_hook(hook(f"{i}.block"))
         block.attention.register_forward_hook(hook(f"{i}.attention"))
-        block.feed_forward_moe.register_forward_hook(hook(f"{i}.moe"))
+        block.feed_forward_norm.register_forward_hook(hook(f"{i}.moe_norm"))
     with torch.no_grad(), sdpa_kernel(SDPBackend.MATH):
         for case_name, ids in cases:
             references[case_name] = model(input_ids=ids.cuda())[..., :vocab].cpu()
@@ -85,7 +85,7 @@ def main():
     for i, block in enumerate(model.model.layers):
         block.register_forward_hook(hook(f"{i}.block"))
         block.self_attn.register_forward_hook(hook(f"{i}.attention"))
-        block.mlp.register_forward_hook(hook(f"{i}.moe"))
+        block.post_feedforward_layernorm.register_forward_hook(hook(f"{i}.moe_norm"))
     records = []
     with torch.no_grad(), sdpa_kernel(SDPBackend.MATH):
         for case_name, ids in cases:
@@ -96,7 +96,7 @@ def main():
                 "layers": {},
             }
             for i in range(len(model.model.layers)):
-                for component in ("attention", "moe", "block"):
+                for component in ("attention", "moe_norm", "block"):
                     key = f"{i}.{component}"
                     row["layers"][key] = statistics(
                         state[case_name, key], core_states[case_name, key]
