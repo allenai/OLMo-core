@@ -213,3 +213,10 @@ Local verification checks all four PyTorch meta-module counts against native
 OLMo-core config counts, both EMO choices, and the updated attention's packed
 document isolation/gradients. This is structural validation, **not** end-to-end
 numerical equivalence or distributed GPU qualification.
+
+Native fused module construction could not be exercised in the local CPU-only
+environment because the required FLA runtime is not installed there. Config-only
+validation passed for all five geometries and all four EMO/global-balancing flag
+combinations. Tiny also matches the canonical core model configuration after the
+QK-gain update, apart from the documented portable FLA versus custom-CuTe backend
+selection. No training or benchmark jobs were launched for this partner update.

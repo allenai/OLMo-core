@@ -20,8 +20,9 @@ implementations:
 * expert dispatch/combine -> the configured rowwise NVSHMEM EP path after EP setup
 
 By default the script validates and reports the config without building modules.
-Pass ``--device meta`` to construct shapes without parameter storage, or ``--device
-cuda`` on appropriately sharded hardware. Module construction requires the production
+Pass ``--device meta`` to construct shapes without parameter storage. ``--device
+cuda`` constructs an UNSHARDED model; use the distributed harness to apply EP
+before materialization. Module construction requires the production
 FLA, FlashAttention 4, Triton, and (for expert parallelism) NVSHMEM environment.
 Use ``--model-size 30m`` for the single-GPU smoke configuration; the default is
 the trained Tiny architecture. Larger rungs are proposals, not benchmarked recipes.
@@ -284,7 +285,8 @@ def build_fused_model(options: FusedModelOptions) -> tuple[object, Transformer |
 def verify_fused_modules(model: Transformer, options: FusedModelOptions) -> None:
     """Verify that config resolution produced the intended runtime module classes."""
     geometry = GEOMETRIES[options.model_size]
-    for layer_idx, block in enumerate(model.blocks):
+    for block_key, block in model.blocks.items():
+        layer_idx = int(block_key)
         assert isinstance(block, OLMoDDPTransformerBlock)
         if layer_idx not in geometry.full_attention_layers:
             assert isinstance(block.attention, KimiDeltaAttention)
