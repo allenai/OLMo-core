@@ -14,7 +14,7 @@ from olmo_core.train.trainer import Trainer
 
 
 def install_gradient_hooks():
-    import olmo_core.nn.attention.kda as kda
+    from olmo_core.nn.attention import kda
 
     original = kda.dispatch_chunk_kda
     count = 0
