@@ -1,7 +1,8 @@
 # Can a cheaper-than-training richer slot make a pooled outlier readable? (eval-side)
 
-**Date** 2026-09-14/15 · **Status** DRAFT — model-readout runs in flight; the oracle readout is
-complete · **Branch** `prasann/landmark`
+**Date** 2026-09-14/15 · **Status** ANSWERED — no candidate makes the slot readable by a frozen
+dense model, but an oracle readout shows the signal is there and free to expose · **Branch**
+`prasann/landmark`
 **Drivers** `debug/pooled_kv/outlier_probe/outlier_richer_slot_probe.py` (can the frozen dense model
 read it?), `debug/pooled_kv/outlier_probe/slot_separability.py` (is it in the vector at all?)
 
@@ -199,14 +200,115 @@ task — it makes it a **4× better-than-chance** task. Note also that a purely 
 (`lexidf`, 0.373 / 0.125) sits between the plain mean and `cent_cmean`: the embedding mean, once
 decontaminated, is a *better* topical summary than bag-of-words, which is the encouraging direction.
 
-## 5. Result B — the model readout (frozen dense model)
+## 5. Result B — the model readout: NOTHING lifts it off the floor
 
-(runs in flight; table to follow — canonical `ds64-outlier-dense-u64M` at 2k and 8k, replicate
-`lmx-full-mixs160M-4b` at 2k and ~8k, each candidate with its `_swap` control)
+The frozen dense model's own free generation, same metric and same swap control as
+`records/outlier-slot-probe.md`. The decision rule set for this probe was **≥ 2 SE above `k/n`
+AND ≥ +0.10**, and the swap control must DROP.
+
+### Canonical: `ds64-outlier-dense-u64M`, ds64 2k rung (generation complete: 64 rows, 192 pooled
+gold documents, `k/n` floor **0.225**, per-document SE **0.030**; CE columns are the running mean at
+row 70/240)
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap | Δ(cond − swap) | \|slot\| | compaction | extra FLOPs (dense) |
+|---|---|---|---|---|---|---|---|---|---|
+| `full` | 0.014 | 0.051 | **0.979** | — (R@gold_real 0.979) | — | — | — | 1.000 | 0 |
+| `mean` (baseline) | 0.463 | 1.676 | 0.234 | **0.234 ± 0.031** | 0.229 | +0.005 | 0.221 | 0.105 | 0 |
+| `meanrn` | 0.479 | 1.724 | 0.224 | 0.224 ± 0.030 | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
+| `cmean100` | 0.486 | 1.747 | 0.234 | 0.234 ± 0.031 | 0.224 | +0.010 | 0.145 | 0.105 | 0 |
+| `cmean500` | 0.474 | 1.719 | 0.266 | **0.266 ± 0.032** | 0.234 | +0.032 | 0.160 | 0.105 | 0 |
+| `centered` | 0.486 | 1.765 | 0.224 | 0.224 ± 0.030 | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
+| `cent_cmean` (best oracle) | 0.471 | 1.711 | 0.234 | 0.234 ± 0.031 | 0.234 | +0.000 | 0.687 | 0.105 | 0 |
+| `idf` | 0.498 | 1.777 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0 |
+| `g2` | 0.468 | 1.691 | 0.229 | 0.229 ± 0.030 | 0.234 | −0.005 | 0.229 | 0.111 | 0 |
+| `g4` | 0.451 | 1.646 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.242 | 0.124 | 0 |
+| `g2cent` | 0.483 | 1.745 | 0.224 | 0.224 ± 0.030 | 0.234 | −0.010 | 0.687 | 0.111 | 0 |
+| `enc2` | 0.469 | 1.706 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0.056 |
+| `enc4` | 0.463 | 1.684 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0.113 |
+| `enc4late` | 0.446 | 1.620 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.221 | 0.105 | 0.113 |
+
+Every construction is inside **±0.041 of the `k/n` floor of 0.225**, i.e. inside 1.3 SE. The best
+cell (`cmean500`, 0.266) fails both halves of the rule: +0.041 is under +0.10 and under 2 SE, and
+its swap control sits at 0.234, a Δ of +0.032 against an SE-of-difference of 0.044. **No candidate
+passes.**
+
+At gold-blind keep 1/6 the picture is the same (154 pooled / 38 real gold documents): pooled recall
+0.182–0.266 against the same 0.225 floor, while recall on gold whose BODY stayed real is 0.53–0.76
+and is unmoved by the slot construction — the previous probe's 3–6× real-vs-pooled gap, reproduced
+with every richer slot.
+
+### Canonical 8k rung (48 generation rows, 144 pooled gold documents, floor **0.053**, SE 0.020)
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap | compaction |
+|---|---|---|---|---|---|---|
+| `full` | 0.053 | 0.154 | **0.868** | — (R@gold_real 0.868) | — | 1.000 |
+| `mean` | 0.663 | 1.920 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
+| `cmean100` | 0.737 | 2.145 | 0.056 | 0.056 ± 0.019 | 0.076 | 0.063 |
+| `cent_cmean` | 0.703 | 2.023 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
+| `enc4` | 0.693 | 2.009 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
+
+Identical to the floor, identical to the swap controls, identical to each other.
+
+### Replicate: `lmx-full-mixs160M-4b`, local ~8k corpus (n = 55, 144 pooled gold, floor **0.055**, eval_size 200)
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap |
+|---|---|---|---|---|---|
+| `full` | 1.785 | 0.187 | 0.762 | — (R@gold_real 0.729) | — |
+| `mean` | 1.692 | 2.171 | 0.049 | 0.049 ± 0.018 | 0.049 |
+| `cmean100` | 1.620 | 2.240 | 0.049 | 0.049 ± 0.018 | 0.049 |
+| `cent_cmean` | 1.677 | 2.042 | 0.049 | 0.049 ± 0.018 | 0.049 |
+| `enc4` | 1.591 | 2.050 | 0.049 | 0.049 ± 0.018 | 0.049 |
+
+**Every construction and every swap control gives the identical 0.049** — the model emits the same
+id set whatever is in the slots, which is the position prior the previous probe dumped verbatim.
 
 ## 6. Verdict
 
-(to follow)
+**No candidate lifts `R@gold_pooled` — but the reason is now known, and it is not the slot.**
+
+1. **Model readout: nothing passes, on any construction, at either length, on either checkpoint.**
+   The best cell in 40 conditions is +0.041 over `k/n` (1.3 SE) and its swap control eats most of
+   that. Renormalising, decontaminating, centring, idf-weighting, splitting into G segments and
+   running a 4-layer block-local encoder all leave the frozen dense model exactly on the guess
+   floor, with the swap control undetectable — identical to the plain mean.
+2. **Oracle readout: the signal is there, and it is cheap.** On the same rows and the same slots, a
+   cosine-distance-to-centroid rule recovers **0.731 ± 0.021 of the gold documents at 2k (floor
+   0.225) and 0.239 ± 0.019 at 8k (floor 0.053)** from `cent_cmean` — 3.2× and 4.5× the floor, at
+   **zero extra tokens and zero extra FLOPs**. The plain mean gives 0.390 / 0.075.
+3. So the binding constraint is the **readout, not the representation**. A model that was trained
+   with full attention and has never seen a soft token does not compare slot vectors to each other;
+   it falls back on the id-position prior, and it does that no matter how good the vectors are. The
+   previous record's verdict — "(B) hard limit, the slot does not carry the signal" — holds for the
+   *plain mean* but is **too strong as stated**: the plain mean is bad because a document's mean
+   embedding is 94% shared common-word mass, and removing that mass is free.
+4. **What this does NOT show.** It does not show that a *trained* reader would find the signal: the
+   oracle uses an explicit all-pairs comparison the network would have to learn to perform in
+   attention. It only removes "there is nothing to find" as the explanation.
+
+**Ranked recommendation (by cost):**
+
+| rank | change | cost | evidence |
+|---|---|---|---|
+| 1 | Replace the training slot with **`cent_cmean`** (drop punctuation + top-100 corpus ids, subtract the corpus-mean embedding, renormalise to the real-token norm) | **free** — one extra vector and a token-id mask, both precomputed per corpus; `O(doc tokens)`; no extra tokens on the row; nothing per-layer | oracle 0.731 vs 0.390 for the plain mean at 2k; 0.239 vs 0.075 at 8k |
+| 2 | `cmean100` alone if the corpus-mean vector is inconvenient | free | oracle 0.674 / 0.107 |
+| — | `G > 1` segment means | +1–3 tokens/doc | **rejected**: oracle 0.299/0.261 at 2k, *below* the plain mean |
+| — | `enc2` / `enc4` block-local encoder | 0.056 / 0.113 of a dense forward = **0.68× / 1.36× the compacted forward** | **rejected**: ties `cent_cmean` at 2k (0.726 vs 0.731), loses at 8k (0.133 vs 0.239), for a cost that roughly doubles the arm |
+| — | a trained summarizer | a second network, trained | **not needed as the next step**: its premise ("the mean carries nothing") is false |
+
+The concrete change is one expression: `_compact_pooled_soft_tokens` in
+`src/olmo_core/nn/transformer/model.py` builds `doc_means` by `index_add` over
+`self.embeddings(input_ids)`; weighting that sum by a precomputed content mask and subtracting a
+precomputed corpus-mean vector is the whole edit. It matters because `detach_soft_kv=True` (the
+default in `train_ctc_suite.py`, and what every ds64 arm ran) gives the projector **no LM gradient
+on pooled slots**, so the slot is the raw mean for the entire run and training cannot fix it.
+
+**Caveat on scope:** everything here is measured on a model that never trained on slots. The claim
+supported is about the *information content* of the slot, not about what training recovers. The
+honest next experiment is a cheap trained one: the `fast2k` harness with `cent_cmean` slots at keep
+1/6, watching train CE against the `ln(C(n,k))/T` format floor — if the slot is readable at all, a
+content-grounded run drops below the floor early (`records/ds64-overnight-2026-09-14.md` decision
+rules), and if it parks on the floor the "readout" explanation is dead too and a trained summarizer
+is the only route left.
 
 ## 7. Runs
 
@@ -214,12 +316,17 @@ decontaminated, is a *better* topical summary than bag-of-words, which is the en
 |---|---|---|---|---|
 | oracle readout, replicate 2k | sneetches | `3549805` | 200 | done (§4) |
 | oracle readout, replicate ~8k (n55) | sneetches | `3549806` | 200 | done (§4) |
-| oracle readout, canonical ds64 2k | beaker ceres/saturn | exp `01M2HNZQEQ2QY1JN4FD662X55R` | 240 | running |
-| oracle readout, canonical ds64 8k | beaker ceres/saturn | exp `01M2HP0GBPEVDFYH6SY6JJM5N1` | 240 | running |
-| model readout, canonical ds64 2k, all 13 candidates + swaps | beaker ceres/saturn | exp `01M2HNFEC7P67NP33F8F3DN5Q3`, job `01M2HNFEG0PWX212YS68NJX61W` | 240 (64 gen) | running |
-| model readout, canonical ds64 8k, 4 candidates + swaps | beaker ceres/saturn | exp `01M2HP2PDCFV3F6RMVS9D7GRN0` | 240 (48 gen) | running |
-| model readout, replicate 2k, all candidates + swaps | sneetches | `3549785` | 200 (64 gen) | running |
-| model readout, replicate ~8k, 4 candidates + swaps | sneetches | `3549832` | 200 (48 gen) | running |
+| oracle readout, canonical ds64 2k | beaker ceres/saturn | exp `01M2HNZQEQ2QY1JN4FD662X55R`, job `01M2HNZQJM6MWERSTE1CDVBWFK` | 240 | **done** (§4) |
+| oracle readout, canonical ds64 8k | beaker ceres/saturn | exp `01M2HP0GBPEVDFYH6SY6JJM5N1`, job `01M2HP0GFGZGWB2DA155RGP4C2` | 240 | **done** (§4) |
+| model readout, canonical ds64 2k, all 13 candidates + swaps (41 conditions) | beaker ceres/saturn | exp `01M2HNFEC7P67NP33F8F3DN5Q3`, job `01M2HNFEG0PWX212YS68NJX61W` | 240 (64 gen) | **generation complete** (§5); CE columns still accumulating |
+| model readout, canonical ds64 8k, 4 candidates + swaps | beaker ceres/saturn | exp `01M2HP2PDCFV3F6RMVS9D7GRN0`, job `01M2HP2PME4RND9J7EGEJYDH3Y` | 240 (48 gen) | **generation complete** (§5) |
+| model readout, replicate 2k, all candidates + swaps | sneetches | `3549785` | 200 (64 gen) | running (slowest; generation completes ~row 64) |
+| model readout, replicate ~8k, 4 candidates + swaps | sneetches | `3549832` | 200 (48 gen) | **done** (§5), JSON `/data/prasann/outlier_probe/richer_local_n55.json` |
+
+All four probe runs write JSON; the Beaker ones also write to
+`/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/outlier_slot_probe/`. Every
+number above is quoted with its per-document SE and its row count; **every eval here is < 500 rows**
+(240 / 200), and the recall columns average over 144–192 gold documents.
 
 Reproduce (1 GPU):
 
