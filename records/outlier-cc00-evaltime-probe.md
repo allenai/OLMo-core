@@ -105,7 +105,25 @@ Three things, at 2k:
   indifferent to real bodies; a real body next to slots actively breaks it. This is the same
   direction the (A) gap will take at longer rungs.
 
-**8k / 16k / 32k — running** (jobs A/B/C below).
+**16k rung — COMPLETE.** `rung_16384.jsonl`, **eval_size = 240** (⚠ < 500; SE ±0.032). Generation on
+the first 32 rows = **96 gold documents** (⚠ per-document SE ≈ 0.028; genF1 is a 32-row mean,
+SE ≈ 0.05). ~111 documents/row, k = 3, so the uniform-guess floor is `k/n` ≈ **0.027**.
+
+| | condition | CE | **CE(digits)** | top1=full | KL | **genF1** | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|---|---|---|
+| **A** | `full` (real text = the ladder) | 0.332 | **0.877** | 1.000 | 0.000 | **0.083** | — | 0.083 (96) | 1.000 |
+| **B** | `arm` = the cc00 TRAINING construction | 0.480 | **1.297** | 0.888 | 0.164 | **0.062** | 0.062 (96) | — | **0.056** |
+| **C** | `gb00h` = same, PLAIN mean slot | 0.730 | 2.007 | 0.795 | 0.311 | 0.042 | 0.042 (96) | — | 0.056 |
+| **D** | `ccgold` = gold bodies REAL (oracle) | 0.701 | 1.902 | 0.841 | 0.315 | 0.010 | — | 0.010 (96) | 0.082 |
+
+**There is no parity at 16k, and the soft side is the WORSE one**: ΔCE **+0.149**, ΔCE(digits)
+**+0.421**, ΔgenF1 −0.021. Both sides are within a whisker of the 0.027 guess floor (0.083 and
+0.062), so this is the "two ways of being wrong" case, not a hidden competence. The dumped
+generations say the same thing directly — on 16k pooled-gold rows the model emits scattered,
+unrelated ids (`true=[6,29,64] pred=[11,17,107]`, `true=[17,31,97] pred=[11,12,14]`,
+`true=[22,38,108] pred=[10,24,81]`), under BOTH inputs.
+
+**8k / 32k — running** (jobs A/C below); `cc00-u32M` (D/E) queued.
 
 ## 5. Interpretation
 
