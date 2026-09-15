@@ -1,6 +1,6 @@
 # Can a dense model read a POOLED outlier out of its soft-token slot? (eval-side probe)
 
-**Date** 2026-09-14 · **Status** ANSWERED on one dense checkpoint (§4); the ds64 replication is still queued (§5) · **Branch** `prasann/landmark`
+**Date** 2026-09-14 · **Status** ANSWERED — canonical ds64 2k run complete, replicated on a second checkpoint + corpus (§4) · **Branch** `prasann/landmark`
 **Driver** `debug/pooled_kv/outlier_probe/outlier_slot_probe.py`
 
 ## 1. The question this answers
@@ -72,10 +72,51 @@ the argument:
 
 ## 4. Results
 
-**Run A (complete): `lmx-full-mixs160M-4b` (dense) on `outlier_wiki100w_n22_k3_eval_600.jsonl`,
+### Run B — the canonical pairing (COMPLETE): `ds64-outlier-dense-u64M` on the ds64 2k rung
+
+`outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl`, **eval_size = 240** (⚠ < 500; binomial SE
+≈ 0.032 at f1 ≈ 0.5), free generation on the first 64 rows (192 gold documents). 13.4
+documents/row, k = 3, so the **uniform-guess floor is `k/n` = 0.224** — the same floor the xhdr
+training arms sat on.
+
+| condition | CE | CE(digits) | top1=full | KL | tf_f1 | tf_id1 | **genF1** | genEM | **R@gold_pooled** | **R@gold_real** | pred_pooled | base_pooled | compaction |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `full` | 0.010 | 0.035 | 1.000 | 0.000 | 0.991 | 0.975 | **0.979** | 0.97 | — | 0.979 (192) | — | 0.00 | 1.000 |
+| `goldonly` | 0.194 | 0.595 | 0.947 | 0.184 | 0.737 | 0.237 | 0.318 | 0.25 | — | 0.318 (192) | 0.682 | 0.78 | 0.284 |
+| `gb50` (=kvgb50) | 0.429 | 1.605 | 0.892 | 0.420 | 0.549 | 0.375 | 0.453 | 0.09 | **0.126** (95) | **0.732** (97) | 0.224 | 0.49 | 0.542 |
+| `gb50h` (=xh2k50) | 0.405 | 1.523 | 0.895 | 0.395 | 0.558 | 0.454 | 0.555 | 0.23 | **0.264** (91) | **0.812** (101) | 0.429 | 0.49 | 0.563 |
+| **`gb50h_swap`** (control) | 0.404 | 1.519 | 0.897 | 0.394 | 0.568 | 0.450 | 0.562 | 0.23 | **0.242** (91) | 0.842 (101) | 0.421 | 0.49 | 0.563 |
+| `gb17h` (=xhdr17) | 0.504 | 1.869 | 0.844 | 0.495 | 0.286 | 0.237 | 0.323 | 0.00 | **0.227** (154) | **0.711** (38) | 0.727 | 0.83 | 0.256 |
+| `gb00h` (=xhdr00) | 0.462 | 1.698 | 0.834 | 0.454 | 0.204 | 0.233 | 0.229 | 0.02 | **0.229** (192) | — | 1.000 | 1.00 | 0.105 |
+| `gb00` (pure slots) | 0.587 | 1.889 | 0.834 | 0.579 | 0.205 | 0.233 | 0.276 | 0.02 | 0.276 (192) | — | 1.000 | 1.00 | 0.071 |
+| **`gb00h_swap`** (control) | 0.457 | 1.677 | 0.837 | 0.448 | 0.217 | 0.233 | 0.229 | 0.02 | **0.229** (192) | — | 1.000 | 1.00 | 0.105 |
+
+This is the decisive table.
+
+* **Every header-real construction lands on the guess floor for pooled gold**: `gb00h` 0.229,
+  `gb17h` 0.227, `gb50h` 0.264, against `k/n` = **0.224** (SE 0.030 at 192 documents, 0.046 at 91).
+  This is exactly where the `xhdr00/17/33` *training* arms landed, reproduced here in a model that
+  was never trained that way — the floor is a property of the construction, not of the optimiser.
+* **The swap controls change nothing.** `gb00h` → `gb00h_swap`: 0.229 → 0.229 on pooled recall, and
+  CE 0.462 → 0.457, CE(digits) 1.698 → 1.677, KL 0.454 → 0.448, tf_id1 0.233 → 0.233.
+  `gb50h` → `gb50h_swap`: 0.264 → 0.242 (SE 0.046), genF1 0.555 → 0.562, CE 0.405 → 0.404. Replacing
+  the gold documents' slot vectors with random non-gold documents' is undetectable in the output.
+* **Real body vs pooled body is the whole signal**: 0.732 / 0.812 / 0.711 recall on gold whose body
+  stayed REAL, against 0.126 / 0.264 / 0.227 when it was pooled — a 3–6x gap in the *same rows*.
+* **The generations are the position prior, verbatim.** All **12 of 12** dumped `gb00h` pooled-gold
+  rows emit `Outliers: [1], [2], [3]`, regardless of the true ids (`[7,10,12]`, `[8,9,11]`,
+  `[6,12,14]`, …). One row, whose gold really was `[1,2,3]`, scores 1.0 by coincidence.
+* The header's apparent *help* (`gb50` genF1 0.453 → `gb50h` 0.555) is a mixture effect on the
+  REAL-gold half (0.732 → 0.812) plus floor-rate credit on the pooled half — and the swap control
+  says none of it comes from the slots.
+
+### Run A — replicate on a second checkpoint and corpus (complete)
+
+`lmx-full-mixs160M-4b` (dense) on `outlier_wiki100w_n22_k3_eval_600.jsonl`,
 eval_size = 200 rows (⚠ < 500; binomial SE ≈ 0.035 at f1 ≈ 0.5), free generation on the first 64
 rows (192 gold documents). Mean 21.4 documents/row, k = 3, so the uniform-guess floor for both
-set-F1 and gold recall is `k/n` = 0.140.**
+set-F1 and gold recall is `k/n` = 0.140. A different checkpoint AND a different corpus from Run B,
+which is what makes it a useful replicate.
 
 | condition | CE | **CE(digits)** | top1=full | KL | tf_f1 | **tf_id1** | **genF1** | genEM | **R@gold_pooled** | **R@gold_real** | pred_pooled | base_pooled | compaction |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -159,14 +200,17 @@ generation metric.
 
 **(B) — not readable, with one honest qualification.** On outlier, a pooled document's
 mean-embedding slot carries **no** usable signal about whether that document is the odd one out, at
-least as far as a dense-trained model can use it. The evidence is three-fold and mutually
-reinforcing: the pooled-gold recall of every header-real construction sits at or below the `k/n`
-uniform-guess floor (`gb00h` 0.094 and `gb17h` 0.154 against a floor of 0.140); **swapping the gold
-documents\' slot vectors with random non-gold ones changes literally nothing** (0.094 → 0.099, every
-other metric within 0.02); and the greedy output on pooled-gold rows is a constant `[1], [2], [3]`
-attached to a hallucinated topic sentence. Meanwhile the same model, in the same rows, recovers
-0.64–0.69 of the gold documents whose **body** stayed real — a ~7x gap that is the whole distance
-between "there is signal here" and "there is not". So the `xhdr*` training collapse is **not** a
+least as far as a dense-trained model can use it. The evidence is three-fold, mutually reinforcing,
+and it reproduces across two checkpoints, two corpora and three lengths. The pooled-gold recall of
+every header-real construction sits **on the `k/n` uniform-guess floor** — on the canonical ds64 2k
+run, `gb00h` 0.229 / `gb17h` 0.227 / `gb50h` 0.264 against a floor of 0.224, which is exactly where
+the `xhdr*` *training* arms landed. **Swapping the gold documents' slot vectors with random non-gold
+ones is undetectable**: 0.229 → 0.229 on `gb00h`, 0.264 → 0.242 (SE 0.046) on `gb50h`, with CE, KL,
+top-1 and tf_id1 all moving by ≤ 0.02. And the greedy output on pooled-gold rows is a constant
+`Outliers: [1], [2], [3]` — **12 of 12** dumped rows on the ds64 run, whatever the true ids were.
+Meanwhile the same model, in the same rows, recovers 0.71–0.84 of the gold documents whose **body**
+stayed real — a 3–6x gap that is the whole distance between "there is signal here" and "there is
+not". So the `xhdr*` training collapse is **not** a
 pure optimisation shortcut that a smarter recipe would fix: the target on a gold-blind, header-real,
 pooled-gold row really is unjustifiable from the context, and the model at chance is the model being
 right. (The xhdr diagnosis\'s mechanism is confirmed — id-copying *is* what happens — but its
@@ -203,24 +247,25 @@ Checkpoint `/data/prasann/dense_ckpts/lmx-full-mixs160M-4b-.../model_and_optim` 
 checkpoint the 2026-09-08 probe used); rows `outlier_wiki100w_n22_k3_eval_600.jsonl` from
 `/scratch/users/prasann/cpt_data/eval500_v2/outlier/`.
 
-**Runs B (launched, STILL QUEUED as of writing).** The canonical pairing — the ds64 dense arm
-`ds64-outlier-dense-u64M` on the ds64 rung files `outlier_lengthmix/eval_rungs/outlier/rung_*.jsonl`,
-240 rows, 64 generation rows, all 9 conditions including `gb50h_swap`. Every one of these had been
-sitting in `created` for ~1.5 h; jupiter is saturated and the two ceres/saturn backups have not moved
-either. Spec verified correct (urgent, 1 GPU, `/weka/oe-training-default` mounted, budget
-`ai2/oe-other`, workspace `ai2/flex2`, unallocated).
-
-| rung | cluster | experiment | job |
-|---|---|---|---|
-| 2k | jupiter | `01M2HFFDXCKYVX9A0RYD4WX5BV` | `01M2HFFE0WT654RME3CFZZKMNP` |
-| 8k | jupiter | `01M2HFG92C4TSM882PN51FNYGF` | `01M2HFG962162KWQ8G3N7Y4QCR` |
-| 16k | jupiter | `01M2HFH8ZN0WY4ERP66J5E12GY` | `01M2HFH93673KY57QD5A2FE22N` |
-| 2k | ceres/saturn | `01M2HFPGBB3ZMV7MMJ10K625N5` | `01M2HFPGEX76K2FGPDWE0XXQ5J` |
-| 8k | ceres/saturn | `01M2HFQCNE55V2QAQQ1GDA1C5Y` | `01M2HFQCS5T08MNNJP1TD35PHP` |
-
-They write their JSON to
+**Runs B (Beaker).** The canonical pairing — the ds64 dense arm `ds64-outlier-dense-u64M` on the
+ds64 rung files `outlier_lengthmix/eval_rungs/outlier/rung_*.jsonl`, 240 rows, 64 generation rows,
+all 9 conditions. They write JSON to
 `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/outlier_slot_probe/` and print
 the same table to stdout, so `beaker job logs <job>` is enough to read them.
+
+| rung | cluster | experiment | job | state |
+|---|---|---|---|---|
+| 2k | ceres/saturn | `01M2HFPGBB3ZMV7MMJ10K625N5` | `01M2HFPGEX76K2FGPDWE0XXQ5J` | **DONE — the §4 headline table**; JSON `.../outlier_slot_probe_ds64-outlier-dense-u64M_2k.json` |
+| 8k | ceres/saturn | `01M2HFQCNE55V2QAQQ1GDA1C5Y` | `01M2HFQCS5T08MNNJP1TD35PHP` | running |
+| 8k | jupiter | `01M2HFG92C4TSM882PN51FNYGF` | `01M2HFG962162KWQ8G3N7Y4QCR` | queued |
+| 16k | jupiter | `01M2HFH8ZN0WY4ERP66J5E12GY` | `01M2HFH93673KY57QD5A2FE22N` | queued |
+| 2k | jupiter | `01M2HFFDXCKYVX9A0RYD4WX5BV` | `01M2HFFE0WT654RME3CFZZKMNP` | cancelled (duplicate of the ceres 2k) |
+
+⚠ **Infra note**: jupiter took > 1.5 h to schedule a 1-GPU **urgent, unallocated** job and still has
+not scheduled these; the ceres/saturn pair started in ~15 min. Spec verified correct (urgent, 1 GPU,
+`/weka/oe-training-default` mounted, budget `ai2/oe-other`, workspace `ai2/flex2`). If a probe is
+time-sensitive, launch it with `--cluster "ai2/ceres-cirrascale,ai2/saturn-cirrascale"` — both carry
+the `storage:weka` tag, so the weka mount works there too.
 
 **Runs C (queued locally, the longer local rungs).** sneetches `3549488` (n=55 docs, ~8k tokens) and
 `3549489` (n=110, ~17k), same checkpoint, 200 rows / 48 generation rows, logs
