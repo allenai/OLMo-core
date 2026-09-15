@@ -110,6 +110,12 @@ CONDITIONS = [
 ]
 
 _SWAP = {"on": False, "gold": None, "seed": 0}
+# The probe compacts once itself (to map answer positions -> compacted columns) and the model's
+# forward compacts again. Those two MUST agree: if they ever disagree about the compacted length,
+# the column indices go out of bounds and torch reports it as an async device-side assert in
+# whatever kernel runs next ("vectorized gather kernel index out of bounds"), far from the cause.
+# So memoize the compaction on the exact input tensor + config so the forward reuses the probe's.
+_CBCACHE = {"key": None, "sig": None, "out": None}
 
 
 def log(m):
@@ -124,7 +130,14 @@ def install_swap_patch(model):
     orig = cls._compact_pooled_soft_tokens
 
     def patched(self, input_ids, labels, ignore_index):
-        out = orig(self, input_ids, labels, ignore_index)
+        sig = (_CBCACHE["key"], int(input_ids.data_ptr()), int(input_ids.shape[1]))
+        if _CBCACHE["out"] is not None and _CBCACHE["sig"] == sig:
+            return _CBCACHE["out"]
+        out = _apply_swap(orig(self, input_ids, labels, ignore_index))
+        _CBCACHE["sig"], _CBCACHE["out"] = sig, out
+        return out
+
+    def _apply_swap(out):
         if out is None or not _SWAP["on"]:
             return out
         cb, inj, ovr = out
@@ -322,6 +335,7 @@ def main():
         do_gen = ri < a.gen_rows
         for name, keep_spec, header in conds:
             t_cfg = time.time()
+            _CBCACHE["key"], _CBCACHE["sig"], _CBCACHE["out"] = (ri, name), None, None
             pst["header_stop_id"] = HEADER_STOP_ID if header else None
             pst["header_stop_count"] = 1
             pst["header_cap"] = 32
@@ -348,6 +362,7 @@ def main():
                 cb = model._compact_pooled_soft_tokens(x, None, -100)[0]
                 posmap = {int(p): c for c, p in enumerate(cb.position_ids[0].tolist())}
                 cols = torch.tensor([posmap[int(p)] for p in pred_pos.tolist()], device="cuda")
+                assert int(cols.max()) < cb.input_ids.shape[1], "compaction/column mismatch"
                 lg = model(x, logits_to_keep=cols[None])[0].float()
                 comp = cb.input_ids.shape[1] / x.shape[1]
 
@@ -385,6 +400,7 @@ def main():
                     model.train()
                 else:
                     model.eval()
+                _CBCACHE["sig"], _CBCACHE["out"] = None, None
                 gen = generate(model, x[:, :ans_start].clone(), a.gen_max_new, len(true_ids) or 3, tok)
                 gtext = tok.decode(gen)
                 gen_ids = parse_ids(gtext)
