@@ -96,6 +96,27 @@ printed with every number), 13.4 documents/row, k = 3, `k/n` floor **0.225** —
 **`cent_cmean` (free) and `enc4` (0.115 of a dense forward) are tied at 0.73 — 3.2x the `k/n`
 floor — so the block-local encoder buys nothing that decontaminating the mean does not.**
 
+### Canonical pairing, 8k rung
+
+`rung_8192.jsonl`, eval_size = 240, 56.6 documents/row, `k/n` floor **0.053**:
+
+| slot | oracle R@k (centroid) | oracle R@k (no-neighbour) | gold rank pct | cos(gold, c) | cos(other, c) |
+|---|---|---|---|---|---|
+| `mean` | 0.075 ± 0.010 | 0.076 ± 0.010 | 0.463 | 0.9341 | 0.9371 |
+| `meanrn` | 0.081 ± 0.011 | 0.076 ± 0.010 | 0.452 | 0.9333 | 0.9375 |
+| `cmean100` | 0.107 ± 0.013 | 0.156 ± 0.015 | 0.345 | 0.6937 | 0.7202 |
+| `cmean500` | 0.126 ± 0.014 | 0.139 ± 0.015 | 0.367 | 0.6829 | 0.7107 |
+| `centered` | 0.124 ± 0.015 | 0.090 ± 0.011 | 0.359 | 0.1783 | 0.3091 |
+| **`cent_cmean`** | **0.239 ± 0.019** | 0.128 ± 0.014 | **0.204** | 0.1288 | 0.2462 |
+| `idf` | 0.090 ± 0.011 | 0.087 ± 0.011 | 0.422 | 0.8253 | 0.8385 |
+| `g2` / `g4` | 0.058 / 0.064 | 0.075 / 0.072 | 0.487 / 0.484 | | |
+| `g2cc` | 0.190 ± 0.016 | 0.100 ± 0.012 | 0.249 | 0.0715 | 0.1597 |
+| `enc2` / `enc4` | 0.128 / 0.133 | 0.150 / 0.165 | 0.384 / 0.370 | | |
+| `lexidf` | 0.129 ± 0.014 | 0.107 ± 0.013 | 0.370 | 0.4087 | 0.4402 |
+
+**`cent_cmean` is 4.5x the floor at 8k** (0.239 vs 0.053) — the margin over `k/n` grows with
+length even though the absolute number falls, and `enc4` is now clearly behind it (0.133).
+
 ### Replicate: `lmx-full-mixs160M-4b` on the local wiki corpora
 
 `lmx-full-mixs160M-4b` (dense) on the two local outlier corpora, **eval_size = 200 rows each**
