@@ -126,3 +126,9 @@ regression test is `src/test/scripts/contradiction_256k_config_test.py`; CPU pre
 performs this construction too. The old `dry_run` only counted parameters and therefore
 missed the invalid model option. Dense was preempted after one hour, automatically
 resumed, and reached step 414/1005 in the inspected logs; it needs no replacement.
+
+
+Replacement compressive job: [01M2JAD9PZDYKQDKJ287FA866D](https://beaker.org/ex/01M2JAD9PZDYKQDKJ287FA866D),
+run name `q35-compressive-contra-3ep-256k-min1h-20260915-r2`, pinned to fix commit
+`1204d1b693e651c1520899c1427e2e7c65444be5`. Verified two 8-GPU replicas and minRuntime=1h.
+Both attention-construction regression tests pass; full GPU training awaits scheduling.
