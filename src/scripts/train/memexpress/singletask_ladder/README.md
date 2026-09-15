@@ -44,6 +44,7 @@ gantry `aws s3 sync s3→/weka` job (creds from the `PRASANNS_AWS_*` beaker secr
 - `launch_singletask_10k_overnight.sh` — submits the variant×task matrix (`CLUSTER` defaults to `ai2/jupiter`)
 - `launch_beaker_multirung_eval.sh` → `run_q4b_beaker_multirung_eval.py` → `run_beaker_multirung_eval.sh` — native 8-GPU multi-rung eval on Beaker (reads everything from the weka eval bundle)
 - `upload_lc_eval_bundle.sh` — push eval code+data to the weka bundle
+- `gold_length/` — post-hoc: accuracy sliced by GOLD OUTPUT LENGTH, from the `*_multirung*.generations.jsonl` sidecars this eval already writes (CPU gantry job, no re-decoding). See its README.
 
 **Local (Berkeley H200) — validation path**
 - `Qwen3-4B-singletask-ladder-SFT-local.py` — torchrun launcher (reads local `/data` or `/scratch`)
