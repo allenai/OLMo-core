@@ -259,12 +259,29 @@ urgent + unallocated (workspace `ai2/flex2`, budget `ai2/oe-other`),
 `--cluster "ai2/ceres-cirrascale,ai2/saturn-cirrascale,ai2/jupiter-cirrascale-2"`. JSON to
 `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/outlier_slot_probe/realtoken_*.json`.
 
-| rung | rows (eval_size) | gen rows | conditions | experiment | job | state |
+| rung | rows | gen rows | conditions | where | experiment / job | state |
 |---|---|---|---|---|---|---|
-| 2k (smoke) | 6 | 3 | core | `01M2K3CDRXS61AS60WKV2Q4CY6` | `01M2K3CDZS4TX7VS9VQ999NJ6P` | — |
-| 2k | 240 | 64 | all (30) | `01M2K3DHB5WKVM9YGC8SHGV3A5` | `01M2K3DHJZW7QV690ES88R0HB6` | — |
-| 8k | 200 | 48 | core (15) | `01M2K3EE19NB5QX1PFF4YZWP57` | `01M2K3EE89VP13HPV3MHM682P5` | — |
-| 32k | 100 | 32 | lean (11) | `01M2K3F8F74F0KER9VSHJWB11T` | `01M2K3F8JZYHR1HJNNMY8N77MZ` | — |
+| 2k (smoke) | 6 | 3 | core | beaker | `01M2K3CDRXS61AS60WKV2Q4CY6` / `01M2K3CDZS4TX7VS9VQ999NJ6P` | **done** — mechanism validated |
+| 2k | 240 | 64 | all (30) | beaker | `01M2K3DHB5WKVM9YGC8SHGV3A5` / `01M2K3DHJZW7QV690ES88R0HB6` | **running** (§5a is its row-25 snapshot) |
+| 8k | 200 | 48 | core (15) | beaker | `01M2K3EE19NB5QX1PFF4YZWP57` / `01M2K3EE89VP13HPV3MHM682P5` | running (ETA ~5 h) |
+| 32k | 100 | 32 | lean (11) | beaker | `01M2K3F8F74F0KER9VSHJWB11T` / `01M2K3F8JZYHR1HJNNMY8N77MZ` | **running** (§5b is its row-5 snapshot) |
+| 32k | 100 | 32 | cat32k (17) | beaker | `01M2K6C1RCE97F0QP2SVD4974N` / `01M2K6C1VTGGF4ZNB69W91Z3EF` | queued (clusters 100 % full) |
+| 8k | 200 | 48 | cat (29) | beaker | `01M2K6D0C2M8SYWXBACZ0JT01X` / `01M2K6D0FGXB6QJK88R719WW7V` | queued |
+| 2k | 240 | 64 | cat (29) | beaker | `01M2K6DXSWB0S74A49PP9ZQJS7` / `01M2K6DXXG6R7ZSWPWSC5781RT` | queued |
+| 2k | 200 | 64 | all (35) | sneetches | slurm `3552283` | running — **replicate pairing** `lmx-full-mixs160M-4b` on `outlier_wiki100w_n22_k3` |
+| 2k | 200 | 64 | cat (29) | sneetches | slurm `3552438` | running — replicate pairing, category rules |
+| 32k | 100 | 32 | 21 conds | horton | slurm `3552570` | queued behind a full node; waits for the staged checkpoint |
+| 8k | 200 | 48 | 33 conds | horton | slurm `3552571` | queued |
+| 2k | 240 | 64 | 33 conds | horton | slurm `3552572` | queued |
+
+The horton jobs read a node-local copy of the frozen checkpoint
+(`/data/prasann/ckpts/ds64-outlier-dense-u64M`) and the staged rung files
+(`/data/prasann/ds64_eval/outlier/rung_*.jsonl`); the launcher
+`/scratch/users/prasann/outlier_probe/run_realtoken_horton.sbatch` blocks until the checkpoint
+appears. They run from a second detached worktree `/scratch/users/prasann/outlier_probe/wt2`.
+Because weka is not mounted locally, those runs build the `cent_cmean` stop set and the idf table
+from the **eval rows** rather than the ds64 training shard — a small construction difference from
+the Beaker runs, noted wherever the two are compared.
 
 ⚠ **Every eval here is < 500 rows** (240 / 200 / 100), and the generation metrics average over fewer
 rows still (64 / 48 / 32). Quote them with the SE printed next to them.
