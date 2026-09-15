@@ -292,14 +292,17 @@ def mark_doc_headers_free(
     *,
     doc_start_id: int,
     doc_end_id: int,
-    stop_id: int,
+    stop_id: Optional[int] = None,
     stop_count: int = 1,
+    extra_tokens: int = 0,
     cap: int = 32,
 ) -> torch.Tensor:
     """
     Re-label each document's *header* -- the tokens after ``<|doc_start|>`` up to and including
     the ``stop_count``-th occurrence of ``stop_id`` (at most ``cap`` tokens) -- as ``FREE``, so a
-    pooled-document construction keeps the header real and pools only the body.
+    pooled-document construction keeps the header real and pools only the body. Optionally, ALSO
+    keep the next ``extra_tokens`` body tokens (the ones right after the header) real, so the
+    compacted row for a pooled doc becomes ``<header><first extra_tokens body tokens><SLOT>``.
 
     Motivation (records/pooled-doc-kv-attention.md, 2026-09-08): a soft token may stand in for a
     document's free text but never for the tokens the question matches exactly (claim ids, user
@@ -309,7 +312,36 @@ def mark_doc_headers_free(
 
     :param chunk_ids: ``(B, S)`` roles from :func:`build_chunk_ids_from_tokens`.
     :param input_ids: ``(B, S)`` token ids (same shape).
-    :returns: A new ``(B, S)`` chunk-id tensor with header tokens set to ``FREE``.
+    :param stop_id: The header-terminating token id. ``None`` (default) means "no header" --
+        ``stop_count``/``cap`` are then ignored and only ``extra_tokens`` (if given) applies,
+        counted from the document's first token after ``<|doc_start|>`` (i.e. the "header" is
+        treated as zero-length, so ``extra_tokens`` covers the doc's own first tokens).
+    :param extra_tokens: Number of BODY tokens after the header to also keep real (``0`` =
+        unchanged, header-only behaviour -- bit-identical to before this parameter existed). These
+        are counted by POSITION, not distance, so they are never truncated by ``cap``: ``cap``
+        only bounds the header search itself (the existing safety valve for a doc that never
+        contains ``stop_count`` occurrences of ``stop_id``), and is independent of
+        ``extra_tokens`` -- there is no need to enlarge it when raising ``extra_tokens``. If the
+        document's body (content + the closing ``<|doc_end|>``) has fewer than ``extra_tokens``
+        tokens after the header, every remaining token -- ``<|doc_end|>``, and then the doc's own
+        ``<|doc_start|>`` too -- is freed, so the whole document ends up real (no residual pooled
+        slot for it: it is simply no longer "present" for
+        :func:`~olmo_core.nn.pooled_soft_token.compact_pooled_rows`). This is the ONE case in
+        which ``<|doc_end|>``/``<|doc_start|>`` can be freed -- the header region on its own never
+        frees either, exactly as before.
+    :returns: A new ``(B, S)`` chunk-id tensor with header (and extra) tokens set to ``FREE``.
+
+    .. warning::
+        **Never combine this with gold-blind keeping on a task whose ANSWER is drawn from the
+        header** (a document id: outlier, nq, rerank). Freeing the header makes every document's id
+        real text -- including for documents whose entire body is a single pooled soft token -- so a
+        row whose gold document is pooled gets a target that is *copyable but unjustifiable*, and the
+        model converges to sampling ids from the visible list. Measured on outlier (ds64 ``xhdr*``,
+        2026-09-14): f1 exactly ``k/n`` at every rung, insensitive to keep probability and to budget.
+        Contradiction is safe because it forces the gold document real (``gold_plus_random``); oolong
+        is safe because its answer is a phrase, not a line id. See
+        ``debug/ds64/xhdr_collapse_diagnosis.md``. The same risk applies to ``extra_tokens`` on
+        such a task -- it reveals more of the body, not less.
     """
     if input_ids.dim() == 1:
         input_ids = input_ids.unsqueeze(0)
@@ -322,20 +354,50 @@ def mark_doc_headers_free(
     # Position of the most recent <|doc_start|> at or before each token (-1 before the first).
     last_start = torch.where(starts, pos, torch.full_like(pos, -1)).cummax(dim=1).values
     dist = pos - last_start
-    # Stop ids strictly before each token but after its document's start.
-    sc = torch.cumsum((input_ids == stop_id).to(torch.long), dim=1)
-    sc_prev = torch.cat([torch.zeros_like(sc[:, :1]), sc[:, :-1]], dim=1)
-    sc_at_start = torch.gather(sc, 1, last_start.clamp(min=0))
-    n_before = sc_prev - sc_at_start
+    in_doc = (chunk_ids >= 0) & (last_start >= 0)
+    if stop_id is None:
+        # No header: every body token is "post-header" from the doc's very first token.
+        stop_count_eff = 0
+        n_before = torch.zeros_like(pos)
+    else:
+        stop_count_eff = stop_count
+        # Stop ids strictly before each token but after its document's start.
+        sc = torch.cumsum((input_ids == stop_id).to(torch.long), dim=1)
+        sc_prev = torch.cat([torch.zeros_like(sc[:, :1]), sc[:, :-1]], dim=1)
+        sc_at_start = torch.gather(sc, 1, last_start.clamp(min=0))
+        n_before = sc_prev - sc_at_start
     header = (
-        (chunk_ids >= 0)
-        & (last_start >= 0)
+        in_doc
         & (dist >= 1)
         & (dist <= cap)
-        & (n_before < stop_count)
+        & (n_before < stop_count_eff)
         & (input_ids != doc_end_id)
     )
-    return torch.where(header, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+    free = header
+    if extra_tokens > 0:
+        # Candidates: every body token from the header's end onward -- INCLUDING <|doc_end|>, so a
+        # doc whose remaining body is <= extra_tokens frees its end marker too and stops being
+        # "present" for compaction (see the docstring). A doc where the header safety valve (cap)
+        # fired without ever finding stop_count occurrences never satisfies `n_before >=
+        # stop_count_eff` (n_before stays 0), so extra_tokens correctly does not fire there either.
+        post_header = in_doc & (dist >= 1) & (n_before >= stop_count_eff)
+        ph_cum = torch.cumsum(post_header.to(torch.long), dim=1)
+        ph_at_start = torch.gather(ph_cum, 1, last_start.clamp(min=0))
+        n_after = ph_cum - ph_at_start  # 1-indexed count of post-header tokens, inclusive
+        extra = post_header & (n_after <= extra_tokens)
+        free = free | extra
+        # If freeing <|doc_end|> was PART of this doc's extra-token budget, its whole body is now
+        # free and nothing content-wise remains -- also free its own <|doc_start|> marker (never
+        # itself an "extra" token, see the docstring) so the document truly has no surviving
+        # ``chunk_ids >= 0`` position, i.e. no residual one-token slot standing in for just the
+        # marker: it is genuinely absent from ``present`` in
+        # :func:`~olmo_core.nn.pooled_soft_token.compact_pooled_rows`.
+        whole_doc_end = extra & (input_ids == doc_end_id)
+        if whole_doc_end.any():
+            rows_idx, cols_idx = whole_doc_end.nonzero(as_tuple=True)
+            free = free.clone()
+            free[rows_idx, last_start[rows_idx, cols_idx]] = True
+    return torch.where(free, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
 
 
 # ---------------------------------------------------------------------------

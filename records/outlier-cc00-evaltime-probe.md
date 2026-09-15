@@ -72,7 +72,40 @@ set-F1 over the k ids, `R@gold_pooled` / `R@gold_real`, and compaction.
 
 ## 4. Results
 
-_(pending — jobs below)_
+### 4.1 `ds64-outlier-cc00-b128f3-u128M` (233 PF, the ladder's best cc00 point)
+
+Ladder reference for this checkpoint (`results/ds64/results.csv`): **2k 0.801 · 8k 0.168 · 16k 0.046
+· 32k 0.011**, mean 0.207.
+
+**2k rung — COMPLETE.** `rung_2048.jsonl`, **eval_size = 240** (⚠ < 500; binomial SE ±0.032 at
+f1 ≈ 0.5). Free generation on the first 48 rows = **144 gold documents** (⚠ per-document SE ≈ 0.036;
+genF1 is a 48-row mean, SE ≈ 0.06). 14 documents/row, k = 3, so the uniform-guess floor is
+`k/n` ≈ **0.22**.
+
+| | condition | CE | **CE(digits)** | top1=full | KL | tfID1 | **genF1** | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **A** | `full` (real text = the ladder) | 0.071 | **0.264** | 1.000 | 0.000 | 0.792 | **0.750** | — | 0.750 (144) | 1.000 |
+| **B** | `arm` = the cc00 TRAINING construction | 0.112 | **0.421** | 0.957 | 0.093 | 0.688 | **0.778** | **0.778** (144) | — | **0.105** |
+| **C** | `gb00h` = same, PLAIN mean slot | 0.399 | 1.534 | 0.839 | 0.291 | 0.237 | 0.243 | 0.243 (144) | — | 0.105 |
+| **D** | `ccgold` = gold bodies REAL (oracle) | 0.214 | 0.791 | 0.924 | 0.114 | 0.167 | 0.326 | — | 0.326 (144) | 0.310 |
+
+Three things, at 2k:
+
+* **A ≈ B: eval-time parity holds at 2k.** ΔCE **+0.041**, ΔCE(digits) **+0.157**, ΔgenF1
+  **+0.028** (inside the ±0.06 generation SE) — at **9.5× compaction**. The probe's `full` genF1
+  0.750 also sits near the ladder's 0.801, so the setup reproduces the ladder.
+* **C says the trained reader is specific to `cent_cmean`.** The identical keep-0, header-real
+  construction with the PLAIN mean slot collapses to genF1 0.243 — i.e. **onto the `k/n` = 0.22
+  guess floor**, exactly where `xhdr00` and the frozen-dense probe's `gb00h` sat. Swapping only the
+  slot construction is worth **+0.535 genF1** on a model trained for it. The 2026-09-15 fast2k
+  screen (cc00 0.482 vs xhdr00 0.239) is reproduced here on the trained 128M checkpoint, larger.
+* **D says the oracle HURTS.** Giving the model the gold documents' real bodies while every other
+  document stays a slot drops it from 0.778 to **0.326** — worse than its own construction by
+  0.45, on rows where the answer is *more* visible. A keep-0-trained reader is not merely
+  indifferent to real bodies; a real body next to slots actively breaks it. This is the same
+  direction the (A) gap will take at longer rungs.
+
+**8k / 16k / 32k — running** (jobs A/B/C below).
 
 ## 5. Interpretation
 

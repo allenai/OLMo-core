@@ -319,6 +319,7 @@ class Transformer(nn.Module):
         header_stop_id: Optional[int] = None,
         header_stop_count: int = 1,
         header_cap: int = 32,
+        header_extra_tokens: int = 0,
         detach_soft_gdn: bool = True,
         mix_start_p: float = 0.0,
         mix_end_p: float = 0.0,
@@ -352,6 +353,17 @@ class Transformer(nn.Module):
             (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`). The eval-side
             construction that reproduces full attention on contradiction (``":"``, count 1) and
             oolong (``":"``, count 3); see records/pooled-doc-kv-attention.md (2026-09-08).
+        :param header_extra_tokens: ALSO keep the next ``header_extra_tokens`` body tokens (the
+            ones right after the header) real, so a pooled doc's compacted row becomes
+            ``<header><first header_extra_tokens body tokens><SLOT>``. ``0`` (default) is
+            bit-identical to header-only behaviour. Works even without ``header_stop_id`` (the
+            "header" is then zero-length, so the extra tokens are simply the document's first
+            ``header_extra_tokens`` tokens after ``<|doc_start|>``). If the document's remaining
+            body has fewer than ``header_extra_tokens`` tokens, the WHOLE document -- including
+            ``<|doc_end|>`` -- is freed (real), so it produces no soft-token slot at all. Counted
+            by position, not distance, so it is never truncated by ``header_cap`` -- no need to
+            enlarge that when raising this. See
+            :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`.
         :param mix_start_p: **Compression-mixing curriculum.** Probability that a row trains
             UNCOMPRESSED (no pooling at all), annealed linearly to ``mix_end_p`` over
             ``mix_total_calls`` training forwards
@@ -472,6 +484,7 @@ class Transformer(nn.Module):
             "header_stop_id": None if header_stop_id is None else int(header_stop_id),
             "header_stop_count": int(header_stop_count),
             "header_cap": int(header_cap),
+            "header_extra_tokens": int(header_extra_tokens),
             "detach_soft_gdn": bool(detach_soft_gdn),
             # Slot construction (pooled_soft_token.apply_slot_mode). "mean" is the historical
             # path and is bit-identical to it; the others need ``slot_stop_ids``. The vocab-sized
@@ -822,7 +835,7 @@ class Transformer(nn.Module):
         n_docs = int(chunk_ids.max().item()) + 1
         if n_docs <= 0:
             return None
-        if cfg.get("header_stop_id") is not None:
+        if cfg.get("header_stop_id") is not None or cfg.get("header_extra_tokens", 0) > 0:
             from ..attention.chunked_mask import mark_doc_headers_free
 
             chunk_ids = mark_doc_headers_free(
@@ -832,6 +845,7 @@ class Transformer(nn.Module):
                 doc_end_id=cfg["doc_end_id"],
                 stop_id=cfg["header_stop_id"],
                 stop_count=cfg["header_stop_count"],
+                extra_tokens=cfg.get("header_extra_tokens", 0),
                 cap=cfg["header_cap"],
             )
         # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row

@@ -380,3 +380,156 @@ def test_mark_doc_headers_free_keeps_header_real():
     assert capped[0].tolist()[:6] == [0, -1, -1, 0, 0, 0]
     # free tokens outside documents are untouched
     assert one[0, :2].tolist() == [-1, -1] and one[0, 22].item() == -1
+
+
+def test_mark_doc_headers_free_extra_tokens_bit_identical_at_zero():
+    """--st-header-extra-tokens 0 (the default) must be bit-identical to header-only behaviour,
+    with and without a stop id given at all."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+
+    DS, DE, EOS, STOP = 900, 901, 902, 25
+    doc = [DS, 10, 11, STOP, 12, STOP, 20, 21, 22, DE]
+    x = torch.tensor([[1, 2] + doc + doc + [3, EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+
+    header_only = mark_doc_headers_free(
+        base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1
+    )
+    k0 = mark_doc_headers_free(
+        base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, extra_tokens=0
+    )
+    assert torch.equal(header_only, k0)
+
+    # no stop id at all + extra_tokens=0: nothing is freed (chunk ids untouched by the function).
+    no_hdr = mark_doc_headers_free(base, x, doc_start_id=DS, doc_end_id=DE, extra_tokens=0)
+    assert torch.equal(no_hdr, base)
+
+
+def test_mark_doc_headers_free_extra_tokens_frees_exact_span_and_excludes_from_slot():
+    """K extra body tokens (right after the header) become FREE, and the pooled slot's log-len
+    (and, by the same `is_ctx = chunk_ids >= 0` gate used in
+    Transformer._compact_pooled_soft_tokens/apply_slot_mode, the slot's feature mean) is computed
+    only over the remaining un-freed tokens."""
+    import math
+
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+    from olmo_core.nn.pooled_soft_token import compact_pooled_rows
+
+    DS, DE, EOS, STOP = 900, 901, 902, 25
+    # header (stop_count=1) = 10 11 STOP (3 tokens); next 2 body tokens = 12 STOP; remainder =
+    # 20 21 22 DE (4 tokens) + the doc's own <|doc_start|> (always chunk-owned) = 5 surviving
+    # `chunk_ids >= 0` positions.
+    doc = [DS, 10, 11, STOP, 12, STOP, 20, 21, 22, DE]
+    x = torch.tensor([[1, 2] + doc + doc + [3, EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+    chunk = mark_doc_headers_free(
+        base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, extra_tokens=2
+    )
+    for off in (2, 12):
+        assert chunk[0, off].item() == (0 if off == 2 else 1)  # <|doc_start|> stays with the doc
+        assert chunk[0, off + 1 : off + 6].tolist() == [-1] * 5  # 10 11 STOP 12 STOP
+        assert chunk[0, off + 6 : off + 10].tolist() == [0 if off == 2 else 1] * 4  # 20 21 22 DE
+
+    n_docs = int(base.max().item()) + 1
+    keep_none = torch.zeros(1, n_docs, dtype=torch.bool)  # pool every document
+    cb = compact_pooled_rows(
+        x, None, chunk, keep_none, placeholder_id=999, pad_token_id=EOS
+    )
+    # Both docs: 5 surviving is_ctx tokens (the marker + 20 21 22 DE) -> log(5).
+    assert torch.allclose(cb.soft_log_len, torch.full_like(cb.soft_log_len, math.log(5)))
+    assert cb.soft_rows.numel() == 2  # one slot per pooled doc, extra-tokens did not add any
+
+
+def test_mark_doc_headers_free_extra_tokens_short_doc_fallback():
+    """If a document's remaining body (content through <|doc_end|>) has fewer tokens than
+    extra_tokens, the WHOLE document -- <|doc_end|> and its own <|doc_start|> -- is freed, so it
+    is not "present" for compact_pooled_rows at all: no soft-token slot, every token real."""
+    from olmo_core.nn.attention.chunked_mask import (
+        FREE_CHUNK_ID,
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+    from olmo_core.nn.pooled_soft_token import compact_pooled_rows
+
+    DS, DE, EOS = 900, 901, 902
+    y = torch.tensor([[DS, 5, 6, 7, 8, DE, EOS]])
+    base = build_chunk_ids_from_tokens(y, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+
+    # extra_tokens (10) > body length (5: "5 6 7 8" + DE) -> everything freed, including the
+    # marker itself (no stop id given: header is zero-length, extra_tokens counts from the doc's
+    # first token after <|doc_start|>, per the docstring).
+    whole = mark_doc_headers_free(base, y, doc_start_id=DS, doc_end_id=DE, extra_tokens=10)
+    assert (whole == FREE_CHUNK_ID).all()
+
+    cb = compact_pooled_rows(
+        y, None, whole, torch.zeros(1, 1, dtype=torch.bool), placeholder_id=999, pad_token_id=EOS
+    )
+    assert cb.soft_rows.numel() == 0  # no slot at all
+    assert cb.input_ids[0, : cb.row_lens[0]].tolist() == [DS, 5, 6, 7, 8, DE, EOS]  # every token real
+
+    # Exactly at the boundary (extra_tokens == body length) the doc is still fully freed.
+    boundary = mark_doc_headers_free(base, y, doc_start_id=DS, doc_end_id=DE, extra_tokens=5)
+    assert (boundary == FREE_CHUNK_ID).all()
+
+    # One short of the boundary: <|doc_end|> (and so the marker) stay chunk-owned -> one slot.
+    one_short = mark_doc_headers_free(base, y, doc_start_id=DS, doc_end_id=DE, extra_tokens=4)
+    assert one_short[0].tolist() == [0, -1, -1, -1, -1, 0, -1]
+    cb2 = compact_pooled_rows(
+        y, None, one_short, torch.zeros(1, 1, dtype=torch.bool), placeholder_id=999,
+        pad_token_id=EOS,
+    )
+    assert cb2.soft_rows.numel() == 1
+
+
+def test_mark_doc_headers_free_extra_tokens_composes_with_cent_cmean_slot():
+    """`--st-header-extra-tokens` composes with `--st-slot-mode cent_cmean`
+    (:func:`~olmo_core.nn.pooled_soft_token.apply_slot_mode`): the slot is rebuilt from
+    `chunk_ids >= 0` positions, which mark_doc_headers_free already excludes the freed
+    header+extra tokens from, so no separate wiring is needed on the slot-construction side."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+    from olmo_core.nn.pooled_soft_token import apply_slot_mode
+
+    DS, DE, EOS, STOP = 900, 901, 902, 25
+    doc1 = [DS, 10, 11, STOP, 12, STOP, 20, 21, 22, DE]
+    doc2 = [DS, 13, 14, STOP, 15, STOP, 60, 61, 62, DE]  # different content -> non-degenerate
+    x = torch.tensor([[1, 2] + doc1 + doc2 + [3, EOS]])  # so the row centroid != doc 0's own mean
+    base = build_chunk_ids_from_tokens(x, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
+    chunk = mark_doc_headers_free(
+        base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, extra_tokens=2
+    )
+    n_docs = int(base.max().item()) + 1
+
+    torch.manual_seed(0)
+    vocab = 1000
+    D = 8
+    emb_table = torch.randn(vocab, D)
+    emb = emb_table[x]
+    stop_mask = torch.zeros(vocab, dtype=torch.bool)  # no content-token filtering for this check
+    plain_means = torch.zeros(1, n_docs, D)
+
+    feats, n_fallback = apply_slot_mode(
+        emb, x, chunk, n_docs, plain_means, mode="cent_cmean", stop_mask=stop_mask
+    )
+    assert feats.shape == (1, n_docs, D)
+    assert n_fallback == 0
+
+    # Reference: cmean (pre-centring) computed by hand ONLY over the surviving (chunk_ids >= 0)
+    # positions of doc 0 -- i.e. excluding the freed header+extra tokens.
+    surviving_positions = (chunk[0] == 0).nonzero(as_tuple=True)[0]
+    assert x[0, surviving_positions].tolist() == [DS, 20, 21, 22, DE]  # header+extra excluded
+    ref_cmean = emb[0, surviving_positions].mean(dim=0)
+    row_mask = (chunk[0] >= 0)
+    row_centre = emb[0, row_mask].mean(dim=0)
+    row_norm = emb[0, row_mask].norm(dim=-1).mean()
+    expected = ref_cmean - row_centre
+    expected = expected / expected.norm().clamp(min=1e-6) * row_norm.clamp(min=1e-6)
+    assert torch.allclose(feats[0, 0], expected, atol=1e-5)

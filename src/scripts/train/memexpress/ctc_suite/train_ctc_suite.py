@@ -1347,6 +1347,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             distill_weight=opts.st_distill_weight,
             header_stop_id=opts.st_header_stop_id,
             header_stop_count=opts.st_header_stop_count,
+            header_extra_tokens=opts.st_header_extra_tokens,
             detach_soft_gdn=not opts.st_no_detach_soft_gdn,
             # Compression-mixing curriculum. With --st-gold-blind there is NO keep hook, so the
             # model applies it to the seeded keep_prob draw itself; otherwise the hook installed
@@ -1362,7 +1363,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             ),
         )
         print(
-            f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
+            f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} "
+            f"(count {opts.st_header_stop_count}, extra {opts.st_header_extra_tokens}) "
             f"detach_gdn={not opts.st_no_detach_soft_gdn} "
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
@@ -1871,6 +1873,17 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--st-header-stop-count", type=int, default=1)
     ap.add_argument(
+        "--st-header-extra-tokens",
+        type=int,
+        default=0,
+        help="softtoken: ALSO keep the next K body tokens (right after the header) real, so a "
+        "pooled doc's compacted row is <header><first K body tokens><SLOT>. 0 (default) is "
+        "bit-identical to header-only behaviour. Works even without --st-header-stop-id (K is "
+        "then counted from the doc's first token after doc_start). A doc whose remaining body "
+        "has fewer than K tokens is kept entirely real (no slot at all) -- see "
+        "olmo_core.nn.attention.chunked_mask.mark_doc_headers_free.",
+    )
+    ap.add_argument(
         "--st-slot-mode",
         choices=["mean", "cmean", "cent_cmean"],
         default="mean",
@@ -2188,6 +2201,11 @@ def parse_args() -> argparse.Namespace:
         ap.error(
             f"--st-slot-mode is only honoured by --variant softtoken (got {opts.variant!r}); "
             "it would be ignored."
+        )
+    if opts.st_header_extra_tokens > 0 and opts.variant != "softtoken":
+        ap.error(
+            "--st-header-extra-tokens is only honoured by --variant softtoken "
+            f"(got --variant {opts.variant!r}); it would be ignored."
         )
     if mix_requested and opts.variant != "softtoken":
         ap.error(
