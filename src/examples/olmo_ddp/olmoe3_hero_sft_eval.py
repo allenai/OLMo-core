@@ -161,7 +161,7 @@ def main():
     output = model.parent / "posttrain-evals-r1" / args.bundle
     resume = os.environ.get("HERO_SFT_RESUME") == "1"
     if resume:
-        assert args.bundle in ("math500", "alpaca")
+        assert args.bundle in ("math500", "ifbench", "alpaca")
         assert (output / "recipe.json").is_file(), "Resume needs the original recipe"
     else:
         output.mkdir(parents=True, exist_ok=False)
@@ -208,9 +208,11 @@ def main():
         "provider.kwargs.language_model_only=true",
         "provider.kwargs.gpu_memory_utilization=0.75",
         "provider.kwargs.max_num_batched_tokens=4096",
-        "provider.kwargs.max_num_seqs=16"
-        if args.bundle == "smoke"
-        else "provider.kwargs.max_num_seqs=32",
+        (
+            "provider.kwargs.max_num_seqs=16"
+            if args.bundle == "smoke"
+            else "provider.kwargs.max_num_seqs=32"
+        ),
         "provider.kwargs.disable_log_stats=false",
         "provider.kwargs.enable_prefix_caching=false",
         "provider.kwargs.model_impl=vllm",

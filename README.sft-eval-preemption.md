@@ -28,3 +28,18 @@ vLLM, model kernels, task definitions or scoring algorithms. Unit tests exercise
 cached/missing dispatch, duplicate-record equality, idempotence, and rejection
 of mismatched model/sampling/question/response. CPU-only validation builds all
 six original recipes in the actual eval runtime and stops before inference.
+# EMO-disabled MT/LC/SFT campaign recovery (September 15)
+
+This branch applies the same recovery to the separate
+`olmo35-small-gptoss-sft-posttrain-noemo-20260914` campaign, whose original
+submission pin is `c0aa341c51622327db8f45aa5791abdb18799587`. Reconciliation
+retains that pin so existing submission receipts do not drift. Training,
+conversion, inference and task recipes are unchanged. Completed and running
+jobs are adopted, not replaced.
+
+Recovery also supports IFBench through the same saved raw-response replay and
+unchanged native scoring used for Math500 and Alpaca. Only finalized Beaker
+system preemptions qualify for one r2 replacement; native auto-resume handles
+later preemptions. Manual cancellation and runtime failures remain held.
+Replacement workers use urgent priority, a 6-hour minimum runtime and the
+original 12-hour timeout/resources. No checkpoint or response deletion.

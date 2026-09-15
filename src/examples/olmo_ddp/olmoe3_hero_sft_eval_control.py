@@ -16,7 +16,7 @@ from olmoe3_lr_sweep_watch import atomic_json, log, replace_env
 DEPLOYMENT = AUTOMATION / "deployments/posteval-r1"
 ALPACA_PIN = "cd543a149df89434d8a54582c0151c0b945c3d20"
 BUNDLES = ("math500", "ifbench", "humaneval", "alpaca")
-ORIGINAL_PIN = "89e7dcb739e2168f5f1022c49f35eec2167383b8"
+ORIGINAL_PIN = "c0aa341c51622327db8f45aa5791abdb18799587"
 
 
 def resume_spec(original, commit):
@@ -125,9 +125,9 @@ def spec_for(template, stage, run, commit):
             "model": model,
             "commit": commit,
             "sampling": "Think final answers; T=.6 P=.95 max_new_tokens=32768 seed=1234 n=1",
-            "inference_profile": "bf16-grouped-fla-pilot-v1"
-            if stage != "qualify"
-            else "strict-fp32-reference",
+            "inference_profile": (
+                "bf16-grouped-fla-pilot-v1" if stage != "qualify" else "strict-fp32-reference"
+            ),
         }
     )
     return spec
@@ -175,7 +175,7 @@ def main():
                     state = control.report(work) if work else "ambiguous_submission"
                     replaces = None
                     if (
-                        stage in ("math500", "alpaca")
+                        stage in ("math500", "ifbench", "alpaca")
                         and state == "STATUS_CANCELED"
                         and is_system_preemption(b, work)
                     ):

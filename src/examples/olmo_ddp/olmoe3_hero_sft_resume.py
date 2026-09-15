@@ -22,7 +22,7 @@ def install_resume_cache():
     recipe = json.loads(Path(path).read_text())
     assert len(recipe["tasks"]) == 1
     task_name = next(iter(recipe["tasks"]))
-    assert task_name in ("hero_sft_math500", "hero_sft_alpaca")
+    assert task_name in ("hero_sft_math500", "hero_sft_ifbench", "hero_sft_alpaca")
     cache = {}
     for file in (Path(recipe["output"]) / "responses" / task_name).glob("*.json"):
         row = json.loads(file.read_text())
