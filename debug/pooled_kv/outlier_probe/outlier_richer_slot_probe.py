@@ -202,12 +202,26 @@ def corpus_stats(rows, tok, model, drop_ks=(100, 500)):
 # ---------------------------------------------------------------------------------------------
 
 
+def _ordinal_in_doc(d, m):
+    """Rank of each token WITHIN its document, for tokens listed in increasing position order.
+    A document's tokens are NOT contiguous once ``mark_doc_headers_free`` has cut its header out
+    of the middle of its span (the ``<|doc_start|>`` marker keeps the doc id, the header tokens
+    become FREE, the body follows), so ``pos - first[doc]`` overcounts by the header length and
+    runs off the end of a per-document buffer. Count ordinals instead."""
+    order = torch.argsort(d, stable=True)
+    lens = torch.bincount(d, minlength=m)
+    offs = torch.cumsum(lens, 0) - lens
+    rank = torch.empty_like(d)
+    rank[order] = torch.arange(d.numel(), device=d.device) - offs[d[order]]
+    return rank, lens
+
+
 def _seg_split(cid, n_docs, G):
     """Split every document's body into G contiguous segments; segment id = doc * G + g."""
     if G == 1:
         return cid, n_docs
     out = cid.clone().to(torch.long)
-    B, T = cid.shape
+    B = cid.shape[0]
     for b in range(B):
         c = cid[b].to(torch.long)
         ctx = c >= 0
@@ -215,11 +229,8 @@ def _seg_split(cid, n_docs, G):
             continue
         pos = ctx.nonzero(as_tuple=True)[0]
         d = c[ctx]
-        first = torch.full((n_docs,), T, dtype=torch.long, device=c.device)
-        first.scatter_reduce_(0, d, pos, reduce="amin", include_self=True)
-        cntd = torch.bincount(d, minlength=n_docs).clamp(min=1)
-        rank = pos - first[d]
-        g = torch.div(rank * G, cntd[d], rounding_mode="floor").clamp(max=G - 1)
+        rank, lens = _ordinal_in_doc(d, n_docs)
+        g = torch.div(rank * G, lens.clamp(min=1)[d], rounding_mode="floor").clamp(max=G - 1)
         out[b, pos] = d * G + g
     return out, n_docs * G
 
@@ -261,11 +272,8 @@ def _enc_feats(model, input_ids, cid, n_seg, want_docs, k):
     remap[want_docs] = torch.arange(len(want_docs), device=dev)
     dd = remap[d]
     m = len(want_docs)
-    first = torch.full((m,), input_ids.shape[1], dtype=torch.long, device=dev)
-    first.scatter_reduce_(0, dd, pos, reduce="amin", include_self=True)
-    lens = torch.bincount(dd, minlength=m)
+    rank, lens = _ordinal_in_doc(dd, m)
     Lmax = int(lens.max().clamp(min=1))
-    rank = pos - first[dd]
     padded = torch.full((m, Lmax), IDS.eos, dtype=input_ids.dtype, device=dev)
     padded[dd, rank] = input_ids[0][ctx]
     real = torch.zeros((m, Lmax), dtype=torch.bool, device=dev)
