@@ -270,7 +270,7 @@ def main():
     n_fp_miss = 0
 
     acc = {c[0]: {"ce": [], "top1": [], "kl": [], "tf_em": [], "compaction": [], "sec": [],
-                  "gen_em": [], "gen_f1": [], "tf_f1": [], "tf_id1": [], "gen_ids": [],
+                  "gen_em": [], "gen_f1": [], "tf_f1": [], "tf_id1": [], "gen_ids": [], "ce_digit": [],
                   "hit_gold_pooled": [], "hit_gold_real": [],
                   "pred_is_pooled": [], "base_pooled": [],
                   "rowsplit": []} for c in conds}
@@ -284,6 +284,12 @@ def main():
         targets = x[0, ans_pos]
         true_text = tok.decode(targets.tolist())
         true_ids = parse_ids(true_text)
+        # Outlier answers can wrap the ids in a prose sentence ("Most passages are about X and the
+        # outliers are [2], [3], [20]"), and that prose dominates the mean answer CE. Score the
+        # DIGIT tokens separately -- those are the ones that carry the retrieval decision.
+        pieces = [tok.decode([int(t)]) for t in targets.tolist()]
+        digit_sel = torch.tensor([i for i, q in enumerate(pieces) if any(ch.isdigit() for ch in q)],
+                                 device="cuda", dtype=torch.long)
         ans_start = int(ans_pos[0])
 
         fp = content_fingerprint_from_row(row.tolist(), IDS.eos)
@@ -347,6 +353,8 @@ def main():
 
             r = acc[name]
             r["ce"].append(float(F.cross_entropy(lg, targets)))
+            if digit_sel.numel():
+                r["ce_digit"].append(float(F.cross_entropy(lg[digit_sel], targets[digit_sel])))
             r["top1"].append(float((lg.argmax(-1) == full_lg.argmax(-1)).float().mean()))
             r["kl"].append(float(F.kl_div(F.log_softmax(lg, -1), F.log_softmax(full_lg, -1),
                                           log_target=True, reduction="batchmean")))
@@ -445,7 +453,7 @@ def summarize(r):
 
 
 def table(acc, conds):
-    hdr = (f"{'condition':12} {'CE':>7} {'top1':>6} {'KL':>7} {'tfEM':>6} {'tfF1':>6} "
+    hdr = (f"{'condition':12} {'CE':>7} {'CEdig':>7} {'top1':>6} {'KL':>7} {'tfEM':>6} {'tfF1':>6} "
            f"{'tfID1':>6} {'genF1':>6} {'genEM':>6} {'R@gold_pooled':>14} {'R@gold_real':>12} "
            f"{'pred_pooled':>11} {'base_pooled':>11} {'compact':>8} {'s/row':>6}")
     print(hdr, flush=True)
@@ -454,7 +462,7 @@ def table(acc, conds):
         if not r["ce"]:
             continue
         m = lambda k: (np.mean(r[k]) if r[k] else float("nan"))  # noqa: E731
-        print(f"{name:12} {m('ce'):7.3f} {m('top1'):6.3f} {m('kl'):7.3f} {m('tf_em'):6.2f} "
+        print(f"{name:12} {m('ce'):7.3f} {m('ce_digit'):7.3f} {m('top1'):6.3f} {m('kl'):7.3f} {m('tf_em'):6.2f} "
               f"{m('tf_f1'):6.3f} {m('tf_id1'):6.3f} {m('gen_f1'):6.3f} {m('gen_em'):6.2f} "
               f"{m('hit_gold_pooled'):9.3f}[{len(r['hit_gold_pooled']):4d}] "
               f"{m('hit_gold_real'):7.3f}[{len(r['hit_gold_real']):4d}] "
