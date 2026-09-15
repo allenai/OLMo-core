@@ -401,6 +401,29 @@ below `cc00` (ΔCE(digits) +1.41 to +1.72). Only the gold-aware `goldcats2`/`gol
 (`first64` +0.111 at 0.490, `fl32` +0.158 at 0.273) survive. A mean-embedding clustering cannot
 separate 26 Wikipedia topics at n = 220.
 
+### 5f. Corpus structure and the hard-negative rate, by rung (replicate pairing, 48 rows each)
+
+| quantity | 2k (n = 22) | 8k (n = 55) | 32k (n = 220) |
+|---|---|---|---|
+| clusters found / true topics | 3.73 ± 0.07 / ≈ 4 | 7.90 ± 0.05 / ≈ 8 | (clustering collapses) |
+| smallest / largest cluster | 2.77 / 8.83 | 1.90 / 12.75 | — |
+| **`gold_cat_purity`** (all 3 gold in one cluster) | **1.000 ± 0.000** | **1.000 ± 0.000** | — |
+| **`gold_in_smallest`** | 0.521 ± 0.073 | **0.250 ± 0.063** | — |
+| cos(gold, centroid) | −0.271 ± 0.047 | −0.024 ± 0.031 | — |
+| cos(other, centroid) | +0.087 ± 0.009 | +0.033 ± 0.003 | — |
+| **`hn_rate`** | 0.708 ± 0.066 | **1.000 ± 0.000** | — |
+| `oracle_cosR` ("3 lowest cosines are the outliers") | 0.396 ± 0.063 | **0.028 ± 0.017** | — |
+| **`gold_only_full`** under `gpr33` (the shortcut signature) | **0.708** | **0.583** | — |
+| `gold_only_full` under `goldonly` | 0.708 | 0.771 | — |
+| `gold_only_full` under `smallcat3` | 0.000 | 0.000 | — |
+
+The cosine margin between gold and non-gold **shrinks by an order of magnitude from 2k to 8k**
+(0.358 → 0.057 in cos units), the accidental hard-negative rate goes to **1.000**, and the oracle
+cosine rule drops from 0.396 to 0.028. The clustering keeps the three gold documents together
+perfectly at both rungs (`gold_cat_purity` 1.000) but increasingly fails to make their cluster the
+*smallest* one (0.521 → 0.250). That single quantity is the whole reason the category rules fade
+with length.
+
 ## 5e. Verdict
 
 **1. Real tokens work where slot vectors did not — this is the first construction in this line that
