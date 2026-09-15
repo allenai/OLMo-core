@@ -272,6 +272,21 @@ def main():
     pst = model._pooled_soft_tokens
     install_swap_patch(model)
 
+    # RoPE cache: on the compacted path rope.forward indexes an absolute-position sin/cos buffer by
+    # position_ids, and it sizes that buffer from the CACHE, never from the positions it is asked
+    # for -- so a compacted row (short) carrying original positions (long) silently reads past the
+    # end. Free generation makes it worse: it walks positions past the row's own length. Warm every
+    # RoPE module to the longest position any construction can ask for. (No RoPE scaling here, so a
+    # larger buffer is the same values, just longer.)
+    max_pos = max(len(r) for r in rows) + a.gen_max_new + 8
+    n_warm = 0
+    for mod in model.modules():
+        rope = getattr(mod, "rope", None)
+        if rope is not None and hasattr(rope, "warmup_cache"):
+            rope.warmup_cache(max_pos, torch.device("cuda"))
+            n_warm += 1
+    log(f"warmed {n_warm} RoPE caches to {max_pos} positions")
+
     # Gold ids straight from the sidecar. NOT make_fingerprint_keep_docs_fn: with
     # n_random_frac=0.0 that helper still forces `max(1, ...)` == ONE random non-gold document
     # real, so the 2026-09-08 "gold-only" probe point was really gold + 1 random. Here `goldonly`
