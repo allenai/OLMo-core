@@ -104,6 +104,7 @@ SLOTS = {
     "g2": dict(G=2),
     "g4": dict(G=4),
     "g2cent": dict(G=2, center=True, renorm=True),
+    "g2cc": dict(G=2, drop=100, center=True, renorm=True),
     "enc2": dict(enc_k=2, renorm=True),
     "enc4": dict(enc_k=4, renorm=True),
     "enc4late": dict(enc_k=4, late=True),

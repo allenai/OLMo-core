@@ -78,7 +78,7 @@ def main():
     ap.add_argument("--ckpt-name", default="ds64-outlier-dense-u64M")
     ap.add_argument("--ckpt", default=None)
     ap.add_argument("--tokenizer", default=None)
-    ap.add_argument("--slots", default="mean,meanrn,cmean100,cmean500,centered,cent_cmean,idf,g2,g4,enc2,enc4")
+    ap.add_argument("--slots", default="mean,meanrn,cmean100,cmean500,centered,cent_cmean,idf,g2,g4,g2cent,g2cc,enc2,enc4")
     ap.add_argument("--work", default="/results/sep_work")
     ap.add_argument("--out", default="/results/slot_separability.json")
     a = ap.parse_args()
@@ -139,8 +139,10 @@ def main():
             want = torch.arange(n_seg, device="cuda")
             R.ST["enc_cache"] = {}
             feats, _ = R.build_slot_feats(model, x, cid_seg, n_seg, want, params, ri)
-            v = feats.float().reshape(n_docs, G, -1).mean(1).cpu().numpy()
-            _score(res[s], v, gold, k)
+            v = feats.float().cpu().numpy()
+            # G > 1: the document's oddness is its ODDEST segment (averaging the segment means back
+            # to a document vector would just reconstruct the plain mean and measure nothing).
+            _score(res[s], v, gold, k, G=G, n_docs=n_docs)
 
         # lexical TF-IDF reference (no embeddings at all)
         c = cid[0].cpu().numpy()
@@ -176,11 +178,13 @@ def main():
     log(f"wrote {a.out}")
 
 
-def _score(acc, v, gold, k):
+def _score(acc, v, gold, k, G=1, n_docs=None):
     c = v.mean(0, keepdims=True)
     vn = v / (np.linalg.norm(v, axis=-1, keepdims=True) + 1e-9)
     cn = c / (np.linalg.norm(c, axis=-1, keepdims=True) + 1e-9)
     cos = (vn * cn).sum(-1)
+    if G > 1:
+        cos = cos.reshape(n_docs, G).min(1)  # oddest segment wins
     acc["recall"].append(topk_recall(-cos, gold, k))  # farthest from centroid = most cosine-distant
     acc["rankpct"].append(mean_rank_pct(cos, gold))  # low cosine = high "oddness"; 0.0 = oddest
     acc["cos_gold"].append(float(np.mean([cos[g] for g in gold])))
