@@ -358,8 +358,9 @@ class AttnCapture:
             n_rep = max(1, q.shape[2] // k.shape[2])
             kk = k if n_rep == 1 else k.repeat_interleave(n_rep, dim=2)
             scale = getattr(mod, "scale", None) or float(q.shape[-1]) ** -0.5
-            qq = q[0, qs].float()            # (nq, H, Dh)
-            sc = torch.einsum("qhd,thd->hqt", qq, kk[0].float()) * float(scale)
+            # bf16 matmul (fp32 accumulate on tensor cores) then cast: an fp32 copy of k is
+            # ~0.5 GB at 32k and buys nothing for a RANKING signal
+            sc = torch.einsum("qhd,thd->hqt", q[0, qs], kk[0]).float() * float(scale)
             causal = torch.arange(T, device=sc.device)[None, :] > qs[:, None]
             sc = sc.masked_fill(causal[None], float("-inf"))
             p = sc.softmax(-1).sum(dim=(0, 1))  # (T,) summed over heads and query rows
