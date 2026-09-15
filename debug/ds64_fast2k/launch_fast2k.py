@@ -87,6 +87,7 @@ WANDB_GROUP = os.environ.get("F2K_WANDB_GROUP", f"f2k-q35-{SCALE}")
 # to its 32-token cap. See records/ds64-handoff.md section 8.
 # ---------------------------------------------------------------------------------------------
 _XHDR = "--st-header-stop-id 5491 --st-header-stop-count 1"
+_XSLOT = f"--st-slot-tokenizer {TOKENIZER}"
 ARM_EXTRA = {
     "kv33": "--st-keep-frac 0.3333 --st-keep-mode gold_plus_random",
     "kv17": "--st-keep-frac 0.1667 --st-keep-mode gold_plus_random",
@@ -106,10 +107,13 @@ ARM_EXTRA = {
     # detach_soft_kv gives the projector no LM gradient on pooled slots. Same header-real,
     # gold-blind construction as xhdr*, so cc17/cm17 are read against xhdr17 (0.234 = the 3/14
     # guess floor) and cc50 against xhdr50 (0.895).
-    "cm17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cmean",
-    "cc17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cent_cmean",
-    "cc00": f"--st-gold-blind --st-keep-prob 0.0 {_XHDR} --st-slot-mode cent_cmean",
-    "cc50": f"--st-gold-blind --st-keep-prob 0.5 {_XHDR} --st-slot-mode cent_cmean",
+    # --st-slot-tokenizer is pinned to the weka copy so the punctuation half of the stop set is
+    # deterministic and needs no HF-hub call at job start (without it the trainer falls back to a
+    # frequency-only stop set and says so in the log).
+    "cm17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cmean {_XSLOT}",
+    "cc17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cent_cmean {_XSLOT}",
+    "cc00": f"--st-gold-blind --st-keep-prob 0.0 {_XHDR} --st-slot-mode cent_cmean {_XSLOT}",
+    "cc50": f"--st-gold-blind --st-keep-prob 0.5 {_XHDR} --st-slot-mode cent_cmean {_XSLOT}",
 }
 ARM_MICRO = {"dense": 4}
 DEFAULT_MICRO = 2
