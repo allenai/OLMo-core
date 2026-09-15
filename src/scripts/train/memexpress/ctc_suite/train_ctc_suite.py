@@ -729,6 +729,10 @@ def build_slot_stop_set(opts: argparse.Namespace, ids: Any, meta: Dict[str, Any]
     Source: the first ``--st-slot-stop-rows`` rows' worth of tokens of the first
     ``token_ids_part_*.npy`` (the shard IS accessible at model-build time -- it is the same path
     ``resolve_plan`` globs -- so no tokenizer-vocab heuristic is needed for the frequency half).
+    Despite the ``.npy`` extension those parts are **raw headerless** arrays
+    (``convert_unified_to_document_landmark.py`` writes them with ``.tofile()``), so they are read
+    with ``np.memmap`` at the shard's ``dtype``; ``np.load`` on one dies with "This file contains
+    pickled (object) data".
     The ``--st-slot-topk`` most frequent ids go in the set, plus the marker/pad/landmark/eos ids,
     plus (when a tokenizer loads) every id whose decoded piece has no alphanumeric character.
 
@@ -745,9 +749,11 @@ def build_slot_stop_set(opts: argparse.Namespace, ids: Any, meta: Dict[str, Any]
         raise SystemExit(
             f"--st-slot-mode {opts.st_slot_mode} needs {opts.data}/token_ids_part_*.npy"
         )
-    arr = np.load(parts[0], mmap_mode="r")
+    dtype = np.dtype(meta.get("dtype") or "uint32")
+    n_total = os.path.getsize(parts[0]) // dtype.itemsize
+    arr = np.memmap(parts[0], dtype=dtype, mode="r", shape=(n_total,))
     row_len = int(meta.get("max_example_len") or opts.seq_len)
-    n_tok = min(int(arr.shape[0]), max(1, opts.st_slot_stop_rows) * max(1, row_len))
+    n_tok = min(n_total, max(1, opts.st_slot_stop_rows) * max(1, row_len))
     decode = None
     tok_id = opts.st_slot_tokenizer or FAMILY_TOKENIZER[opts.model_family]
     try:
