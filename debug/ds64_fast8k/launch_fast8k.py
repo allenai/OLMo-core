@@ -310,7 +310,10 @@ def do_parity(args):
             extra = [
                 # --trained-parity implies --no-reset-projector and scores every rung in ONE
                 # process, so the 4B checkpoint is loaded once.
-                "--trained-parity", "--arm", "none", "--construction", spec,
+                # ``--construction=<spec>``, never ``--construction <spec>``: the spec itself
+                # starts with "--", and argparse refuses an option value that looks like another
+                # option ("expected one argument"). The "=" form always parses.
+                "--trained-parity", "--arm", "none", f"--construction={spec}",
                 "--rungs", args.parity_rungs, "--rows", args.parity_rows,
                 "--gen-rows", args.parity_gen_rows,
                 "--ckpt", f"{CKPTS}/{name}", "--ckpt-name", name,
