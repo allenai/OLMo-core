@@ -33,6 +33,8 @@ Constructions (``--conditions``)::
   gb00        keep 0, no header (pure slots)
   gb00h_swap  CONTROL: gb00h with the gold docs' slot vectors swapped with random non-gold slots'.
               If F1 does not drop, the model is not reading slot CONTENT at all.
+  gb50h_swap  the same control on gb50h, where half the documents are still real: it separates
+              "found the gold because its BODY was real" from "found it from the slot".
 
 Everything gold-blind uses the SAME keep draw the trainer uses (``resolve_keep_docs`` with
 ``holder=None``), and the header path is the trainer's own ``mark_doc_headers_free``
@@ -103,6 +105,7 @@ CONDITIONS = [
     ("goldonly", "gold", False),
     ("gb50", 0.5, False),
     ("gb50h", 0.5, True),
+    ("gb50h_swap", 0.5, True),
     ("gb17h", 1.0 / 6.0, True),
     ("gb00h", 0.0, True),
     ("gb00", 0.0, False),
