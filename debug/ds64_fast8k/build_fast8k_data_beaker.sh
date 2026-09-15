@@ -38,16 +38,17 @@ esac
 # hammond have `storage:weka` and no GPUs at all, while saturn/neptune/ceres schedule `eager` and
 # were measured at 0/216, 0/96 and 0/88 free slots -- an urgent CPU job queued behind them for
 # ~50 min with no placement (2026-09-15). jupiter is kept as the strict-priority backfill.
-CLUSTERS="${CLUSTERS:-ai2/phobos ai2/hammond ai2/jupiter*}"
+CLUSTERS="${CLUSTERS:-ai2/phobos ai2/hammond ai2/jupiter* ai2/holmes* ai2/titan* ai2/prometheus* ai2/triton* ai2/ceres* ai2/saturn* ai2/neptune*}"
 CLUSTER_ARGS=""; for c in $CLUSTERS; do CLUSTER_ARGS="$CLUSTER_ARGS --cluster $c"; done
 
 gantry run --name "fast8k-data-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
   $CLUSTER_ARGS \
-  --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
+  --gpus 0 --cpus ${BUILD_CPUS:-4} --memory ${BUILD_MEM:-32GiB} --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false \
   --weka oe-training-default:/weka/oe-training-default \
   --env TASK="$TASK" --env BUDGETS="$BUDGETS" --env SLICES="$SLICES" --env SEQ_LEN="$SEQ_LEN" \
   --env WEKA="$WEKA" --env POOL_ROWS="$POOL_ROWS" \
   --env TOKENIZER="$TOKENIZER" --env EVAL_RUNG="$EVAL_RUNG" --env EVAL_RUNG_2K="$EVAL_RUNG_2K" \
   --env CONV_TASK="$CONV_TASK" --env CHUNK_BY="$CHUNK_BY" --env CTC_BRANCH="$CTC_BRANCH" \
+  --env BUILD_CPUS="${BUILD_CPUS:-4}" \
   --allow-dirty --timeout 0 --yes -- bash debug/ds64_fast8k/_build_fast8k_inner.sh

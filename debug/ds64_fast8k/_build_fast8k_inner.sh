@@ -32,7 +32,7 @@ for f in $F/arms/${TASK}_g*.jsonl; do
     PYTHONPATH=src $PYB src/scripts/data/convert_unified_to_document_landmark.py \
       --input-jsonl "$f" --task "$CONV_TASK" --out-dir "$OUT" --emit dense --marker-set qwen3_5 \
       --tokenizer "$TOKENIZER" --seq-len "$SEQ_LEN" --query-position after --cot-mode none \
-      --chunk-by "$CHUNK_BY" --emit-gold-sidecar --num-proc 16 || { echo "!!! tokenize FAILED $ARM"; exit 1; }
+      --chunk-by "$CHUNK_BY" --emit-gold-sidecar --num-proc "${BUILD_CPUS:-4}" || { echo "!!! tokenize FAILED $ARM"; exit 1; }
   fi
   # Two overlap checks, not one: fast8k trains on 8k rows and scores the 8k rung (the decisive
   # number) AND the 2k rung (continuity with the fast2k screen), so both have to be disjoint.
