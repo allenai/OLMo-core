@@ -86,7 +86,7 @@ Model-token budgets: dense 1,053,818,880; compressive 1,073,995,776, including p
 The full corpus before batch-tail dropping has 1,055,675,463 content tokens over three passes.
 
 `launch_contradiction_256k.py` submits detached jobs with exactly two replicas, eight GPUs
-each, urgent priority, and `minRuntime: 0`. It requires a full pushed commit SHA:
+each, urgent priority, and `minRuntime: 3600000000000` (one hour). It requires a full pushed commit SHA:
 
 ```bash
 python src/scripts/train/memexpress/sft_xlong256k/launch_contradiction_256k.py dense --ref <sha>

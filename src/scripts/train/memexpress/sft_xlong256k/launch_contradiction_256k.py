@@ -1,7 +1,7 @@
 """Detached Gantry submission for the contradiction-only SFT pair and CPU prep.
 
 Requires uvx; --ref pins a pushed snapshot of the training scripts. Training uses
-2 x 8 GPUs on Jupiter, urgent priority, and minRuntime=0.
+2 x 8 GPUs on Jupiter, urgent priority, and minRuntime=1h.
 """
 
 import argparse
@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 parser = argparse.ArgumentParser(
-    description="Queue contradiction-only SFT on two nodes, minRuntime=0"
+    description="Queue contradiction-only SFT on two nodes, minRuntime=1h"
 )
 parser.add_argument("arm", choices=["dense", "compressive", "prep"])
 parser.add_argument("--ref", required=True, help="Full pushed commit SHA")
@@ -42,7 +42,7 @@ cmd = [
     "--priority",
     "urgent",
     "--min-runtime",
-    "0",
+    "1h",
     "--beaker-image",
     "tylerr/olmo-core-tch291cu128-2025-11-25",
     "--gpus",
