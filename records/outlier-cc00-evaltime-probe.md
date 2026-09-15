@@ -105,6 +105,23 @@ Three things, at 2k:
   indifferent to real bodies; a real body next to slots actively breaks it. This is the same
   direction the (A) gap will take at longer rungs.
 
+**8k rung — COMPLETE.** `rung_8192.jsonl`, **eval_size = 240** (⚠ < 500; SE ±0.032). Generation on
+the first 48 rows = **144 gold documents** (⚠ per-document SE ≈ 0.036; genF1 is a 48-row mean,
+SE ≈ 0.06). ~56 documents/row, k = 3, so the uniform-guess floor is `k/n` ≈ **0.053**.
+
+| | condition | CE | **CE(digits)** | top1=full | KL | tfID1 | **genF1** | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **A** | `full` (real text = the ladder) | 0.225 | **0.623** | 1.000 | 0.000 | 0.167 | **0.229** | — | 0.229 (144) | 1.000 |
+| **B** | `arm` = the cc00 TRAINING construction | 0.346 | **0.988** | 0.920 | 0.128 | 0.100 | **0.125** | 0.125 (144) | — | **0.062** |
+| **C** | `gb00h` = same, PLAIN mean slot | 0.637 | 1.859 | 0.801 | 0.336 | 0.054 | 0.069 | 0.069 (144) | — | 0.062 |
+| **D** | `ccgold` = gold bodies REAL (oracle) | 0.544 | 1.560 | 0.872 | 0.279 | 0.021 | 0.007 | — | 0.007 (144) | 0.114 |
+
+**The 2k parity is gone by 8k, and it is the SOFT side that lost it**: ΔCE **+0.121**,
+ΔCE(digits) **+0.365**, ΔgenF1 **−0.104** (against an SE ≈ 0.06, so real). The ordering
+C < B < A is preserved — `cent_cmean` is still worth ~1.8× the plain slot (0.125 vs 0.069) — but
+2× the guess floor is not a working reader. `ccgold` has collapsed to 0.007, **below the floor**:
+at 56 documents the oracle is actively harmful.
+
 **16k rung — COMPLETE.** `rung_16384.jsonl`, **eval_size = 240** (⚠ < 500; SE ±0.032). Generation on
 the first 32 rows = **96 gold documents** (⚠ per-document SE ≈ 0.028; genF1 is a 32-row mean,
 SE ≈ 0.05). ~111 documents/row, k = 3, so the uniform-guess floor is `k/n` ≈ **0.027**.
@@ -123,7 +140,16 @@ generations say the same thing directly — on 16k pooled-gold rows the model em
 unrelated ids (`true=[6,29,64] pred=[11,17,107]`, `true=[17,31,97] pred=[11,12,14]`,
 `true=[22,38,108] pred=[10,24,81]`), under BOTH inputs.
 
-**8k / 32k — running** (jobs A/C below); `cc00-u32M` (D/E) queued.
+**The parity table, `cc00-u128M`** (printed by `--trained-parity`; eval_size 240/rung):
+
+```
+ rung eval_size |  CE_full  CE_soft      dCE | CEdig_full CEdig_soft   dCEdig |  F1_full  F1_soft     dF1 | compact
+   2k       240 |    0.071    0.112   +0.042 |      0.264      0.421   +0.157 |    0.750    0.778  +0.028 |   0.105
+   8k       240 |    0.225    0.346   +0.121 |      0.623      0.988   +0.365 |    0.229    0.125  -0.104 |   0.062
+  16k       240 |    0.332    0.480   +0.149 |      0.877      1.297   +0.421 |    0.083    0.062  -0.021 |   0.056
+```
+
+**32k — running** (job C); `cc00-u32M` (D/E) queued.
 
 ## 5. Interpretation
 
