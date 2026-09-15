@@ -275,7 +275,14 @@ def table(acc):
 def run_rung(a, task, arm_name, rung, rows_n, gen_rows_n, model, pst, tok, keep_mode, keep_val,
              header_stop_id, header_stop_count, slot_mode):
     shard = f"{a.work}/{task}_{rung}"
-    P.convert(task, a.jsonl or P.EVAL_JSONL[task][rung], rows_n, shard)
+    if a.jsonl:
+        jsonl = a.jsonl
+    elif a.eval_dir:
+        # local-cluster mirror: same basename as the weka rung file, flat under <eval-dir>/<task>/
+        jsonl = os.path.join(a.eval_dir, task, os.path.basename(P.EVAL_JSONL[task][rung]))
+    else:
+        jsonl = P.EVAL_JSONL[task][rung]
+    P.convert(task, jsonl, rows_n, shard)
     rows, masks = P.load_rows(shard, rows_n)
     log(f"=== rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:6]]}")
     if len(rows) < 200:
@@ -410,13 +417,21 @@ def main():
     ap.add_argument("--gen-rows", default="48,48,24", help="single int, or one per rung")
     ap.add_argument("--gen-max-new", type=int, default=64)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--jsonl", default=None, help="override eval JSONL (applies to every rung -- local runs only)")
+    ap.add_argument("--jsonl", default=None, help="override eval JSONL for EVERY rung (single-rung local runs only)")
+    ap.add_argument("--eval-dir", default=None,
+                     help="local-cluster mirror of the eval rung files: <eval-dir>/<task>/<basename of the "
+                          "weka EVAL_JSONL path>, e.g. /data/prasann/ds64_eval (varies correctly per rung, "
+                          "unlike --jsonl)")
     ap.add_argument("--work", default="/results/trained_parity_work")
     ap.add_argument("--out", default="/results/trained_parity.json")
-    ap.add_argument("--weka-out", default=f"{W}/_eval_results/trained_parity")
+    ap.add_argument("--weka-out", default=f"{W}/_eval_results/trained_parity",
+                     help="set to 'none' when weka isn't mounted (local-cluster runs)")
     ap.add_argument("--tag", default="")
     ap.add_argument("--slot-stop-topk", type=int, default=100)
     ap.add_argument("--slot-stop-rows", type=int, default=512)
+    ap.add_argument("--slot-stop-shard-root", default=None,
+                     help="override DS64_SHARDS (weka) for the --st-slot-mode cent_cmean stop-id-set "
+                          "training shard, e.g. a local-cluster mirror root holding <task>_u<budget>/")
     a = ap.parse_args()
 
     arm_name = arm_for_ckpt_name(a.ckpt_name) if a.arm == "auto" else a.arm
@@ -455,7 +470,8 @@ def main():
     pst = model._pooled_soft_tokens
 
     if slot_mode != "mean":
-        shard_dir = f"{DS64_SHARDS}/{task}_u{budget_for_ckpt_name(a.ckpt_name)}"
+        shards_root = a.slot_stop_shard_root or DS64_SHARDS
+        shard_dir = f"{shards_root}/{task}_u{budget_for_ckpt_name(a.ckpt_name)}"
         stop_ids, shown, n_scanned = O.build_stop_ids(shard_dir, tok, topk=a.slot_stop_topk, n_rows=a.slot_stop_rows)
         pst["slot_stop_ids"] = [int(t) for t in stop_ids]
         pst["slot_stop_mask"] = None
