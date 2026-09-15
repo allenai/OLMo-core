@@ -24,9 +24,9 @@ imports fast2k's log fetch / CE-curve parse / log-FLOP interpolation verbatim.
 | | fast2k | fast8k |
 |---|---|---|
 | data | ds64 **2k** rung pool | ds64 **8k** rung pool (n ≈ 56 docs) |
-| seq-len | 4096 | **PLACEHOLDER_SEQLEN** (unpacked; shard `max_example_len` = PLACEHOLDER_MAXLEN) |
+| seq-len | 4096 | **12288** (unpacked; shard `max_example_len` = 10162) |
 | rows/step | 32 | **16** — an 8k row carries ~4× the tokens, so 16 rows ≈ the same real tokens/step |
-| budgets | 2M / 4M / 8M | **8M / 16M / 20M** nominal = PLACEHOLDER_ROWS rows |
+| budgets | 2M / 4M / 8M | **8M / 16M / 20M** nominal = 977 / 1953 / 2441 rows = 62 / 123 / 153 steps |
 | eval | 2k rung × 500 | **8k rung × 500 (decisive)** + 2k × 500 (continuity) |
 | primary metric | ladder f1 + CE floor | **eval-time CE parity** (below), then f1 |
 | GPUs | 2 | 2 (see below) |
@@ -38,7 +38,7 @@ same order, same steps" guarantee the matched budget rests on.
 
 **2 GPUs, not 4.** `model_scale=4b` resolves to `shard_degree=world_size` + FULL activation
 checkpointing (`train_ctc_suite.resolve_activation_checkpointing`), so a 2-rank FSDP job holds half
-of an 8 GB bf16 parameter set, its grads and its ~32 GB fp32 AdamW state, and 2 × PLACEHOLDER_SEQLEN
+of an 8 GB bf16 parameter set, its grads and its ~32 GB fp32 AdamW state, and 2 × 12288
 checkpointed tokens per micro-batch is far below the 4 GPU × 65536 the ds64 ladder already runs.
 Memory is not the binding constraint; queue turnaround is, which is why the cluster list is
 `ceres,saturn,jupiter` with ceres first.
@@ -117,10 +117,20 @@ But a `cpi<p>` arm pools **every** gold document, so it can learn the *training-
 ce_floor_pooled = ln C(k + (1-p)(n-k), k) / answer_tokens
 ```
 
-At n = 56, k = 3, p = 1/2 that is ~0.72 × the nominal floor. **Read a cpi arm's CE descent against
-`ce_floor_pooled`, not `ce_floor`.** The shortcut transfers to nothing — the eval has no pooled
-subset — so it can only flatter the training CE, never the score. `collect_fast8k.py` computes both
-and uses the right one for the `FLOOR` flag.
+**Read a cpi arm's CE descent against `ce_floor_pooled`, not `ce_floor`.** Measured on this shard
+(n = 57 documents, k = 3 gold, 16.53 answer tokens):
+
+| floor | value | what a model parked there has learned |
+|---|---|---|
+| `ce_floor` (nominal) | **0.622** | the output format only; guessing 3 ids from 57 (f1 3/57 = 0.053) |
+| `ce_floor_pooled`, `cpi17` | 0.590 | + "the answer is among the 48 pooled documents" |
+| `ce_floor_pooled`, `cpi33` | **0.552** | + "… among the 39 pooled documents" |
+| `ce_floor_pooled`, `cpi50` | 0.503 | + "… among the 30 pooled documents" |
+
+The shortcut transfers to nothing — the eval has no pooled subset — so it can only flatter the
+training CE, never the score. It is also why the *low*-keep cpi arms are the informative ones:
+at p = 1/6 the shortcut buys 0.03 of CE, at p = 1/2 it buys 0.12. `collect_fast8k.py` computes both
+floors and uses the right one for the `FLOOR` flag.
 
 ## Run it
 
@@ -136,7 +146,7 @@ $PY debug/ds64_fast8k/collect_fast8k.py --stats-from-job <data-experiment-id>
 
 # 3. train.  ALWAYS git push first -- gantry runs the PUSHED commit, --allow-dirty ships nothing.
 #    F8K_SEQ_LEN comes from step 2's reported max_example_len.
-export F8K_SEQ_LEN=PLACEHOLDER_SEQLEN
+export F8K_SEQ_LEN=12288
 PYTHONPATH=src $PY debug/ds64_fast8k/launch_fast8k.py --arms dense --budgets 8M,16M,20M launch
 PYTHONPATH=src $PY debug/ds64_fast8k/launch_fast8k.py --arms cc00,cpi17,cpi33,cpi50,kvgb50 --budgets 16M launch
 
