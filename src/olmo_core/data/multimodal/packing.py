@@ -9,8 +9,10 @@ OLMo-core analogue of mm_olmo's dynamic packer.
 Cross-example isolation reuses the same machinery as intra-example branch isolation:
 
 * a per-token ``example_ids`` vector marks which packed example each token belongs to;
-  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]`` into
-  the attention keep-mask so a token never attends across an example boundary.
+  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]``
+  into the attention keep-mask so a token never attends across an example boundary.
+  Pad positions all carry ``-1``, so they are additionally restricted to themselves --
+  equality alone would make the whole pad tail one mutually-visible segment.
 * per-example ``position_ids`` are preserved (each example keeps its own 0-based RoPE
   positions / branch overlap), so packing is invisible to RoPE.
 * ``subsegment_ids`` are concatenated (examples without branches get a constant id, which
@@ -81,9 +83,7 @@ def greedy_pack_indices(
         crops = int(crop_counts[i]) if crop_counts is not None else 0
         over_tokens = cur and cur_len + n > seq_len
         over_crops = (
-            max_crops_per_pack is not None
-            and cur
-            and cur_crops + crops > max_crops_per_pack
+            max_crops_per_pack is not None and cur and cur_crops + crops > max_crops_per_pack
         )
         if over_tokens or over_crops:
             groups.append(cur)
@@ -205,7 +205,9 @@ def iter_packs(
             and example_has_images(cur[0])
             and cur_crops + crops > max_crops_per_pack
         )
-        if cur and (over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])):
+        if cur and (
+            over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])
+        ):
             yield pack_examples(cur)
             cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
@@ -281,7 +283,9 @@ class PackingConstraint:
     :param granularity: quantization step for the DP table.
     """
 
-    def __init__(self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int):
+    def __init__(
+        self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int
+    ):
         self.key = key
         self.max_len = max_len
         self.allow_shortcut = allow_shortcut
