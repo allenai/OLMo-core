@@ -34,8 +34,15 @@ case "$TASK" in
   *) export CONV_TASK=$TASK CHUNK_BY=document ;;
 esac
 
+# This is a 0-GPU tokenization job, so it belongs on the CPU-only DEV clusters FIRST: phobos and
+# hammond have `storage:weka` and no GPUs at all, while saturn/neptune/ceres schedule `eager` and
+# were measured at 0/216, 0/96 and 0/88 free slots -- an urgent CPU job queued behind them for
+# ~50 min with no placement (2026-09-15). jupiter is kept as the strict-priority backfill.
+CLUSTERS="${CLUSTERS:-ai2/phobos ai2/hammond ai2/jupiter*}"
+CLUSTER_ARGS=""; for c in $CLUSTERS; do CLUSTER_ARGS="$CLUSTER_ARGS --cluster $c"; done
+
 gantry run --name "fast8k-data-$TASK-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
-  --cluster 'ai2/jupiter*' --cluster 'ai2/neptune*' --cluster 'ai2/ceres*' --cluster 'ai2/saturn*' \
+  $CLUSTER_ARGS \
   --gpus 0 --cpus 16 --memory 120GiB --priority urgent \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false \
   --weka oe-training-default:/weka/oe-training-default \
