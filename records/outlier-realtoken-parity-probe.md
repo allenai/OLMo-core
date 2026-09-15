@@ -338,27 +338,116 @@ deliberate hard negatives, so "preserve the near-misses" is not the binding cons
 all. The frozen model is genuinely reading the kept tokens, which is exactly what no slot-vector
 construction ever achieved.
 
-### 5b. The 32k rung — INTERIM at row 5/100 (⚠ eval_size 5 — shape only)
+### 5b. Canonical 32k — INTERIM at row 50/100 (⚠ eval_size 50, 96 gold documents, SE ≈ 0.05)
 
-`rung_32768.jsonl`, job `01M2K3F8JZYHR1HJNNMY8N77MZ` (ETA ~4 h).
+`rung_32768.jsonl`, 220 documents/row, `k/n` floor **0.014**. Job `01M2K3F8JZYHR1HJNNMY8N77MZ`.
 
-| condition | CE | ΔCE | CE(dig) | genF1 | R@gold_pooled | tok/doc | compaction |
-|---|---|---|---|---|---|---|---|
-| `full` | 0.102 | — | 0.260 | **0.400** | — (0.400) | 146.4 | 1.000 |
-| `goldonly` | 0.271 | +0.170 | 0.662 | 0.000 | — (0.000) | 3.0 | 0.025 |
-| `cc00` | 0.970 | +0.869 | 2.397 | 0.000 | 0.000 | 7.5 | 0.055 |
-| `first16` | 0.638 | +0.537 | 1.599 | 0.000 | 0.000 | 23.5 | 0.164 |
-| `first32` | 0.404 | +0.302 | 1.022 | 0.000 | 0.000 | 39.5 | 0.273 |
-| `first64` | 0.153 | **+0.051** | 0.383 | **0.400** | 0.400 | 71.5 | 0.491 |
-| `first32d` | 0.399 | +0.298 | 1.003 | 0.133 | 0.133 | 38.5 | 0.266 |
-| `idfspan16` | 0.411 | +0.309 | 1.023 | 0.133 | 0.133 | 23.5 | 0.164 |
-| `sent1` | 0.627 | +0.525 | 1.567 | 0.000 | 0.000 | 24.8 | 0.173 |
-| `first32_swap` | 1.368 | +1.267 | 3.403 | 0.067 | 0.067 | 39.5 | 0.273 |
+| condition | ΔCE | ΔCE(digits) | genF1 | **R@gold_pooled** | tok/doc | compaction |
+|---|---|---|---|---|---|---|
+| `full` | — | — | **0.490** | — (R@gold_real 0.490) | 147 | 1.000 |
+| `cc00` | +0.749 | +1.828 | 0.010 | **0.010** ≈ floor 0.014 | 7.5 | 0.055 |
+| `goldonly` | +0.135 | +0.291 | 0.062 | — (0.062) | 3.0 | 0.025 |
+| `goldonly_cc` | +0.177 | +0.388 | 0.042 | — (0.042) | 3.0 | 0.025 |
+| `first16` | +0.440 | +1.036 | 0.021 | 0.021 | 23.5 | 0.164 |
+| `first32` | +0.258 | +0.607 | 0.094 | 0.094 | 39.5 | 0.273 |
+| `first64` | **+0.104** | **+0.243** | **0.229** | 0.229 | 71.5 | 0.490 |
+| `first32d` | +0.281 | +0.670 | 0.083 | 0.083 | 38.5 | 0.266 |
+| `idfspan16` | +0.413 | +0.983 | 0.031 | 0.031 | 23.5 | 0.164 |
+| `sent1` | +0.472 | +1.122 | 0.010 | 0.010 | 25.1 | 0.175 |
+| `first32_swap` | +1.186 | +2.939 | 0.021 | 0.021 | 39.5 | 0.273 |
 
-⚠ **`full` itself only scores genF1 0.400 at 32k on these 5 rows.** Any "parity" claim at this rung
-is parity with a model that is already mostly wrong, which is a much weaker statement than at 2k —
-flag it wherever it is quoted. The k-dependence is the same shape as at 2k but shifted: at 32k it
-takes ~64 real tokens/document to reach `full`, where 2k needed ~32.
+⚠ **`full` itself scores only genF1 0.490 at 32k** — the frozen checkpoint is already half wrong, so
+"parity" here is a weak statement. Nothing comes close regardless: the best (`first64`, 64 real
+tokens/document, compaction 0.490) recovers 0.229 of 0.490.
+
+### 5d. Replicate pairing, 8k and 32k — the category rules at length (⚠ interim, 16 rows)
+
+`lmx-full-mixs160M-4b` on `outlier_wiki100w_n55` (8k) and `n220` (32k), sneetches `3552660` /
+`3552682`. **On this checkpoint `full` itself scores genF1 0.000 at both rungs**, so only
+CE(digits), top-1 and the rule diagnostics are informative here.
+
+**8k (n = 55)** — `full` CE(digits) 0.138:
+
+| condition | ΔCE(dig) | top1 | **rule_recall** | kept docs | compaction |
+|---|---|---|---|---|---|
+| `cc00` | +1.926 | 0.730 | — | 0 | 0.063 |
+| `smallcat1` | +1.745 | 0.774 | **0.396** | 2.0 | 0.098 |
+| `smallcat2` | +0.720 | 0.890 | 0.917 | 5.4 | 0.158 |
+| **`smallcat3`** | +0.380 | 0.928 | **0.938** | 10.1 | **0.240** |
+| **`smallcat3cat`** (one slot per pooled cluster) | +0.382 | 0.914 | 0.938 | 10.1 | **0.235** |
+| **`smallcat3f16`** | **+0.116** | 0.958 | 0.938 | 10.1 | 0.328 |
+| `smallcatle3` | +0.905 | 0.870 | 0.896 | 4.3 | **0.137** |
+| `smallcat5` | +0.116 | 0.965 | 1.000 | 24.3 | 0.482 |
+| `smallcat3d1` / `d2` (decoys) | +0.289 / +0.242 | 0.928 / 0.948 | 0.938 | 20.0 / 31.3 | 0.414 / 0.610 |
+| `goldcats2` / `goldcats4` | +0.188 / +0.106 | 0.941 / 0.973 | 1.000 | 11.7 / 26.2 | 0.267 / 0.515 |
+| `goldcats2r` (random cats) | **−0.004** | 0.965 | 1.000 | 20.1 | 0.414 |
+| `margin6` / `margin6f16` | +2.381 / +0.767 | 0.751 / 0.896 | **0.042** | 6.5 | 0.184 / 0.279 |
+| `hardneg6` (ORACLE) | +2.703 | 0.704 | 0.000 | 6.0 | 0.165 |
+| `first16` / `first32` / `first64` | +0.723 / +0.186 / +0.097 | 0.870 / 0.942 / 0.969 | — | 0 | 0.171 / 0.279 / 0.495 |
+| `fl32` | +0.170 | 0.938 | — | 0 | 0.279 |
+| `smallcat3_swap` / `first32_swap` | +2.276 / +3.283 | 0.783 / 0.753 | | | |
+
+**8k is where the category rule is worth something.** After the cluster-cut fix (§3c, `nover8`),
+`smallcat3` lands in the target region — **rule recall 0.938 at compaction 0.240** — and
+`smallcat3f16` (small categories whole **+** 16 real tokens on every pooled document) gives
+**ΔCE(digits) +0.116 at compaction 0.328**, the best value in the ≤ 0.33 band and half the cost of
+`smallcat5` (+0.116 at 0.482). `margin{M}` and the oracle `hardneg{M}` are the **worst** rows in the
+table (rule recall 0.042 / 0.000, ΔCE(digits) +2.4 / +2.7) — worse than keeping nothing.
+
+**32k (n = 220)** — `full` CE(digits) 0.545. **The clustering collapses**: `smallcat1`/`smallcat3`
+rule recall **0.021**, `smallcat5`/`smallcatle3` 0.312, so every gold-blind category rule is at or
+below `cc00` (ΔCE(digits) +1.41 to +1.72). Only the gold-aware `goldcats2`/`goldcats4`
+(+0.074 / +0.046 at compaction 0.102 / 0.120) and the flat token budgets
+(`first64` +0.111 at 0.490, `fl32` +0.158 at 0.273) survive. A mean-embedding clustering cannot
+separate 26 Wikipedia topics at n = 220.
+
+## 5e. Verdict
+
+**1. Real tokens work where slot vectors did not — this is the first construction in this line that
+moves `R@gold_pooled` off the `k/n` floor.** Canonical pairing: 0.224 → **0.927** at 2k and
+0.062 → **0.603** at 8k, with the swap control collapsing both to 0.026 / 0.007. Thirteen slot
+vectors, two checkpoints and three lengths of prior work never moved it at all.
+
+**2. The cheapest near-parity recipe is `fl32` — first 16 + last 16 body tokens per document, header
+real, remainder pooled (or simply dropped) — at 2k only.** ΔCE +0.044 ± 0.007, ΔCE(digits)
++0.162 ± 0.028, genF1 0.927 vs 0.979 (ΔF1 −0.052 ± 0.031), **compaction 0.309 ≈ 3.2x**. No
+construction meets the strict ΔCE ≤ 1 SE bar at any rung — the SEs at 240 rows are 0.007–0.03 — so
+this is *near*-parity, not parity.
+
+**3. Parity gets harder with length, monotonically — which is fatal for the recipe's purpose.** The
+tokens/document needed to reach a given ΔCE roughly doubles per rung: at 2k, 32 tokens gives
+ΔCE +0.049; at 8k, 32 gives +0.204 and 64 gives +0.065; at 32k, 64 gives +0.104 and genF1 is still
+0.229 against `full`'s 0.490. Extrapolated, 8k needs ~128 tokens/document and 32k more than that —
+i.e. the whole document. **A compaction recipe that needs more of each document as the context grows
+is not a compaction recipe.**
+
+**4. The slot is dead weight.** `first{k}d` — the same tokens with the pooled remainder **dropped
+entirely**, no soft token at all — matches or beats `first{k}` at 2k (`first64d` ΔCE +0.013 vs
++0.013.. +0.020, genF1 0.901 vs 0.872) and costs one token per document less. Whatever the model is
+using, it is not the slot.
+
+**5. Selection rule: position ≫ frequency, and both ends ≫ one.** At a fixed budget, `fl` > `first`
+≈ `idfspan` > `idf` > `sent1`. The one candidate that needed a corpus statistic (idf) is the worst.
+
+**6. `goldonly` is not at parity, and the 2026-09-08 claim does not survive.** 2k genF1 0.318 vs
+0.979; 8k 0.049 vs 0.868. `first16` — gold-blind and cheaper — beats it on every column.
+
+**7. The gold-forcing shortcut is confirmed, and it is large.** Under the old `gold_plus_random`
+keep at 1/3, the gold document's category is the **only fully-real category** in **70.8 %** of rows
+(48 rows, replicate 2k). `smallcat3` drives that to **0.000**. So the user's mechanism is right —
+but removing the shortcut does not by itself buy accuracy.
+
+**8. The category rules are a length-limited idea.** They are worth something at 8k
+(`smallcat3f16`: ΔCE(digits) +0.116 at compaction 0.328, rule recall 0.938) and worthless at 32k
+(rule recall **0.021**), because average-linkage clustering of mean-embedding vectors cannot
+separate ~26 topics. At 2k they are degenerate (C = 3 of ~3.7 clusters keeps the whole row). The
+binding constraint is the **clustering**, not the rule: `gold_cat_purity` is 1.000 (the three gold
+documents always land together) but `gold_in_smallest` is only 0.521.
+
+**9. "Preserve the hard negatives" is not the explanation.** The generator makes no deliberate
+near-misses (§3b); accidental ones are common (`hn_rate` 0.708 at 2k) but the constructions built to
+keep them — `margin{M}` and the ORACLE `hardneg{M}` — are the **worst** rows measured, below
+keeping nothing at all.
 
 ## 6. Runs
 
