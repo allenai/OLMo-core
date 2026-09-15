@@ -1,6 +1,6 @@
 # Can a REAL-TOKEN subset per document reach frozen-model parity on outlier?
 
-**Date** 2026-09-15 · **Status** RUNNING (jobs listed in §6) · **Branch** `prasann/landmark`
+**Date** 2026-09-15 · **Status** COMPLETE — canonical 2k / 8k / 32k all in (§5); 32k category-rule job still running · **Branch** `prasann/landmark`
 **Driver** `debug/pooled_kv/outlier_probe/outlier_realtoken_probe.py`
 
 ## 1. The question
@@ -159,249 +159,62 @@ lowest-cosine documents are the outliers").
 
 ## 5. Results
 
-### 5a. Canonical pairing — **COMPLETE**: 2k (eval_size 240) and 8k (eval_size 200)
+All on the **frozen** `ds64-outlier-dense-u64M` and the ds64 outlier rungs. ⚠ eval_size **240 / 200 /
+100** at 2k / 8k / 32k (all < 500); generation on the first 64 / 48 / 32 rows, so genF1 and
+`R@gold_pooled` average over **192 / 144 / 96 gold documents** (per-document SE ≈ 0.03 / 0.04 / 0.05).
+Paired SEs in brackets. **Read CE(digits), not CE** — the answer wraps its ids in prose, so mean CE
+is largely prose and ranks constructions backwards (the driver's PARITY rule now uses CE(digits) +
+genF1; logs written before 2026-09-15 evening print the old ΔCE-based verdict).
 
-`ds64-outlier-dense-u64M` (frozen, full-attention-trained) on the ds64 outlier rungs. ⚠ eval_size
-240 / 200 (< 500); generation on the first 64 / 48 rows, so the genF1 and `R@gold_pooled` columns
-average over **192 / 144 gold documents** (per-document SE ≈ 0.03 / 0.04). Paired SEs printed.
+`k/n` guess floor: **0.224 / 0.053 / 0.014**. `full` genF1: **0.979 / 0.868 / 0.490** — note the
+frozen model is itself only half right at 32k, so "parity" there is a weak statement.
 
-**2k** — 13.4 documents/row, `k/n` guess floor **0.224**. Jobs `01M2K3DHJZW7QV690ES88R0HB6`.
+### 5a. Real-token subsets — the finalists, all three rungs
 
-| condition | ΔCE (SE) | ΔCE(digits) (SE) | genF1 | ΔgenF1 (SE) | **R@gold_pooled** | tok/doc | compaction |
+| construction | 2k ΔCE(dig) | 2k genF1 | 2k comp | 8k ΔCE(dig) | 8k genF1 | 8k comp | 32k ΔCE(dig) | 32k genF1 | 32k comp |
+|---|---|---|---|---|---|---|---|---|---|
+| `full` | — | **0.979** | 1.000 | — | **0.868** | 1.000 | — | **0.490** | 1.000 |
+| `cc00` (slot only) | +1.676 (.037) | 0.224 = floor | 0.105 | +2.007 (.031) | 0.062 ≈ floor | 0.062 | +1.873 (.044) | 0.010 ≈ floor | 0.055 |
+| `goldonly` (gold-aware) | +0.560 (.017) | 0.318 | 0.284 | +0.648 (.023) | 0.062 | 0.076 | +0.367 (.042) | 0.062 | 0.025 |
+| `first16` | +0.571 (.046) | 0.661 | 0.207 | +1.063 (.051) | 0.194 | 0.170 | +1.035 (.072) | 0.021 | 0.163 |
+| `first32` | +0.181 (.024) | 0.818 | 0.309 | +0.593 (.044) | 0.312 | 0.277 | +0.596 (.060) | 0.094 | 0.272 |
+| `first64` | +0.072 (.020) | 0.872 | 0.514 | +0.192 (.024) | 0.600 | 0.492 | +0.224 (.034) | 0.229 | 0.488 |
+| `first32d` / `first64d` (no slot) | +0.184 / **+0.048** | 0.854 / 0.901 | 0.303 / 0.508 | +0.567 | 0.382 | 0.271 | +0.630 | 0.083 | 0.265 |
+| `idf16` / `idfspan16` | +0.411 / +0.491 | 0.724 / 0.784 | 0.207 | +0.588 / +0.886 | 0.368 / 0.329 | 0.170 | — / +0.907 | — / 0.031 | 0.163 |
+| **`fl32`** | **+0.162** (.028) | **0.927** | **0.309** | +0.512 (.044) | 0.444 | 0.277 | — | — | — |
+| `sent1` | +0.762 (.049) | 0.630 | 0.217 | +1.159 (.053) | 0.250 | 0.180 | +1.052 (.073) | 0.010 | 0.174 |
+| **`first32_swap`** (control) | +3.636 | **0.026** | 0.309 | +3.703 | **0.007** | 0.277 | +2.976 | **0.021** | 0.272 |
+
+### 5b. Category keep rules — canonical 2k (240 rows) and 8k (200 rows)
+
+8k is where they matter; at 2k they are dominated (C = 3 of ~3.7 clusters already keeps most of the
+row). Cut rule: `nover8` (Sec. 3c).
+
+| construction | 2k ΔCE(dig) | 2k ΔF1 | 2k comp | 8k ΔCE(dig) | 8k genF1 | 8k comp | 8k **rule_R** |
 |---|---|---|---|---|---|---|---|
-| `full` | — | — | **0.979** | — | — | 144 | 1.000 |
-| `cc00` (slot only — the old floor) | +0.454 (.008) | +1.676 (.037) | 0.224 | −0.755 (.036) | **0.224** = `k/n` | 6.3 | 0.105 |
-| `goldonly` (gold-aware) | +0.184 (.004) | +0.561 (.017) | 0.318 | −0.661 (.055) | — (R@gold_real 0.318) | 34.4 | 0.284 |
-| `goldonly_cc` | +0.193 (.004) | +0.592 (.017) | 0.328 | −0.651 (.054) | — (0.328) | 34.4 | 0.284 |
-| `first4` | +0.381 (.012) | +1.436 (.049) | 0.364 | −0.615 (.043) | 0.364 | 10.3 | 0.130 |
-| `first8` | +0.269 (.013) | +1.006 (.051) | 0.552 | −0.427 (.051) | 0.552 | 14.3 | 0.156 |
-| `first16` | +0.152 (.012) | +0.571 (.046) | 0.661 | −0.318 (.054) | 0.661 | 22.3 | 0.207 |
-| `first32` | +0.049 (.006) | +0.181 (.024) | 0.818 | −0.161 (.048) | 0.818 | 38.3 | 0.309 |
-| `first64` | +0.020 (.005) | +0.073 (.020) | 0.872 | −0.107 (.040) | 0.872 | 70.3 | 0.514 |
-| `first32d` (no slot) | +0.049 (.006) | +0.184 (.024) | 0.854 | −0.125 (.044) | 0.854 | 37.3 | 0.303 |
-| `first64d` (no slot) | **+0.013** (.004) | **+0.048** (.017) | 0.901 | −0.078 (.039) | 0.901 | 69.3 | 0.508 |
-| `idf16` | +0.113 (.009) | +0.411 (.038) | 0.724 | −0.255 (.046) | 0.724 | 22.3 | 0.207 |
-| `idfspan16` | +0.130 (.011) | +0.491 (.045) | 0.784 | −0.195 (.045) | 0.784 | 22.3 | 0.207 |
-| `fl16` | +0.124 (.009) | +0.463 (.036) | 0.776 | −0.203 (.046) | 0.776 | 22.3 | 0.207 |
-| **`fl32`** | **+0.044** (.007) | **+0.162** (.028) | **0.927** | **−0.052** (.031) | **0.927** | 38.3 | **0.309** |
-| `sent1` | +0.202 (.013) | +0.762 (.049) | 0.630 | −0.349 (.051) | 0.630 | 23.9 | 0.217 |
-| `first8_swap` | +0.651 | +2.477 | 0.156 | −0.823 | 0.156 | 14.3 | 0.156 |
-| `first16_swap` | +0.809 | +3.101 | 0.099 | −0.880 | 0.099 | 22.3 | 0.207 |
-| `first32_swap` | +0.948 | +3.636 | **0.026** | −0.953 (.021) | 0.026 | 38.3 | 0.309 |
-| `first64_swap` | +1.042 | +3.997 | 0.044 | −0.935 | 0.044 | 70.3 | 0.514 |
-| `idfspan16_swap` | +0.854 | +3.257 | 0.042 | −0.938 | 0.042 | 22.3 | 0.207 |
-| `sent1_swap` | +0.773 | +2.954 | 0.219 | −0.760 | 0.219 | 23.9 | 0.217 |
+| `smallcat1` | +1.468 (.046) | −0.750 | 0.241 | +1.573 (.057) | 0.076 | 0.189 | 0.365 |
+| `smallcat3` | +1.120 (.069) | −0.396 | 0.561 | +0.497 (.058) | 0.646 | 0.554 | 0.847 |
+| `smallcat3cat` (slot per cluster) | +1.243 (.071) | −0.464 | 0.560 | +0.540 | 0.632 | 0.552 | 0.847 |
+| **`smallcat5`** | +0.964 (.071) | −0.297 | 0.687 | **+0.180** | **0.812** | 0.734 | **0.950** |
+| `smallcat3f16` | **+0.259** (.035) | −0.115 | 0.611 | +0.220 | 0.597 | 0.606 | 0.847 |
+| `smallcatle2` / `le3` | +0.908 / +0.409 | −0.456 / −0.344 | 0.564 / 0.716 | +1.996 / +1.500 | 0.056 / 0.056 | 0.070 / 0.096 | 0.023 / 0.408 |
+| `smallcat3d1` / `d2` (decoys) | +1.065 / +0.929 | −0.375 / −0.297 | 0.637 / 0.705 | +0.309 / +0.147 | 0.688 / 0.785 | 0.661 / 0.757 | 0.887 / 0.953 |
+| `margin3/6/10` | +1.378 / +1.012 / +0.444 | −0.833 / −0.736 / −0.339 | 0.402 / 0.535 / 0.786 | +2.097 / +2.143 / +2.109 | 0.042 / 0.090 / 0.139 | 0.145 / 0.181 / 0.243 | **0.048 / 0.073 / 0.143** |
+| `margin6f16` | +0.412 (.036) | −0.271 | 0.589 | +0.967 | 0.271 | 0.276 | 0.073 |
+| `hardneg6` / `10` (ORACLE) | +1.707 / +0.807 | −0.661 / −0.366 | 0.502 / 0.750 | +2.224 / **+2.407** | 0.042 / **0.000** | 0.163 / 0.230 | 0.000 |
+| `gpr33` (gold + 1/3 random) | +0.719 (.029) | −0.766 | 0.554 | +0.618 (.031) | 0.090 | 0.409 | 1.000 |
+| `goldcats2` / `4` (gold-aware) | +0.712 / +0.409 | −0.531 / −0.419 | 0.643 / 0.763 | +0.193 / +0.068 | 0.729 / 0.812 | 0.569 / 0.742 | 1.000 |
+| **`goldcats2r`** (random cats) | +0.618 | −0.490 | 0.671 | **+0.038** | **0.854** (ΔF1 −0.014) | 0.634 | 1.000 |
+| `smallcat3_swap` (control) | +2.712 | −0.786 | 0.561 | +3.258 | **0.028** | 0.554 | 0.847 |
 
-**8k** — 56.3 documents/row, `k/n` floor **0.053**. Job `01M2K3EE89VP13HPV3MHM682P5`.
+### 5c. Replicate pairing (`lmx-full-mixs160M-4b`, wiki corpora, 48 rows/rung)
 
-| condition | ΔCE (SE) | ΔCE(digits) (SE) | genF1 | ΔgenF1 (SE) | **R@gold_pooled** | tok/doc | compaction |
-|---|---|---|---|---|---|---|---|
-| `full` | — | — | **0.868** | — | — | 146 | 1.000 |
-| `cc00` | +0.693 (.010) | +2.006 (.031) | 0.062 | −0.806 (.048) | **0.062** ≈ floor 0.053 | 6.8 | 0.062 |
-| `goldonly` | +0.240 (.008) | +0.648 (.023) | **0.049** | −0.819 (.052) | — (R@gold_real 0.049) | 8.9 | 0.076 |
-| `goldonly_cc` | +0.262 (.009) | +0.712 (.026) | 0.056 | −0.812 (.052) | — (0.056) | 8.9 | 0.076 |
-| `first8` | +0.549 (.019) | +1.622 (.057) | 0.139 | −0.729 (.060) | 0.139 | 14.8 | 0.116 |
-| `first16` | +0.361 (.017) | +1.061 (.051) | 0.208 | −0.660 (.062) | 0.208 | 22.8 | 0.170 |
-| `first32` | +0.204 (.015) | +0.592 (.044) | 0.319 | −0.549 (.069) | 0.319 | 38.8 | 0.277 |
-| `first64` | **+0.065** (.008) | **+0.190** (.024) | **0.603** | −0.265 (.068) | 0.597 | 70.8 | 0.492 |
-| `first16d` | +0.389 (.019) | +1.145 (.057) | 0.264 | −0.604 (.071) | 0.264 | 21.8 | 0.163 |
-| `first32d` | +0.195 (.015) | +0.567 (.045) | 0.382 | −0.486 (.069) | 0.382 | 37.8 | 0.271 |
-| `idf16` | +0.200 (.014) | +0.588 (.042) | 0.368 | −0.500 (.082) | 0.368 | 22.8 | 0.170 |
-| `idfspan16` | +0.303 (.016) | +0.886 (.048) | 0.329 | −0.539 (.073) | 0.326 | 22.8 | 0.170 |
-| **`fl32`** | +0.176 (.015) | +0.512 (.044) | 0.444 | −0.424 (.082) | 0.444 | 38.8 | **0.277** |
-| `sent1` | +0.397 (.018) | +1.159 (.053) | 0.250 | −0.618 (.071) | 0.250 | 24.3 | 0.180 |
-| `first32_swap` | +1.242 (.017) | +3.703 (.057) | **0.007** | −0.861 (.048) | 0.007 | 38.8 | 0.277 |
+Same ordering at 2k (`fl32` / `first32` at parity, `smallcat*` dominated; `CHEAPEST PARITY: first32`
+at compaction 0.296). At 8k and 32k **this checkpoint scores genF1 0.000 itself**, so only
+CE(digits) is readable there: 8k `smallcat3f16` +0.116 at compaction 0.328 is the best value in the
+≤ 0.33 band; 32k every gold-blind category rule collapses (rule recall **0.021**).
 
-**The headline.** Where every slot-vector construction sat **on** the `k/n` guess floor with an
-undetectable swap control, a real-token subset moves `R@gold_pooled` from **0.224 → 0.927** at 2k
-and **0.062 → 0.603** at 8k, and the swap control **collapses it to 0.026 / 0.007**. The frozen
-dense model reads these tokens; it never read the slots.
-
-**Cheapest near-parity, 2k: `fl32`** (first 16 + last 16 body tokens, header real, remainder pooled)
-— ΔCE +0.044 ± 0.007, ΔCE(digits) +0.162 ± 0.028, genF1 **0.927 vs 0.979** (ΔF1 −0.052 ± 0.031,
-1.7 SE) at **compaction 0.309 ≈ 3.2x**. It is not *formal* parity by the ΔCE ≤ 1 SE rule — nothing
-here is, at 240 rows the SEs are 0.007–0.03 — but it is the closest, and it beats `first64` at 0.6x
-its tokens.
-
-**At 8k nothing reaches parity**: the best is `first64` at ΔCE +0.065 ± 0.008 / genF1 0.603 vs 0.868,
-compaction 0.492. The ΔCE-vs-tokens curve is smooth and monotone — 8 / 16 / 32 / 64 tokens per
-document give ΔCE +0.549 / +0.361 / +0.204 / +0.065 — so the 8k rung would need ~128 tokens per
-document (i.e. essentially the whole document) to close. **Parity gets strictly harder with length**,
-which is the opposite of what a compaction recipe needs.
-
-**`goldonly` is settled, and it is not at parity.** 2k: ΔCE +0.184 ± 0.004, ΔCE(digits) +0.561,
-genF1 **0.318 vs 0.979**. 8k: ΔCE +0.240 ± 0.008, genF1 **0.049 vs 0.868** — it collapses completely.
-And on this corpus the CE column is *not* prose-contaminated (`full` CE ≈ CE(digits) ≈ 0.01), so
-this is not the measurement artefact of `records/outlier-slot-probe.md` §4. The 2026-09-08 handoff's
-"outlier 1.201 gold-only vs 1.206 full = parity" was measured on `lmx-full-mixs160M-4b` at 24 rows,
-where answer CE **is** ~95 % prose; the 2026-09-14 reading is the one that survives. Note
-**`first16` (gold-blind, cheaper) already beats `goldonly` on every column at 2k** — 0.661 vs 0.318
-genF1 at compaction 0.207 vs 0.284.
-
-**The greedy dumps make the failure mode concrete.** `cc00` emits the constant
-`Outliers: [1], [2], [3]` (the position prior) whatever the true ids; `first16`/`first32` emit ids
-spread across the row and get them right — row 2 of the 2k run: true `[8, 9, 11]`, `cc00` predicts
-`[1, 2, 3]`, `first16` predicts `[8, 9, 11]`.
-
-### 5c. Replicate pairing, 2k — **COMPLETE, 48 rows**, the full construction set
-
-`lmx-full-mixs160M-4b` (frozen dense) on `outlier_wiki100w_n22_k3_eval_600.jsonl`, **eval_size = 48**
-(⚠ < 500; the SE of every Δ is printed beside it), 21.4 documents/row, `k/n` floor **0.140**,
-generation on the first 8 rows (24 gold documents — ⚠ genF1/R columns have SE ≈ 0.04–0.18).
-sneetches job `3552630`.
-
-**Corpus structure measured on these rows** (48 rows):
-
-| quantity | value |
-|---|---|
-| clusters found per row | 3.73 ± 0.07 (true majority topics ≈ 3 + the outlier topic) |
-| smallest / largest cluster | 2.77 ± 0.17 / 8.83 ± 0.19 documents |
-| **`gold_cat_purity`** | **1.000 ± 0.000** — all three gold documents always land in the SAME cluster |
-| **`gold_in_smallest`** | **0.521 ± 0.073** — but that cluster is the smallest only about half the time |
-| cos(gold, centroid) / cos(other, centroid) | **−0.271 ± 0.047** / **+0.087 ± 0.009** |
-| **`hn_rate`** | **0.708 ± 0.066** — in 71 % of rows some non-gold document sits farther from the centroid than a gold one |
-| `oracle_cosR` | 0.396 ± 0.063 — "the 3 lowest-cosine documents are the outliers" recovers 40 % of gold |
-
-So accidental hard negatives are **common** (71 % of rows) even though the generator never makes them
-on purpose, and the cosine margin between gold and non-gold is real but far from separating.
-
-| condition | CE | ΔCE (SE) | CE(dig) | ΔCE(dig) (SE) | top1 | genF1 | ΔF1 (SE) | rule_R | kept docs | tok/doc | compaction |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| `full` | 1.804 | — | 0.053 | — | 1.000 | **0.825** | — | — | 21.4 | 146 | 1.000 |
-| `goldonly` | 1.396 | −0.400 (.024) | 0.280 | **+0.259** (.026) | 0.909 | **0.250** | −0.575 (.182) | 1.000 | 3.0 | 21.5 | 0.184 |
-| `goldonly_cc` | 1.328 | −0.483 | 0.301 | +0.296 (.027) | 0.908 | 0.375 | −0.450 (.165) | 1.000 | 3.0 | 21.5 | 0.184 |
-| `gpr33` (gold + 1/3 random) | 1.645 | −0.165 | 0.564 | +0.605 (.073) | 0.934 | 0.350 | −0.475 (.164) | 1.000 | 8.9 | 64.5 | 0.466 |
-| `cc00` (control) | 1.481 | −0.281 | 1.514 | +1.536 (.055) | 0.786 | 0.083 | −0.742 (.127) | 0.000 | 0 | 6.6 | 0.085 |
-| `smallcat1` | 1.595 | −0.193 | 1.323 | +1.212 (.067) | 0.839 | 0.208 | −0.617 (.165) | **0.528** | 2.6 | 24.8 | 0.205 |
-| `smallcat2` | 1.632 | −0.201 | 0.677 | +0.587 (.094) | 0.920 | 0.292 | −0.533 (.182) | 0.826 | 7.6 | 55.6 | 0.407 |
-| `smallcat3` | 1.661 | −0.128 | 0.145 | +0.213 (.067) | 0.979 | 0.500 | −0.325 (.181) | **0.951** | 14.9 | 106 | 0.739 |
-| `smallcat3cat` (slot/cluster) | 1.708 | −0.073 | 0.196 | +0.222 (.069) | 0.975 | 0.500 | −0.325 (.181) | 0.951 | 14.9 | 106 | 0.738 |
-| **`smallcat3f16`** | 1.703 | −0.090 | **0.063** | **+0.064** (.030) | 0.996 | **0.825** | **+0.000** (.038) | 0.951 | 14.9 | 111 | 0.770 |
-| `smallcatle3` | 1.558 | −0.227 | 1.062 | +1.047 (.063) | 0.871 | 0.208 | −0.617 (.165) | 0.708 | 2.9 | 26.1 | 0.214 |
-| `smallcat5`, `smallcat5cat`, `smallcat3d1/d2`, `goldcats4` | — | +0.000 | — | +0.000 | 1.000 | 0.825 | +0.000 | 1.000 | 21.4 | 146 | **1.000 (degenerate: they keep the whole row at n = 22)** |
-| `goldcats2` | 1.675 | −0.129 | 0.118 | +0.153 (.052) | 0.979 | 0.500 | −0.325 (.181) | 1.000 | 15.5 | 109 | 0.756 |
-| `goldcats2r` (random cats) | 1.752 | −0.064 | 0.114 | +0.039 (.018) | 0.993 | 0.775 | −0.050 (.050) | 1.000 | 18.9 | 130 | 0.901 |
-| `margin6` | 1.732 | −0.101 | 1.329 | +1.173 (.123) | 0.873 | 0.271 | −0.554 (.157) | 0.618 | 6.0 | 47.6 | 0.355 |
-| `margin6f16` | 1.639 | −0.188 | 0.278 | +0.271 (.047) | 0.947 | 0.637 | −0.188 (.137) | 0.618 | 6.0 | 59.1 | 0.431 |
-| `hardneg6` (ORACLE) | 1.946 | **+0.144** | 2.275 | +2.234 (.090) | 0.810 | 0.217 | −0.608 (.122) | 0.000 | 6.0 | 45.8 | 0.343 |
-| `first16` | 1.521 | −0.292 | 0.488 | +0.467 (.057) | 0.906 | 0.458 | −0.367 (.175) | — | 0 | 22.6 | 0.191 |
-| **`first32`** | 1.513 | −0.237 | 0.207 | +0.262 (.050) | 0.940 | **0.787** | **−0.038** (.080) | — | 0 | 38.6 | **0.296** |
-| `first64` | 1.593 | −0.164 | 0.120 | +0.170 (.055) | 0.962 | 0.775 | −0.050 (.050) | — | 0 | 70.6 | 0.507 |
-| `first64d` (no slot) | 1.632 | −0.147 | 0.179 | +0.172 (.050) | 0.972 | 0.738 | −0.087 (.058) | — | 0 | 69.6 | 0.501 |
-| `fl16` | 1.461 | −0.294 | 0.468 | +0.513 (.075) | 0.906 | 0.537 | −0.287 (.160) | — | 0 | 22.6 | 0.191 |
-| **`fl32`** | 1.522 | −0.283 | 0.267 | +0.204 (.052) | 0.950 | **0.800** | **−0.025** (.045) | — | 0 | 38.6 | **0.296** |
-| `sent1` | 1.540 | −0.265 | 0.833 | +0.705 (.090) | 0.870 | 0.617 | −0.208 (.131) | — | 0 | 24.1 | 0.201 |
-| `idfspan16` | 1.483 | −0.319 | 0.523 | +0.469 (.067) | 0.906 | 0.479 | −0.346 (.147) | — | 0 | 22.6 | 0.191 |
-| `smallcat3_swap` | 2.547 | +0.764 | 2.970 | +3.110 (.143) | 0.812 | **0.050** | −0.775 (.133) | 0.951 | 14.9 | 106 | 0.739 |
-| `first32_swap` | 2.439 | +0.637 | 3.223 | +3.203 (.126) | 0.790 | **0.000** | −0.825 (.122) | — | 0 | 38.6 | 0.296 |
-
-⚠ **Read the CE(digits) column, not CE.** On this corpus the answer is a prose sentence wrapping the
-ids, so mean answer CE is ~95 % prose and every construction "beats" `full` on it — the driver's own
-`PARITY` verdict therefore mislabels anything with negative ΔCE as `ce-ok`. The discriminating
-columns are ΔCE(digits) and ΔgenF1. (Fixed for future runs; the printed verdict line in these logs
-should be re-read with that substitution.)
-
-**1. A flat per-document token budget beats every category rule at equal cost.** At compaction
-0.296, `first32` and `fl32` reach genF1 0.787 / 0.800 against `full`'s 0.825 — ΔF1 −0.038 ± 0.080
-and −0.025 ± 0.045, i.e. **parity within noise**. `smallcat3` needs compaction 0.739 to reach only
-0.500, and `goldcats2` 0.756 for 0.500. Keeping categories WHOLE spends the whole budget on a few
-documents and leaves the rest unreadable.
-
-**2. The one place the category structure helps is as a *floor*, not a *replacement*.**
-`smallcat3f16` — whole small categories **plus** 16 real tokens on every pooled document — is the
-only construction that matches `full` on **both** ΔCE(digits) (+0.064 ± 0.030) and genF1 (0.825,
-ΔF1 +0.000) — but at compaction 0.770 it saves almost nothing. `margin6f16` shows the same shape
-more cheaply and less well (0.637 at 0.431).
-
-**3. The clustering, not the rule, is what limits `smallcat`.** `gold_cat_purity` is **1.000** — the
-three gold documents always land in one cluster — but `gold_in_smallest` is only **0.521**, so
-`smallcat1` has rule recall 0.528 and `smallcatle3` 0.708. Only at C = 3 does rule recall reach
-0.951, and by then the rule is keeping 15 of 21 documents. The generator's guarantee ("the outlier
-topic is strictly the smallest") is true of the *articles*; it is not recoverable from a
-mean-embedding clustering at this accuracy.
-
-**4. The gold-forcing signature is real and large.** Under the old `gpr33` construction the gold
-document's category is the **ONLY fully-real category** in **0.708** of rows (`goldonly`: 0.708
-likewise). Under `smallcat3` it is **0.000** — three categories are always complete — and under
-`smallcat1` 0.521. So the user's mechanism is confirmed: gold-forcing hands the model a
-"whole category ⇒ gold" shortcut in 7 of 10 rows, and the category rules remove it by construction.
-`smallcat3d1/d2` (decoys) would remove it too, but at n = 22 they degenerate to keeping the whole
-row.
-
-**5. The oracle `hardneg6` is the only construction that is WORSE than `cc00` on ΔCE** (+0.144 vs
-−0.281 on CE, +2.234 vs +1.536 on digits). Keeping the six non-gold documents most similar to gold,
-with gold itself pooled, is actively harmful — consistent with §3b: the generator makes no
-deliberate hard negatives, so "preserve the near-misses" is not the binding constraint.
-
-**6. Both swap controls fire.** `first32` 0.787 → `first32_swap` **0.000**; `smallcat3` 0.500 →
-`smallcat3_swap` **0.050**, with CE(digits) blowing up to 3.1–3.2 — worse than seeing nothing at
-all. The frozen model is genuinely reading the kept tokens, which is exactly what no slot-vector
-construction ever achieved.
-
-### 5b. Canonical 32k — INTERIM at row 50/100 (⚠ eval_size 50, 96 gold documents, SE ≈ 0.05)
-
-`rung_32768.jsonl`, 220 documents/row, `k/n` floor **0.014**. Job `01M2K3F8JZYHR1HJNNMY8N77MZ`.
-
-| condition | ΔCE | ΔCE(digits) | genF1 | **R@gold_pooled** | tok/doc | compaction |
-|---|---|---|---|---|---|---|
-| `full` | — | — | **0.490** | — (R@gold_real 0.490) | 147 | 1.000 |
-| `cc00` | +0.749 | +1.828 | 0.010 | **0.010** ≈ floor 0.014 | 7.5 | 0.055 |
-| `goldonly` | +0.135 | +0.291 | 0.062 | — (0.062) | 3.0 | 0.025 |
-| `goldonly_cc` | +0.177 | +0.388 | 0.042 | — (0.042) | 3.0 | 0.025 |
-| `first16` | +0.440 | +1.036 | 0.021 | 0.021 | 23.5 | 0.164 |
-| `first32` | +0.258 | +0.607 | 0.094 | 0.094 | 39.5 | 0.273 |
-| `first64` | **+0.104** | **+0.243** | **0.229** | 0.229 | 71.5 | 0.490 |
-| `first32d` | +0.281 | +0.670 | 0.083 | 0.083 | 38.5 | 0.266 |
-| `idfspan16` | +0.413 | +0.983 | 0.031 | 0.031 | 23.5 | 0.164 |
-| `sent1` | +0.472 | +1.122 | 0.010 | 0.010 | 25.1 | 0.175 |
-| `first32_swap` | +1.186 | +2.939 | 0.021 | 0.021 | 39.5 | 0.273 |
-
-⚠ **`full` itself scores only genF1 0.490 at 32k** — the frozen checkpoint is already half wrong, so
-"parity" here is a weak statement. Nothing comes close regardless: the best (`first64`, 64 real
-tokens/document, compaction 0.490) recovers 0.229 of 0.490.
-
-### 5d. Replicate pairing, 8k and 32k — the category rules at length (⚠ interim, 16 rows)
-
-`lmx-full-mixs160M-4b` on `outlier_wiki100w_n55` (8k) and `n220` (32k), sneetches `3552660` /
-`3552682`. **On this checkpoint `full` itself scores genF1 0.000 at both rungs**, so only
-CE(digits), top-1 and the rule diagnostics are informative here.
-
-**8k (n = 55)** — `full` CE(digits) 0.138:
-
-| condition | ΔCE(dig) | top1 | **rule_recall** | kept docs | compaction |
-|---|---|---|---|---|---|
-| `cc00` | +1.926 | 0.730 | — | 0 | 0.063 |
-| `smallcat1` | +1.745 | 0.774 | **0.396** | 2.0 | 0.098 |
-| `smallcat2` | +0.720 | 0.890 | 0.917 | 5.4 | 0.158 |
-| **`smallcat3`** | +0.380 | 0.928 | **0.938** | 10.1 | **0.240** |
-| **`smallcat3cat`** (one slot per pooled cluster) | +0.382 | 0.914 | 0.938 | 10.1 | **0.235** |
-| **`smallcat3f16`** | **+0.116** | 0.958 | 0.938 | 10.1 | 0.328 |
-| `smallcatle3` | +0.905 | 0.870 | 0.896 | 4.3 | **0.137** |
-| `smallcat5` | +0.116 | 0.965 | 1.000 | 24.3 | 0.482 |
-| `smallcat3d1` / `d2` (decoys) | +0.289 / +0.242 | 0.928 / 0.948 | 0.938 | 20.0 / 31.3 | 0.414 / 0.610 |
-| `goldcats2` / `goldcats4` | +0.188 / +0.106 | 0.941 / 0.973 | 1.000 | 11.7 / 26.2 | 0.267 / 0.515 |
-| `goldcats2r` (random cats) | **−0.004** | 0.965 | 1.000 | 20.1 | 0.414 |
-| `margin6` / `margin6f16` | +2.381 / +0.767 | 0.751 / 0.896 | **0.042** | 6.5 | 0.184 / 0.279 |
-| `hardneg6` (ORACLE) | +2.703 | 0.704 | 0.000 | 6.0 | 0.165 |
-| `first16` / `first32` / `first64` | +0.723 / +0.186 / +0.097 | 0.870 / 0.942 / 0.969 | — | 0 | 0.171 / 0.279 / 0.495 |
-| `fl32` | +0.170 | 0.938 | — | 0 | 0.279 |
-| `smallcat3_swap` / `first32_swap` | +2.276 / +3.283 | 0.783 / 0.753 | | | |
-
-**8k is where the category rule is worth something.** After the cluster-cut fix (§3c, `nover8`),
-`smallcat3` lands in the target region — **rule recall 0.938 at compaction 0.240** — and
-`smallcat3f16` (small categories whole **+** 16 real tokens on every pooled document) gives
-**ΔCE(digits) +0.116 at compaction 0.328**, the best value in the ≤ 0.33 band and half the cost of
-`smallcat5` (+0.116 at 0.482). `margin{M}` and the oracle `hardneg{M}` are the **worst** rows in the
-table (rule recall 0.042 / 0.000, ΔCE(digits) +2.4 / +2.7) — worse than keeping nothing.
-
-**32k (n = 220)** — `full` CE(digits) 0.545. **The clustering collapses**: `smallcat1`/`smallcat3`
-rule recall **0.021**, `smallcat5`/`smallcatle3` 0.312, so every gold-blind category rule is at or
-below `cc00` (ΔCE(digits) +1.41 to +1.72). Only the gold-aware `goldcats2`/`goldcats4`
-(+0.074 / +0.046 at compaction 0.102 / 0.120) and the flat token budgets
-(`first64` +0.111 at 0.490, `fl32` +0.158 at 0.273) survive. A mean-embedding clustering cannot
-separate 26 Wikipedia topics at n = 220.
-
-### 5f. Corpus structure and the hard-negative rate, by rung (replicate pairing, 48 rows each)
+### 5d. Corpus structure and the hard-negative rate, by rung (replicate pairing, 48 rows each)
 
 | quantity | 2k (n = 22) | 8k (n = 55) | 32k (n = 220) |
 |---|---|---|---|
@@ -430,53 +243,57 @@ short-context phenomenon** — `gold_only_full` under `gpr33` falls 0.708 → 0.
 32k — so "gold-forcing taught the model a whole-category shortcut" explains the 2k/8k arms far
 better than the long ones.
 
+
 ## 5e. Verdict
 
-**1. Real tokens work where slot vectors did not — this is the first construction in this line that
-moves `R@gold_pooled` off the `k/n` floor.** Canonical pairing: 0.224 → **0.927** at 2k and
-0.062 → **0.603** at 8k, with the swap control collapsing both to 0.026 / 0.007. Thirteen slot
-vectors, two checkpoints and three lengths of prior work never moved it at all.
+**1. Real tokens work where slot vectors did not.** `R@gold_pooled` moves off the `k/n` floor for
+the first time in this line of work: **0.224 → 0.927** (2k), **0.062 → 0.600** (8k),
+**0.010 → 0.229** (32k), and the swap control collapses it to **0.026 / 0.007 / 0.021**. Thirteen
+slot-vector constructions across two checkpoints and three lengths never moved it at all, with an
+undetectable swap control.
 
-**2. The cheapest near-parity recipe is `fl32` — first 16 + last 16 body tokens per document, header
-real, remainder pooled (or simply dropped) — at 2k only.** ΔCE +0.044 ± 0.007, ΔCE(digits)
-+0.162 ± 0.028, genF1 0.927 vs 0.979 (ΔF1 −0.052 ± 0.031), **compaction 0.309 ≈ 3.2x**. No
-construction meets the strict ΔCE ≤ 1 SE bar at any rung — the SEs at 240 rows are 0.007–0.03 — so
-this is *near*-parity, not parity.
+**2. Cheapest near-parity: `fl32`** (first 16 + last 16 body tokens, header real, remainder pooled or
+simply dropped) — 2k ΔCE(digits) +0.162 ± 0.028, genF1 **0.927 vs 0.979** (ΔF1 −0.052 ± 0.031) at
+**compaction 0.309 ≈ 3.2x**. Nothing meets the strict ≤ 1 SE bar at any rung.
 
-**3. Parity gets harder with length, monotonically — which is fatal for the recipe's purpose.** The
-tokens/document needed to reach a given ΔCE roughly doubles per rung: at 2k, 32 tokens gives
-ΔCE +0.049; at 8k, 32 gives +0.204 and 64 gives +0.065; at 32k, 64 gives +0.104 and genF1 is still
-0.229 against `full`'s 0.490. Extrapolated, 8k needs ~128 tokens/document and 32k more than that —
-i.e. the whole document. **A compaction recipe that needs more of each document as the context grows
-is not a compaction recipe.**
+**3. Frozen parity gets monotonically harder with length.** Tokens/document for a given ΔCE(digits)
+roughly doubles per rung; at 32k, 64 tokens/document still leaves genF1 0.229 against `full`'s 0.490.
 
-**4. The slot is dead weight.** `first{k}d` — the same tokens with the pooled remainder **dropped
-entirely**, no soft token at all — matches or beats `first{k}` at 2k (`first64d` ΔCE +0.013 vs
-+0.013.. +0.020, genF1 0.901 vs 0.872) and costs one token per document less. Whatever the model is
-using, it is not the slot.
+**4. The slot is dead weight.** `first{k}d` (same tokens, remainder dropped, no soft token) matches
+or beats `first{k}` and costs one token/document less.
 
-**5. Selection rule: position ≫ frequency, and both ends ≫ one.** At a fixed budget, `fl` > `first`
-≈ `idfspan` > `idf` > `sent1`. The one candidate that needed a corpus statistic (idf) is the worst.
+**5. Selection: position ≫ frequency, both ends ≫ one.** `fl` > `first` ≈ `idfspan` > `idf` > `sent1`.
 
-**6. `goldonly` is not at parity, and the 2026-09-08 claim does not survive.** 2k genF1 0.318 vs
-0.979; 8k 0.049 vs 0.868. `first16` — gold-blind and cheaper — beats it on every column.
+**6. `goldonly` is not at parity** — 2k genF1 0.318 vs 0.979, 8k 0.062 vs 0.868. The 2026-09-08
+"1.201 vs 1.206" claim was mean answer CE on a prose-heavy corpus at 24 rows. Gold-blind `first16`
+beats it on every column at 2k.
 
-**7. The gold-forcing shortcut is confirmed, and it is large.** Under the old `gold_plus_random`
-keep at 1/3, the gold document's category is the **only fully-real category** in **70.8 %** of rows
-(48 rows, replicate 2k). `smallcat3` drives that to **0.000**. So the user's mechanism is right —
-but removing the shortcut does not by itself buy accuracy.
+**7. Category rules are a mid-length idea.** Dominated at 2k, genuinely competitive at 8k
+(`smallcat5` genF1 0.812 at compaction 0.734, rule recall 0.950; `smallcat3` 0.646 at 0.554 —
+roughly on `first64`'s curve), dead at 32k (rule recall 0.021). The binding constraint is the
+**clustering**: `gold_cat_purity` is 1.000 at every rung but `gold_in_smallest` falls
+0.521 → 0.250 → 0.000.
 
-**8. The category rules are a length-limited idea.** They are worth something at 8k
-(`smallcat3f16`: ΔCE(digits) +0.116 at compaction 0.328, rule recall 0.938) and worthless at 32k
-(rule recall **0.021**), because average-linkage clustering of mean-embedding vectors cannot
-separate ~26 topics. At 2k they are degenerate (C = 3 of ~3.7 clusters keeps the whole row). The
-binding constraint is the **clustering**, not the rule: `gold_cat_purity` is 1.000 (the three gold
-documents always land together) but `gold_in_smallest` is only 0.521.
+**8. The gold-forcing shortcut is confirmed and is short-context.** Under `gpr33` the gold category
+is the ONLY fully-real category in **0.708 / 0.583 / 0.167** of rows at 2k / 8k / 32k; `smallcat3`
+drives it to 0.000. Removing the shortcut does not by itself buy accuracy.
 
-**9. "Preserve the hard negatives" is not the explanation.** The generator makes no deliberate
-near-misses (§3b); accidental ones are common (`hn_rate` 0.708 at 2k) but the constructions built to
-keep them — `margin{M}` and the ORACLE `hardneg{M}` — are the **worst** rows measured, below
-keeping nothing at all.
+**9. "Preserve the hard negatives" is not the explanation.** `margin{M}` (rule recall 0.048–0.143)
+and the ORACLE `hardneg{M}` are the **worst** rows measured — `hardneg10` reaches genF1 **0.000** at
+8k, below keeping nothing.
+
+## 5g. ⚠ This probe is a RANKING tool, not a gate — it UNDER-predicts trained first-k
+
+The frozen model has never seen a compacted row. Trained first-k arms beat these numbers by a wide
+margin and now **dominate dense on the ladder**: `ck32-32M` **0.409 @ 222 PF** vs `dense-16M` 0.322
+@ 780 PF; `ck64-32M` **0.466 @ 396 PF** vs `dense-32M` 0.452 @ 1582 PF. The gap against the frozen
+probe is large — frozen `first32` at 8k scores **0.32**, trained `ck32-64M` at 8k scores **0.81**.
+
+So use this probe to **order** candidate constructions cheaply (it got `first{k}`/`fl{k}` > `idf` >
+`sent1` > slot-only right, and the swap controls confirm the model reads the tokens), and never to
+**reject** one: "no construction reaches frozen parity at 8k/32k" says nothing about what training
+recovers. The conclusions that do transfer are the *relative* ones — the slot is dead weight, both
+ends beat one end, category rules need the clustering to work — plus the negative controls.
 
 ## 6. Runs
 
@@ -489,19 +306,18 @@ urgent + unallocated (workspace `ai2/flex2`, budget `ai2/oe-other`),
 | rung | rows | gen rows | conditions | where | experiment / job | state |
 |---|---|---|---|---|---|---|
 | 2k (smoke) | 6 | 3 | core | beaker | `01M2K3CDRXS61AS60WKV2Q4CY6` / `01M2K3CDZS4TX7VS9VQ999NJ6P` | **done** — mechanism validated |
-| 2k | 240 | 64 | all (30) | beaker | `01M2K3DHB5WKVM9YGC8SHGV3A5` / `01M2K3DHJZW7QV690ES88R0HB6` | **running** (§5a is its row-25 snapshot) |
-| 8k | 200 | 48 | core (15) | beaker | `01M2K3EE19NB5QX1PFF4YZWP57` / `01M2K3EE89VP13HPV3MHM682P5` | running (ETA ~5 h) |
-| 32k | 100 | 32 | lean (11) | beaker | `01M2K3F8F74F0KER9VSHJWB11T` / `01M2K3F8JZYHR1HJNNMY8N77MZ` | **running** (§5b is its row-5 snapshot) |
-| 32k | 100 | 32 | cat32k (17) | beaker | `01M2K6C1RCE97F0QP2SVD4974N` / `01M2K6C1VTGGF4ZNB69W91Z3EF` | queued (clusters 100 % full) |
-| 8k | 200 | 48 | cat (29) | beaker | `01M2K6D0C2M8SYWXBACZ0JT01X` / `01M2K6D0FGXB6QJK88R719WW7V` | queued |
-| 2k | 240 | 64 | cat (29) | beaker | `01M2K6DXSWB0S74A49PP9ZQJS7` / `01M2K6DXXG6R7ZSWPWSC5781RT` | queued |
+| 2k | 240 | 64 | all (30) | beaker | `01M2K3DHB5WKVM9YGC8SHGV3A5` / `01M2K3DHJZW7QV690ES88R0HB6` | **done** |
+| 8k | 200 | 48 | core (15) | beaker | `01M2K3EE19NB5QX1PFF4YZWP57` / `01M2K3EE89VP13HPV3MHM682P5` | **done** |
+| 32k | 100 | 32 | lean (11) | beaker | `01M2K3F8F74F0KER9VSHJWB11T` / `01M2K3F8JZYHR1HJNNMY8N77MZ` | **done** |
+| 32k | 100 | 32 | cat32k (17) | beaker | `01M2K6C1RCE97F0QP2SVD4974N` / `01M2K6C1VTGGF4ZNB69W91Z3EF` | running (row 50/100) |
+| 8k | 200 | 48 | cat (29) | beaker | `01M2K6D0C2M8SYWXBACZ0JT01X` / `01M2K6D0FGXB6QJK88R719WW7V` | **done** (§5b) |
+| 2k | 240 | 64 | cat (29) | beaker | `01M2K6DXSWB0S74A49PP9ZQJS7` / `01M2K6DXXG6R7ZSWPWSC5781RT` | **done** (§5b) |
 | 2k | 200 | 64 | all (35) | sneetches | slurm `3552283` | running — **replicate pairing** `lmx-full-mixs160M-4b` on `outlier_wiki100w_n22_k3` |
 | 2k | 200 | 64 | cat (29) | sneetches | slurm `3552438` | running — replicate pairing, category rules |
-| 32k | 100 | 32 | 21 conds | horton | slurm `3552570` | queued behind a full node; waits for the staged checkpoint |
-| 8k | 200 | 48 | 33 conds | horton | slurm `3552571` | queued |
-| 2k | 240 | 64 | 33 conds | horton | slurm `3552572` | queued |
 
-The horton jobs read a node-local copy of the frozen checkpoint
+The horton finalist jobs (`3552734-6`) were cancelled — horton went unavailable and the canonical
+2k/8k/32k tables had already landed on Beaker. Their launcher reads a node-local copy of the frozen
+checkpoint
 (`/data/prasann/ckpts/ds64-outlier-dense-u64M`) and the staged rung files
 (`/data/prasann/ds64_eval/outlier/rung_*.jsonl`); the launcher
 `/scratch/users/prasann/outlier_probe/run_realtoken_horton.sbatch` blocks until the checkpoint
@@ -537,3 +353,4 @@ python debug/flop_scaling/beaker_bench_launch.py \
 * `mark_doc_headers_free` is imported *inside* the forward, which is what makes the chunk-id override
   possible — but it also means a stale `sys.modules` entry would silently un-patch it. The driver
   asserts the patch is installed before it loads the model.
+
