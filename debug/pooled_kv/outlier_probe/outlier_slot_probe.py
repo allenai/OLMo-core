@@ -222,6 +222,7 @@ def main():
     ap.add_argument("--out", default="/results/outlier_slot_probe.json")
     ap.add_argument("--weka-out", default=f"{W}/_eval_results/outlier_slot_probe")
     ap.add_argument("--dump-rows", type=int, default=12, help="pooled-gold rows to dump greedy id sets for")
+    ap.add_argument("--tag", default="", help="suffix for the weka JSON filename (e.g. 'smoke')")
     a = ap.parse_args()
 
     if a.tokenizer:
@@ -412,7 +413,9 @@ def main():
         "per_row": {n: {k: v for k, v in acc[n].items()} for n, _, _ in conds},
         "dumps": dumps,
     }
-    for path in [a.out] + ([f"{a.weka_out}/outlier_slot_probe_{a.ckpt_name}_{a.rung}.json"] if a.weka_out else []):
+    sfx = f"_{a.tag}" if a.tag else ""
+    weka = None if a.weka_out in ("", "none") else f"{a.weka_out}/outlier_slot_probe_{a.ckpt_name}_{a.rung}{sfx}.json"
+    for path in [a.out] + ([weka] if weka else []):
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             json.dump(out, open(path, "w"), indent=1)
