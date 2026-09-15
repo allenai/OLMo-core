@@ -95,3 +95,19 @@ python src/scripts/train/memexpress/sft_xlong256k/launch_contradiction_256k.py c
 
 Pass `--dry-run` to inspect the Beaker spec without submitting, or `--run-name` to set a
 fresh output namespace. The default run name includes a timestamp.
+
+
+### Submitted jobs (one-hour minimum runtime)
+
+Training source commit: `ed819780fadb1f1b3759074567f1c3e3c5cc9ea9` on
+`amandab/contradiction-only-256k-20260914`.
+
+| Arm | Run name | Beaker |
+|---|---|---|
+| Dense | `q35-dense-contra-3ep-256k-min1h-20260914` | [01M2H90PG60ST3S7MGPCQF27QN](https://beaker.org/ex/01M2H90PG60ST3S7MGPCQF27QN) |
+| Compressive | `q35-compressive-contra-3ep-256k-min1h-20260914` | [01M2H90YY680NHJTJGS4Q88BQY](https://beaker.org/ex/01M2H90YY680NHJTJGS4Q88BQY) |
+
+Checkpoints: `/weka/oe-training-default/ai2-llm/checkpoints/amandab/<run-name>/`.
+Both replicas of each submitted job were verified as 8 GPUs, urgent, minRuntime=1h.
+The earlier minRuntime=0 submissions (`01M2H8XM0BKSANRMJHE8N2SPBD` and
+`01M2H8XRVAKKZQBB500VB1FN34`) were canceled before starting, following the runtime change.
