@@ -384,3 +384,53 @@ length-scaling:
   frozen-dense richer-slot probe already found hard (G=2/4 and enc2/enc4 rejected). Worth 20 GPU-min:
   run `--trained-parity` on `occ00` (oolong keep 0, same slot, currently a 3.6x Pareto win) to check that win
   is slot reading and not an eval-format artefact.
+- 09-15 12:15 Trained-parity check SHIPPED (3c053b656, 6b48341e7): `outlier_slot_probe.py --trained-parity --ckpt-name <run>
+  --rungs 2k,8k,16k,32k`. cc00-128M final: dCEdig +0.16/+0.37/+0.42/+0.29 (2k/8k/16k/32k), dF1 +0.03/−0.10/−0.02/+0.04;
+  plain-slot control at k/n floor everywhere; gold-real oracle WORSE than pure slots at every rung → NOT distribution
+  shift: the slot readout does not scale with doc count. No more cc00 budget, no exposure fixes. Dispatched the same check
+  on the winning arms (occ00-16M, ohdr08-16M, hdr33-64M, kv33-64M) to confirm the frontiers are not eval-format artefacts.
+- 09-15 12:25 fast8k harness live (debug/ds64_fast8k/: n=57 docs, seq 12288, CE floor 0.622, 0 overlap with eval rungs);
+  trimmed sweep queued (dense 8M/16M/20M, cc00@16M, cpi33@16M, kvgb50@16M). COMET-secret line is informational (optional
+  secret), not a failure. Training modes `smallcat_keep` (+decoy cats, size-capped) and `gold_plus_wholecats` shipped in
+  src/olmo_core/nn/attention/doc_categories.py (12 CPU tests, c96125dae); arms sc3/sc5/gw3/gw5 defined, launch HELD for
+  frozen parity. Agent told to poll/eval/parity-check the 6 jobs.
+- 09-15 12:20 **fast8k harness SHIPPED + two new keep modes; trimmed sweep queued.** outlier's failure
+  is at 8k+, which the fast2k screen cannot see (cc00: 2k 0.80, 8k 0.17), so `debug/ds64_fast8k/` moves
+  the whole loop one rung up: training rows sliced from the ds64 **8k** pool (2700 rows), eval on the
+  **8k rung** (decisive) + 2k (continuity), and **eval-time CE parity as the primary metric** (one
+  checkpoint, two inputs, via `outlier_slot_probe.py --trained-parity`). It reuses fast2k's arm
+  vocabulary, stats script, log parsing and FLOP interpolation by import; `debug/ds64_fast2k/` untouched.
+  Measured harness facts: **n = 57 docs, k = 3, 16.53 answer tokens → CE floor 0.622**, uniform-guess
+  f1 3/57 = 0.053; `max_example_len` 10162 → seq-len **12288** unpacked; budgets 8M/16M/20M = 977/1953/2441
+  rows = **62/123/153 steps** at 16 rows/step, 2 GPUs, micro 2 for EVERY arm (the 09-15 FLOP audit
+  requires identical gpus/micro for any matched-FLOP pair); **0 example and 0 document overlap** against
+  BOTH the 8k and the 2k eval rung. Data build `01M2K5Q2N4S6HMYA957FSS74JK`.
+  **New keep modes** (committed, default behaviour unchanged, CPU tests green):
+    - `gold_pooled_random` (`cpi<p>`): gold ALWAYS pooled, fraction p of NON-gold bodies real. The
+      middle ground between cc00 (no real body anywhere → reads slots, but 0.17 at 8k) and cc03/cc08/cc17
+      (any gold-blind real bodies → back to id-guessing). A visible id is never an answer, so copying
+      one earns exactly chance. ⚠ It has its OWN lower CE floor: a cpi arm can learn "the answer is
+      among the POOLED docs" and guess inside that set — `ln C(k+(1-p)(n-k), k)/ans_tok` = 0.590 / **0.552** /
+      0.503 at p = 1/6, 1/3, 1/2. Not exploitable at eval (everything is real there), so it can only
+      flatter the training CE.
+    - `smallcat_keep` (gold-blind) and `gold_plus_wholecats` — **WHOLE-CATEGORY** policies
+      (`src/olmo_core/nn/attention/doc_categories.py`). Motivation: `gold_plus_random` collapsed because
+      forcing every gold doc real made the gold category the only COMPLETE one, so "which category is
+      entirely real?" answered outlier without reading anything. Both keep whole categories only, and
+      more than one. Categories come from clustering the documents' OWN `cent_cmean` slot vectors, cut
+      at the midpoint of the largest interior gap in the row's off-diagonal cosines — mean+σ puts the
+      cut above every cosine (all singletons) and Otsu puts it flush against the low mode, where one
+      borderline pair chains two categories; both are recorded in the docstring. Decoys are size-capped
+      and skipped-with-a-count when unaffordable; one category always stays pooled so an over-large C/K
+      cannot silently make the arm dense; `[cat-keep]` logs categories/kept sizes/**real-token fraction**
+      every 50 steps. Arms `sc3/sc5/gw3/gw5` registered in `launch_fast8k.py` + `launch_ds64.py`
+      ARM_EXTRA, **NOT launched** — held for the frozen-model probe's parity verdict.
+  Trap: a `--gpus 0` tokenization job cannot preempt (Beaker's urgent preemption is expressed in GPU
+  slots) — three submissions sat `pending` 50/10/7 min across nine weka clusters until it asked for one
+  GPU it does not use. `build_fast8k_data_beaker.sh` now defaults `BUILD_GPUS=1`.
+  Trimmed sweep queued (dense 8M/16M/20M, cc00-16M, cpi33-16M, kvgb50-16M; cpi17/cpi50/two-phase held):
+  `01M2K6JJEP3PWXQ6RCBBSGD466` / `01M2K6KJJM0Z3D02R3WSWWJ1MM` / `01M2K6MH0P37VHQ0XKRABFJA53` /
+  `01M2K6NJ3N6TDWJDGYT1A10SZG` / `01M2K6PE1ZK30JHADZ8H2J86E5` / `01M2K6QB53SVSEXJC3PK6Z8SDY`, wandb group
+  `f8k-q35-4b`. Blocking driver `debug/ds64_fast8k/orchestrate_fast8k.sh` (pid 694418) polls every 10 min
+  and launches each run's eval + parity probe as its training finalizes. **Beaker is saturated** (jupiter
+  984/984, saturn 216/216, ceres 88/88 at 12:19), so results land when capacity does.
