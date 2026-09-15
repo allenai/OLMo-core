@@ -201,6 +201,10 @@ CONDITIONS = [
     C("trunc32", None, False, "mean", 32),
 ]
 
+# The nine plain-mean constructions of the 2026-09-14 run -- the default condition set, kept so
+# the published command line reproduces that table exactly.
+DEFAULT_CONDS = ",".join(c["name"] for c in CONDITIONS[:9])
+
 # Trainer ``--extra-args`` of the registered ds64 soft arms, so ``--arm <name>`` (or the arm
 # segment of a run name like ``ds64-outlier-cc00-b128f3-u128M``) reproduces an arm's EXACT
 # training construction eval-side.  Keep in sync with ``debug/ds64/launch_ds64.py:ARM_EXTRA``.
@@ -465,7 +469,7 @@ def main():
     ap.add_argument("--ckpt", default=None, help="explicit override path")
     ap.add_argument("--jsonl", default=None, help="override eval JSONL (local runs)")
     ap.add_argument("--shard", default=None, help="already-tokenized shard dir")
-    ap.add_argument("--conditions", default=",".join(c["name"] for c in CONDITIONS[:9]),
+    ap.add_argument("--conditions", default=DEFAULT_CONDS,
                     help="comma list; default = the nine plain-mean constructions of the 2026-09-14 "
                          f"run. All: {[c['name'] for c in CONDITIONS]} (+ 'arm', see --arm)")
     ap.add_argument("--seed", type=int, default=42)
@@ -534,7 +538,9 @@ def main():
     if a.parity:
         if arm_cond is None:
             raise SystemExit("--parity needs an arm (--arm <name>, or a --ckpt-name carrying one)")
-        want = {"full", "arm"}
+        # --trained-parity on its own is the two-condition check; it ADDS to an explicit
+        # --conditions rather than replacing it, so extra diagnostics can ride along.
+        want = {"full", "arm"} | (set() if a.conditions == DEFAULT_CONDS else set(a.conditions.split(",")))
     else:
         want = set(a.conditions.split(",")) | {"full"}  # FULL is the reference every metric needs
     conds = [c for c in table_all if c["name"] in want]
