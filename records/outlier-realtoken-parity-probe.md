@@ -159,75 +159,89 @@ lowest-cosine documents are the outliers").
 
 ## 5. Results
 
-### 5a. The canonical 2k rung — INTERIM at row 25/240 (⚠ eval_size 25, 75 gold documents)
+### 5a. Canonical pairing — **COMPLETE**: 2k (eval_size 240) and 8k (eval_size 200)
 
-`ds64-outlier-dense-u64M` on `outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl`, 13.4
-documents/row, `k/n` guess floor **0.224**. ⚠ **eval_size = 25 so far** — per-document SE ≈ 0.05 at
-75 gold documents; this is a shape check, not a number to quote. Job `01M2K3DHJZW7QV690ES88R0HB6`,
-still running (ETA ~2.5 h to 240 rows).
+`ds64-outlier-dense-u64M` (frozen, full-attention-trained) on the ds64 outlier rungs. ⚠ eval_size
+240 / 200 (< 500); generation on the first 64 / 48 rows, so the genF1 and `R@gold_pooled` columns
+average over **192 / 144 gold documents** (per-document SE ≈ 0.03 / 0.04). Paired SEs printed.
 
-| condition | CE | ΔCE | CE(digits) | ΔCE(dig) | genF1 | **R@gold_pooled** | tok/doc | compaction |
-|---|---|---|---|---|---|---|---|---|
-| `full` | 0.004 | — | 0.007 | — | **1.000** | — (R@gold_real 1.000) | 144.3 | 1.000 |
-| `goldonly` | 0.196 | +0.192 | 0.610 | +0.603 | 0.307 | — (R@gold_real 0.307) | 33.4 | 0.282 |
-| `goldonly_cc` | 0.203 | +0.199 | 0.626 | +0.619 | 0.333 | — (0.333) | 33.4 | 0.282 |
-| `cc00` (control) | 0.445 | +0.442 | 1.643 | +1.636 | 0.213 | **0.213** ← the floor | 6.3 | 0.106 |
-| `first4` | 0.348 | +0.344 | 1.301 | +1.293 | 0.280 | 0.280 | 10.3 | 0.132 |
-| `first8` | 0.182 | +0.178 | 0.660 | +0.653 | 0.693 | 0.693 | 14.3 | 0.158 |
-| `first16` | 0.091 | +0.087 | 0.311 | +0.304 | 0.787 | 0.787 | 22.3 | 0.210 |
-| `first32` | 0.047 | +0.043 | 0.154 | +0.146 | 0.853 | 0.853 | 38.3 | 0.314 |
-| `first64` | 0.022 | +0.018 | 0.065 | +0.058 | 0.947 | 0.947 | 70.3 | 0.522 |
-| `first4d` (no slot) | 0.356 | +0.352 | 1.338 | +1.331 | 0.467 | 0.467 | 9.3 | 0.125 |
-| `first8d` | 0.229 | +0.225 | 0.838 | +0.831 | 0.547 | 0.547 | 13.3 | 0.151 |
-| `first16d` | 0.109 | +0.105 | 0.380 | +0.372 | 0.792 | 0.787 | 21.3 | 0.203 |
-| `first32d` | 0.049 | +0.045 | 0.165 | +0.157 | 0.853 | 0.853 | 37.3 | 0.307 |
-| `first64d` | **0.015** | **+0.011** | **0.044** | +0.036 | **0.960** | 0.960 | 69.3 | 0.515 |
-| `idf4` / `idf8` / `idf16` | 0.290 / 0.222 / 0.101 | | 1.100 / 0.832 / 0.351 | | 0.453 / 0.520 / 0.747 | | 10.3 / 14.3 / 22.3 | 0.132 / 0.158 / 0.210 |
-| `idfspan4` / `8` / `16` | 0.262 / 0.166 / 0.114 | | 0.990 / 0.634 / 0.434 | | 0.587 / 0.680 / 0.787 | | 10.3 / 14.3 / 22.3 | 0.132 / 0.158 / 0.210 |
-| `fl8` | 0.201 | +0.197 | 0.762 | +0.755 | 0.560 | 0.560 | 14.3 | 0.158 |
-| `fl16` | 0.080 | +0.076 | 0.285 | +0.278 | 0.813 | 0.813 | 22.3 | 0.210 |
-| **`fl32`** | **0.018** | **+0.015** | **0.062** | +0.055 | **0.947** | 0.947 | 38.3 | **0.314** |
-| `sent1` | 0.148 | +0.145 | 0.550 | +0.543 | 0.707 | 0.707 | 24.0 | 0.221 |
-| `first8_swap` | 0.664 | +0.660 | 2.517 | | **0.093** | 0.093 | 14.3 | 0.158 |
-| `first16_swap` | 0.807 | +0.803 | 3.080 | | **0.080** | 0.080 | 22.3 | 0.210 |
-| `first32_swap` | 0.943 | +0.939 | 3.648 | | **0.000** | 0.000 | 38.3 | 0.314 |
-| `first64_swap` | 1.031 | +1.027 | 3.976 | | **0.027** | 0.027 | 70.3 | 0.522 |
-| `idfspan16_swap` | 0.826 | +0.822 | 3.164 | | 0.053 | 0.053 | 22.3 | 0.210 |
-| `sent1_swap` | 0.779 | +0.775 | 2.975 | | 0.227 | 0.227 | 24.0 | 0.221 |
+**2k** — 13.4 documents/row, `k/n` guess floor **0.224**. Jobs `01M2K3DHJZW7QV690ES88R0HB6`.
 
-Four readings, in order of how much they change the picture.
+| condition | ΔCE (SE) | ΔCE(digits) (SE) | genF1 | ΔgenF1 (SE) | **R@gold_pooled** | tok/doc | compaction |
+|---|---|---|---|---|---|---|---|
+| `full` | — | — | **0.979** | — | — | 144 | 1.000 |
+| `cc00` (slot only — the old floor) | +0.454 (.008) | +1.676 (.037) | 0.224 | −0.755 (.036) | **0.224** = `k/n` | 6.3 | 0.105 |
+| `goldonly` (gold-aware) | +0.184 (.004) | +0.561 (.017) | 0.318 | −0.661 (.055) | — (R@gold_real 0.318) | 34.4 | 0.284 |
+| `goldonly_cc` | +0.193 (.004) | +0.592 (.017) | 0.328 | −0.651 (.054) | — (0.328) | 34.4 | 0.284 |
+| `first4` | +0.381 (.012) | +1.436 (.049) | 0.364 | −0.615 (.043) | 0.364 | 10.3 | 0.130 |
+| `first8` | +0.269 (.013) | +1.006 (.051) | 0.552 | −0.427 (.051) | 0.552 | 14.3 | 0.156 |
+| `first16` | +0.152 (.012) | +0.571 (.046) | 0.661 | −0.318 (.054) | 0.661 | 22.3 | 0.207 |
+| `first32` | +0.049 (.006) | +0.181 (.024) | 0.818 | −0.161 (.048) | 0.818 | 38.3 | 0.309 |
+| `first64` | +0.020 (.005) | +0.073 (.020) | 0.872 | −0.107 (.040) | 0.872 | 70.3 | 0.514 |
+| `first32d` (no slot) | +0.049 (.006) | +0.184 (.024) | 0.854 | −0.125 (.044) | 0.854 | 37.3 | 0.303 |
+| `first64d` (no slot) | **+0.013** (.004) | **+0.048** (.017) | 0.901 | −0.078 (.039) | 0.901 | 69.3 | 0.508 |
+| `idf16` | +0.113 (.009) | +0.411 (.038) | 0.724 | −0.255 (.046) | 0.724 | 22.3 | 0.207 |
+| `idfspan16` | +0.130 (.011) | +0.491 (.045) | 0.784 | −0.195 (.045) | 0.784 | 22.3 | 0.207 |
+| `fl16` | +0.124 (.009) | +0.463 (.036) | 0.776 | −0.203 (.046) | 0.776 | 22.3 | 0.207 |
+| **`fl32`** | **+0.044** (.007) | **+0.162** (.028) | **0.927** | **−0.052** (.031) | **0.927** | 38.3 | **0.309** |
+| `sent1` | +0.202 (.013) | +0.762 (.049) | 0.630 | −0.349 (.051) | 0.630 | 23.9 | 0.217 |
+| `first8_swap` | +0.651 | +2.477 | 0.156 | −0.823 | 0.156 | 14.3 | 0.156 |
+| `first16_swap` | +0.809 | +3.101 | 0.099 | −0.880 | 0.099 | 22.3 | 0.207 |
+| `first32_swap` | +0.948 | +3.636 | **0.026** | −0.953 (.021) | 0.026 | 38.3 | 0.309 |
+| `first64_swap` | +1.042 | +3.997 | 0.044 | −0.935 | 0.044 | 70.3 | 0.514 |
+| `idfspan16_swap` | +0.854 | +3.257 | 0.042 | −0.938 | 0.042 | 22.3 | 0.207 |
+| `sent1_swap` | +0.773 | +2.954 | 0.219 | −0.760 | 0.219 | 23.9 | 0.217 |
 
-**1. A real-token subset lifts `R@gold_pooled` clean off the `k/n` floor — the first construction in
-this line of work that does.** `cc00` sits at 0.213 against a 0.224 floor, exactly where every one of
-the thirteen slot vectors sat. Eight real body tokens per document takes it to **0.693**; sixteen to
-0.787; sixty-four to **0.947** against `full`'s 1.000. Where a slot vector could not be read at all,
-a handful of real tokens is read almost perfectly.
+**8k** — 56.3 documents/row, `k/n` floor **0.053**. Job `01M2K3EE89VP13HPV3MHM682P5`.
 
-**2. The swap control fires, hard, at every k.** Exchanging the gold documents' kept tokens with
-random non-gold documents' collapses genF1 to **0.000–0.093** and blows CE(digits) up to 2.5–4.0 —
-*worse* than `cc00`, because the model now actively reads a misleading document. Compare the slot
-probes, where the swap control was undetectable to three decimal places. The model really is reading
-these tokens.
+| condition | ΔCE (SE) | ΔCE(digits) (SE) | genF1 | ΔgenF1 (SE) | **R@gold_pooled** | tok/doc | compaction |
+|---|---|---|---|---|---|---|---|
+| `full` | — | — | **0.868** | — | — | 146 | 1.000 |
+| `cc00` | +0.693 (.010) | +2.006 (.031) | 0.062 | −0.806 (.048) | **0.062** ≈ floor 0.053 | 6.8 | 0.062 |
+| `goldonly` | +0.240 (.008) | +0.648 (.023) | **0.049** | −0.819 (.052) | — (R@gold_real 0.049) | 8.9 | 0.076 |
+| `goldonly_cc` | +0.262 (.009) | +0.712 (.026) | 0.056 | −0.812 (.052) | — (0.056) | 8.9 | 0.076 |
+| `first8` | +0.549 (.019) | +1.622 (.057) | 0.139 | −0.729 (.060) | 0.139 | 14.8 | 0.116 |
+| `first16` | +0.361 (.017) | +1.061 (.051) | 0.208 | −0.660 (.062) | 0.208 | 22.8 | 0.170 |
+| `first32` | +0.204 (.015) | +0.592 (.044) | 0.319 | −0.549 (.069) | 0.319 | 38.8 | 0.277 |
+| `first64` | **+0.065** (.008) | **+0.190** (.024) | **0.603** | −0.265 (.068) | 0.597 | 70.8 | 0.492 |
+| `first16d` | +0.389 (.019) | +1.145 (.057) | 0.264 | −0.604 (.071) | 0.264 | 21.8 | 0.163 |
+| `first32d` | +0.195 (.015) | +0.567 (.045) | 0.382 | −0.486 (.069) | 0.382 | 37.8 | 0.271 |
+| `idf16` | +0.200 (.014) | +0.588 (.042) | 0.368 | −0.500 (.082) | 0.368 | 22.8 | 0.170 |
+| `idfspan16` | +0.303 (.016) | +0.886 (.048) | 0.329 | −0.539 (.073) | 0.326 | 22.8 | 0.170 |
+| **`fl32`** | +0.176 (.015) | +0.512 (.044) | 0.444 | −0.424 (.082) | 0.444 | 38.8 | **0.277** |
+| `sent1` | +0.397 (.018) | +1.159 (.053) | 0.250 | −0.618 (.071) | 0.250 | 24.3 | 0.180 |
+| `first32_swap` | +1.242 (.017) | +3.703 (.057) | **0.007** | −0.861 (.048) | 0.007 | 38.8 | 0.277 |
 
-**3. The slot adds nothing; the tokens are the whole story.** `first{k}d` (the same subset, remainder
-**dropped**, no slot at all) matches or beats `first{k}` at every k — `first64d` 0.960 / ΔCE +0.011
-against `first64` 0.947 / +0.018. So the cheaper construction is also the better one, and the
-soft-token slot can be dropped from this recipe entirely.
+**The headline.** Where every slot-vector construction sat **on** the `k/n` guess floor with an
+undetectable swap control, a real-token subset moves `R@gold_pooled` from **0.224 → 0.927** at 2k
+and **0.062 → 0.603** at 8k, and the swap control **collapses it to 0.026 / 0.007**. The frozen
+dense model reads these tokens; it never read the slots.
 
-**4. Position beats frequency, and both ends beat one.** At a fixed 16 tokens/document: `fl16`
-(first 8 + last 8) 0.813 > `first16` 0.787 = `idfspan16` 0.787 > `idf16` 0.747. At 32:
-**`fl32` reaches genF1 0.947 and ΔCE +0.015 at compaction 0.314** — i.e. `first64`'s accuracy for
-0.6x its tokens. `idf` weighting, the one candidate that needed a corpus statistic, is the *worst*
-of the four selection rules.
+**Cheapest near-parity, 2k: `fl32`** (first 16 + last 16 body tokens, header real, remainder pooled)
+— ΔCE +0.044 ± 0.007, ΔCE(digits) +0.162 ± 0.028, genF1 **0.927 vs 0.979** (ΔF1 −0.052 ± 0.031,
+1.7 SE) at **compaction 0.309 ≈ 3.2x**. It is not *formal* parity by the ΔCE ≤ 1 SE rule — nothing
+here is, at 240 rows the SEs are 0.007–0.03 — but it is the closest, and it beats `first64` at 0.6x
+its tokens.
 
-**On `goldonly`** (the coordinator's question): on this pairing it is **not** at parity —
-ΔCE +0.192, ΔCE(digits) +0.603, genF1 **0.307 vs 1.000**. And here the CE column is not
-prose-contaminated (`full` CE 0.004 ≈ CE(digits) 0.007), so this is not the measurement artefact of
-`records/outlier-slot-probe.md` §4 — gold-only genuinely loses two thirds of the answers. The
-2026-09-08 handoff's "outlier 1.201 gold-only vs 1.206 full" was measured on a different checkpoint
-and corpus (`lmx-full-mixs160M-4b`, 24 rows) whose answer CE **is** ~95 % prose; the 2026-09-14
-reading is the one that holds up. Note `first16` already beats `goldonly` on every column while
-being **gold-blind** and cheaper (0.210 vs 0.282 compaction).
+**At 8k nothing reaches parity**: the best is `first64` at ΔCE +0.065 ± 0.008 / genF1 0.603 vs 0.868,
+compaction 0.492. The ΔCE-vs-tokens curve is smooth and monotone — 8 / 16 / 32 / 64 tokens per
+document give ΔCE +0.549 / +0.361 / +0.204 / +0.065 — so the 8k rung would need ~128 tokens per
+document (i.e. essentially the whole document) to close. **Parity gets strictly harder with length**,
+which is the opposite of what a compaction recipe needs.
+
+**`goldonly` is settled, and it is not at parity.** 2k: ΔCE +0.184 ± 0.004, ΔCE(digits) +0.561,
+genF1 **0.318 vs 0.979**. 8k: ΔCE +0.240 ± 0.008, genF1 **0.049 vs 0.868** — it collapses completely.
+And on this corpus the CE column is *not* prose-contaminated (`full` CE ≈ CE(digits) ≈ 0.01), so
+this is not the measurement artefact of `records/outlier-slot-probe.md` §4. The 2026-09-08 handoff's
+"outlier 1.201 gold-only vs 1.206 full = parity" was measured on `lmx-full-mixs160M-4b` at 24 rows,
+where answer CE **is** ~95 % prose; the 2026-09-14 reading is the one that survives. Note
+**`first16` (gold-blind, cheaper) already beats `goldonly` on every column at 2k** — 0.661 vs 0.318
+genF1 at compaction 0.207 vs 0.284.
+
+**The greedy dumps make the failure mode concrete.** `cc00` emits the constant
+`Outliers: [1], [2], [3]` (the position prior) whatever the true ids; `first16`/`first32` emit ids
+spread across the row and get them right — row 2 of the 2k run: true `[8, 9, 11]`, `cc00` predicts
+`[1, 2, 3]`, `first16` predicts `[8, 9, 11]`.
 
 ### 5c. Replicate pairing, 2k — **COMPLETE, 48 rows**, the full construction set
 
