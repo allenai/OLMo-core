@@ -57,7 +57,7 @@ TOKENIZER = f"{W}/hf_tokenizers/Qwen3.5-0.8B-Base"
 
 TASK = os.environ.get("F2K_TASK", "outlier")
 BUDGETS = ["2M", "4M", "8M"]            # nominal tokens @2048/example -> 1024 / 2048 / 4096 rows
-EXAMPLES = {"2M": 1024, "4M": 2048, "8M": 4096}
+EXAMPLES = {"2M": 977, "4M": 1953, "8M": 3906}   # = budget_tokens / 2048, measured by the build job
 GLOBAL_BATCH = int(os.environ.get("F2K_GB", "32"))      # rows/optimizer step, every arm
 # Two GPUs, not one: a 4B model's AdamW state alone is ~32 GB fp32 on top of ~8 GB bf16 params and
 # ~8 GB grads, which leaves an 80 GB H100 with almost nothing for activations at a single rank.

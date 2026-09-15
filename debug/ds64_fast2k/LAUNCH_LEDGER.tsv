@@ -1,0 +1,13 @@
+fast2k	4b	outlier	DATA	2M,4M,8M	fast2k-data-outlier-09141929	gantry-cpu	2026-09-14 19:29	LAUNCHED	01M2HEAZC1NXM29XR8C4JAR9FD
+fast2k	4b	outlier	dense	2M	f2k-outlier-dense-2M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:32	LAUNCHED	"01M2HEFX03F8401EP666V6DCR0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	dense	4M	f2k-outlier-dense-4M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:32	LAUNCHED	"01M2HEGPK90NJFVP42NCSKGTP3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	dense	8M	f2k-outlier-dense-8M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:32	LAUNCHED	"01M2HEHJKSR5DN57YC75AY0ES9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	kvgb50	4M	f2k-outlier-kvgb50-4M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:34	LAUNCHED	"01M2HEJEME7XF7P7G9KDC730MD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	xhdr17	4M	f2k-outlier-xhdr17-4M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:34	LAUNCHED	"01M2HEK7TABD47V8VEN2YCYXZV   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	xhdr50	4M	f2k-outlier-xhdr50-4M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:34	LAUNCHED	"01M2HEM3NC4WRNTSVFEQYPGSA7   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

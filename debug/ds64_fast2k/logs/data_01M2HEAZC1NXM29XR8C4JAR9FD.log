@@ -1,0 +1,206 @@
+Logs for job 01M2HEAZFS2K3NR9QCM5D0X0Z0 of task main:
+2026-09-15T02:29:34.079Z [36m[1m
+2026-09-15T02:29:34.079Z ##########################################
+2026-09-15T02:29:34.079Z ### [GANTRY] Validating environment... ###  
+2026-09-15T02:29:34.079Z ##########################################
+2026-09-15T02:29:34.079Z [0m
+2026-09-15T02:29:34.082Z [36m[1m❯ [GANTRY INFO][0m Shell is GNU bash, version 5.1.16(1)-release (x86_64-pc-linux-gnu).
+2026-09-15T02:29:34.082Z [36m[1m❯ [GANTRY INFO][0m Running on Beaker node 'neptune-cs-aus-261.reviz.ai2.in' (01K8CCZW74218Q06Z4X0314WX3)
+2026-09-15T02:29:34.082Z [36m[1m❯ [GANTRY INFO][0m Results dataset [94m[4mhttps://beaker.org/ds/01M2HEAZCD9G2YYEGZFZM58PJJ[0m mounted to '/results'.
+2026-09-15T02:29:34.082Z [36m[1m❯ [GANTRY INFO][0m Checking for required tools...
+2026-09-15T02:29:34.084Z [36m[1m❯ [GANTRY INFO][0m Using git version 2.34.1.
+2026-09-15T02:29:34.092Z [36m[1m❯ [GANTRY INFO][0m Using curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 (+libidn2/2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 OpenLDAP/2.5.19.
+2026-09-15T02:29:34.092Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:34.092Z [36m[1m
+2026-09-15T02:29:34.092Z #######################################
+2026-09-15T02:29:34.092Z ### [GANTRY] Cloning source code... ###  
+2026-09-15T02:29:34.092Z #######################################
+2026-09-15T02:29:34.092Z [0m
+2026-09-15T02:29:34.103Z [36m[1m❯ [GANTRY INFO][0m Cloning source from 'allenai/OLMo-core' @ 'f9cd644c5b6752ce039235b46012c186370708a9'...
+2026-09-15T02:29:38.436Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:38.436Z [36m[1m❯ [GANTRY INFO][0m Initializing git submodules...
+2026-09-15T02:29:38.470Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:38.470Z [36m[1m
+2026-09-15T02:29:38.470Z #######################################
+2026-09-15T02:29:38.470Z ### [GANTRY] Building Python env... ###  
+2026-09-15T02:29:38.470Z #######################################
+2026-09-15T02:29:38.470Z [0m
+2026-09-15T02:29:38.470Z [36m[1m❯ [GANTRY INFO][0m Installing uv...
+2026-09-15T02:29:39.396Z [36m[1m❯ [GANTRY INFO][0m Done. Installed uv 0.12.14 (x86_64-unknown-linux-gnu).
+2026-09-15T02:29:39.396Z [36m[1m❯ [GANTRY INFO][0m Creating virtual environment with Python 3.12...
+2026-09-15T02:29:39.457Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:39.457Z [36m[1m❯ [GANTRY INFO][0m Activating virtual environment...
+2026-09-15T02:29:39.458Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:39.461Z [36m[1m❯ [GANTRY INFO][0m Acquiring lock for uv install at '/results/lockfile'...
+2026-09-15T02:29:39.463Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T02:29:39.463Z [36m[1m❯ [GANTRY INFO][0m Running user-defined install command: 'false'
+2026-09-15T02:29:39.516Z [36m[1m
+2026-09-15T02:29:39.516Z ########################################
+2026-09-15T02:29:39.516Z ### [GANTRY] Python environment info ###  
+2026-09-15T02:29:39.516Z ########################################
+2026-09-15T02:29:39.516Z [0m
+2026-09-15T02:29:39.521Z [36m[1m❯ [GANTRY INFO][0m Using Python 3.12.12 from '/gantry-runtime/.venv/bin/python'.
+2026-09-15T02:29:39.521Z [36m[1m❯ [GANTRY INFO][0m Packages:
+2026-09-15T02:29:39.522Z [36m[1m
+2026-09-15T02:29:39.522Z #####################################
+2026-09-15T02:29:39.522Z ### [GANTRY] NVIDIA system status ###  
+2026-09-15T02:29:39.522Z #####################################
+2026-09-15T02:29:39.522Z [0m
+2026-09-15T02:29:39.569Z Tue Sep 15 02:29:39 2026       
+2026-09-15T02:29:39.569Z +-----------------------------------------------------------------------------------------+
+2026-09-15T02:29:39.569Z | NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version: 12.8     |
+2026-09-15T02:29:39.569Z |-----------------------------------------+------------------------+----------------------+
+2026-09-15T02:29:39.569Z | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+2026-09-15T02:29:39.569Z | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+2026-09-15T02:29:39.569Z |                                         |                        |               MIG M. |
+2026-09-15T02:29:39.569Z |=========================================+========================+======================|
+2026-09-15T02:29:39.602Z |   0  NVIDIA L40S                    On  |   00000000:01:00.0 Off |                    0 |
+2026-09-15T02:29:39.603Z | N/A   38C    P8             35W /  350W |       1MiB /  46068MiB |      0%      Default |
+2026-09-15T02:29:39.603Z |                                         |                        |                  N/A |
+2026-09-15T02:29:39.603Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T02:29:39.608Z |   1  NVIDIA L40S                    On  |   00000000:25:00.0 Off |                    0 |
+2026-09-15T02:29:39.608Z | N/A   38C    P8             34W /  350W |       1MiB /  46068MiB |      0%      Default |
+2026-09-15T02:29:39.608Z |                                         |                        |                  N/A |
+2026-09-15T02:29:39.608Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T02:29:39.609Z                                                                                          
+2026-09-15T02:29:39.609Z +-----------------------------------------------------------------------------------------+
+2026-09-15T02:29:39.609Z | Processes:                                                                              |
+2026-09-15T02:29:39.609Z |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+2026-09-15T02:29:39.609Z |        ID   ID                                                               Usage      |
+2026-09-15T02:29:39.609Z |=========================================================================================|
+2026-09-15T02:29:39.610Z |  No running processes found                                                             |
+2026-09-15T02:29:39.610Z +-----------------------------------------------------------------------------------------+
+2026-09-15T02:29:39.962Z [36m[1m
+2026-09-15T02:29:39.962Z ###############################
+2026-09-15T02:29:39.962Z ### [GANTRY] Setup complete ###  (finished in 5 seconds)
+2026-09-15T02:29:39.962Z ###############################
+2026-09-15T02:29:39.962Z [0m
+2026-09-15T02:29:39.964Z python: /opt/conda/bin/python  task=outlier budgets=2M,4M,8M seq_len=8192
+2026-09-15T02:29:42.841Z [notice] A new release of pip is available: 25.3 -> 26.2.1
+2026-09-15T02:29:42.841Z [notice] To update, run: pip install --upgrade pip
+2026-09-15T02:29:45.061Z pool: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/build/outlier/pools/outlier_2k/outlier/train.jsonl (21600 rows)
+2026-09-15T02:29:45.327Z pool 2k: 21600 rows <- /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/build/outlier/pools/outlier_2k/outlier/train.jsonl
+2026-09-15T02:29:45.327Z outlier_f2M: 977 examples (~2.0M nominal tokens)
+2026-09-15T02:29:45.345Z outlier_f4M: 1953 examples (~4.0M nominal tokens)
+2026-09-15T02:29:45.375Z outlier_f8M: 3906 examples (~8.0M nominal tokens)
+2026-09-15T02:29:45.458Z --- tokenizing outlier_f2M 02:29:45 ---
+2026-09-15T02:29:49.862Z marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+2026-09-15T02:29:49.893Z loaded 977 examples (task=outlier, emit=dense, chunk_by=document); tokenizing -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M
+2026-09-15T02:29:49.994Z tokenizing with 16 worker processes
+2026-09-15T02:29:51.198Z Skipping import of cpp extensions due to incompatible torch version 2.9.1+cu128 for torchao version 0.14.1+cu128             Please see https://github.com/pytorch/ao/issues/2919 for more info
+2026-09-15T02:29:53.371Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:29:53.374Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:29:53.921Z metadata.json -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/metadata.json (num_instances=977, max_example_len=2949, num_loss_tokens=14756)
+2026-09-15T02:29:53.923Z gold sidecar: 977 examples with gold_doc_indices -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/gold_fingerprints.json
+2026-09-15T02:29:53.929Z length tokens: min 1873 / p50 2189 / p90 2354 / max 2949
+2026-09-15T02:29:53.929Z done: kept 977, dropped 0 (too long / reserved collision). shards: 1
+2026-09-15T02:29:55.459Z --- stats outlier_f2M ---
+2026-09-15T02:29:55.602Z {
+2026-09-15T02:29:55.602Z   "arm_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/arms/outlier_f2M.jsonl",
+2026-09-15T02:29:55.602Z   "shard_dir": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M",
+2026-09-15T02:29:55.602Z   "n_examples": 977,
+2026-09-15T02:29:55.602Z   "shard_num_instances": 977,
+2026-09-15T02:29:55.602Z   "shard_num_dropped": 0,
+2026-09-15T02:29:55.602Z   "shard_max_example_len": 2949,
+2026-09-15T02:29:55.602Z   "shard_min_example_len": 1873,
+2026-09-15T02:29:55.602Z   "shard_mean_example_len": 2207.656090071648,
+2026-09-15T02:29:55.602Z   "mean_answer_tokens": 15.103377686796316,
+2026-09-15T02:29:55.602Z   "n_docs_min": 14,
+2026-09-15T02:29:55.602Z   "n_docs_mean": 14.0,
+2026-09-15T02:29:55.602Z   "n_docs_max": 14,
+2026-09-15T02:29:55.602Z   "k_gold_mean": 3.0,
+2026-09-15T02:29:55.602Z   "mean_log_choose": 5.8971538676367405,
+2026-09-15T02:29:55.602Z   "ce_floor": 0.39045265171327564,
+2026-09-15T02:29:55.602Z   "f1_uniform_guess": 0.21428571428571427,
+2026-09-15T02:29:55.602Z   "eval_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl",
+2026-09-15T02:29:55.602Z   "eval_size": 600,
+2026-09-15T02:29:55.602Z   "example_overlap": 0,
+2026-09-15T02:29:55.602Z   "example_overlap_frac": 0.0,
+2026-09-15T02:29:55.602Z   "document_overlap": 0,
+2026-09-15T02:29:55.602Z   "document_overlap_frac": 0.0,
+2026-09-15T02:29:55.602Z   "eval_n_docs_mean": 13.385
+2026-09-15T02:29:55.602Z }
+2026-09-15T02:29:55.604Z -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/fast2k_stats.json
+2026-09-15T02:29:55.618Z --- tokenizing outlier_f4M 02:29:55 ---
+2026-09-15T02:30:00.399Z marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+2026-09-15T02:30:00.462Z loaded 1953 examples (task=outlier, emit=dense, chunk_by=document); tokenizing -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M
+2026-09-15T02:30:00.561Z tokenizing with 16 worker processes
+2026-09-15T02:30:01.881Z Skipping import of cpp extensions due to incompatible torch version 2.9.1+cu128 for torchao version 0.14.1+cu128             Please see https://github.com/pytorch/ao/issues/2919 for more info
+2026-09-15T02:30:04.115Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:30:04.118Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:30:04.940Z metadata.json -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M/metadata.json (num_instances=1953, max_example_len=2949, num_loss_tokens=29494)
+2026-09-15T02:30:04.944Z gold sidecar: 1953 examples with gold_doc_indices -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M/gold_fingerprints.json
+2026-09-15T02:30:04.950Z length tokens: min 1873 / p50 2187 / p90 2350 / max 2949
+2026-09-15T02:30:04.950Z done: kept 1953, dropped 0 (too long / reserved collision). shards: 1
+2026-09-15T02:30:06.922Z --- stats outlier_f4M ---
+2026-09-15T02:30:07.128Z {
+2026-09-15T02:30:07.128Z   "arm_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/arms/outlier_f4M.jsonl",
+2026-09-15T02:30:07.128Z   "shard_dir": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M",
+2026-09-15T02:30:07.128Z   "n_examples": 1953,
+2026-09-15T02:30:07.128Z   "shard_num_instances": 1953,
+2026-09-15T02:30:07.128Z   "shard_num_dropped": 0,
+2026-09-15T02:30:07.128Z   "shard_max_example_len": 2949,
+2026-09-15T02:30:07.128Z   "shard_min_example_len": 1873,
+2026-09-15T02:30:07.128Z   "shard_mean_example_len": 2203.3133640552996,
+2026-09-15T02:30:07.128Z   "mean_answer_tokens": 15.10189452124936,
+2026-09-15T02:30:07.128Z   "n_docs_min": 14,
+2026-09-15T02:30:07.128Z   "n_docs_mean": 14.0,
+2026-09-15T02:30:07.128Z   "n_docs_max": 14,
+2026-09-15T02:30:07.128Z   "k_gold_mean": 3.0,
+2026-09-15T02:30:07.128Z   "mean_log_choose": 5.8971538676367405,
+2026-09-15T02:30:07.128Z   "ce_floor": 0.3904909982876027,
+2026-09-15T02:30:07.128Z   "f1_uniform_guess": 0.21428571428571427,
+2026-09-15T02:30:07.128Z   "eval_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl",
+2026-09-15T02:30:07.128Z   "eval_size": 600,
+2026-09-15T02:30:07.128Z   "example_overlap": 0,
+2026-09-15T02:30:07.128Z   "example_overlap_frac": 0.0,
+2026-09-15T02:30:07.128Z   "document_overlap": 0,
+2026-09-15T02:30:07.128Z   "document_overlap_frac": 0.0,
+2026-09-15T02:30:07.128Z   "eval_n_docs_mean": 13.385
+2026-09-15T02:30:07.128Z }
+2026-09-15T02:30:07.129Z -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M/fast2k_stats.json
+2026-09-15T02:30:07.148Z --- tokenizing outlier_f8M 02:30:07 ---
+2026-09-15T02:30:11.414Z marker set 'qwen3_5': doc_start=248049 doc_end=248050 eos=248044 landmark=248200 pad=248203
+2026-09-15T02:30:11.526Z loaded 3906 examples (task=outlier, emit=dense, chunk_by=document); tokenizing -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f8M
+2026-09-15T02:30:11.633Z tokenizing with 16 worker processes
+2026-09-15T02:30:12.916Z Skipping import of cpp extensions due to incompatible torch version 2.9.1+cu128 for torchao version 0.14.1+cu128             Please see https://github.com/pytorch/ao/issues/2919 for more info
+2026-09-15T02:30:14.696Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:30:14.699Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T02:30:16.500Z metadata.json -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f8M/metadata.json (num_instances=3906, max_example_len=2949, num_loss_tokens=58991)
+2026-09-15T02:30:16.509Z gold sidecar: 3906 examples with gold_doc_indices -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f8M/gold_fingerprints.json
+2026-09-15T02:30:16.514Z length tokens: min 1873 / p50 2190 / p90 2349 / max 2949
+2026-09-15T02:30:16.514Z done: kept 3906, dropped 0 (too long / reserved collision). shards: 1
+2026-09-15T02:30:17.597Z --- stats outlier_f8M ---
+2026-09-15T02:30:17.946Z {
+2026-09-15T02:30:17.946Z   "arm_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/arms/outlier_f8M.jsonl",
+2026-09-15T02:30:17.946Z   "shard_dir": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f8M",
+2026-09-15T02:30:17.946Z   "n_examples": 3906,
+2026-09-15T02:30:17.946Z   "shard_num_instances": 3906,
+2026-09-15T02:30:17.946Z   "shard_num_dropped": 0,
+2026-09-15T02:30:17.946Z   "shard_max_example_len": 2949,
+2026-09-15T02:30:17.946Z   "shard_min_example_len": 1873,
+2026-09-15T02:30:17.946Z   "shard_mean_example_len": 2203.5637480798773,
+2026-09-15T02:30:17.946Z   "mean_answer_tokens": 15.102662570404506,
+2026-09-15T02:30:17.946Z   "n_docs_min": 14,
+2026-09-15T02:30:17.946Z   "n_docs_mean": 14.0,
+2026-09-15T02:30:17.946Z   "n_docs_max": 14,
+2026-09-15T02:30:17.946Z   "k_gold_mean": 3.0,
+2026-09-15T02:30:17.946Z   "mean_log_choose": 5.8971538676367405,
+2026-09-15T02:30:17.946Z   "ce_floor": 0.39047113978385023,
+2026-09-15T02:30:17.946Z   "f1_uniform_guess": 0.21428571428571427,
+2026-09-15T02:30:17.946Z   "eval_jsonl": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl",
+2026-09-15T02:30:17.946Z   "eval_size": 600,
+2026-09-15T02:30:17.946Z   "example_overlap": 0,
+2026-09-15T02:30:17.946Z   "example_overlap_frac": 0.0,
+2026-09-15T02:30:17.946Z   "document_overlap": 0,
+2026-09-15T02:30:17.946Z   "document_overlap_frac": 0.0,
+2026-09-15T02:30:17.946Z   "eval_n_docs_mean": 13.385
+2026-09-15T02:30:17.946Z }
+2026-09-15T02:30:17.947Z -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f8M/fast2k_stats.json
+2026-09-15T02:30:17.982Z total 0
+2026-09-15T02:30:17.982Z drwxr-xr-x 1 root root 0 Sep 15 02:30 .
+2026-09-15T02:30:17.982Z drwxr-xr-x 1 root root 0 Sep 15 02:29 ..
+2026-09-15T02:30:17.982Z drwxr-xr-x 1 root root 0 Sep 15 02:29 outlier_f2M
+2026-09-15T02:30:17.982Z drwxr-xr-x 1 root root 0 Sep 15 02:30 outlier_f4M
+2026-09-15T02:30:17.982Z drwxr-xr-x 1 root root 0 Sep 15 02:30 outlier_f8M
+2026-09-15T02:30:17.982Z === DONE outlier ===
