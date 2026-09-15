@@ -196,6 +196,17 @@ def install_compaction_cache(model):
 # --------------------------------------------------------------------------------------------
 # corpus statistics (idf) and sentence ends
 # --------------------------------------------------------------------------------------------
+def build_idf_from_rows(rows, vocab):
+    """Fallback when the training shard is not mounted (local runs): estimate the corpus token
+    frequencies from the EVAL rows themselves.  A rung file holds hundreds of documents drawn from
+    the same corpus, so this is the same statistic, measured on the same distribution."""
+    ids = np.concatenate([np.asarray(r, dtype=np.int64) for r in rows])
+    ids = ids[(ids >= 0) & (ids < vocab)]
+    cnt = np.bincount(ids, minlength=vocab)[:vocab].astype(np.float64)
+    p = (cnt + 1.0) / (cnt.sum() + float(vocab))
+    return (-np.log(p)).astype(np.float32), int(ids.size)
+
+
 def build_idf(shard_dir, vocab, n_rows=512):
     """``-log p(token)`` over the head of the TRAINING shard (add-one smoothed).
 
@@ -383,9 +394,14 @@ def main():
         bud = a.ckpt_name.rsplit("-u", 1)[-1] if "-u" in a.ckpt_name else "64M"
         idf_shard = f"{DS64_SHARDS}/outlier_u{bud}"
     t0 = time.time()
-    idf, n_idf_tok = build_idf(idf_shard, vocab, n_rows=a.idf_rows)
+    try:
+        idf, n_idf_tok = build_idf(idf_shard, vocab, n_rows=a.idf_rows)
+        idf_src = idf_shard
+    except (SystemExit, FileNotFoundError, OSError) as e:
+        log(f"idf shard unavailable ({e}); falling back to the eval rows")
+        idf, n_idf_tok, idf_src = None, 0, "eval-rows"
     sent_end = build_sent_end(tok, vocab)
-    log(f"idf from {n_idf_tok} tokens of {idf_shard} in {time.time() - t0:.0f}s; "
+    log(f"idf from {n_idf_tok} tokens of {idf_src} in {time.time() - t0:.0f}s; "
         f"{int(sent_end.sum())} sentence-end pieces")
 
     cfg = P.build_cfg()
@@ -406,7 +422,7 @@ def main():
     install_compaction_cache(model)
 
     # the --st-slot-mode stop set, from the TRAINING shard, exactly as train_ctc_suite builds it
-    if {c["slot"] for c in conds} - {"mean"}:
+    if ({c["slot"] for c in conds} - {"mean"}) and idf is not None:
         from olmo_core.nn.pooled_soft_token import build_slot_stop_ids
         parts = sorted(_glob.glob(f"{idf_shard}/token_ids_part_*.npy"))
         meta = json.load(open(f"{idf_shard}/metadata.json"))
@@ -432,11 +448,22 @@ def main():
 
 
 @torch.no_grad()
-def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):
+def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
     shard = f"{a.work}/outlier_{rung}"
     P.convert("outlier", a.jsonl or RUNGS[rung], a.rows, shard)
     rows, masks = P.load_rows(shard, a.rows)
     log(f"=== rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:6]]}")
+    if idf is None:
+        idf, n_t = build_idf_from_rows(rows, int(P.VOCAB))
+        from olmo_core.nn.pooled_soft_token import build_slot_stop_ids
+        stop, shown = build_slot_stop_ids(
+            np.concatenate([np.asarray(r) for r in rows]), top_k=100,
+            extra_ids=(IDS.doc_start, IDS.doc_end, IDS.eos, IDS.landmark, IDS.pad),
+            decode=lambda t: tok.decode([int(t)]))
+        pst["slot_stop_ids"] = [int(t) for t in stop]
+        pst["slot_stop_mask"] = None
+        log(f"idf + slot stop set ({len(stop)} ids) from the {n_t} eval-row tokens; "
+            f"most frequent dropped: {' '.join(shown[:12])}")
     if len(rows) < 500:
         log(f"WARNING eval_size={len(rows)} (<500): binomial SE at f1~0.5 is "
             f"{0.5 / max(1, len(rows)) ** 0.5:.3f}")
