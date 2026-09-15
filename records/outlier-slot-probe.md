@@ -117,7 +117,32 @@ seen directly.
 **4. `gb00` (no header) is the impossibility control and behaves like one**: 0.016, below every
 other cell, because a pooled document's id is nowhere in the context.
 
-### Caveat this run also produced: answer-CE parity on outlier does NOT mean the answer is right
+### Run C, ~8k rung (INTERIM: eval_size 25, 75 gold documents — quote nothing from this table alone)
+
+Same checkpoint, `outlier_wiki100w_n55_k3_eval_600.jsonl` (n = 55 documents/row, so the `k/n`
+guess floor drops to **0.055**). This run also carries `gb50h_swap`. Snapshot at row 25/200
+(sneetches `3549488`, still running):
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|
+| `full` | 1.847 | 0.238 | 0.848 | — | 0.813 (75) | 1.000 |
+| `goldonly` | 1.410 | 0.379 | 0.467 | — | 0.467 (75) | 0.078 |
+| `gb50` | 2.240 | 1.838 | 0.315 | **0.000** (31) | **0.523** (44) | 0.511 |
+| `gb50h` | 2.198 | 1.758 | 0.341 | **0.069** (29) | **0.478** (46) | 0.556 |
+| **`gb50h_swap`** | 2.209 | 1.800 | 0.381 | **0.103** (29) | 0.522 (46) | 0.556 |
+| `gb17h` | 2.321 | 2.945 | 0.080 | 0.049 (61) | 0.214 (14) | 0.231 |
+| `gb00h` | 1.730 | 2.310 | 0.067 | **0.067** (75) | — | 0.063 |
+| `gb00` | 2.191 | 2.227 | 0.040 | 0.040 (75) | — | 0.024 |
+| **`gb00h_swap`** | 1.728 | 2.298 | 0.067 | **0.067** (75) | — | 0.063 |
+
+Same shape, four times longer: `gb00h` and its swap control are **identical to three decimals** on
+every column (0.067 / 0.067, CE 1.730 / 1.728, CE(digits) 2.310 / 2.298, KL 0.936 / 0.933), both at
+the 0.055 floor; `gb50h`'s swap control moves pooled recall *up* (0.069 → 0.103, n = 29, well inside
+noise) rather than down; and the real-vs-pooled gap holds (0.478–0.523 real against 0.000–0.069
+pooled). The second control behaves like the first: whatever the header-real constructions recover,
+they do not recover it from slot content.
+
+### Caveat Run A also produced: answer-CE parity on outlier does NOT mean the answer is right
 
 `full` has CE 1.811 but CE **on the digit tokens** of 0.092 — this corpus wraps the ids in a prose
 topic sentence, and that prose is ~95% of the mean answer CE. So the CE column ranks constructions
