@@ -22,6 +22,8 @@ Constraints every candidate respects (FLOP-optimal + trainable at very long leng
 Candidates (``--slots``)::
 
   mean        the training construction: mean input embedding over the doc's body   [baseline]
+  meanrn      the same mean RENORMALISED to the typical real-token embedding norm (the mean of ~150
+              embeddings is ~3x shorter than a real one, and RMSNorm amplifies whatever is left)
   cmean100    mean over CONTENT tokens only: drop punctuation/whitespace and the top-100 most
   cmean500    frequent token ids of the eval corpus (K = 100 / 500)
   centered    (mean - corpus mean embedding), renormalised to the typical real-token norm
@@ -93,6 +95,7 @@ parse_ids, set_f1, generate = O.parse_ids, O.set_f1, O.generate
 # late   : inject the enc vector as the slot RESIDUAL at layer enc_k (layers < k see `mean`)
 SLOTS = {
     "mean": dict(),
+    "meanrn": dict(renorm=True),
     "cmean100": dict(drop=100),
     "cmean500": dict(drop=500),
     "centered": dict(center=True, renorm=True),
