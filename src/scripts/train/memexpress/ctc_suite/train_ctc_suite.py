@@ -552,6 +552,42 @@ def resolve_keep_frac(opts: argparse.Namespace) -> Optional[float]:
     return None
 
 
+def resolve_cat_keep(opts: argparse.Namespace) -> Optional[Dict[str, Any]]:
+    """The WHOLE-CATEGORY keep config for ``enable_pooled_soft_tokens``, or ``None``.
+
+    Two ``--st-keep-mode`` values select it, and both exist because ``gold_plus_random`` collapsed
+    on outlier for a reason that has nothing to do with which documents were kept and everything to
+    do with the SHAPE of the keep set: forcing every gold document real made the gold category the
+    only *complete* category in the row, so "which category is entirely real?" answered the task
+    without reading anything (records/ds64-overnight-2026-09-14.md). Both policies here keep whole
+    categories only, and both keep more than one, so completeness names nothing:
+
+    * ``smallcat_keep`` -- GOLD-BLIND: keep the ``--st-keep-smallcat`` smallest categories whole
+      plus ``--st-keep-decoy-cats`` large decoy categories. No sidecar is read.
+    * ``gold_plus_wholecats`` -- keep the gold document's category whole (as ``gold_plus_random``
+      did) plus ``--st-keep-cats`` other whole categories. The gold sidecar hook is installed with
+      ``n_random=0`` so the holder's mask carries GOLD and nothing else; the model reads it as the
+      gold set and grows it to whole categories.
+
+    :param opts: Parsed CLI options.
+
+    :returns: The config dict consumed by ``Transformer.enable_pooled_soft_tokens(cat_keep=...)``,
+        or ``None`` for every other keep mode (unchanged behaviour).
+    """
+    if opts.st_keep_mode not in ("smallcat_keep", "gold_plus_wholecats"):
+        return None
+    return {
+        "mode": opts.st_keep_mode,
+        "n_small": opts.st_keep_smallcat,
+        "n_decoy": opts.st_keep_decoy_cats,
+        "decoy_max_size_mult": opts.st_keep_decoy_max_mult,
+        "n_cats": opts.st_keep_cats,
+        "cats_random": opts.st_keep_cats_random,
+        "threshold_rule": opts.st_cat_threshold_rule,
+        "log_every": opts.st_cat_log_every,
+    }
+
+
 def resolve_activation_checkpointing(opts: argparse.Namespace) -> str:
     """Resolve ``--activation-checkpointing`` ("auto" -> scale-dependent default).
 
@@ -1361,6 +1397,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                 if opts.st_slot_mode == "mean"
                 else build_slot_stop_set(opts, ids, plan["meta"])
             ),
+            cat_keep=resolve_cat_keep(opts),
         )
         print(
             f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} "
@@ -1375,7 +1412,15 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             flush=True,
         )
     train_module = train_module_config.build(model)
-    if opts.variant == "softtoken" and not opts.st_gold_blind:
+    # ``smallcat_keep`` is gold-blind by construction, so it never reads a sidecar even though it
+    # is not spelled with --st-gold-blind. ``gold_plus_wholecats`` DOES install the hook, but with
+    # n_random=0 so the holder's mask is exactly the gold set for the model to grow into whole
+    # categories (see resolve_cat_keep).
+    if (
+        opts.variant == "softtoken"
+        and not opts.st_gold_blind
+        and opts.st_keep_mode != "smallcat_keep"
+    ):
         from olmo_core.nn.attention.pooled_doc_kv import (
             install_pooled_doc_keep,
             make_fingerprint_keep_docs_fn,
@@ -1389,14 +1434,22 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             doc_start_id=ids.doc_start,
             doc_end_id=ids.doc_end,
             eos_id=ids.eos,
-            n_random=opts.st_n_random,
+            n_random=(0 if opts.st_keep_mode == "gold_plus_wholecats" else opts.st_n_random),
             n_random_range=(
-                tuple(int(x) for x in opts.st_n_random_range.split(","))
-                if opts.st_n_random_range
-                else None
+                None
+                if opts.st_keep_mode == "gold_plus_wholecats"
+                else (
+                    tuple(int(x) for x in opts.st_n_random_range.split(","))
+                    if opts.st_n_random_range
+                    else None
+                )
             ),
-            n_random_frac=resolve_keep_frac(opts),
-            mode=opts.st_keep_mode,
+            n_random_frac=(
+                None if opts.st_keep_mode == "gold_plus_wholecats" else resolve_keep_frac(opts)
+            ),
+            # the hook only has to deliver GOLD for the whole-category policy; the model grows it
+            mode=("gold_plus_random" if opts.st_keep_mode == "gold_plus_wholecats"
+                  else opts.st_keep_mode),
             n_gold=opts.st_n_gold,
             seed=opts.seed,
             mix_start_p=opts.st_mix_start_p,
@@ -1831,9 +1884,57 @@ def parse_args() -> argparse.Namespace:
         "keeps every gold doc real; gold_pooled_random is its inverse -- gold is ALWAYS pooled and "
         "--st-keep-frac (or --st-keep-prob) of the NON-gold docs stay real, so a visible id is "
         "never an answer and the slots are the only route to the loss. Also gold_subsample / "
-        "random_only / random_nongold / gold_pair / gold_halves",
+        "random_only / random_nongold / gold_pair / gold_halves. The WHOLE-CATEGORY policies "
+        "smallcat_keep (gold-blind) and gold_plus_wholecats are handled by resolve_cat_keep()",
     )
     ap.add_argument("--st-n-gold", type=int, default=0)
+    ap.add_argument(
+        "--st-keep-smallcat",
+        type=int,
+        default=3,
+        help="--st-keep-mode smallcat_keep: how many of the SMALLEST document categories to keep "
+        "fully real (a category is kept or pooled as a UNIT, never partially)",
+    )
+    ap.add_argument(
+        "--st-keep-decoy-cats",
+        type=int,
+        default=1,
+        help="--st-keep-mode smallcat_keep: additional LARGE categories kept whole as decoys, so "
+        "'kept whole' does not by itself mean 'small category'. Costs real FLOPs -- watch the "
+        "[cat-keep] log's real_token_frac",
+    )
+    ap.add_argument(
+        "--st-keep-decoy-max-mult",
+        type=float,
+        default=2.0,
+        help="a decoy category is eligible only if its size is <= this multiple of the largest "
+        "kept small one; when nothing is eligible the row keeps no decoy (logged as decoy_skipped)",
+    )
+    ap.add_argument(
+        "--st-keep-cats",
+        type=int,
+        default=3,
+        help="--st-keep-mode gold_plus_wholecats: how many NON-gold categories to keep whole "
+        "alongside the gold document's own category (the SMALLEST ones by default)",
+    )
+    ap.add_argument(
+        "--st-keep-cats-random",
+        action="store_true",
+        help="--st-keep-mode gold_plus_wholecats: pick those categories at random instead of "
+        "taking the smallest",
+    )
+    ap.add_argument(
+        "--st-cat-threshold-rule",
+        default="gap",
+        choices=["gap", "mean_std"],
+        help="how the document-similarity graph is cut (olmo_core.nn.attention.doc_categories)",
+    )
+    ap.add_argument(
+        "--st-cat-log-every",
+        type=int,
+        default=50,
+        help="[cat-keep] log cadence (categories found, kept sizes, real-token fraction)",
+    )
     ap.add_argument(
         "--st-keep-prob",
         type=float,

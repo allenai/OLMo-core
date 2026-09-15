@@ -327,6 +327,7 @@ class Transformer(nn.Module):
         slot_mode: str = "mean",
         slot_stop_ids: Optional[Sequence[int]] = None,
         slot_centroid: str = "row",
+        cat_keep: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -495,6 +496,13 @@ class Transformer(nn.Module):
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
             "_slot_stats": {"calls": 0, "fallback_docs": 0},
+            # WHOLE-CATEGORY keep policy (olmo_core.nn.attention.doc_categories). When set, the
+            # keep mask comes from clustering the DOCUMENTS' OWN SLOT VECTORS instead of from the
+            # per-document keep_prob draw or the gold hook's mask, and a category is kept or
+            # pooled as a unit -- never partially. Keys: mode, n_small, n_decoy,
+            # decoy_max_size_mult, n_cats, cats_random, threshold_rule, log_every.
+            "cat_keep": None if cat_keep is None else dict(cat_keep),
+            "_cat_calls": 0,
         }
         for mod in self.modules():
             if hasattr(mod, "detach_masked_writes"):
@@ -864,27 +872,8 @@ class Transformer(nn.Module):
             if mix_on
             else 0.0
         )
-        keep = resolve_keep_docs(
-            chunk_ids,
-            n_docs,
-            holder=self._pooled_keep_holder,
-            keep_prob=cfg["keep_prob"],
-            keep_seed=cfg["keep_seed"],
-            mix_p_full=p_full,
-            mix_call=cfg["mix_calls"] if mix_on else 0,
-        )
-        if mix_on:
-            cfg["mix_calls"] += 1
-            calls, B_ = cfg["mix_calls"], keep.shape[0]
-            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
-                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
-                # greps in debug/ds64 and records/ see the curriculum on either path.
-                print(
-                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
-                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
-                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
-                    flush=True,
-                )
+        # NB the keep set is resolved AFTER the slot vectors below, not here: a whole-category
+        # policy (cfg["cat_keep"]) decides which documents to keep FROM those vectors.
         # Mean input embedding per pooled doc (from the ORIGINAL row), the projector's feature.
         emb = self.embeddings(input_ids)  # type: ignore[misc]
         B, T, D = emb.shape
@@ -932,6 +921,113 @@ class Transformer(nn.Module):
                     cfg["slot_mode"],
                     st_slot["fallback_docs"],
                     st_slot["calls"],
+                )
+
+        cat_cfg = cfg.get("cat_keep")
+        if cat_cfg is None:
+            keep = resolve_keep_docs(
+                chunk_ids,
+                n_docs,
+                holder=self._pooled_keep_holder,
+                keep_prob=cfg["keep_prob"],
+                keep_seed=cfg["keep_seed"],
+                mix_p_full=p_full,
+                mix_call=cfg["mix_calls"] if mix_on else 0,
+            )
+        else:
+            # Whole-category keep: cluster the documents by the SAME slot vectors the pooled slot
+            # carries, then keep or pool each category as a unit. For "gold_plus_wholecats" the
+            # gold-sidecar hook's mask is read as the GOLD set (the trainer installs that hook with
+            # n_random=0 precisely so it carries gold and nothing else); "smallcat_keep" is
+            # gold-blind and ignores the holder entirely.
+            from ..attention.doc_categories import resolve_category_keep
+
+            doc_valid = (
+                torch.zeros(B, n_docs, dtype=torch.bool, device=doc_means.device)
+                .reshape(-1)
+                .index_fill_(0, flat, True)
+                .reshape(B, n_docs)
+            )
+            gold_mask = None
+            if cat_cfg["mode"] == "gold_plus_wholecats":
+                holder = self._pooled_keep_holder
+                gold_mask = None if holder is None else holder.keep_docs
+                if gold_mask is None:
+                    raise OLMoConfigurationError(
+                        "cat_keep mode 'gold_plus_wholecats' needs the gold-sidecar keep hook "
+                        "(install_pooled_doc_keep); no holder mask was set for this forward."
+                    )
+                gold_mask = gold_mask.to(device=doc_means.device, dtype=torch.bool)
+                if gold_mask.shape[0] == 1 and B > 1:
+                    gold_mask = gold_mask.expand(B, -1)
+                if gold_mask.shape[1] < n_docs:
+                    gold_mask = torch.cat(
+                        [
+                            gold_mask,
+                            torch.zeros(
+                                B,
+                                n_docs - gold_mask.shape[1],
+                                dtype=torch.bool,
+                                device=doc_means.device,
+                            ),
+                        ],
+                        dim=1,
+                    )
+                gold_mask = gold_mask[:, :n_docs]
+            cfg["_cat_calls"] += 1
+            keep, cat_stats = resolve_category_keep(
+                doc_means.detach().float(),
+                doc_valid,
+                mode=cat_cfg["mode"],
+                gold_docs=gold_mask,
+                n_small=cat_cfg.get("n_small", 3),
+                n_decoy=cat_cfg.get("n_decoy", 1),
+                decoy_max_size_mult=cat_cfg.get("decoy_max_size_mult", 2.0),
+                n_cats=cat_cfg.get("n_cats", 3),
+                cats_random=cat_cfg.get("cats_random", False),
+                threshold_rule=cat_cfg.get("threshold_rule", "gap"),
+                seed=cfg["keep_seed"],
+                call=cfg["_cat_calls"],
+                doc_counts=counts.reshape(B, n_docs),
+            )
+            n_call = cfg["_cat_calls"]
+            every = int(cat_cfg.get("log_every", 50))
+            if n_call <= 5 or (every > 0 and n_call % every == 0):
+                # The FLOP cost of this policy is `real_token_frac`, and it is DATA-DEPENDENT (a
+                # decoy category's size varies row to row), so it has to be logged, not assumed.
+                print(
+                    f"[cat-keep] call#{n_call} {cat_cfg['mode']}: B={B} n_docs<={n_docs} "
+                    f"cats={cat_stats['n_cats_mean']:.1f} kept_docs={cat_stats['kept_docs_mean']:.1f} "
+                    f"kept_sizes={cat_stats['kept_sizes']} "
+                    f"real_token_frac={cat_stats['real_token_frac']} "
+                    f"decoy_skipped={cat_stats['decoy_skipped']} "
+                    f"saturated_rows={cat_stats['saturated_rows']}",
+                    flush=True,
+                )
+        if mix_on:
+            cfg["mix_calls"] += 1
+            calls, B_ = cfg["mix_calls"], keep.shape[0]
+            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
+                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
+                # greps in debug/ds64 and records/ see the curriculum on either path.
+                print(
+                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
+                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
+                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
+                    flush=True,
+                )
+
+        if mix_on:
+            cfg["mix_calls"] += 1
+            calls, B_ = cfg["mix_calls"], keep.shape[0]
+            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
+                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
+                # greps in debug/ds64 and records/ see the curriculum on either path.
+                print(
+                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
+                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
+                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
+                    flush=True,
                 )
 
         cb = compact_pooled_rows(

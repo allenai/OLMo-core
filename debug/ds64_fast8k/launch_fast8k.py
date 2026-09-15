@@ -113,11 +113,30 @@ WANDB_GROUP = os.environ.get("F8K_WANDB_GROUP", f"f8k-q35-{SCALE}")
 # alias for this mode (train_ctc_suite.resolve_keep_frac) since that is how the gold-blind arms
 # spell the same quantity.
 _CPI = f"--st-keep-mode gold_pooled_random {_XHDR} --st-slot-mode cent_cmean {_XSLOT}"
+#
+# ``sc<C>`` / ``gw<K>`` = the WHOLE-CATEGORY policies (olmo_core.nn.attention.doc_categories).
+# They come from a sharper reading of why gold-forcing collapsed: under ``gold_plus_random`` the
+# gold category was the only category kept WHOLE -- every gold outlier real -- while other
+# categories showed up as one or two scattered real documents, so "which category is complete?" was
+# a content-free detector of the answer. Both policies keep whole categories ONLY, and both keep
+# more than one, so completeness names nothing.
+#   sc<C>  smallcat_keep, GOLD-BLIND: the C smallest categories (by the documents' own cent_cmean
+#          vectors) kept whole + 1 decoy large category. The rule never reads the label.
+#   gw<K>  gold_plus_wholecats: the gold document's category kept whole (as gold_plus_random did)
+#          PLUS the K smallest non-gold categories, also whole.
+# ⚠ NOT LAUNCHED. Held until the frozen-model probe reports whether the rule reaches eval-loss
+# parity; the real-token fraction (and therefore the FLOP cost) is data-dependent and is printed
+# every 50 steps by the trainer's ``[cat-keep]`` line.
+_CAT = f"{_XHDR} --st-slot-mode cent_cmean {_XSLOT}"
 ARM_EXTRA = dict(F2K_ARM_EXTRA)
 ARM_EXTRA.update({
     "cpi17": f"--st-keep-frac 0.1667 {_CPI}",
     "cpi33": f"--st-keep-frac 0.3333 {_CPI}",
     "cpi50": f"--st-keep-frac 0.5 {_CPI}",
+    "sc3": f"--st-keep-mode smallcat_keep --st-keep-smallcat 3 --st-keep-decoy-cats 1 {_CAT}",
+    "sc5": f"--st-keep-mode smallcat_keep --st-keep-smallcat 5 --st-keep-decoy-cats 1 {_CAT}",
+    "gw3": f"--st-keep-mode gold_plus_wholecats --st-keep-cats 3 {_CAT}",
+    "gw5": f"--st-keep-mode gold_plus_wholecats --st-keep-cats 5 {_CAT}",
 })
 ARM_MICRO = {}          # every arm at micro 2: the FLOP audit (09-15 10:30) requires identical
 DEFAULT_MICRO = 2       # gpus/micro across any pair that will be compared at matched FLOPs.
@@ -154,7 +173,11 @@ CONSTRUCTIONS = {
 }
 #: arm -> the constructions to score it under. First entry is the one promoted into results.csv.
 PARITY_ARMS = {"dense": ["cc00"], "cc00": ["cc00"], "kvgb50": ["kvgb50", "cc00"],
-               "cpi17": ["gb17c", "cc00"], "cpi33": ["gb33c", "cc00"], "cpi50": ["gb50c", "cc00"]}
+               "cpi17": ["gb17c", "cc00"], "cpi33": ["gb33c", "cc00"], "cpi50": ["gb50c", "cc00"],
+               # a whole-CATEGORY construction is not reproducible by outlier_slot_probe's
+               # keep_prob/gold-only conditions, so these are scored against the common
+               # maximal-compaction reference only.
+               "sc3": ["cc00"], "sc5": ["cc00"], "gw3": ["cc00"], "gw5": ["cc00"]}
 PARITY_RUNGS = os.environ.get("F8K_PARITY_RUNGS", "8k,32k")
 PARITY_ROWS = os.environ.get("F8K_PARITY_ROWS", "200")
 PARITY_GEN_ROWS = os.environ.get("F8K_PARITY_GEN_ROWS", "32")
