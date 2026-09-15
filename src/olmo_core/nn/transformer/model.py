@@ -1017,18 +1017,6 @@ class Transformer(nn.Module):
                     flush=True,
                 )
 
-        if mix_on:
-            cfg["mix_calls"] += 1
-            calls, B_ = cfg["mix_calls"], keep.shape[0]
-            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
-                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
-                # greps in debug/ds64 and records/ see the curriculum on either path.
-                print(
-                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
-                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
-                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
-                    flush=True,
-                )
 
         cb = compact_pooled_rows(
             input_ids,
