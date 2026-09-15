@@ -527,6 +527,31 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
 _LARGE_SCALES = ("2b", "4b", "9b", "27b")
 
 
+def resolve_keep_frac(opts: argparse.Namespace) -> Optional[float]:
+    """Resolve the soft-token keep FRACTION for the gold-sidecar path.
+
+    ``--st-keep-frac`` is the knob (a fixed fraction of each row's non-gold documents keeps its
+    real tokens). ``--st-keep-mode gold_pooled_random`` additionally accepts ``--st-keep-prob``:
+    that arm's whole parameter *is* "what fraction of the non-gold bodies stays real", and
+    ``--st-keep-prob`` is the flag every gold-BLIND arm already spells it with, so the two families
+    read the same on a launcher line. ``--st-keep-frac`` wins if both are given.
+
+    :param opts: Parsed CLI options.
+
+    :returns: The fraction, or ``None`` to fall back to ``--st-n-random`` / ``--st-n-random-range``.
+    """
+    if opts.st_keep_frac is not None:
+        return opts.st_keep_frac
+    if opts.st_keep_mode == "gold_pooled_random":
+        print(
+            f"[ctc-suite] softtoken: gold_pooled_random without --st-keep-frac; using "
+            f"--st-keep-prob {opts.st_keep_prob} as the non-gold keep fraction",
+            flush=True,
+        )
+        return opts.st_keep_prob
+    return None
+
+
 def resolve_activation_checkpointing(opts: argparse.Namespace) -> str:
     """Resolve ``--activation-checkpointing`` ("auto" -> scale-dependent default).
 
@@ -1368,7 +1393,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                 if opts.st_n_random_range
                 else None
             ),
-            n_random_frac=opts.st_keep_frac,
+            n_random_frac=resolve_keep_frac(opts),
             mode=opts.st_keep_mode,
             n_gold=opts.st_n_gold,
             seed=opts.seed,
@@ -1797,7 +1822,15 @@ def parse_args() -> argparse.Namespace:
         help="keep a FIXED FRACTION of each example's non-gold docs real (gold always kept); "
         "context-length invariant -- the FLOP-scaling study's KV arms (overrides n-random/range)",
     )
-    ap.add_argument("--st-keep-mode", default="gold_plus_random")
+    ap.add_argument(
+        "--st-keep-mode",
+        default="gold_plus_random",
+        help="softtoken + gold sidecar: the select_keep_docs policy. gold_plus_random (default) "
+        "keeps every gold doc real; gold_pooled_random is its inverse -- gold is ALWAYS pooled and "
+        "--st-keep-frac (or --st-keep-prob) of the NON-gold docs stay real, so a visible id is "
+        "never an answer and the slots are the only route to the loss. Also gold_subsample / "
+        "random_only / random_nongold / gold_pair / gold_halves",
+    )
     ap.add_argument("--st-n-gold", type=int, default=0)
     ap.add_argument(
         "--st-keep-prob",

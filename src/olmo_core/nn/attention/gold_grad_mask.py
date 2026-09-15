@@ -193,6 +193,9 @@ def select_keep_docs(
 
         * ``"gold_plus_random"`` -- keep **every** gold doc plus ``n_random`` random non-gold docs.
           O(1) in N, but over-represents positives vs the true base rate (see ``"gold_subsample"``).
+        * ``"gold_pooled_random"`` -- the INVERSE of ``"gold_plus_random"``: **every gold doc is
+          left out of the keep set** (so a pooled-KV arm always pools it) and ``n_random`` random
+          NON-gold docs are kept real. See the note below for why this is not ``"random_nongold"``.
         * ``"gold_subsample"`` -- keep ``n_gold`` *randomly chosen* gold docs plus ``n_random`` random
           non-gold docs. O(1) in N **and** base-rate preserving.
         * ``"random_only"`` -- keep ``len(gold_docs) + n_random`` docs drawn from **all** docs. NB this
@@ -217,6 +220,15 @@ def select_keep_docs(
     :returns: The set of document indices to keep (a subset of ``present_docs``).
 
     .. note::
+        ``"gold_pooled_random"`` vs ``"random_nongold"``: both keep only non-gold documents, but
+        ``"random_nongold"`` keeps ``len(gold) + n_random`` of them (it is the *same-sparsity*
+        control for ``"gold_plus_random"``), whereas ``"gold_pooled_random"`` keeps exactly
+        ``n_random``. That matters when the count comes from a FRACTION of the non-gold documents
+        (``n_random_frac`` in :func:`~olmo_core.nn.attention.pooled_doc_kv.make_fingerprint_keep_docs_fn`):
+        only ``"gold_pooled_random"`` then keeps exactly that fraction, so "keep p of the
+        non-gold bodies real" is length-invariant and means the same thing at n = 14 and n = 56.
+
+    .. note::
         The pair-aware modes exist because the label is a *relation* (the model must emit
         ``[[9, 28], ...]``), yet every doc-level mode treats gold as an unordered set -- so
         ``gold_subsample`` with ``n_gold=1`` keeps one half of a pair and detaches its partner, and
@@ -230,6 +242,14 @@ def select_keep_docs(
         rng.shuffle(pool)
         keep.update(pool[: max(0, n_random)])
         return keep
+    if mode == "gold_pooled_random":
+        # Gold is NEVER kept; exactly n_random non-gold docs are. Paired with the soft-token /
+        # pooled-KV feature this means "the answer is only ever reachable through a POOLED slot,
+        # while some real bodies are still present". See the module-level note in
+        # :func:`~olmo_core.nn.attention.pooled_doc_kv.make_fingerprint_keep_docs_fn`.
+        pool = sorted(present_set - set(gold_docs))
+        rng.shuffle(pool)
+        return set(pool[: max(0, n_random)])
     if mode == "random_only":
         n_keep = min(
             len(present), len([g for g in gold_docs if g in present_set]) + max(0, n_random)
@@ -284,8 +304,8 @@ def select_keep_docs(
         rng.shuffle(pool)
         return set(pool[:n_keep])
     raise ValueError(
-        f"Unknown gold-grad mode {mode!r}; expected 'gold_plus_random', 'gold_subsample', "
-        "'random_only', 'random_nongold', 'gold_pair' or 'gold_halves'."
+        f"Unknown gold-grad mode {mode!r}; expected 'gold_plus_random', 'gold_pooled_random', "
+        "'gold_subsample', 'random_only', 'random_nongold', 'gold_pair' or 'gold_halves'."
     )
 
 

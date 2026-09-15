@@ -536,8 +536,38 @@ def make_fingerprint_keep_docs_fn(
         breadths teaches ranking that is scale-invariant, so the eval regime (every doc real) is
         not out-of-distribution. The draw is per (fingerprint, call): a row's breadth varies
         across epochs.
-    :param mode: A :func:`select_keep_docs` policy (``"gold_plus_random"``, ``"gold_subsample"``,
-        ``"random_only"``, ``"random_nongold"``, ``"gold_pair"``, ``"gold_halves"``).
+    :param mode: A :func:`select_keep_docs` policy (``"gold_plus_random"``,
+        ``"gold_pooled_random"``, ``"gold_subsample"``, ``"random_only"``, ``"random_nongold"``,
+        ``"gold_pair"``, ``"gold_halves"``).
+
+        ``"gold_pooled_random"`` is the **slot-forcing** policy: every GOLD document is pooled and
+        a fraction ``n_random_frac`` of the NON-gold documents keep their real tokens. It is the
+        middle ground between the two regimes ds64 measured on outlier at 2k
+        (records/ds64-overnight-2026-09-14.md, 09-15):
+
+        * keep 0 with a readable slot (no real body anywhere) beat its control 0.482 vs 0.239,
+          because with nothing real to copy the *only* gradient left comes from the slots -- but a
+          model that has never seen a real document body does not transfer to an eval where every
+          document is real (2k 0.80, 8k 0.17);
+        * any positive keep of *gold-blind* real bodies (1/36, 1/12, 1/6) reverted to "sample k ids
+          from the visible headers", which still earns partial credit and so is what SGD takes.
+
+        Pooling gold removes that partial credit *without* removing real text: a visible id is
+        never an answer, so copying one earns exactly chance, while the real bodies keep the model
+        in the distribution it meets at eval.
+
+        ⚠ Two things to hold in mind when reading a ``gold_pooled_random`` run:
+
+        1. **The training CE floor is lower than the shard's nominal ``ln C(n, k) / answer_tokens``.**
+           A model can learn the training-only regularity "the answer is among the POOLED
+           documents" and guess within that smaller set: with ``n`` documents, ``k`` gold and a
+           kept fraction ``p``, the reachable floor is ``ln C(k + (1-p)(n-k), k) / answer_tokens``.
+           At n = 56, k = 3, p = 1/2 that is ~0.72 of the nominal floor. Read a CE descent against
+           *that* number, not the nominal one.
+        2. **It is a TRAINING-time construction only, and is not exploitable at eval.** Evaluation
+           runs full attention with every document real, so there is no pooled subset to guess
+           within and the shortcut in (1) transfers to nothing -- it can only flatter the training
+           CE, never the score.
     :param seed: Base seed; the per-example draw is seeded with ``f"{seed}:{fingerprint}"`` so it is
         stable across epochs and layers.
     :param mix_start_p: **Compression-mixing curriculum** (the pooled analogue of the proven
