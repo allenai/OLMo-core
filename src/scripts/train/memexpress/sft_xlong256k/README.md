@@ -69,3 +69,29 @@ strict weights-only CPT loading and unique checkpoint folders under `amandab`.
 Compressive incurs landmark compute overhead; its CPT had 1/64 fewer content tokens.
 The loader drops the final incomplete global batch each epoch; prep records the count.
 `prep_contradiction_256k.py` checks checkpoint files and builds both real datasets.
+
+
+CPU prep passed on [Beaker 01M2H8QC6M1MN5EP910NPB1ST1](https://beaker.org/ex/01M2H8QC6M1MN5EP910NPB1ST1).
+Both arms retain all 19,988 tokenized examples / 351,891,821 content tokens (longest
+262,072); the original converter had excluded 12 oversized source examples.
+
+| Arm | Packed windows | Steps/epoch | Three-epoch steps | Tail windows dropped/epoch |
+|---|---:|---:|---:|---:|
+| Dense | 1,343 | 335 | 1,005 | 3 (0.22%) |
+| Compressive | 1,345 | 336 | 1,008 | 1 (0.07%) |
+
+Epochs use the native loader's shuffled, full-batch convention. This is data-controlled,
+with the small tail discrepancy above; it is not an equal-compute comparison.
+Model-token budgets: dense 1,053,818,880; compressive 1,073,995,776, including padding.
+The full corpus before batch-tail dropping has 1,055,675,463 content tokens over three passes.
+
+`launch_contradiction_256k.py` submits detached jobs with exactly two replicas, eight GPUs
+each, urgent priority, and `minRuntime: 0`. It requires a full pushed commit SHA:
+
+```bash
+python src/scripts/train/memexpress/sft_xlong256k/launch_contradiction_256k.py dense --ref <sha>
+python src/scripts/train/memexpress/sft_xlong256k/launch_contradiction_256k.py compressive --ref <sha>
+```
+
+Pass `--dry-run` to inspect the Beaker spec without submitting, or `--run-name` to set a
+fresh output namespace. The default run name includes a timestamp.

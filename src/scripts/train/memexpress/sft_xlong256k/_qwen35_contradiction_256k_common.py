@@ -33,6 +33,8 @@ DATA_ROOT = (
     "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/"
     "xlong5_2k256k_qwen35/shards_full/contradiction_train"
 )
+# Measured 2026-09-14 (Pacific), CPU prep Beaker 01M2H8QC6M1MN5EP910NPB1ST1.
+# Both keep 19,988 documents / 351,891,821 content tokens, zero packer drops.
 _ARMS = {
     "dense": dict(
         cpt_run="fq3brt27",
