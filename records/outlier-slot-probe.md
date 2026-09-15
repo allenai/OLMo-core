@@ -158,7 +158,31 @@ seen directly.
 **4. `gb00` (no header) is the impossibility control and behaves like one**: 0.016, below every
 other cell, because a pooled document's id is nowhere in the context.
 
-### Run C, ~8k rung (INTERIM: snapshot at row 75/200, 144 gold documents in the generation split)
+### Run B, 8k rung (INTERIM: snapshot at row 25/240, 75 gold documents)
+
+`ds64-outlier-dense-u64M` on `rung_8192.jsonl`. 56.3 documents/row, so the guess floor is
+`k/n` = **0.053**. Job `01M2HFQCS5T08MNNJP1TD35PHP`, still running (⚠ eval_size 25 so far —
+per-document SE ≈ 0.03 at 75, ≈ 0.08 at 37–38; treat as a shape check, not a number to quote):
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|
+| `full` | 0.042 | 0.121 | 0.880 | — | 0.880 (75) | 1.000 |
+| `goldonly` | 0.291 | 0.785 | 0.027 | — | 0.027 (75) | 0.076 |
+| `gb50` | 0.697 | 2.077 | 0.165 | **0.000** (38) | **0.324** (37) | 0.493 |
+| `gb50h` | 0.596 | 1.731 | 0.312 | **0.000** (38) | **0.622** (37) | 0.525 |
+| **`gb50h_swap`** | 0.608 | 1.768 | 0.312 | **0.000** (38) | **0.622** (37) | 0.525 |
+| `gb17h` | 0.767 | 2.225 | 0.072 | 0.049 (61) | 0.143 (14) | 0.210 |
+| `gb00h` | 0.682 | 1.967 | 0.080 | **0.080** (75) | — | 0.063 |
+| `gb00` | 0.736 | 2.096 | 0.067 | 0.067 (75) | — | 0.023 |
+| **`gb00h_swap`** | 0.684 | 1.972 | 0.080 | **0.080** (75) | — | 0.063 |
+
+`gb50h` and `gb50h_swap` are **bit-for-bit identical on every recall column** (0.000 / 0.622 /
+genF1 0.312), and `gb00h` matches its swap at 0.080. Pooled-gold recall is 0.000–0.080 against a
+0.053 floor at every keep. Note `goldonly` collapses to 0.027 here even though the gold bodies are
+REAL — at 8k, pooling 53 of 56 documents destroys the *comparison* the task needs, which is the
+same message from the other side.
+
+### Run C, ~8k rung on the replicate checkpoint (INTERIM: snapshot at row 75/200, 144 gold documents in the generation split)
 
 Same checkpoint, `outlier_wiki100w_n55_k3_eval_600.jsonl` (n = 55 documents/row, so the `k/n`
 guess floor drops to **0.055**). This run also carries `gb50h_swap`. Snapshot at row 75/200
