@@ -215,6 +215,42 @@ spreads 90 % of its doc-side mass over ~45 of them.
 flatter (n50/n 0.283 → 0.297). The direction is "when FULL fails, it failed to single out the gold
 documents and spread itself over the distractors", but at 7 rows this is a hypothesis, not a result.
 
+### 5b-32k. The saliency diagnostic — 32k rung, COMPLETE (eval_size 100; generation on 12, ⚠ « 500)
+
+~219 documents per row, k = 3 gold (**1.4 %** of documents). FULL itself answers only **6 of 12**
+generation rows exactly, so at this rung FULL is near its own ceiling and the right/wrong split
+(6 vs 6) is too small to read.
+
+| saliency | gold | non-gold | header | marker | quest | answ | n50/n | n90/n | hdr/doc | **AUCgold** | ρ(ambig) | s/tok G / H / E |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `grad` | 0.045 | 0.848 | 0.071 | 0.013 | 0.022 | 0.001 | 0.222 | **0.762** | 0.073 | **0.925** | 0.016 | 0.058 / 0.017 / 0.018 |
+| `attn` | 0.028 | 0.258 | **0.217** | 0.031 | 0.351 | 0.117 | 0.242 | 0.753 | 0.432 | **0.965** | 0.054 | 0.279 / 0.038 / 0.037 |
+| `attnlast` | 0.038 | 0.278 | 0.197 | 0.040 | 0.329 | 0.119 | 0.178 | 0.677 | 0.384 | 0.963 | 0.081 | 0.191 / 0.022 / 0.020 |
+
+Within-document, normalised (1.0 = the document's average token):
+
+| saliency | 1st sent | rest | q0 | q1 | q2 | q3 | digit | capital | stopword | idfq0 | q1 | q2 | q3 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `grad` | **1.44** | 0.95 | 1.24 | 0.99 | 0.92 | 0.86 | **0.72** | 1.35 | 0.86 | 0.86 | 0.86 | 1.01 | **1.27** |
+| `attn` | 1.29 | 0.98 | 1.14 | 0.96 | 0.96 | 0.94 | **1.75** | 1.18 | 1.41 | **1.57** | 1.17 | 0.62 | 0.66 |
+| `attnlast` | 1.23 | 0.99 | 1.04 | 0.97 | 1.00 | 0.99 | **2.00** | 1.35 | 1.41 | **1.63** | 1.11 | 0.58 | 0.70 |
+
+The trends from 2k → 8k all continue, and two of them sharpen decisively:
+
+* **Gold separation keeps improving with n.** AUC(gold) `grad` 0.829 → 0.875 → **0.925**, `attn`
+  0.934 → 0.964 → **0.965**. Gold documents are 1.4 % of the row but take 5.0 % of the doc-body
+  gradient mass and 9.8 % of the doc-body attention mass — **3.6× / 7.0× over-represented** — and get
+  **7.4× the per-token attention** of everything else (0.279 vs 0.038 / 0.037).
+* **The gradient is now essentially all document** (non-gold 0.848, question 0.022, answer 0.001) and
+  its within-document profile is at its sharpest: rarest IDF quartile 1.27×, digits 0.72×, first
+  sentence 1.44×.
+* **`n90/n` falls only to 0.75.** Even with 219 documents, 90 % of the doc-side mass needs 165 of
+  them. This is the number that bounds every construction here.
+* **The ambiguity score is now noise** (ρ = 0.016–0.081) and hard negatives are indistinguishable
+  from easy ones (0.038 vs 0.037). The topical-distance notion of "hard" can be retired for outlier.
+* **Headers take 0.217 of all attention at 32k** — more than every document body combined (0.286 ×
+  0.76 excluded) and rising with n (0.167 → 0.190 → 0.217).
+
 ### 5c. What this implies for the constructions
 
 1. **A per-document attention BUDGET is the signal, not the per-token identity.** AUC(gold) 0.93–0.97
