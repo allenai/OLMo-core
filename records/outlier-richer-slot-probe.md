@@ -232,10 +232,27 @@ cell (`cmean500`, 0.266) fails both halves of the rule: +0.041 is under +0.10 an
 its swap control sits at 0.234, a Δ of +0.032 against an SE-of-difference of 0.044. **No candidate
 passes.**
 
-At gold-blind keep 1/6 the picture is the same (154 pooled / 38 real gold documents): pooled recall
-0.182–0.266 against the same 0.225 floor, while recall on gold whose BODY stayed real is 0.53–0.76
-and is unmoved by the slot construction — the previous probe's 3–6× real-vs-pooled gap, reproduced
-with every richer slot.
+Gold-blind keep 1/6, same run (154 pooled / 38 real gold documents, same 0.225 floor):
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | **R@gold_real** | pred_pooled | compaction | extra FLOPs (dense) |
+|---|---|---|---|---|---|---|---|---|
+| `mean` | 0.503 | 1.843 | 0.323 | 0.227 ± 0.034 | 0.711 | 0.727 | 0.252 | 0 |
+| `meanrn` | 0.520 | 1.900 | 0.307 | 0.208 ± 0.033 | 0.711 | 0.699 | 0.252 | 0 |
+| `cmean100` | 0.518 | 1.879 | 0.331 | 0.221 ± 0.033 | 0.763 | 0.705 | 0.252 | 0 |
+| `cmean500` | 0.514 | 1.867 | 0.363 | 0.266 ± 0.036 | 0.737 | 0.688 | 0.252 | 0 |
+| `centered` | 0.498 | 1.841 | 0.286 | 0.201 ± 0.032 | 0.632 | 0.779 | 0.252 | 0 |
+| `cent_cmean` | 0.483 | 1.775 | 0.339 | 0.253 ± 0.035 | 0.684 | 0.801 | 0.252 | 0 |
+| `idf` | 0.556 | 2.018 | 0.305 | 0.201 ± 0.032 | 0.711 | 0.626 | 0.252 | 0 |
+| `g2` | 0.521 | 1.909 | 0.286 | 0.182 ± 0.031 | 0.711 | 0.710 | 0.257 | 0 |
+| `g4` | 0.536 | 1.969 | 0.305 | 0.195 ± 0.032 | 0.737 | 0.693 | 0.268 | 0 |
+| `g2cent` | 0.510 | 1.871 | 0.318 | 0.266 ± 0.036 | 0.526 | 0.831 | 0.257 | 0 |
+| `enc2` | 0.475 | 1.759 | 0.318 | 0.240 ± 0.034 | 0.632 | 0.751 | 0.252 | 0.047 |
+| `enc4` | 0.482 | 1.780 | 0.318 | 0.234 ± 0.034 | 0.658 | 0.751 | 0.252 | 0.094 |
+| `enc4late` | 0.475 | 1.750 | 0.339 | 0.247 ± 0.035 | 0.711 | 0.754 | 0.252 | 0.094 |
+
+Pooled recall 0.182–0.266 against the 0.225 floor — nothing passes here either — while recall on
+gold whose BODY stayed real is 0.53–0.76 and is essentially unmoved by the slot construction. That
+is the previous probe's 3–6× real-vs-pooled gap, reproduced with every richer slot.
 
 ### Canonical 8k rung (COMPLETE: eval_size 240, 48 generation rows, 144 pooled gold documents, floor **0.053**, SE 0.020)
 
