@@ -105,8 +105,9 @@ def main():
     idf_np = R.ST["corpus"]["idf"].cpu().numpy()
 
     slots = [s for s in a.slots.split(",") if s]
-    res = {s: {"recall": [], "rankpct": [], "cos_gold": [], "cos_other": []} for s in slots}
-    res["lexidf"] = {"recall": [], "rankpct": [], "cos_gold": [], "cos_other": []}
+    mk = lambda: {"recall": [], "recall_nn": [], "rankpct": [], "cos_gold": [], "cos_other": []}
+    res = {s: mk() for s in slots}
+    res["lexidf"] = mk()
     floor = []
 
     gold_table = json.load(open(f"{shard}/gold_fingerprints.json"))
@@ -164,6 +165,8 @@ def main():
         "readouts": {
             s: {
                 "oracle_topk_recall": float(np.mean(r["recall"])),
+                "oracle_topk_recall_nn": float(np.mean(r["recall_nn"])),
+                "oracle_topk_recall_nn_se": float(np.std(r["recall_nn"]) / max(1, len(r["recall_nn"])) ** 0.5),
                 "oracle_topk_recall_se": float(np.std(r["recall"]) / max(1, len(r["recall"])) ** 0.5),
                 "gold_mean_rank_pct": float(np.mean(r["rankpct"])),
                 "cos_gold_centroid": float(np.mean(r["cos_gold"])),
@@ -183,8 +186,17 @@ def _score(acc, v, gold, k, G=1, n_docs=None):
     vn = v / (np.linalg.norm(v, axis=-1, keepdims=True) + 1e-9)
     cn = c / (np.linalg.norm(c, axis=-1, keepdims=True) + 1e-9)
     cos = (vn * cn).sum(-1)
+    # A second, task-shaped readout: an outlier has no topical NEIGHBOUR, while every ordinary
+    # document has at least one other document about the same thing. Rank by max similarity to any
+    # other document (lowest = oddest). Strictly a better oracle than centroid distance whenever
+    # the ordinary documents are a tight topical cluster.
+    sim = vn @ vn.T
+    np.fill_diagonal(sim, -2.0)
+    nn = sim.max(1)
     if G > 1:
         cos = cos.reshape(n_docs, G).min(1)  # oddest segment wins
+        nn = nn.reshape(n_docs, G).min(1)
+    acc["recall_nn"].append(topk_recall(-nn, gold, k))
     acc["recall"].append(topk_recall(-cos, gold, k))  # farthest from centroid = most cosine-distant
     acc["rankpct"].append(mean_rank_pct(cos, gold))  # low cosine = high "oddness"; 0.0 = oddest
     acc["cos_gold"].append(float(np.mean([cos[g] for g in gold])))
@@ -192,15 +204,18 @@ def _score(acc, v, gold, k, G=1, n_docs=None):
 
 
 def table(res, floor):
-    print(f"{'readout':12} {'oracle R@k':>12} {'gold rankpct':>13} {'cos(gold,c)':>12} "
-          f"{'cos(other,c)':>13} {'rows':>5}   (k/n floor {np.mean(floor):.3f})", flush=True)
+    print(f"{'readout':12} {'R@k centroid':>14} {'R@k nn':>14} {'gold rankpct':>13} "
+          f"{'cos(gold,c)':>12} {'cos(other,c)':>13} {'rows':>5}   (k/n floor {np.mean(floor):.3f})",
+          flush=True)
     for s, r in res.items():
         if not r["recall"]:
             continue
         n = len(r["recall"])
         se = float(np.std(r["recall"]) / max(1, n) ** 0.5)
-        print(f"{s:12} {np.mean(r['recall']):7.3f}±{se:.3f} {np.mean(r['rankpct']):13.3f} "
-              f"{np.mean(r['cos_gold']):12.4f} {np.mean(r['cos_other']):13.4f} {n:5d}", flush=True)
+        sn = float(np.std(r["recall_nn"]) / max(1, n) ** 0.5)
+        print(f"{s:12} {np.mean(r['recall']):9.3f}±{se:.3f} {np.mean(r['recall_nn']):9.3f}±{sn:.3f} "
+              f"{np.mean(r['rankpct']):13.3f} {np.mean(r['cos_gold']):12.4f} "
+              f"{np.mean(r['cos_other']):13.4f} {n:5d}", flush=True)
 
 
 if __name__ == "__main__":
