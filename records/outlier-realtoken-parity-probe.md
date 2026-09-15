@@ -155,7 +155,8 @@ largest cluster size, `gold_in_smallest`, `cos_gold` vs `cos_other`, `hn_rate` (
 document sits farther from the centroid than a gold one) and `oracle_cosR` (recall of "the 3
 lowest-cosine documents are the outliers").
 
-**Parity rule:** ΔCE ≤ 1 paired SE **and** |ΔgenF1| ≤ 1 paired SE, at 8k and 32k.
+**Parity rule:** Δ**CE(digits)** ≤ 1 paired SE **and** |ΔgenF1| ≤ 1 paired SE. Mean answer CE is
+prose-dominated on outlier and is NOT a parity criterion (§5).
 
 ## 5. Results
 
