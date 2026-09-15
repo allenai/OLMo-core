@@ -53,3 +53,19 @@ The legacy dense/landmark 256k pair remains a valid landmark-vs-dense comparison
 
 Neither reaches the 262,144 window, so `LongDocStrategy.exclude` drops nothing on either arm —
 asserted in the common file rather than left to a comment.
+
+## Contradiction-only SFT from end-of-CPT (2026-09-14)
+
+| Arm | Script | CPT run / checkpoint | Control |
+|---|---|---|---|
+| Dense | `Qwen3.5-4B-dense-contradiction-3ep-256k-SFT.py` | `fq3brt27` / `q35-4b-dense-256k-fix/step2385` | Compressive |
+| Compressive | `Qwen3.5-4B-compressive-contradiction-3ep-256k-SFT.py` | `2brjoa8r` / `q35-4b-fastcomplm-256k-fix/step2385` | Dense |
+
+Shared builder: `_qwen35_contradiction_256k_common.py`. Three **loader epochs** of only
+`xlong5_2k256k_qwen35/shards_full/contradiction_train`, query position `both`, no task
+mixing. Dense window 262144; compressive window 266368 (4162 blocks, content capacity
+262206). Both use BFD, LR 4e-5, 3% warmup, seed 34521, two 8-GPU nodes, CP=4 / DP=4,
+strict weights-only CPT loading and unique checkpoint folders under `amandab`.
+Compressive incurs landmark compute overhead; its CPT had 1/64 fewer content tokens.
+The loader drops the final incomplete global batch each epoch; prep records the count.
+`prep_contradiction_256k.py` checks checkpoint files and builds both real datasets.
