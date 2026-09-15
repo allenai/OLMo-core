@@ -70,8 +70,13 @@ NODES = 1
 # raise it if the build job's metadata says max_example_len > 4096.
 SEQ_LEN = int(os.environ.get("F2K_SEQ_LEN", "4096"))
 SOFT_BACKEND = os.environ.get("F2K_SOFT_BACKEND", "flash_2")
-CLUSTER = os.environ.get("F2K_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale")
-EVAL_CLUSTER = os.environ.get("F2K_EVAL_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale")
+# THREE clusters on purpose. The point of fast2k is turnaround, and the ds64 campaign keeps a wave
+# of 4-GPU urgent jobs queued on jupiter alone -- a 2-GPU fast2k job then sits behind our OWN work
+# (measured 2026-09-14: 38 min queued on jupiter+saturn with zero starts). ceres is a separate H100
+# pool ds64 never targets; saturn is A100-80GB, slower per step but fine for a 4B model at 2k.
+# Cross-cluster is safe here because fast2k quotes FLOPs and accuracy, never wall-clock.
+CLUSTER = os.environ.get("F2K_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale")
+EVAL_CLUSTER = os.environ.get("F2K_EVAL_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale")
 WANDB_GROUP = os.environ.get("F2K_WANDB_GROUP", f"f2k-q35-{SCALE}")
 
 # ---------------------------------------------------------------------------------------------
