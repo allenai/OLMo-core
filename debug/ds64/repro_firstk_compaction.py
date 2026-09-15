@@ -54,6 +54,7 @@ from olmo_core.nn.pooled_soft_token import (  # noqa: E402
     build_token_idf,
     build_token_piece_tables,
     compact_pooled_rows,
+    first_last_scores,
     keep_token_scores,
     parse_keep_token_weights,
 )
@@ -119,11 +120,12 @@ def main():
     ap.add_argument("--extra-tokens", default="0,8,16,32", help="comma list of K values to compare")
     ap.add_argument(
         "--rule",
-        choices=["first", "rule"],
+        choices=["first", "first_last", "rule"],
         default="first",
         help="which keep-token selector to show: 'first' = --st-header-extra-tokens K (the "
-        "original behaviour of this script); 'rule' = --st-keep-token-rule rule, the per-document "
-        "top-K by the cheap feature score",
+        "original behaviour of this script); 'first_last' = --st-keep-token-rule first_last, the "
+        "first K//2 + last K-K//2 body tokens; 'rule' = --st-keep-token-rule rule, the "
+        "per-document top-K by the cheap feature score",
     )
     ap.add_argument(
         "--weights",
@@ -210,19 +212,29 @@ def main():
             doc_end_id=ids_set.doc_end,
             stop_id=args.stop_id,
             stop_count=1,
-            extra_tokens=0 if args.rule == "rule" else K,
+            extra_tokens=K if args.rule == "first" else 0,
             cap=32,
         )
-        if args.rule == "rule" and K > 0:
-            scores = keep_token_scores(
-                t,
-                chunk,
-                tables=tables,
-                weights=weights,
-                sd=sd,
-                doc_start_id=ids_set.doc_start,
-                doc_end_id=ids_set.doc_end,
-                n_docs=n_docs,
+        if args.rule != "first" and K > 0:
+            scores = (
+                first_last_scores(
+                    t,
+                    chunk,
+                    doc_start_id=ids_set.doc_start,
+                    doc_end_id=ids_set.doc_end,
+                    n_docs=n_docs,
+                )
+                if args.rule == "first_last"
+                else keep_token_scores(
+                    t,
+                    chunk,
+                    tables=tables,
+                    weights=weights,
+                    sd=sd,
+                    doc_start_id=ids_set.doc_start,
+                    doc_end_id=ids_set.doc_end,
+                    n_docs=n_docs,
+                )
             )
             chunk = mark_doc_topk_tokens_free(
                 chunk,
