@@ -42,7 +42,7 @@ _ARMS = {
         mem_freq=None,
         num_landmarks=0,
         mem_id=None,
-        packed_windows=None,
+        packed_windows=1343,
     ),
     "compressive": dict(
         cpt_run="2brjoa8r",
@@ -50,7 +50,7 @@ _ARMS = {
         mem_freq=63,
         num_landmarks=1,
         mem_id=248200,
-        packed_windows=None,
+        packed_windows=1345,
     ),
 }
 
