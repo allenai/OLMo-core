@@ -26,3 +26,21 @@ Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 fast2k	4b	outlier	xhdr17-warm	4M	f2k-outlier-xhdr17-warm-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 21:47	LAUNCHED	"01M2HP7XFDNQXKWSE3YG09152J   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 fast2k	4b	outlier	dense	2M,4M,8M	f2k-outlier-dense-{2M,4M,8M}	jupiter+ceres+saturn	2026-09-14 22:25	DONE	01M2HGRDXR2HB0PMS4FQEFXM8M 01M2HGSDK6N2NAX4N6ZA1SYG3M 01M2HGTBBAPQ8906BH0W0JF2C9 f1 0.954/0.987/0.996
+fast2k	4b	outlier	cc17	4M	f2k-outlier-cc17-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 00:58	LAUNCHED	"01M2J1411KD3N55S7TZX7M8BBT   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cm17	4M	f2k-outlier-cm17-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 00:58	LAUNCHED	"01M2J14W1M5PBH7AMD3SXFXM59   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cc00	4M	f2k-outlier-cc00-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 00:58	LAUNCHED	"01M2J15MDAWDD7BGPVXDB5T8F0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cc50	4M	f2k-outlier-cc50-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 00:58	LAUNCHED	"01M2J16FC48RWAZVPSTTW14TZK   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cc17	4M	f2k-outlier-cc17-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 01:03	LAUNCHED	"01M2J1CK2TG2VYA5GX64354EZC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cm17	4M	f2k-outlier-cm17-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 01:03	LAUNCHED	"01M2J1DFSAT35R0AGYRKEGJBKB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cc00	4M	f2k-outlier-cc00-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 01:03	LAUNCHED	"01M2J1EBYVKRREN264H3C15TZX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	cc50	4M	f2k-outlier-cc50-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 01:03	LAUNCHED	"01M2J1F9DCYXJEB0FDPVRWPB6W   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	xhdr00	4M	f2k-outlier-xhdr00-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-15 01:40	LAUNCHED	"01M2J3J7K49M1WKDKFCP9BYTTC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

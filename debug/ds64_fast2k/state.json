@@ -69,6 +69,56 @@
    "gpus": 2,
    "state": "DONE",
    "rc": 0
+  },
+  "f2k-outlier-cc17-4M": {
+   "ex": "01M2J1CK2TG2VYA5GX64354EZC",
+   "task": "outlier",
+   "arm": "cc17",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cm17-4M": {
+   "ex": "01M2J1DFSAT35R0AGYRKEGJBKB",
+   "task": "outlier",
+   "arm": "cm17",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cc00-4M": {
+   "ex": "01M2J1EBYVKRREN264H3C15TZX",
+   "task": "outlier",
+   "arm": "cc00",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cc50-4M": {
+   "ex": "01M2J1F9DCYXJEB0FDPVRWPB6W",
+   "task": "outlier",
+   "arm": "cc50",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-xhdr00-4M": {
+   "ex": "01M2J3J7K49M1WKDKFCP9BYTTC",
+   "task": "outlier",
+   "arm": "xhdr00",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
   }
  },
  "evals": {
@@ -104,6 +154,31 @@
   },
   "f2k-outlier-xhdr17-warm-4M": {
    "ex": "01M2HQS4MQSWGR79XKAGRTP5W2",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cc00-4M": {
+   "ex": "01M2J2S43E50NYS7C2MW2Z21MT",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cc17-4M": {
+   "ex": "01M2J3DDSRSVEWQXFY7KG0NDY5",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cm17-4M": {
+   "ex": "01M2J3E9XAYHKSFNAFRCJ22WXD",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-cc50-4M": {
+   "ex": "01M2J46CVDEED2QK9DTHVHZSEF",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-xhdr00-4M": {
+   "ex": "01M2J543PV8NNRNJ3Z05SS2A8Y",
    "state": "DONE",
    "rc": 0
   }
