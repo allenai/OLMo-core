@@ -234,9 +234,45 @@ documents and spread itself over the distractors", but at 7 rows this is a hypot
 4. **`idf{k}` and `attn{k}` will select nearly disjoint tokens** (IDF quartile profiles are inverted),
    so the `overlap@k with grad` column in the parity tables is the thing to read alongside ΔCE.
 
+### 5d. Parity constructions — 2k rung (INTERIM, eval_size 5; ⚠ shape check ONLY, do not quote)
+
+First table off the `sal2k` job. FULL CE 0.003, genF1 1.000. Read the *ordering*, not the values.
+
+| condition | CE | ΔCE | genF1 | tok/doc real | FLOPfrac | gold / hard / easy tokens | docs with 0 |
+|---|---|---|---|---|---|---|---|
+| `cc00` (k = 0) | 0.470 | +0.467 | 0.067 | 0 | 0.101 | — | — |
+| `rand8` | 0.558 | +0.555 | 0.267 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| `first8` | 0.263 | +0.260 | 0.533 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| `idf8` | 0.262 | +0.259 | 0.333 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| `attn8` | 0.319 | +0.317 | 0.400 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| **`grad8`** (oracle) | **0.072** | +0.069 | 0.800 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| **`rule8`** (deployable) | **0.071** | +0.068 | **0.867** | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
+| `grad16` (oracle) | 0.037 | +0.034 | 0.800 | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
+| `rule16` | 0.046 | +0.043 | 0.800 | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
+| `gradrow8` (row budget) | 0.300 | +0.297 | 0.467 | 8 | 0.151 | **13.9 / 4.5 / 7.4** | 0.22 |
+| `attnrow8` | 0.288 | +0.285 | 0.200 | 8 | 0.151 | **16.9 / 6.1 / 5.1** | 0.01 |
+| `rulerow8` | 0.106 | +0.103 | 0.667 | 8 | 0.151 | 6.7 / 8.9 / 8.0 | 0.00 |
+| **`grad16_swap`** (control) | 0.911 | +0.909 | **0.000** | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
+
+Three things are already visible and are the reason the full runs are worth waiting for.
+
+* **The swap control fires hard** — `grad16` 0.037 / genF1 0.800 versus `grad16_swap` 0.911 / genF1
+  **0.000**. Unlike every slot construction in the two previous records, the model is unambiguously
+  *reading* the kept tokens.
+* **`rand8` is worse than keeping nothing** (0.558 vs `cc00` 0.470): eight arbitrary real tokens per
+  document are an active distraction. Which tokens are kept is the whole effect.
+* **The transferable rule matches the oracle** (`rule8` 0.071 vs `grad8` 0.072; `rule16` 0.046 vs
+  `grad16` 0.037) from six free features — and it is not doing what attention does (`attn8` 0.319).
+* **The row-level budget is behind the uniform one at 2k**, on all three saliencies
+  (`gradrow8` 0.300 vs `grad8` 0.072), even though it does concentrate on the gold documents
+  (13.9 tokens/gold vs 4.5/hard, 7.4/easy) — because it strands 22 % of documents with no real token
+  at all, and (b) of the diagnostic says 90 % of the model's mass needs 84 % of the documents. Whether
+  this reverses at 8k/32k, where the per-document budget is the binding constraint, is exactly what
+  the running jobs answer.
+
 ## 6. Verdict
 
-_(pending)_
+_(pending the full rungs — the interim above is 5 rows)_
 
 ## 7. Runs
 
