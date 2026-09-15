@@ -377,6 +377,11 @@ class Transformer(nn.Module):
             * ``"first"`` -- the first ``keep_token_k`` body tokens, i.e. exactly
               ``header_extra_tokens=keep_token_k`` (it is implemented as that call, so the two are
               bit-identical by construction). Mutually exclusive with ``header_extra_tokens``.
+            * ``"first_last"`` -- the first ``k // 2`` and last ``k - k // 2`` body tokens
+              (:func:`~olmo_core.nn.pooled_soft_token.first_last_scores`). Same cost as ``"first"``,
+              and it beats it on every rung of the frozen-model probe (ΔCE +0.044 vs +0.049 and
+              R@gold 0.927 vs 0.818 at 2k, genF1 0.800 vs 0.787 at 32k --
+              ``records/outlier-realtoken-parity-probe.md``). Needs no feature tables.
             * ``"rule"`` -- the ``keep_token_k`` highest-scoring body tokens PER DOCUMENT under the
               cheap feature rule of
               :func:`~olmo_core.nn.pooled_soft_token.keep_token_scores` (idf, relative position,
@@ -929,23 +934,33 @@ class Transformer(nn.Module):
                 extra_tokens=extra_tokens,
                 cap=cfg["header_cap"],
             )
-        if keep_rule == "rule":
+        if keep_rule in ("rule", "first_last"):
             from ..attention.chunked_mask import mark_doc_topk_tokens_free
             from ..pooled_soft_token import (
                 DEFAULT_KEEP_TOKEN_WEIGHTS,
+                first_last_scores,
                 keep_token_scores,
             )
 
-            scores = keep_token_scores(
-                input_ids,
-                chunk_ids,
-                tables=cfg["keep_token_tables"],
-                weights=cfg.get("keep_token_weights") or DEFAULT_KEEP_TOKEN_WEIGHTS,
-                sd=cfg.get("keep_token_sd"),
-                doc_start_id=cfg["doc_start_id"],
-                doc_end_id=cfg["doc_end_id"],
-                n_docs=n_docs,
-            )
+            if keep_rule == "first_last":
+                scores = first_last_scores(
+                    input_ids,
+                    chunk_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
+            else:
+                scores = keep_token_scores(
+                    input_ids,
+                    chunk_ids,
+                    tables=cfg["keep_token_tables"],
+                    weights=cfg.get("keep_token_weights") or DEFAULT_KEEP_TOKEN_WEIGHTS,
+                    sd=cfg.get("keep_token_sd"),
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
             chunk_ids = mark_doc_topk_tokens_free(
                 chunk_ids,
                 input_ids,

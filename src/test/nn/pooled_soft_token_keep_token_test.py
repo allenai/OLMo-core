@@ -195,3 +195,57 @@ def test_keep_token_rule_config_validation():
         _model(keep_token_rule="first", keep_token_k=4, header_extra_tokens=4)
     with pytest.raises(OLMoConfigurationError):  # 'rule' needs the feature tables
         _model(keep_token_rule="rule", keep_token_k=4)
+
+
+@pytest.mark.parametrize("k", [2, 3, 4, 6])
+def test_keep_token_rule_first_last_matches_the_probe_split(k):
+    """``first_last`` keeps the first ``k // 2`` and last ``k - k // 2`` body tokens -- the exact
+    split ``outlier_realtoken_probe._firstlast`` uses, odd-k tail bias included."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+        mark_doc_topk_tokens_free,
+    )
+    from olmo_core.nn.pooled_soft_token import first_last_scores
+
+    ids = _row(DOCS)
+    x = torch.tensor([ids])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=DOC_START, doc_end_id=DOC_END, eos_id=EOS)
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=DOC_START, doc_end_id=DOC_END, stop_id=STOP, stop_count=1
+    )
+    scores = first_last_scores(
+        x, header, doc_start_id=DOC_START, doc_end_id=DOC_END, n_docs=len(DOCS)
+    )
+    out = mark_doc_topk_tokens_free(
+        header, x, scores, doc_start_id=DOC_START, doc_end_id=DOC_END, k=k
+    )
+    for d in range(len(DOCS)):
+        body = (header[0] == d).nonzero(as_tuple=True)[0]
+        body = body[(x[0, body] != DOC_START) & (x[0, body] != DOC_END)]
+        a, b = k // 2, k - k // 2
+        expected = body[:a].tolist() + body[len(body) - b :].tolist()
+        freed = [
+            int(i)
+            for i in ((out[0] < 0) & (header[0] >= 0)).nonzero(as_tuple=True)[0]
+            if header[0, i].item() == d
+        ]
+        assert freed == sorted(expected)
+
+
+def test_keep_token_rule_first_last_through_the_trainer_path():
+    """Same cost as ``first``, different tokens -- and the document's TAIL survives, which is the
+    whole point (``first`` never sees a document's conclusion)."""
+    ids = _row(DOCS)
+    first = _compact(_model(keep_token_rule="first", keep_token_k=4), ids)
+    fl = _compact(_model(keep_token_rule="first_last", keep_token_k=4), ids)
+    assert first.row_lens.tolist() == fl.row_lens.tolist()  # identical cost
+    assert not torch.equal(first.input_ids, fl.input_ids)
+    r_first = first.input_ids[0, : first.row_lens[0]].tolist()
+    r_fl = fl.input_ids[0, : fl.row_lens[0]].tolist()
+    # body = 20 D0 21 D1 22 D2 23 D3 ; first 4 = 20 D0 21 D1 ; fl 4 = 20 D0 | 23 D3
+    assert r_first.count(DIGITS[1]) == len(DOCS) and r_first.count(DIGITS[3]) == 0
+    assert r_fl.count(DIGITS[3]) == len(DOCS) and r_fl.count(23) == len(DOCS)
+    assert r_fl.count(DIGITS[1]) == 0
+    # and it needs no feature tables at all
+    assert fl.soft_rows.numel() == len(DOCS)

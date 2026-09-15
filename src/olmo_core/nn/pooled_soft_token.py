@@ -59,6 +59,7 @@ __all__ = [
     "build_token_piece_tables",
     "parse_keep_token_weights",
     "keep_token_scores",
+    "first_last_scores",
 ]
 
 
@@ -484,9 +485,11 @@ def apply_slot_mode(
 # ridge over six cheap token features (``rule8``) reaches 0.071, matching the gradient ORACLE
 # (``grad8`` 0.072). This is the training-side port of that ``rule{k}`` selector: a per-token
 # linear score from features computable from TOKEN IDS AND POSITIONS ALONE (no model forward), of
-# which the top k per document are kept real.
+# which the top k per document are kept real. ``first_last`` is the cheaper middle ground that a
+# second probe (``records/outlier-realtoken-parity-probe.md``) found beats ``first`` at every
+# rung at identical cost, and needs no feature tables at all.
 
-KEEP_TOKEN_RULES = ("none", "first", "rule")
+KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule")
 
 #: The probe's feature list, in order (``outlier_saliency_preview_probe.FEATURES``).
 KEEP_TOKEN_FEATURES = (
@@ -728,6 +731,52 @@ def keep_token_scores(
         if w != 0.0:
             score = score + w * value
     out[flat_idx] = score
+    return out.reshape(input_ids.shape)
+
+
+
+def first_last_scores(
+    input_ids: torch.Tensor,
+    chunk_ids: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    n_docs: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Scores for the ``first_last`` keep-token rule: keep each document's first ``k // 2`` and last
+    ``k - k // 2`` body tokens real.
+
+    Ranking a body token by its distance to the NEARER end of the body, back-of-document first on a
+    tie, makes :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_topk_tokens_free`'s top-k pick
+    exactly the split ``outlier_realtoken_probe._firstlast`` uses -- including the odd-``k`` case,
+    where the extra token goes to the TAIL.
+
+    Why it exists: ``fl32`` (first 16 + last 16) beats ``first32`` at identical cost on every rung
+    of the frozen-model probe -- ΔCE +0.044 vs +0.049 and R@gold 0.927 vs 0.818 at 2k, +0.176 vs
+    +0.204 and 0.444 vs 0.319 at 8k, genF1 0.800 vs 0.787 at 32k
+    (``records/outlier-realtoken-parity-probe.md``). A document's last tokens carry its conclusion;
+    ``first`` alone never sees one. Needs no feature tables, so unlike ``rule`` it costs no
+    tokenizer and no shard read.
+
+    :returns: ``(B, S)`` float32 scores, zero at non-body positions.
+    """
+    from .attention.chunked_mask import doc_body_groups
+
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    out = torch.zeros(input_ids.shape, dtype=torch.float32, device=input_ids.device).reshape(-1)
+    flat_idx, gid, within, counts, _n = doc_body_groups(
+        chunk_ids, input_ids, doc_start_id=doc_start_id, doc_end_id=doc_end_id, n_docs=n_docs
+    )
+    if flat_idx.numel() == 0:
+        return out.reshape(input_ids.shape)
+    from_end = counts[gid] - 1 - within
+    dist = torch.minimum(within, from_end)
+    # +1 penalty for the FRONT member of a tie, so the tail wins it (the probe's ``b = k - k // 2``).
+    out[flat_idx] = -(2.0 * dist + (within < from_end).to(torch.float32))
     return out.reshape(input_ids.shape)
 
 

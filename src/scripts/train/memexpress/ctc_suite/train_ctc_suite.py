@@ -2079,12 +2079,16 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--st-keep-token-rule",
-        choices=["none", "first", "rule"],
+        choices=["none", "first", "first_last", "rule"],
         default="none",
         help="softtoken: WHICH body tokens of a pooled document stay real. 'none' (default) = off, "
         "bit-identical to every run before 2026-09-15. 'first' = the first --st-keep-token-k body "
         "tokens, i.e. exactly --st-header-extra-tokens K (same code path, bit-identical; the two "
-        "flags are mutually exclusive). 'rule' = the K highest-scoring body tokens PER DOCUMENT "
+        "flags are mutually exclusive). 'first_last' = the first K//2 and last K-K//2 body tokens "
+        "-- same cost as 'first' and better on every rung of the frozen-model probe (dCE +0.044 vs "
+        "+0.049 and R@gold 0.927 vs 0.818 at 2k, genF1 0.800 vs 0.787 at 32k, "
+        "records/outlier-realtoken-parity-probe.md), and it needs no tokenizer and no shard read. "
+        "'rule' = the K highest-scoring body tokens PER DOCUMENT "
         "under a linear score over cheap token features (idf, relative position in the body, "
         "first-sentence, capitalised, digit, piece length) -- kept at their ORIGINAL positions, so "
         "non-contiguous. Ties go to the earlier position; a doc with <= K body tokens is kept "
@@ -2460,6 +2464,11 @@ def parse_args() -> argparse.Namespace:
                 parse_keep_token_weights(opts.st_keep_token_weights)
             except ValueError as exc:
                 ap.error(f"--st-keep-token-weights: {exc}")
+        elif opts.st_keep_token_weights is not None:
+            ap.error(
+                f"--st-keep-token-weights only applies to --st-keep-token-rule rule (got "
+                f"{opts.st_keep_token_rule!r}); it would be ignored."
+            )
     elif opts.st_keep_token_k > 0 or opts.st_keep_token_weights is not None:
         ap.error(
             "--st-keep-token-k/--st-keep-token-weights were given but --st-keep-token-rule is "
