@@ -1,8 +1,8 @@
 # Can a cheaper-than-training richer slot make a pooled outlier readable? (eval-side)
 
-**Date** 2026-09-14/15 · **Status** ANSWERED — no candidate makes the slot readable by a frozen
-dense model, but an oracle readout shows the signal is there and free to expose · **Branch**
-`prasann/landmark`
+**Date** 2026-09-14/15 · **Status** ANSWERED (all 4 model-readout + 4 oracle runs complete) — no
+candidate makes the slot readable by a frozen dense model, but an oracle readout shows the signal
+*is* in the slot and is free to expose · **Branch** `prasann/landmark`
 **Drivers** `debug/pooled_kv/outlier_probe/outlier_richer_slot_probe.py` (can the frozen dense model
 read it?), `debug/pooled_kv/outlier_probe/slot_separability.py` (is it in the vector at all?)
 
@@ -206,31 +206,34 @@ The frozen dense model's own free generation, same metric and same swap control 
 `records/outlier-slot-probe.md`. The decision rule set for this probe was **≥ 2 SE above `k/n`
 AND ≥ +0.10**, and the swap control must DROP.
 
-### Canonical: `ds64-outlier-dense-u64M`, ds64 2k rung (generation complete: 64 rows, 192 pooled
-gold documents, `k/n` floor **0.225**, per-document SE **0.030**; CE columns are the running mean at
-row 70/240)
+### Canonical: `ds64-outlier-dense-u64M`, ds64 2k rung — COMPLETE
 
-| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap | Δ(cond − swap) | \|slot\| | compaction | extra FLOPs (dense) |
-|---|---|---|---|---|---|---|---|---|---|
-| `full` | 0.014 | 0.051 | **0.979** | — (R@gold_real 0.979) | — | — | — | 1.000 | 0 |
-| `mean` (baseline) | 0.463 | 1.676 | 0.234 | **0.234 ± 0.031** | 0.229 | +0.005 | 0.221 | 0.105 | 0 |
-| `meanrn` | 0.479 | 1.724 | 0.224 | 0.224 ± 0.030 | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
-| `cmean100` | 0.486 | 1.747 | 0.234 | 0.234 ± 0.031 | 0.224 | +0.010 | 0.145 | 0.105 | 0 |
-| `cmean500` | 0.474 | 1.719 | 0.266 | **0.266 ± 0.032** | 0.234 | +0.032 | 0.160 | 0.105 | 0 |
-| `centered` | 0.486 | 1.765 | 0.224 | 0.224 ± 0.030 | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
-| `cent_cmean` (best oracle) | 0.471 | 1.711 | 0.234 | 0.234 ± 0.031 | 0.234 | +0.000 | 0.687 | 0.105 | 0 |
-| `idf` | 0.498 | 1.777 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0 |
-| `g2` | 0.468 | 1.691 | 0.229 | 0.229 ± 0.030 | 0.234 | −0.005 | 0.229 | 0.111 | 0 |
-| `g4` | 0.451 | 1.646 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.242 | 0.124 | 0 |
-| `g2cent` | 0.483 | 1.745 | 0.224 | 0.224 ± 0.030 | 0.234 | −0.010 | 0.687 | 0.111 | 0 |
-| `enc2` | 0.469 | 1.706 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0.056 |
-| `enc4` | 0.463 | 1.684 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.687 | 0.105 | 0.113 |
-| `enc4late` | 0.446 | 1.620 | 0.229 | 0.229 ± 0.030 | 0.229 | +0.000 | 0.221 | 0.105 | 0.113 |
+eval_size **240** (⚠ < 500), 64 generation rows, **192 pooled gold documents**, `k/n` floor
+**0.225**, per-document SE **0.030**. Keep 0 + header real (`gb00h`), so every gold document is a
+pure slot read.
 
-Every construction is inside **±0.041 of the `k/n` floor of 0.225**, i.e. inside 1.3 SE. The best
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled (SE)** | R@gold_real | **swap** | **Δ(cond−swap)** | \|slot\| | compaction | extra FLOPs (dense) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `full` | 0.010 | 0.035 | **0.979** | — | 0.979 (192) | — | — | — | 1.000 | 0 |
+| `mean` (baseline) | 0.462 | 1.698 | 0.234 | **0.234 ± 0.031** | — | 0.229 | +0.005 | 0.221 | 0.105 | 0 |
+| `meanrn` | 0.478 | 1.743 | 0.224 | 0.224 ± 0.030 | — | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
+| `cmean100` | 0.479 | 1.737 | 0.234 | 0.234 ± 0.031 | — | 0.224 | +0.010 | 0.144 | 0.105 | 0 |
+| `cmean500` | 0.478 | 1.745 | 0.266 | **0.266 ± 0.032** | — | 0.234 | +0.032 | 0.160 | 0.105 | 0 |
+| `centered` | 0.471 | 1.731 | 0.224 | 0.224 ± 0.030 | — | 0.229 | −0.005 | 0.687 | 0.105 | 0 |
+| `cent_cmean` (best oracle) | 0.461 | 1.697 | 0.234 | 0.234 ± 0.031 | — | 0.234 | +0.000 | 0.687 | 0.105 | 0 |
+| `idf` | 0.495 | 1.787 | 0.229 | 0.229 ± 0.030 | — | 0.229 | +0.000 | 0.687 | 0.105 | 0 |
+| `g2` | 0.469 | 1.719 | 0.229 | 0.229 ± 0.030 | — | 0.234 | −0.005 | 0.229 | 0.111 | 0 |
+| `g4` | 0.466 | 1.719 | 0.229 | 0.229 ± 0.030 | — | 0.229 | +0.000 | 0.242 | 0.124 | 0 |
+| `g2cent` | 0.485 | 1.781 | 0.224 | 0.224 ± 0.030 | — | 0.234 | −0.010 | 0.687 | 0.111 | 0 |
+| `enc2` | 0.468 | 1.732 | 0.229 | 0.229 ± 0.030 | — | 0.229 | +0.000 | 0.687 | 0.105 | 0.056 |
+| `enc4` | 0.462 | 1.705 | 0.229 | 0.229 ± 0.030 | — | 0.229 | +0.000 | 0.687 | 0.105 | 0.113 |
+| `enc4late` | 0.447 | 1.647 | 0.229 | 0.229 ± 0.030 | — | 0.229 | +0.000 | 0.221 | 0.105 | 0.113 |
+
+Every construction is inside **±0.041 of the `k/n` floor of 0.225**, i.e. inside 1.4 SE. The best
 cell (`cmean500`, 0.266) fails both halves of the rule: +0.041 is under +0.10 and under 2 SE, and
 its swap control sits at 0.234, a Δ of +0.032 against an SE-of-difference of 0.044. **No candidate
-passes.**
+passes.** Ten of the thirteen candidates are within ±0.005 of the baseline and of their own swap
+control — the model emits the same ids whatever the slot holds.
 
 Gold-blind keep 1/6, same run (154 pooled / 38 real gold documents, same 0.225 floor):
 
@@ -279,6 +282,28 @@ Identical to the floor, identical to the swap controls, identical to each other.
 
 **Every construction and every swap control gives the identical 0.049** — the model emits the same
 id set whatever is in the slots, which is the position prior the previous probe dumped verbatim.
+
+### Replicate: `lmx-full-mixs160M-4b`, local 2k corpus (n = 22, COMPLETE: eval_size 200, 64 generation rows, 192 pooled gold, floor **0.140**, SE 0.022)
+
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled (SE)** | swap | Δ | \|slot\| | compaction | extra FLOPs |
+|---|---|---|---|---|---|---|---|---|---|
+| `full` | 1.811 | 0.092 | **0.979** | — (R@gold_real 0.979) | — | — | — | 1.000 | 0 |
+| `mean` | 1.498 | 1.748 | 0.099 | 0.099 ± 0.022 | 0.104 | −0.005 | 0.223 | 0.084 | 0 |
+| `meanrn` | 1.581 | 1.777 | 0.099 | 0.099 ± 0.022 | 0.099 | 0.000 | 0.688 | 0.084 | 0 |
+| `cmean100` | 1.458 | 1.766 | 0.104 | 0.104 ± 0.022 | 0.099 | +0.005 | 0.144 | 0.084 | 0 |
+| `cmean500` | 1.493 | 1.784 | 0.104 | 0.104 ± 0.022 | 0.099 | +0.005 | 0.161 | 0.084 | 0 |
+| `centered` | 1.508 | 1.659 | 0.099 | 0.099 ± 0.022 | 0.094 | +0.005 | 0.688 | 0.084 | 0 |
+| `cent_cmean` | 1.499 | 1.598 | 0.109 | 0.109 ± 0.023 | 0.099 | +0.010 | 0.688 | 0.084 | 0 |
+| `idf` | 1.548 | 1.820 | 0.099 | 0.099 ± 0.022 | 0.099 | 0.000 | 0.688 | 0.084 | 0 |
+| `g2` / `g4` | 1.483 / 1.500 | 1.686 / 1.714 | 0.099 | 0.099 ± 0.022 | 0.109 / 0.099 | −0.010 / 0 | 0.230 / 0.243 | 0.091 / 0.104 | 0 |
+| `g2cent` | 1.632 | 1.661 | 0.109 | 0.109 ± 0.023 | 0.099 | +0.010 | 0.688 | 0.091 | 0 |
+| `enc2` | 1.500 | 1.663 | 0.099 | 0.099 ± 0.022 | 0.083 | +0.016 | 0.688 | 0.084 | 0.058 |
+| `enc4` | 1.433 | 1.673 | 0.099 | 0.099 ± 0.022 | 0.099 | 0.000 | 0.688 | 0.084 | 0.115 |
+| `enc4late` | 1.497 | 1.672 | 0.099 | 0.099 ± 0.022 | 0.099 | 0.000 | 0.223 | 0.084 | 0.115 |
+
+Here every cell is **below** the 0.140 floor, all within 0.083–0.109, and at keep 1/6 the range is
+0.105–0.179 against the same floor (best `g2cent` 0.179 ± 0.030 = +0.039, 1.3 SE — fails the rule),
+with real-body recall 0.57–0.67 throughout.
 
 ## 6. Verdict
 
@@ -336,9 +361,9 @@ is the only route left.
 | oracle readout, replicate ~8k (n55) | sneetches | `3549806` | 200 | done (§4) |
 | oracle readout, canonical ds64 2k | beaker ceres/saturn | exp `01M2HNZQEQ2QY1JN4FD662X55R`, job `01M2HNZQJM6MWERSTE1CDVBWFK` | 240 | **done** (§4) |
 | oracle readout, canonical ds64 8k | beaker ceres/saturn | exp `01M2HP0GBPEVDFYH6SY6JJM5N1`, job `01M2HP0GFGZGWB2DA155RGP4C2` | 240 | **done** (§4) |
-| model readout, canonical ds64 2k, all 13 candidates + swaps (41 conditions) | beaker ceres/saturn | exp `01M2HNFEC7P67NP33F8F3DN5Q3`, job `01M2HNFEG0PWX212YS68NJX61W` | 240 (64 gen) | **generation complete** (§5); CE columns still accumulating |
+| model readout, canonical ds64 2k, all 13 candidates + swaps (41 conditions) | beaker ceres/saturn | exp `01M2HNFEC7P67NP33F8F3DN5Q3`, job `01M2HNFEG0PWX212YS68NJX61W` | 240 (64 gen) | **DONE, all 240 rows** (§5); weka `_eval_results/outlier_slot_probe/outlier_richer_slot_ds64-outlier-dense-u64M_2k.json` |
 | model readout, canonical ds64 8k, 4 candidates + swaps | beaker ceres/saturn | exp `01M2HP2PDCFV3F6RMVS9D7GRN0`, job `01M2HP2PME4RND9J7EGEJYDH3Y` | 240 (48 gen) | **DONE, all 240 rows** (§5); weka `_eval_results/outlier_slot_probe/outlier_richer_slot_ds64-outlier-dense-u64M_8k_8ksel.json` |
-| model readout, replicate 2k, all candidates + swaps | sneetches | `3549785` | 200 (64 gen) | running (slowest; generation completes ~row 64) |
+| model readout, replicate 2k, all candidates + swaps | sneetches | `3549785` | 200 (64 gen) | **DONE, all 200 rows** (§5), JSON `/data/prasann/outlier_probe/richer_local_2k.json` |
 | model readout, replicate ~8k, 4 candidates + swaps | sneetches | `3549832` | 200 (48 gen) | **done** (§5), JSON `/data/prasann/outlier_probe/richer_local_n55.json` |
 
 All four probe runs write JSON; the Beaker ones also write to
