@@ -237,17 +237,18 @@ At gold-blind keep 1/6 the picture is the same (154 pooled / 38 real gold docume
 and is unmoved by the slot construction — the previous probe's 3–6× real-vs-pooled gap, reproduced
 with every richer slot.
 
-### Canonical 8k rung (48 generation rows, 144 pooled gold documents, floor **0.053**, SE 0.020)
+### Canonical 8k rung (COMPLETE: eval_size 240, 48 generation rows, 144 pooled gold documents, floor **0.053**, SE 0.020)
 
-| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap | compaction |
-|---|---|---|---|---|---|---|
-| `full` | 0.053 | 0.154 | **0.868** | — (R@gold_real 0.868) | — | 1.000 |
-| `mean` | 0.663 | 1.920 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
-| `cmean100` | 0.737 | 2.145 | 0.056 | 0.056 ± 0.019 | 0.076 | 0.063 |
-| `cent_cmean` | 0.703 | 2.023 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
-| `enc4` | 0.693 | 2.009 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.063 |
+| condition | CE | CE(digits) | genF1 | **R@gold_pooled** | swap | \|slot\| | compaction | extra FLOPs (dense) |
+|---|---|---|---|---|---|---|---|---|
+| `full` | 0.028 | 0.076 | **0.868** | — (R@gold_real 0.868) | — | — | 1.000 | 0 |
+| `mean` | 0.678 | 1.966 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.222 | 0.062 | 0 |
+| `cmean100` | 0.747 | 2.173 | 0.056 | 0.056 ± 0.019 | 0.076 | 0.144 | 0.062 | 0 |
+| `cent_cmean` | 0.723 | 2.089 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.687 | 0.062 | 0 |
+| `enc4` | 0.691 | 2.003 | 0.062 | 0.062 ± 0.020 | 0.062 | 0.687 | 0.062 | 0.118 |
 
-Identical to the floor, identical to the swap controls, identical to each other.
+Identical to the floor, identical to the swap controls, identical to each other. At keep 1/6
+(119 pooled / 25 real gold) pooled recall is 0.017–0.034 while real-body recall is 0.12–0.24.
 
 ### Replicate: `lmx-full-mixs160M-4b`, local ~8k corpus (n = 55, 144 pooled gold, floor **0.055**, eval_size 200)
 
@@ -319,7 +320,7 @@ is the only route left.
 | oracle readout, canonical ds64 2k | beaker ceres/saturn | exp `01M2HNZQEQ2QY1JN4FD662X55R`, job `01M2HNZQJM6MWERSTE1CDVBWFK` | 240 | **done** (§4) |
 | oracle readout, canonical ds64 8k | beaker ceres/saturn | exp `01M2HP0GBPEVDFYH6SY6JJM5N1`, job `01M2HP0GFGZGWB2DA155RGP4C2` | 240 | **done** (§4) |
 | model readout, canonical ds64 2k, all 13 candidates + swaps (41 conditions) | beaker ceres/saturn | exp `01M2HNFEC7P67NP33F8F3DN5Q3`, job `01M2HNFEG0PWX212YS68NJX61W` | 240 (64 gen) | **generation complete** (§5); CE columns still accumulating |
-| model readout, canonical ds64 8k, 4 candidates + swaps | beaker ceres/saturn | exp `01M2HP2PDCFV3F6RMVS9D7GRN0`, job `01M2HP2PME4RND9J7EGEJYDH3Y` | 240 (48 gen) | **generation complete** (§5) |
+| model readout, canonical ds64 8k, 4 candidates + swaps | beaker ceres/saturn | exp `01M2HP2PDCFV3F6RMVS9D7GRN0`, job `01M2HP2PME4RND9J7EGEJYDH3Y` | 240 (48 gen) | **DONE, all 240 rows** (§5); weka `_eval_results/outlier_slot_probe/outlier_richer_slot_ds64-outlier-dense-u64M_8k_8ksel.json` |
 | model readout, replicate 2k, all candidates + swaps | sneetches | `3549785` | 200 (64 gen) | running (slowest; generation completes ~row 64) |
 | model readout, replicate ~8k, 4 candidates + swaps | sneetches | `3549832` | 200 (48 gen) | **done** (§5), JSON `/data/prasann/outlier_probe/richer_local_n55.json` |
 
