@@ -128,8 +128,27 @@ _CPI = f"--st-keep-mode gold_pooled_random {_XHDR} --st-slot-mode cent_cmean {_X
 # parity; the real-token fraction (and therefore the FLOP cost) is data-dependent and is printed
 # every 50 steps by the trainer's ``[cat-keep]`` line.
 _CAT = f"{_XHDR} --st-slot-mode cent_cmean {_XSLOT}"
+#
+# ``rk<K>`` = cc00's recipe (gold-blind, keep 0, header real, cent_cmean slot) PLUS
+# ``--st-keep-token-rule rule --st-keep-token-k K``: the K highest-scoring BODY tokens of every
+# pooled document stay real, chosen by a linear score over cheap token features (idf, relative
+# position in the body, first-sentence, capitalisation, digit, piece length) -- no model forward,
+# no gold, kept at their ORIGINAL positions so the selection is non-contiguous. This is the
+# training-side port of the eval-side probe's ``rule{k}``
+# (``records/outlier-saliency-preview-probe.md`` 5d), where at 8 tokens per document the SAME
+# budget spent at RANDOM scores CE 0.558 -- worse than cc00's 0.470 -- the first 8 score 0.263,
+# and the rule scores 0.071, matching the gradient ORACLE's 0.072. ``ck08``/``ck16`` (first-K, the
+# fast2k/ds64 arms) are the exact controls: same cost, different tokens.
+# ⚠ The weight vector is the documented PLACEHOLDER in
+# olmo_core.nn.pooled_soft_token.DEFAULT_KEEP_TOKEN_WEIGHTS (signs and rough magnitudes from the
+# measured within-document gradient profile, probe record 5a(c)), NOT the probe's fitted ridge,
+# which is not reachable from this repo. Pass the fitted vector with --st-keep-token-weights once
+# it is harvested off the probe job.
+_RULE = f"--st-gold-blind --st-keep-prob 0.0 {_XHDR} --st-slot-mode cent_cmean {_XSLOT}"
 ARM_EXTRA = dict(F2K_ARM_EXTRA)
 ARM_EXTRA.update({
+    "rk08": f"{_RULE} --st-keep-token-rule rule --st-keep-token-k 8",
+    "rk16": f"{_RULE} --st-keep-token-rule rule --st-keep-token-k 16",
     "cpi17": f"--st-keep-frac 0.1667 {_CPI}",
     "cpi33": f"--st-keep-frac 0.3333 {_CPI}",
     "cpi50": f"--st-keep-frac 0.5 {_CPI}",
@@ -177,7 +196,10 @@ PARITY_ARMS = {"dense": ["cc00"], "cc00": ["cc00"], "kvgb50": ["kvgb50", "cc00"]
                # a whole-CATEGORY construction is not reproducible by outlier_slot_probe's
                # keep_prob/gold-only conditions, so these are scored against the common
                # maximal-compaction reference only.
-               "sc3": ["cc00"], "sc5": ["cc00"], "gw3": ["cc00"], "gw5": ["cc00"]}
+               "sc3": ["cc00"], "sc5": ["cc00"], "gw3": ["cc00"], "gw5": ["cc00"],
+               # the keep-token rule selects WITHIN a document, which is not one of
+               # outlier_slot_probe's conditions either -- score against the common reference only
+               "rk08": ["cc00"], "rk16": ["cc00"]}
 PARITY_RUNGS = os.environ.get("F8K_PARITY_RUNGS", "8k,32k")
 PARITY_ROWS = os.environ.get("F8K_PARITY_ROWS", "200")
 PARITY_GEN_ROWS = os.environ.get("F8K_PARITY_GEN_ROWS", "32")

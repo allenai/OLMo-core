@@ -30,7 +30,7 @@ Design notes (validated by the probes in ``records/pooled-doc-kv-attention.md``)
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import torch
 import torch.nn as nn
@@ -48,6 +48,17 @@ __all__ = [
     "build_position_causal_bias",
     "masked_sdpa",
     "aux_matching_loss",
+    "SLOT_MODES",
+    "build_slot_stop_ids",
+    "apply_slot_mode",
+    "KEEP_TOKEN_RULES",
+    "KEEP_TOKEN_FEATURES",
+    "DEFAULT_KEEP_TOKEN_WEIGHTS",
+    "KeepTokenTables",
+    "build_token_idf",
+    "build_token_piece_tables",
+    "parse_keep_token_weights",
+    "keep_token_scores",
 ]
 
 
@@ -311,6 +322,22 @@ def compact_pooled_rows(
 SLOT_MODES = ("mean", "cmean", "cent_cmean")
 
 
+def _token_id_counts(token_ids, vocab: Optional[int] = None):
+    """Dense per-id occurrence counts over a 1-D array of training token ids.
+
+    The single frequency pass shared by :func:`build_slot_stop_ids` (which ranks these counts to
+    pick the stop set) and :func:`build_token_idf` (which smooths them into ``-log p``), so the
+    slot's content filter and the keep-token rule's IDF are always taken over the same tokens.
+    """
+    import numpy as np
+
+    arr = np.asarray(token_ids).reshape(-1).astype(np.int64, copy=False)
+    n = int(arr.max()) + 1 if arr.size else 1
+    if vocab is not None:
+        n = max(n, int(vocab))
+    return np.bincount(arr, minlength=n)[:n]
+
+
 def build_slot_stop_ids(
     token_ids,
     *,
@@ -333,7 +360,8 @@ def build_slot_stop_ids(
     corpus still goes.
 
     :param token_ids: A 1-D array/sequence of training token ids to take frequencies over (e.g.
-        the first N rows of the training shard). Frequencies are only used for the ranking.
+        the first N rows of the training shard). Frequencies are only used for the ranking; the
+        same counts feed the keep-token rule's IDF (:func:`build_token_idf`).
     :param top_k: How many of the most frequent ids to drop.
     :param extra_ids: Ids to drop unconditionally (markers / pad / placeholder).
     :param decode: Optional ``Callable[[int], str]`` (a tokenizer's single-id decode) used for the
@@ -345,8 +373,9 @@ def build_slot_stop_ids(
     """
     import numpy as np
 
-    arr = np.asarray(token_ids).reshape(-1)
-    uniq, counts = np.unique(arr, return_counts=True)
+    cnt = _token_id_counts(token_ids)
+    uniq = np.flatnonzero(cnt)
+    counts = cnt[uniq]
     order = np.argsort(-counts, kind="stable")
     stop = {int(t) for t in uniq[order[: max(0, int(top_k))]].tolist()}
     stop |= {int(t) for t in extra_ids}
@@ -442,6 +471,264 @@ def apply_slot_mode(
         feats = feats / feats.norm(dim=-1, keepdim=True).clamp(min=eps) * target[:, None, None]
 
     return feats.to(emb.dtype), n_fallback
+
+
+# ---------------------------------------------------------------------------
+# Keep-token rule: which body tokens of a pooled document stay REAL
+# ---------------------------------------------------------------------------
+#
+# ``--st-header-extra-tokens K`` keeps the FIRST K body tokens of every pooled document real. The
+# eval-side saliency probe (``debug/pooled_kv/outlier_probe/outlier_saliency_preview_probe.py``,
+# ``records/outlier-saliency-preview-probe.md``) showed that *which* K is the whole effect --
+# ``rand8`` is worse than keeping nothing (CE 0.558 vs 0.470) while ``first8`` reaches 0.263 and a
+# ridge over six cheap token features (``rule8``) reaches 0.071, matching the gradient ORACLE
+# (``grad8`` 0.072). This is the training-side port of that ``rule{k}`` selector: a per-token
+# linear score from features computable from TOKEN IDS AND POSITIONS ALONE (no model forward), of
+# which the top k per document are kept real.
+
+KEEP_TOKEN_RULES = ("none", "first", "rule")
+
+#: The probe's feature list, in order (``outlier_saliency_preview_probe.FEATURES``).
+KEEP_TOKEN_FEATURES = (
+    "idf",
+    "relpos",
+    "first_sent",
+    "is_cap",
+    "is_dig",
+    "tok_len",
+    "log_doclen",
+)
+
+#: **Placeholder** weights -- see :func:`parse_keep_token_weights`. The probe prints its fitted
+#: ridge weights into its job log and stores them in its result JSON, but neither is reachable from
+#: this repo (the runs live on weka / Beaker), so these are derived from what IS recorded: the
+#: within-document gradient-saliency profile of ``records/outlier-saliency-preview-probe.md`` 5a(c),
+#: where 1.0 = that document's average token. Gradient prefers the first sentence (1.36), early
+#: positions (position quartiles 1.18 -> 0.92), the RAREST idf quartile (1.18 vs 0.94 for the most
+#: frequent), capitalised tokens (1.27), and actively avoids digits (0.78). Each entry below is that
+#: sign and rough magnitude divided by the feature's nominal spread, so they apply to RAW features.
+#: ``log_doclen`` is constant inside a document and therefore cannot affect a per-document top-k at
+#: all; it is listed only to keep the vector interchangeable with the probe's 7-feature fit.
+DEFAULT_KEEP_TOKEN_WEIGHTS: Dict[str, float] = {
+    "idf": 0.40,
+    "relpos": -1.30,
+    "first_sent": 1.20,
+    "is_cap": 0.75,
+    "is_dig": -1.00,
+    "tok_len": 0.04,
+    "log_doclen": 0.0,
+}
+
+
+@dataclass
+class KeepTokenTables:
+    """Vocab-sized feature tables for :func:`keep_token_scores` (all ``(vocab,)``)."""
+
+    idf: torch.Tensor
+    """``-log p(id)`` over the training shard (:func:`build_token_idf`)."""
+    sent_end: torch.Tensor
+    """bool: the decoded piece contains ``.`` or a newline."""
+    is_cap: torch.Tensor
+    """bool: the stripped piece starts with an upper-case character."""
+    is_dig: torch.Tensor
+    """bool: the piece contains a digit."""
+    tok_len: torch.Tensor
+    """float: length of the stripped decoded piece."""
+
+    def to(self, device) -> "KeepTokenTables":
+        """Move every table to ``device`` (a no-op when already there)."""
+        if self.idf.device == torch.device(device):
+            return self
+        return KeepTokenTables(
+            idf=self.idf.to(device),
+            sent_end=self.sent_end.to(device),
+            is_cap=self.is_cap.to(device),
+            is_dig=self.is_dig.to(device),
+            tok_len=self.tok_len.to(device),
+        )
+
+
+def build_token_idf(token_ids, vocab: int):
+    """
+    Per-id ``-log p(id)`` ("IDF") over the head of the training shard, add-one smoothed.
+
+    The same array and the same source tokens the ``cmean``/``cent_cmean`` stop set is built from
+    (:func:`build_slot_stop_ids` ranks the very same counts), so a run needs ONE read of the shard
+    head for both. Matches ``outlier_saliency_preview_probe.build_idf`` exactly.
+
+    :param token_ids: 1-D array/sequence of training token ids.
+    :param vocab: Table size (the model's embedding rows).
+
+    :returns: ``(vocab,)`` float32 numpy array.
+    """
+    import numpy as np
+
+    cnt = _token_id_counts(token_ids, vocab=vocab)[:vocab].astype(np.float64)
+    p = (cnt + 1.0) / (cnt.sum() + float(vocab))
+    return (-np.log(p)).astype(np.float32)
+
+
+def build_token_piece_tables(pieces: Sequence[Optional[str]]):
+    """
+    Per-id ``(sent_end, is_cap, is_dig, tok_len)`` tables from decoded tokenizer pieces.
+
+    Matches ``outlier_saliency_preview_probe.build_piece_tables``: byte-BPE markers ``Ġ``/``Ċ`` are
+    mapped back to space/newline first.
+
+    :param pieces: ``tok.convert_ids_to_tokens(range(vocab))`` (``None`` entries are skipped).
+
+    :returns: ``(sent_end, is_cap, is_dig, tok_len)`` numpy arrays of length ``len(pieces)``.
+    """
+    import numpy as np
+
+    vocab = len(pieces)
+    sent_end = np.zeros(vocab, dtype=bool)
+    is_cap = np.zeros(vocab, dtype=bool)
+    is_dig = np.zeros(vocab, dtype=bool)
+    tok_len = np.zeros(vocab, dtype=np.float32)
+    for i, s in enumerate(pieces):
+        if s is None:
+            continue
+        t = s.replace("\u0120", " ").replace("\u010a", "\n")
+        if "." in t or "\n" in t:
+            sent_end[i] = True
+        st = t.strip()
+        if st[:1].isupper():
+            is_cap[i] = True
+        if any(c.isdigit() for c in t):
+            is_dig[i] = True
+        tok_len[i] = float(len(st))
+    return sent_end, is_cap, is_dig, tok_len
+
+
+def parse_keep_token_weights(spec) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """
+    Resolve a ``--st-keep-token-weights`` spec into ``(weights, sd)``.
+
+    Accepted: ``None`` (the documented placeholder :data:`DEFAULT_KEEP_TOKEN_WEIGHTS`), a dict, an
+    inline JSON string, or a path to a JSON file. Two shapes are understood:
+
+    * flat -- ``{"idf": 0.4, "relpos": -1.3, ...}``: weights on RAW features.
+    * ridge -- ``{"weights": {...}, "sd": {...}, "mu": {...}, "bias": 0.0}``: the shape
+      ``outlier_saliency_preview_probe.fit_ridge`` produces, i.e. weights on STANDARDISED features.
+      ``sd`` is honoured (it rescales each weight); ``mu`` and ``bias`` are accepted and IGNORED
+      because they shift every token of every document by the same constant and so cannot change a
+      per-document top-k.
+
+    :raises ValueError: On an unknown feature name or an unparseable spec.
+    """
+    import json
+    import os
+
+    if spec is None:
+        return dict(DEFAULT_KEEP_TOKEN_WEIGHTS), {}
+    obj = spec
+    if isinstance(spec, str):
+        text = spec
+        if not spec.lstrip().startswith("{"):
+            if not os.path.exists(spec):
+                raise ValueError(
+                    f"--st-keep-token-weights {spec!r} is neither inline JSON nor an existing file"
+                )
+            with open(spec) as f:
+                text = f.read()
+        obj = json.loads(text)
+    if not isinstance(obj, dict):
+        raise ValueError(f"keep-token weights must be a JSON object, got {type(obj).__name__}")
+    raw = obj["weights"] if "weights" in obj else obj
+    weights = {str(f): float(w) for f, w in dict(raw).items()}
+    sd = {str(f): float(v) for f, v in dict(obj.get("sd") or {}).items()}
+    unknown = sorted(f for f in set(weights) | set(sd) if f not in KEEP_TOKEN_FEATURES)
+    if unknown:
+        raise ValueError(
+            f"unknown keep-token feature(s) {unknown}; expected a subset of "
+            f"{list(KEEP_TOKEN_FEATURES)}"
+        )
+    return weights, sd
+
+
+def keep_token_scores(
+    input_ids: torch.Tensor,
+    chunk_ids: torch.Tensor,
+    *,
+    tables: KeepTokenTables,
+    weights: Dict[str, float],
+    doc_start_id: int,
+    doc_end_id: int,
+    sd: Optional[Dict[str, float]] = None,
+    n_docs: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Per-token linear feature score for the ``rule`` keep-token selector -- the training-side port of
+    ``outlier_saliency_preview_probe``'s ``token_features`` + ``apply_ridge``.
+
+    Every feature is computable from token ids and positions alone (no model forward, no gradient):
+
+    * ``idf`` -- ``-log p(id)`` over the training shard (:func:`build_token_idf`).
+    * ``relpos`` -- index inside the document's body / ``max(1, body_len - 1)``.
+    * ``first_sent`` -- 1.0 up to and including the body's first sentence-ending token (1.0
+      everywhere when the body has none), else 0.0.
+    * ``is_cap`` / ``is_dig`` / ``tok_len`` -- piece tables (:func:`build_token_piece_tables`).
+    * ``log_doclen`` -- ``log(max(2, body_len))``; constant inside a document, so it cannot change a
+      per-document top-k, and is carried only for weight-vector compatibility.
+
+    :param input_ids: ``(B, S)`` token ids.
+    :param chunk_ids: ``(B, S)`` roles, normally already header-freed, so "body" is exactly the part
+        a slot would stand in for (:func:`~olmo_core.nn.attention.chunked_mask.doc_body_groups`).
+    :param tables: Vocab-sized feature tables.
+    :param weights: Feature -> weight (raw features).
+    :param sd: Optional per-feature standard deviations to divide the weights by (for a ridge fit
+        on standardised features).
+    :param n_docs: Document-id space (see
+        :func:`~olmo_core.nn.attention.chunked_mask.doc_body_groups`).
+
+    :returns: ``(B, S)`` float32 scores, zero at non-body positions (never read by
+        :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_topk_tokens_free`).
+    """
+    from .attention.chunked_mask import doc_body_groups
+
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    device = input_ids.device
+    out = torch.zeros(input_ids.shape, dtype=torch.float32, device=device).reshape(-1)
+    flat_idx, gid, within, counts, _n = doc_body_groups(
+        chunk_ids, input_ids, doc_start_id=doc_start_id, doc_end_id=doc_end_id, n_docs=n_docs
+    )
+    M = int(flat_idx.numel())
+    if M == 0:
+        return out.reshape(input_ids.shape)
+    tab = tables.to(device)
+    ids_m = input_ids.reshape(-1)[flat_idx]
+    body_len = counts[gid]
+    body_len_f = body_len.to(torch.float32)
+    # first_sent: 1.0 through the body's FIRST sentence-ending token; a body with none is all 1.0
+    # (the probe's `end = n - 1` fallback).
+    sentinel = M + 1
+    se_pos = torch.where(tab.sent_end[ids_m], within, torch.full_like(within, sentinel))
+    first_end = torch.full(
+        (counts.numel(),), sentinel, dtype=within.dtype, device=device
+    ).scatter_reduce(0, gid, se_pos, reduce="amin", include_self=True)[gid]
+    end = torch.where(first_end >= sentinel, (body_len - 1).clamp(min=0), first_end)
+    feats = {
+        "idf": tab.idf[ids_m].to(torch.float32),
+        "relpos": within.to(torch.float32) / (body_len_f - 1.0).clamp(min=1.0),
+        "first_sent": (within <= end).to(torch.float32),
+        "is_cap": tab.is_cap[ids_m].to(torch.float32),
+        "is_dig": tab.is_dig[ids_m].to(torch.float32),
+        "tok_len": tab.tok_len[ids_m].to(torch.float32),
+        "log_doclen": torch.log(body_len_f.clamp(min=2.0)),
+    }
+    sd = sd or {}
+    score = torch.zeros(M, dtype=torch.float32, device=device)
+    for name, value in feats.items():
+        scale = float(sd.get(name, 1.0) or 1.0)
+        w = float(weights.get(name, 0.0)) / scale
+        if w != 0.0:
+            score = score + w * value
+    out[flat_idx] = score
+    return out.reshape(input_ids.shape)
 
 
 def add_soft_len_bias(

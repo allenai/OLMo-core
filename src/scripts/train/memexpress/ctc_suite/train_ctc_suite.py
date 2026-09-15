@@ -45,7 +45,7 @@ import functools
 import json
 import os
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
@@ -783,38 +783,109 @@ def announce_wandb(opts: argparse.Namespace) -> None:
         )
 
 
+def shard_head_token_ids(
+    opts: argparse.Namespace, meta: Dict[str, Any], n_rows: int, why: str
+) -> Tuple[Any, str]:
+    """Read the head of the training shard's first token-id part.
+
+    The one shard read shared by the slot stop set (:func:`build_slot_stop_set`) and the keep-token
+    rule's IDF table (:func:`build_keep_token_tables`), so both are taken over the SAME tokens.
+
+    Despite the ``.npy`` extension those parts are **raw headerless** arrays
+    (``convert_unified_to_document_landmark.py`` writes them with ``.tofile()``), so they are read
+    with ``np.memmap`` at the shard's ``dtype``; ``np.load`` on one dies with "This file contains
+    pickled (object) data".
+
+    :param n_rows: How many shard rows' worth of tokens to take.
+    :param why: The flag asking for the read, quoted in the error if the shard has no parts.
+
+    :returns: ``(1-D int array, basename of the part read)``.
+    """
+    import glob
+
+    import numpy as np
+
+    parts = sorted(glob.glob(os.path.join(opts.data, "token_ids_part_*.npy")))
+    if not parts:
+        raise SystemExit(f"{why} needs {opts.data}/token_ids_part_*.npy")
+    dtype = np.dtype(meta.get("dtype") or "uint32")
+    n_total = os.path.getsize(parts[0]) // dtype.itemsize
+    arr = np.memmap(parts[0], dtype=dtype, mode="r", shape=(n_total,))
+    row_len = int(meta.get("max_example_len") or opts.seq_len)
+    n_tok = min(n_total, max(1, int(n_rows)) * max(1, row_len))
+    return np.asarray(arr[:n_tok]), os.path.basename(parts[0])
+
+
+def build_keep_token_tables(opts: argparse.Namespace, meta: Dict[str, Any]) -> Any:
+    """Build the ``--st-keep-token-rule rule`` feature tables.
+
+    Two halves, both vocab-sized and both computable without a model forward: the IDF table
+    (``-log p(id)`` over the same shard head the slot stop set counts) and the piece tables
+    (sentence-end / capitalised / digit / length), which need the tokenizer -- the rule is
+    refused rather than silently degraded if it will not load, since a missing piece table would
+    zero four of the six features that matter.
+
+    :returns: A :class:`~olmo_core.nn.pooled_soft_token.KeepTokenTables`.
+    """
+    import numpy as np
+    import torch
+
+    from olmo_core.nn.pooled_soft_token import (
+        KeepTokenTables,
+        build_token_idf,
+        build_token_piece_tables,
+    )
+
+    vocab = int(opts.vocab_size)
+    head, name = shard_head_token_ids(
+        opts, meta, opts.st_slot_stop_rows, "--st-keep-token-rule rule"
+    )
+    idf = build_token_idf(head, vocab)
+    tok_id = opts.st_slot_tokenizer or FAMILY_TOKENIZER[opts.model_family]
+    try:
+        from transformers import AutoTokenizer
+
+        _tk = AutoTokenizer.from_pretrained(tok_id)
+        pieces = _tk.convert_ids_to_tokens(list(range(vocab)))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(
+            f"--st-keep-token-rule rule needs a tokenizer for its piece features, but "
+            f"{tok_id!r} did not load ({exc}); pass --st-slot-tokenizer pointing at a local copy"
+        )
+    sent_end, is_cap, is_dig, tok_len = build_token_piece_tables(pieces)
+    print(
+        f"[ctc-suite] keep-token rule tables: idf over {head.size} tokens of {name} "
+        f"(mean {float(np.mean(idf)):.2f}), pieces from {tok_id} "
+        f"(sent_end {int(sent_end.sum())}, cap {int(is_cap.sum())}, digit {int(is_dig.sum())} "
+        f"of {vocab} ids)",
+        flush=True,
+    )
+    return KeepTokenTables(
+        idf=torch.from_numpy(idf),
+        sent_end=torch.from_numpy(sent_end),
+        is_cap=torch.from_numpy(is_cap),
+        is_dig=torch.from_numpy(is_dig),
+        tok_len=torch.from_numpy(tok_len),
+    )
+
+
 def build_slot_stop_set(opts: argparse.Namespace, ids: Any, meta: Dict[str, Any]) -> List[int]:
     """Build the ``--st-slot-mode`` stop set ONCE, from token frequencies over the head of the
     training shard.
 
     Source: the first ``--st-slot-stop-rows`` rows' worth of tokens of the first
     ``token_ids_part_*.npy`` (the shard IS accessible at model-build time -- it is the same path
-    ``resolve_plan`` globs -- so no tokenizer-vocab heuristic is needed for the frequency half).
-    Despite the ``.npy`` extension those parts are **raw headerless** arrays
-    (``convert_unified_to_document_landmark.py`` writes them with ``.tofile()``), so they are read
-    with ``np.memmap`` at the shard's ``dtype``; ``np.load`` on one dies with "This file contains
-    pickled (object) data".
+    ``resolve_plan`` globs -- so no tokenizer-vocab heuristic is needed for the frequency half),
+    read by :func:`shard_head_token_ids`, which the keep-token rule's IDF table shares.
     The ``--st-slot-topk`` most frequent ids go in the set, plus the marker/pad/landmark/eos ids,
     plus (when a tokenizer loads) every id whose decoded piece has no alphanumeric character.
 
     :returns: The sorted stop-set token ids.
     """
-    import glob
-
-    import numpy as np
-
     from olmo_core.nn.pooled_soft_token import build_slot_stop_ids
 
-    parts = sorted(glob.glob(os.path.join(opts.data, "token_ids_part_*.npy")))
-    if not parts:
-        raise SystemExit(
-            f"--st-slot-mode {opts.st_slot_mode} needs {opts.data}/token_ids_part_*.npy"
-        )
-    dtype = np.dtype(meta.get("dtype") or "uint32")
-    n_total = os.path.getsize(parts[0]) // dtype.itemsize
-    arr = np.memmap(parts[0], dtype=dtype, mode="r", shape=(n_total,))
-    row_len = int(meta.get("max_example_len") or opts.seq_len)
-    n_tok = min(n_total, max(1, opts.st_slot_stop_rows) * max(1, row_len))
+    head, name = shard_head_token_ids(opts, meta, opts.st_slot_stop_rows, opts.st_slot_mode)
+    n_tok = int(head.size)
     decode = None
     tok_id = opts.st_slot_tokenizer or FAMILY_TOKENIZER[opts.model_family]
     try:
@@ -832,14 +903,14 @@ def build_slot_stop_set(opts: argparse.Namespace, ids: Any, meta: Dict[str, Any]
             flush=True,
         )
     stop, shown = build_slot_stop_ids(
-        np.asarray(arr[:n_tok]),
+        head,
         top_k=opts.st_slot_stop_topk,
         extra_ids=(ids.doc_start, ids.doc_end, ids.eos, ids.landmark, ids.pad),
         decode=decode,
     )
     print(
         f"[ctc-suite] slot stop set: {len(stop)} ids from {n_tok} tokens of "
-        f"{os.path.basename(parts[0])} (top-{opts.st_slot_stop_topk} + markers"
+        f"{name} (top-{opts.st_slot_stop_topk} + markers"
         f"{' + punctuation/whitespace' if decode is not None else ''}); "
         f"most frequent dropped: {' '.join(shown)}",
         flush=True,
@@ -1369,6 +1440,13 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             flush=True,
         )
     if opts.variant == "softtoken":
+        from olmo_core.nn.pooled_soft_token import parse_keep_token_weights
+
+        _keep_token_w, _keep_token_sd = (
+            parse_keep_token_weights(opts.st_keep_token_weights)
+            if opts.st_keep_token_rule == "rule"
+            else (None, None)
+        )
         model.enable_pooled_soft_tokens(
             ids.doc_start,
             ids.doc_end,
@@ -1384,6 +1462,16 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             header_stop_id=opts.st_header_stop_id,
             header_stop_count=opts.st_header_stop_count,
             header_extra_tokens=opts.st_header_extra_tokens,
+            keep_token_rule=opts.st_keep_token_rule,
+            keep_token_k=opts.st_keep_token_k,
+            keep_token_weights=_keep_token_w,
+            keep_token_sd=_keep_token_sd,
+            keep_token_tables=(
+                build_keep_token_tables(opts, plan["meta"])
+                if opts.st_keep_token_rule == "rule"
+                else None
+            ),
+            keep_token_log_every=opts.st_keep_token_log_every,
             detach_soft_gdn=not opts.st_no_detach_soft_gdn,
             # Compression-mixing curriculum. With --st-gold-blind there is NO keep hook, so the
             # model applies it to the seeded keep_prob draw itself; otherwise the hook installed
@@ -1406,6 +1494,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
+            f"keep_token={opts.st_keep_token_rule}/k={opts.st_keep_token_k} "
+            f"keep_token_weights={_keep_token_w} "
             f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob} "
             f"mix=({opts.st_mix_start_p}->{opts.st_mix_end_p} over "
             f"{int(total_calls * opts.st_mix_anneal_frac)}/{total_calls} calls)",
@@ -1448,8 +1538,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                 None if opts.st_keep_mode == "gold_plus_wholecats" else resolve_keep_frac(opts)
             ),
             # the hook only has to deliver GOLD for the whole-category policy; the model grows it
-            mode=("gold_plus_random" if opts.st_keep_mode == "gold_plus_wholecats"
-                  else opts.st_keep_mode),
+            mode=(
+                "gold_plus_random"
+                if opts.st_keep_mode == "gold_plus_wholecats"
+                else opts.st_keep_mode
+            ),
             n_gold=opts.st_n_gold,
             seed=opts.seed,
             mix_start_p=opts.st_mix_start_p,
@@ -1985,6 +2078,45 @@ def parse_args() -> argparse.Namespace:
         "olmo_core.nn.attention.chunked_mask.mark_doc_headers_free.",
     )
     ap.add_argument(
+        "--st-keep-token-rule",
+        choices=["none", "first", "rule"],
+        default="none",
+        help="softtoken: WHICH body tokens of a pooled document stay real. 'none' (default) = off, "
+        "bit-identical to every run before 2026-09-15. 'first' = the first --st-keep-token-k body "
+        "tokens, i.e. exactly --st-header-extra-tokens K (same code path, bit-identical; the two "
+        "flags are mutually exclusive). 'rule' = the K highest-scoring body tokens PER DOCUMENT "
+        "under a linear score over cheap token features (idf, relative position in the body, "
+        "first-sentence, capitalised, digit, piece length) -- kept at their ORIGINAL positions, so "
+        "non-contiguous. Ties go to the earlier position; a doc with <= K body tokens is kept "
+        "whole. Which tokens are kept is the whole effect: at K=8 on outlier the eval-side probe "
+        "measures rand 0.558 CE (WORSE than keeping nothing, 0.470), first 0.263, and this rule "
+        "0.071 -- the gradient oracle's 0.072 (records/outlier-saliency-preview-probe.md 5d)",
+    )
+    ap.add_argument(
+        "--st-keep-token-k",
+        type=int,
+        default=0,
+        help="softtoken: tokens kept real per pooled document for --st-keep-token-rule",
+    )
+    ap.add_argument(
+        "--st-keep-token-weights",
+        default=None,
+        help="softtoken: feature weights for --st-keep-token-rule rule -- inline JSON or a path to "
+        'a JSON file. Flat ({"idf": 0.4, ...}) = weights on RAW features; the ridge shape '
+        '({"weights": {...}, "sd": {...}}) = weights on STANDARDISED features (mu/bias are '
+        "accepted and ignored: they shift every token equally and cannot change a per-doc top-k). "
+        "Default: olmo_core.nn.pooled_soft_token.DEFAULT_KEEP_TOKEN_WEIGHTS, a PLACEHOLDER whose "
+        "signs come from the measured within-document gradient profile (probe record 5a(c)), not "
+        "from the probe's fitted ridge -- pass the fitted vector here once it is harvested",
+    )
+    ap.add_argument(
+        "--st-keep-token-log-every",
+        type=int,
+        default=50,
+        help="softtoken: log the realised keep-token cost (real tokens per pooled doc, real-token "
+        "fraction) every N compactions; the first 5 are always logged",
+    )
+    ap.add_argument(
         "--st-slot-mode",
         choices=["mean", "cmean", "cent_cmean"],
         default="mean",
@@ -2307,6 +2439,31 @@ def parse_args() -> argparse.Namespace:
         ap.error(
             "--st-header-extra-tokens is only honoured by --variant softtoken "
             f"(got --variant {opts.variant!r}); it would be ignored."
+        )
+    if opts.st_keep_token_rule != "none":
+        if opts.variant != "softtoken":
+            ap.error(
+                "--st-keep-token-rule is only honoured by --variant softtoken "
+                f"(got --variant {opts.variant!r}); it would be ignored."
+            )
+        if opts.st_keep_token_k <= 0:
+            ap.error(f"--st-keep-token-rule {opts.st_keep_token_rule} needs --st-keep-token-k > 0.")
+        if opts.st_header_extra_tokens > 0:
+            ap.error(
+                "--st-keep-token-rule and --st-header-extra-tokens both choose real body tokens; "
+                "pass only one (--st-keep-token-rule first IS --st-header-extra-tokens)."
+            )
+        if opts.st_keep_token_rule == "rule":
+            from olmo_core.nn.pooled_soft_token import parse_keep_token_weights
+
+            try:
+                parse_keep_token_weights(opts.st_keep_token_weights)
+            except ValueError as exc:
+                ap.error(f"--st-keep-token-weights: {exc}")
+    elif opts.st_keep_token_k > 0 or opts.st_keep_token_weights is not None:
+        ap.error(
+            "--st-keep-token-k/--st-keep-token-weights were given but --st-keep-token-rule is "
+            "'none', so they would be ignored."
         )
     if mix_requested and opts.variant != "softtoken":
         ap.error(

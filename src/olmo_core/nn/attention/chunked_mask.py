@@ -24,7 +24,7 @@ landmark variant folds the resulting boolean mask into its grouped-softmax addit
 
 import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 
@@ -40,6 +40,9 @@ __all__ = [
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
     "build_is_anchor",
+    "mark_doc_headers_free",
+    "doc_body_groups",
+    "mark_doc_topk_tokens_free",
     "mask_mix_standard_prob",
     "collapse_roles_to_causal",
 ]
@@ -398,6 +401,142 @@ def mark_doc_headers_free(
             free = free.clone()
             free[rows_idx, last_start[rows_idx, cols_idx]] = True
     return torch.where(free, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+
+
+def doc_body_groups(
+    chunk_ids: torch.Tensor,
+    input_ids: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    n_docs: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int]:
+    """
+    Flatten a batch's document **body** tokens into one group-contiguous list, with each token's
+    index inside its own document.
+
+    A "body" token is a token that still belongs to a document (``chunk_ids >= 0``) and is not one
+    of the ``<|doc_start|>`` / ``<|doc_end|>`` markers. Because
+    :func:`mark_doc_headers_free` has already re-labelled header (and header-extra) tokens
+    ``FREE``, calling this *after* it yields exactly "the part of the document a pooled slot would
+    stand in for" -- which is the set a keep-token rule chooses from.
+
+    Shared by the rule's scorer (:func:`~olmo_core.nn.pooled_soft_token.keep_token_scores`) and its
+    selector (:func:`mark_doc_topk_tokens_free`) so the two can never disagree about what a body
+    token is.
+
+    :param chunk_ids: ``(B, S)`` roles from :func:`build_chunk_ids_from_tokens` (possibly already
+        header-freed).
+    :param input_ids: ``(B, S)`` token ids.
+    :param n_docs: Document-id space to use for the group ids. Defaults to
+        ``chunk_ids.max() + 1``; pass the pre-header-free value so two calls on differently-freed
+        role tensors share one group numbering.
+
+    :returns: ``(flat_idx, gid, within, counts, n_docs)`` -- ``flat_idx`` ``(M,)`` indices into the
+        flattened ``(B * S)`` tensors; ``gid`` ``(M,)`` group id ``b * n_docs + doc``; ``within``
+        ``(M,)`` 0-based index of the token inside its document's body; ``counts``
+        ``(B * n_docs,)`` body-token count per group.
+
+    .. note::
+        ``within`` is derived from group offsets, which is valid because ``gid`` is non-decreasing
+        along the flattened order: :func:`build_chunk_ids_from_tokens` numbers documents by how
+        many ``<|doc_start|>`` tokens precede them, so within a row document ids increase with
+        position, and rows are laid out in order.
+    """
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    B, S = input_ids.shape
+    device = input_ids.device
+    cid = chunk_ids.to(torch.long)
+    n_docs_eff = max(1, int(n_docs) if n_docs is not None else int(cid.max().item()) + 1)
+    body = (cid >= 0) & (input_ids != doc_start_id) & (input_ids != doc_end_id)
+    flat_idx = body.reshape(-1).nonzero(as_tuple=True)[0]
+    rows = torch.div(flat_idx, S, rounding_mode="floor")
+    gid = rows * n_docs_eff + cid.reshape(-1)[flat_idx]
+    counts = torch.bincount(gid, minlength=B * n_docs_eff)
+    starts = torch.cumsum(counts, dim=0) - counts
+    within = torch.arange(flat_idx.numel(), device=device) - starts[gid]
+    return flat_idx, gid, within, counts, n_docs_eff
+
+
+def mark_doc_topk_tokens_free(
+    chunk_ids: torch.Tensor,
+    input_ids: torch.Tensor,
+    scores: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    k: int,
+    n_docs: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Keep the ``k`` highest-scoring **body** tokens of every document REAL (re-label them ``FREE``)
+    and leave the rest to be pooled -- the non-contiguous generalisation of
+    :func:`mark_doc_headers_free`'s ``extra_tokens``, which keeps the *first* ``k`` instead.
+
+    The kept tokens stay at their ORIGINAL positions (they are simply not compacted away), so a
+    pooled document's compacted span becomes ``<header><scattered real tokens><SLOT>``.
+    Downstream needs no change: ``compact_pooled_rows`` emits every ``FREE`` token in position
+    order, and the slot's feature mean (:func:`~olmo_core.nn.pooled_soft_token.apply_slot_mode`,
+    and the plain-mean path in ``Transformer._compact_pooled_soft_tokens``) is taken over
+    ``chunk_ids >= 0`` positions only, so freed tokens are excluded from the slot automatically.
+
+    Ties are broken by position, earlier first. A document whose body has ``<= k`` tokens is kept
+    WHOLE: every body token plus its ``<|doc_end|>``/``<|doc_start|>`` markers are freed, so the
+    document leaves no residual one-token slot (the same end state
+    :func:`mark_doc_headers_free` reaches when ``extra_tokens`` exceeds the remaining body).
+
+    :param chunk_ids: ``(B, S)`` roles, normally already passed through
+        :func:`mark_doc_headers_free`.
+    :param input_ids: ``(B, S)`` token ids.
+    :param scores: ``(B, S)`` per-token scores; only body positions are read (see
+        :func:`~olmo_core.nn.pooled_soft_token.keep_token_scores` for the feature rule).
+    :param k: Tokens to keep real per document. ``<= 0`` returns ``chunk_ids`` unchanged.
+    :param n_docs: Document-id space (see :func:`doc_body_groups`).
+
+    :returns: A new ``(B, S)`` chunk-id tensor.
+    """
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    if k <= 0:
+        return chunk_ids
+    if scores.shape != input_ids.shape:
+        raise ValueError(
+            f"mark_doc_topk_tokens_free: scores {tuple(scores.shape)} must match input_ids "
+            f"{tuple(input_ids.shape)}"
+        )
+    B, S = input_ids.shape
+    device = input_ids.device
+    flat_idx, gid, _within, counts, n_docs_eff = doc_body_groups(
+        chunk_ids, input_ids, doc_start_id=doc_start_id, doc_end_id=doc_end_id, n_docs=n_docs
+    )
+    M = int(flat_idx.numel())
+    if M == 0:
+        return chunk_ids
+    out = chunk_ids.reshape(-1).clone()
+    # Lexicographic sort: group, then score DESC, then original position ASC. Three stable sorts
+    # applied least-significant first; the flattened body order is already position-ascending, so
+    # the tie-break falls out of stability with no extra key.
+    sc = scores.reshape(-1)[flat_idx].to(torch.float32)
+    o1 = torch.argsort(-sc, stable=True)
+    perm = o1[torch.argsort(gid[o1], stable=True)]
+    starts = torch.cumsum(counts, dim=0) - counts
+    rank = torch.arange(M, device=device) - starts[gid[perm]]
+    out[flat_idx[perm[rank < k]]] = FREE_CHUNK_ID
+    out = out.reshape(B, S)
+    # Documents whose whole body fits in the budget: free the markers too, so the document is not
+    # "present" for compact_pooled_rows at all (no slot standing in for a marker pair).
+    whole = counts <= k
+    if bool(whole.any()):
+        cid = chunk_ids.to(torch.long)
+        gid_full = torch.arange(B, device=device)[:, None] * n_docs_eff + cid.clamp(min=0)
+        markers = (cid >= 0) & ((input_ids == doc_start_id) | (input_ids == doc_end_id))
+        out = torch.where(markers & whole[gid_full], torch.full_like(out, FREE_CHUNK_ID), out)
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -556,3 +556,352 @@ def test_mark_doc_headers_free_extra_tokens_composes_with_cent_cmean_slot():
     expected = ref_cmean - row_centre
     expected = expected / expected.norm().clamp(min=1e-6) * row_norm.clamp(min=1e-6)
     assert torch.allclose(feats[0, 0], expected, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# keep-token rule (--st-keep-token-rule {first,rule})
+# ---------------------------------------------------------------------------
+
+_KT_DS, _KT_DE, _KT_EOS, _KT_STOP = 900, 901, 902, 25
+
+
+def _keep_token_tables(vocab: int, *, digits=(), caps=(), sent_ends=(), idf=None, tok_len=None):
+    """Hand-made vocab tables for :func:`keep_token_scores` -- no tokenizer, no shard."""
+    from olmo_core.nn.pooled_soft_token import KeepTokenTables
+
+    def _flags(ids):
+        t = torch.zeros(vocab, dtype=torch.bool)
+        for i in ids:
+            t[i] = True
+        return t
+
+    return KeepTokenTables(
+        idf=torch.zeros(vocab) if idf is None else idf,
+        sent_end=_flags(sent_ends),
+        is_cap=_flags(caps),
+        is_dig=_flags(digits),
+        tok_len=torch.zeros(vocab) if tok_len is None else tok_len,
+    )
+
+
+def test_keep_token_rule_off_is_bit_identical():
+    """k <= 0 (the 'none' default's end state) leaves the roles untouched, and a rule row with the
+    rule disabled is bit-identical to the header-only chunk ids."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+        mark_doc_topk_tokens_free,
+    )
+
+    doc = [_KT_DS, 10, 11, _KT_STOP, 12, 13, 20, 21, 22, _KT_DE]
+    x = torch.tensor([[1, 2] + doc + doc + [3, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, stop_id=_KT_STOP, stop_count=1
+    )
+    scores = torch.rand(x.shape)
+    for k in (0, -1):
+        out = mark_doc_topk_tokens_free(
+            header, x, scores, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=k
+        )
+        assert torch.equal(out, header)
+
+
+@pytest.mark.parametrize("k", [1, 2, 3, 8])
+@pytest.mark.parametrize("stop_id", [None, _KT_STOP])
+def test_keep_token_rule_first_equals_header_extra_tokens(k, stop_id):
+    """'first' must reproduce --st-header-extra-tokens EXACTLY. It is implemented as that call
+    (Transformer._compact_pooled_soft_tokens maps rule='first' onto extra_tokens=k), and a
+    position-scored top-k reproduces it token for token wherever the doc is not kept whole."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+        mark_doc_topk_tokens_free,
+    )
+
+    doc = [_KT_DS, 10, 11, _KT_STOP, 12, 13, 20, 21, 22, 23, 24, _KT_DE]
+    x = torch.tensor([[1, 2] + doc + doc + [3, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+
+    first = mark_doc_headers_free(
+        base,
+        x,
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+        stop_id=stop_id,
+        stop_count=1,
+        extra_tokens=k,
+    )
+    # The equivalent construction through the rule path: header first, then a top-k whose score is
+    # the negated position, so "highest scoring" == "earliest".
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, stop_id=stop_id, stop_count=1
+    )
+    pos_score = -torch.arange(x.shape[1], dtype=torch.float32)[None, :]
+    rule = mark_doc_topk_tokens_free(
+        header, x, pos_score, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=k
+    )
+    assert torch.equal(first, rule)
+
+
+def test_keep_token_rule_keeps_exactly_k_per_doc_by_score():
+    """A hand-made weight vector that selects DIGITS keeps exactly the k digit tokens of each
+    document real -- non-contiguously, at their original positions -- and nothing else."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+        mark_doc_topk_tokens_free,
+    )
+    from olmo_core.nn.pooled_soft_token import keep_token_scores
+
+    DIG = (30, 31, 32, 33)
+    # body after the (stop_count=1) header: 20 DIG0 21 DIG1 22 DIG2 23 DIG3 24
+    doc = [_KT_DS, 10, _KT_STOP, 20, DIG[0], 21, DIG[1], 22, DIG[2], 23, DIG[3], 24, _KT_DE]
+    x = torch.tensor([[1, 2] + doc + doc + [3, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, stop_id=_KT_STOP, stop_count=1
+    )
+    tables = _keep_token_tables(1000, digits=DIG)
+    scores = keep_token_scores(
+        x,
+        header,
+        tables=tables,
+        weights={"is_dig": 1.0},
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+    )
+    # doc 0 occupies positions 2..14; only its BODY (past the header) is ever scored
+    assert torch.equal(
+        scores[0, 2:15] > 0,
+        torch.tensor([t in DIG for t in doc]),
+    )
+
+    k = 3
+    out = mark_doc_topk_tokens_free(header, x, scores, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=k)
+    for d, off in ((0, 2), (1, 15)):
+        freed = ((out[0] < 0) & (header[0] >= 0)).nonzero(as_tuple=True)[0]
+        freed_d = [int(i) for i in freed if header[0, i].item() == d]
+        assert len(freed_d) == k
+        # the first k digits (ties -> earlier position), at their ORIGINAL, non-contiguous places
+        assert freed_d == [off + 4, off + 6, off + 8]
+        assert [int(x[0, i]) for i in freed_d] == list(DIG[:k])
+        # everything else in the doc keeps its chunk id
+        assert out[0, off].item() == d and out[0, off + 12].item() == d
+
+
+def test_keep_token_rule_excludes_kept_tokens_from_the_slot():
+    """Rule-kept tokens are FREE, so the pooled slot's mean (plain and cent_cmean) and its log-len
+    are computed WITHOUT them -- the same `chunk_ids >= 0` gate the header path relies on."""
+    import math
+
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+        mark_doc_topk_tokens_free,
+    )
+    from olmo_core.nn.pooled_soft_token import (
+        apply_slot_mode,
+        compact_pooled_rows,
+        keep_token_scores,
+    )
+
+    DIG = (30, 31)
+    doc1 = [_KT_DS, 10, _KT_STOP, 20, DIG[0], 21, DIG[1], 22, _KT_DE]
+    doc2 = [_KT_DS, 11, _KT_STOP, 60, DIG[0], 61, DIG[1], 62, _KT_DE]
+    x = torch.tensor([[1, 2] + doc1 + doc2 + [3, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, stop_id=_KT_STOP, stop_count=1
+    )
+    vocab, D = 1000, 8
+    scores = keep_token_scores(
+        x,
+        header,
+        tables=_keep_token_tables(vocab, digits=DIG),
+        weights={"is_dig": 1.0},
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+    )
+    chunk = mark_doc_topk_tokens_free(
+        header, x, scores, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=2
+    )
+    n_docs = int(base.max().item()) + 1
+
+    # doc 0 survives as <|doc_start|> 20 21 22 <|doc_end|> -- both digits freed.
+    survivors = (chunk[0] == 0).nonzero(as_tuple=True)[0]
+    assert x[0, survivors].tolist() == [_KT_DS, 20, 21, 22, _KT_DE]
+
+    cb = compact_pooled_rows(
+        x,
+        None,
+        chunk,
+        torch.zeros(1, n_docs, dtype=torch.bool),
+        placeholder_id=999,
+        pad_token_id=_KT_EOS,
+    )
+    assert torch.allclose(cb.soft_log_len, torch.full_like(cb.soft_log_len, math.log(5)))
+    assert cb.soft_rows.numel() == n_docs  # still exactly one slot per pooled doc
+
+    torch.manual_seed(0)
+    emb = torch.randn(vocab, D)[x]
+    feats, n_fallback = apply_slot_mode(
+        emb,
+        x,
+        chunk,
+        n_docs,
+        torch.zeros(1, n_docs, D),
+        mode="cmean",
+        stop_mask=torch.zeros(vocab, dtype=torch.bool),
+    )
+    assert n_fallback == 0
+    assert torch.allclose(feats[0, 0], emb[0, survivors].mean(dim=0), atol=1e-5)
+
+
+def test_keep_token_rule_short_doc_is_kept_whole():
+    """A document whose body has <= k tokens is kept WHOLE -- markers included -- so it leaves no
+    residual one-token slot, matching mark_doc_headers_free's extra-token fallback."""
+    from olmo_core.nn.attention.chunked_mask import (
+        FREE_CHUNK_ID,
+        build_chunk_ids_from_tokens,
+        mark_doc_topk_tokens_free,
+    )
+    from olmo_core.nn.pooled_soft_token import compact_pooled_rows
+
+    y = torch.tensor([[_KT_DS, 5, 6, 7, _KT_DE, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(y, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+    scores = torch.zeros(y.shape)
+    whole = mark_doc_topk_tokens_free(base, y, scores, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=3)
+    assert (whole == FREE_CHUNK_ID).all()
+    cb = compact_pooled_rows(
+        y,
+        None,
+        whole,
+        torch.zeros(1, 1, dtype=torch.bool),
+        placeholder_id=999,
+        pad_token_id=_KT_EOS,
+    )
+    assert cb.soft_rows.numel() == 0
+    assert cb.input_ids[0, : cb.row_lens[0]].tolist() == y[0].tolist()
+
+    # One short of the whole-doc threshold: the markers stay, so the doc still gets a slot.
+    part = mark_doc_topk_tokens_free(base, y, scores, doc_start_id=_KT_DS, doc_end_id=_KT_DE, k=2)
+    assert part[0].tolist() == [0, -1, -1, 0, 0, -1]  # ties -> the two earliest body tokens
+    cb2 = compact_pooled_rows(
+        y, None, part, torch.zeros(1, 1, dtype=torch.bool), placeholder_id=999, pad_token_id=_KT_EOS
+    )
+    assert cb2.soft_rows.numel() == 1
+
+
+def test_keep_token_scores_features():
+    """The six cheap features are computed per DOCUMENT BODY, exactly as the eval-side probe's
+    ``token_features`` does: relpos over the body, first_sent through the body's first
+    sentence-ender (all-ones when it has none), log_doclen constant inside a document."""
+    from olmo_core.nn.attention.chunked_mask import (
+        build_chunk_ids_from_tokens,
+        mark_doc_headers_free,
+    )
+    from olmo_core.nn.pooled_soft_token import keep_token_scores
+
+    SENT = 40
+    doc = [_KT_DS, 10, _KT_STOP, 20, 21, SENT, 22, 23, _KT_DE]  # body = 20 21 SENT 22 23
+    x = torch.tensor([[1] + doc + [2, _KT_EOS]])
+    base = build_chunk_ids_from_tokens(x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, eos_id=_KT_EOS)
+    header = mark_doc_headers_free(
+        base, x, doc_start_id=_KT_DS, doc_end_id=_KT_DE, stop_id=_KT_STOP, stop_count=1
+    )
+    body = slice(4, 9)  # positions of 20 21 SENT 22 23
+
+    tables = _keep_token_tables(1000, sent_ends=(SENT,))
+    rel = keep_token_scores(
+        x, header, tables=tables, weights={"relpos": 1.0}, doc_start_id=_KT_DS, doc_end_id=_KT_DE
+    )
+    assert torch.allclose(rel[0, body], torch.tensor([0.0, 0.25, 0.5, 0.75, 1.0]))
+
+    fs = keep_token_scores(
+        x,
+        header,
+        tables=tables,
+        weights={"first_sent": 1.0},
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+    )
+    assert fs[0, body].tolist() == [1.0, 1.0, 1.0, 0.0, 0.0]
+
+    # No sentence-ender in the body -> every body token is "first sentence" (the probe's fallback).
+    fs_none = keep_token_scores(
+        x,
+        header,
+        tables=_keep_token_tables(1000),
+        weights={"first_sent": 1.0},
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+    )
+    assert fs_none[0, body].tolist() == [1.0] * 5
+
+    dl = keep_token_scores(
+        x,
+        header,
+        tables=tables,
+        weights={"log_doclen": 1.0},
+        doc_start_id=_KT_DS,
+        doc_end_id=_KT_DE,
+    )
+    assert torch.allclose(dl[0, body], torch.full((5,), float(torch.tensor(5.0).log())))
+    # nothing outside the body is ever scored
+    assert float(dl[0, 0]) == 0.0 and float(dl[0, 1]) == 0.0 and float(dl[0, 9]) == 0.0
+
+
+def test_parse_keep_token_weights():
+    """Flat and ridge-shaped weight specs, inline or from a file; mu/bias are accepted and ignored
+    (they shift every token equally, so they cannot change a per-document top-k)."""
+    import json
+
+    from olmo_core.nn.pooled_soft_token import (
+        DEFAULT_KEEP_TOKEN_WEIGHTS,
+        parse_keep_token_weights,
+    )
+
+    w, sd = parse_keep_token_weights(None)
+    assert w == DEFAULT_KEEP_TOKEN_WEIGHTS and sd == {}
+
+    w, sd = parse_keep_token_weights('{"idf": 1.0, "is_dig": -2.0}')
+    assert w == {"idf": 1.0, "is_dig": -2.0} and sd == {}
+
+    w, sd = parse_keep_token_weights(
+        json.dumps({"weights": {"idf": 1.0}, "sd": {"idf": 2.0}, "mu": {"idf": 7.0}, "bias": 3.0})
+    )
+    assert w == {"idf": 1.0} and sd == {"idf": 2.0}
+
+    with pytest.raises(ValueError):
+        parse_keep_token_weights('{"not_a_feature": 1.0}')
+    with pytest.raises(ValueError):
+        parse_keep_token_weights("/nonexistent/weights.json")
+
+
+def test_build_token_idf_and_piece_tables():
+    """IDF is -log p over the shard head (rarer id -> higher), and the piece tables reproduce the
+    probe's byte-BPE handling."""
+    import numpy as np
+
+    from olmo_core.nn.pooled_soft_token import (
+        build_slot_stop_ids,
+        build_token_idf,
+        build_token_piece_tables,
+    )
+
+    ids = np.array([5] * 100 + [6] * 10 + [7], dtype=np.int64)
+    idf = build_token_idf(ids, 16)
+    assert idf.shape == (16,)
+    assert idf[5] < idf[6] < idf[7] < idf[0]  # unseen ids are rarest of all
+    # same counts the slot stop set ranks
+    stop, _ = build_slot_stop_ids(ids, top_k=1)
+    assert stop == [5]
+
+    sent_end, is_cap, is_dig, tok_len = build_token_piece_tables(
+        [None, "Ġthe", "Hello", "abc.", "Ċ", "x7"]
+    )
+    assert sent_end.tolist() == [False, False, False, True, True, False]
+    assert is_cap.tolist() == [False, False, True, False, False, False]
+    assert is_dig.tolist() == [False, False, False, False, False, True]
+    assert tok_len.tolist() == [0.0, 3.0, 5.0, 4.0, 0.0, 2.0]

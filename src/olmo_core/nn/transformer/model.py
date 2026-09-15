@@ -320,6 +320,12 @@ class Transformer(nn.Module):
         header_stop_count: int = 1,
         header_cap: int = 32,
         header_extra_tokens: int = 0,
+        keep_token_rule: str = "none",
+        keep_token_k: int = 0,
+        keep_token_weights: Optional[Dict[str, float]] = None,
+        keep_token_sd: Optional[Dict[str, float]] = None,
+        keep_token_tables: Optional[Any] = None,
+        keep_token_log_every: int = 50,
         detach_soft_gdn: bool = True,
         mix_start_p: float = 0.0,
         mix_end_p: float = 0.0,
@@ -365,6 +371,34 @@ class Transformer(nn.Module):
             by position, not distance, so it is never truncated by ``header_cap`` -- no need to
             enlarge that when raising this. See
             :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`.
+        :param keep_token_rule: WHICH body tokens of a pooled document stay real.
+
+            * ``"none"`` (default) -- no per-token keeping; bit-identical to before this existed.
+            * ``"first"`` -- the first ``keep_token_k`` body tokens, i.e. exactly
+              ``header_extra_tokens=keep_token_k`` (it is implemented as that call, so the two are
+              bit-identical by construction). Mutually exclusive with ``header_extra_tokens``.
+            * ``"rule"`` -- the ``keep_token_k`` highest-scoring body tokens PER DOCUMENT under the
+              cheap feature rule of
+              :func:`~olmo_core.nn.pooled_soft_token.keep_token_scores` (idf, relative position,
+              first-sentence, capitalisation, digit, piece length), kept at their original
+              positions and so non-contiguous
+              (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_topk_tokens_free`). Ties go to
+              the earlier position; a document with ``<= k`` body tokens is kept whole. Needs
+              ``keep_token_tables``.
+
+            The eval-side probe this ports says the *choice* is the whole effect: at k=8 on outlier
+            the same budget spent at random is WORSE than keeping nothing (CE 0.558 vs 0.470),
+            ``first`` reaches 0.263, and this rule reaches 0.071 -- the gradient oracle's 0.072
+            (``records/outlier-saliency-preview-probe.md`` 5d).
+        :param keep_token_k: Tokens kept real per pooled document (``0`` = rule off).
+        :param keep_token_weights: Feature -> weight for ``"rule"``
+            (:data:`~olmo_core.nn.pooled_soft_token.DEFAULT_KEEP_TOKEN_WEIGHTS` when ``None``).
+        :param keep_token_sd: Optional per-feature standard deviations the weights are divided by
+            (for a ridge fitted on standardised features).
+        :param keep_token_tables: :class:`~olmo_core.nn.pooled_soft_token.KeepTokenTables` with the
+            vocab-sized idf / piece tables. Required for ``"rule"``.
+        :param keep_token_log_every: Log the realised keep-token cost (mean real tokens per pooled
+            document, real-token fraction) every N compactions; the first 5 are always logged.
         :param mix_start_p: **Compression-mixing curriculum.** Probability that a row trains
             UNCOMPRESSED (no pooling at all), annealed linearly to ``mix_end_p`` over
             ``mix_total_calls`` training forwards
@@ -409,8 +443,27 @@ class Transformer(nn.Module):
                 "enable_pooled_soft_tokens is mutually exclusive with "
                 "enable_document_chunk_attention (the compacted sequence is plain causal)."
             )
-        from ..pooled_soft_token import SLOT_MODES, PooledDocProjector
+        from ..pooled_soft_token import KEEP_TOKEN_RULES, SLOT_MODES, PooledDocProjector
 
+        if keep_token_rule not in KEEP_TOKEN_RULES:
+            raise OLMoConfigurationError(
+                f"unknown keep_token_rule {keep_token_rule!r} (expected one of {KEEP_TOKEN_RULES})"
+            )
+        if keep_token_rule != "none":
+            if keep_token_k <= 0:
+                raise OLMoConfigurationError(
+                    f"keep_token_rule={keep_token_rule!r} needs keep_token_k > 0"
+                )
+            if header_extra_tokens > 0:
+                raise OLMoConfigurationError(
+                    "keep_token_rule and header_extra_tokens both select real body tokens; set "
+                    "only one (keep_token_rule='first' IS header_extra_tokens)."
+                )
+        if keep_token_rule == "rule" and keep_token_tables is None:
+            raise OLMoConfigurationError(
+                "keep_token_rule='rule' needs keep_token_tables (build them with "
+                "olmo_core.nn.pooled_soft_token.build_token_idf / build_token_piece_tables)"
+            )
         if slot_mode not in SLOT_MODES:
             raise OLMoConfigurationError(
                 f"unknown slot_mode {slot_mode!r} (expected one of {SLOT_MODES})"
@@ -486,6 +539,19 @@ class Transformer(nn.Module):
             "header_stop_count": int(header_stop_count),
             "header_cap": int(header_cap),
             "header_extra_tokens": int(header_extra_tokens),
+            # Keep-token rule: WHICH body tokens of a pooled doc stay real (none/first/rule). The
+            # "first" branch is literally mark_doc_headers_free(extra_tokens=k), so it is
+            # bit-identical to --st-header-extra-tokens; "rule" adds a non-contiguous per-document
+            # top-k over cheap token features (pooled_soft_token.keep_token_scores).
+            "keep_token_rule": str(keep_token_rule),
+            "keep_token_k": int(keep_token_k),
+            "keep_token_weights": (
+                None if keep_token_weights is None else dict(keep_token_weights)
+            ),
+            "keep_token_sd": None if keep_token_sd is None else dict(keep_token_sd),
+            "keep_token_tables": keep_token_tables,
+            "keep_token_log_every": int(keep_token_log_every),
+            "_keep_token_calls": 0,
             "detach_soft_gdn": bool(detach_soft_gdn),
             # Slot construction (pooled_soft_token.apply_slot_mode). "mean" is the historical
             # path and is bit-identical to it; the others need ``slot_stop_ids``. The vocab-sized
@@ -843,7 +909,14 @@ class Transformer(nn.Module):
         n_docs = int(chunk_ids.max().item()) + 1
         if n_docs <= 0:
             return None
-        if cfg.get("header_stop_id") is not None or cfg.get("header_extra_tokens", 0) > 0:
+        # Which body tokens stay REAL. "first" IS --st-header-extra-tokens (same call, so
+        # bit-identical); "rule" adds a non-contiguous per-document top-k afterwards.
+        keep_rule = cfg.get("keep_token_rule", "none")
+        extra_tokens = int(cfg.get("header_extra_tokens", 0))
+        if keep_rule == "first":
+            extra_tokens = int(cfg["keep_token_k"])
+        pre_free_chunk_ids = chunk_ids if keep_rule != "none" else None
+        if cfg.get("header_stop_id") is not None or extra_tokens > 0:
             from ..attention.chunked_mask import mark_doc_headers_free
 
             chunk_ids = mark_doc_headers_free(
@@ -853,8 +926,34 @@ class Transformer(nn.Module):
                 doc_end_id=cfg["doc_end_id"],
                 stop_id=cfg["header_stop_id"],
                 stop_count=cfg["header_stop_count"],
-                extra_tokens=cfg.get("header_extra_tokens", 0),
+                extra_tokens=extra_tokens,
                 cap=cfg["header_cap"],
+            )
+        if keep_rule == "rule":
+            from ..attention.chunked_mask import mark_doc_topk_tokens_free
+            from ..pooled_soft_token import (
+                DEFAULT_KEEP_TOKEN_WEIGHTS,
+                keep_token_scores,
+            )
+
+            scores = keep_token_scores(
+                input_ids,
+                chunk_ids,
+                tables=cfg["keep_token_tables"],
+                weights=cfg.get("keep_token_weights") or DEFAULT_KEEP_TOKEN_WEIGHTS,
+                sd=cfg.get("keep_token_sd"),
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                n_docs=n_docs,
+            )
+            chunk_ids = mark_doc_topk_tokens_free(
+                chunk_ids,
+                input_ids,
+                scores,
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                k=int(cfg["keep_token_k"]),
+                n_docs=n_docs,
             )
         # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row
         # trains uncompressed. With the gold-aware hook installed the hook already applied it
@@ -1029,6 +1128,46 @@ class Transformer(nn.Module):
             add_shadows=cfg["aux_match_weight"] > 0.0,
             max_shadows_per_row=cfg["aux_max_shadows"],
         )
+        if pre_free_chunk_ids is not None:
+            cfg["_keep_token_calls"] += 1
+            n_call = cfg["_keep_token_calls"]
+            every = int(cfg.get("keep_token_log_every", 50))
+            if n_call <= 5 or (every > 0 and n_call % every == 0):
+                # The realised cost of a keep-token rule is DATA-dependent (short documents are
+                # kept whole, so the mean is <= k and the FLOP saving is not 1/k of anything):
+                # it has to be measured, not assumed. Freed-per-document is counted against the
+                # PRE-free roles, which still carry each freed token's document id.
+                from ..attention.chunked_mask import PAD_CHUNK_ID
+
+                pre_cid = pre_free_chunk_ids.to(torch.long)
+                freed = (chunk_ids < 0) & (pre_cid >= 0)
+                gid_full = torch.arange(B, device=input_ids.device)[
+                    :, None
+                ] * n_docs + pre_cid.clamp(min=0)
+                per_doc = torch.zeros(
+                    B * n_docs, dtype=torch.float32, device=input_ids.device
+                ).index_add_(
+                    0, gid_full[freed], torch.ones(int(freed.sum()), device=input_ids.device)
+                )
+                present = (
+                    torch.zeros(B * n_docs, dtype=torch.bool, device=input_ids.device)
+                    .index_fill_(0, gid_full[pre_cid >= 0], True)
+                    .reshape(B, n_docs)
+                )
+                pooled = present & ~keep[:, :n_docs]
+                n_pooled = int(pooled.sum().item())
+                kept_per_doc = (
+                    float(per_doc.reshape(B, n_docs)[pooled].mean().item()) if n_pooled else 0.0
+                )
+                n_in = int((chunk_ids != PAD_CHUNK_ID).sum().item())
+                n_real = int(cb.row_lens.sum().item()) - int(cb.soft_rows.numel())
+                print(
+                    f"[keep-token] call#{n_call} rule={keep_rule} k={cfg['keep_token_k']}: "
+                    f"B={B} pooled_docs={n_pooled} real_tokens_per_pooled_doc={kept_per_doc:.2f} "
+                    f"real_token_frac={n_real / max(1, n_in):.4f}",
+                    flush=True,
+                )
+
         # Projector features for pooled slots AND (when aux is on) the shadow candidates -- both
         # are P(mean input embeds of the doc), same distribution, same module.
         inj_rows = torch.cat([cb.soft_rows, cb.shadow_rows])
