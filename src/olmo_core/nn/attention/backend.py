@@ -627,8 +627,9 @@ class FlexAttentionBackend(AttentionBackend):
                 # Pad positions all carry the same sentinel (-1), so equality alone would
                 # make the entire pad tail one mutually-visible causal segment -- at the
                 # shipped single-image geometry that is ~92% of all computed 128x128
-                # blocks, spent on tokens whose outputs are discarded (loss_masks are 0
-                # and the LM head only gathers response positions). Let a pad position
+                # blocks, spent on tokens that cannot affect the loss: their loss_masks
+                # are 0, and under `response_logits_only` the LM head does not even
+                # project them. Let a pad position
                 # attend to itself and nothing else: the row stays well-defined for
                 # softmax, and the tail collapses from a triangle to a diagonal.
                 same_example = example_id[b, q_idx] == example_id[b, kv_idx]

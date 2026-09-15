@@ -617,10 +617,13 @@ class MultimodalLM(nn.Module):
                 # backend (see FlexAttentionBackend._build_mask_mod). Dense SDPA computes
                 # the whole (S, S) matrix either way, so this buys no compute here -- it
                 # is purely so the two backends produce the same hidden states.
-                pad_self_only = (eid >= 0)[:, :, None] | torch.eye(
-                    eid.shape[1], dtype=torch.bool, device=device
-                )[None]
-                same_example = same_example & pad_self_only
+                #
+                # Done in place rather than by ANDing an `eye`-based helper: at Stage-2's
+                # S=16384 each extra (B, S, S) bool temporary is ~268 MB per row, which is
+                # a lot to spend on a path that saves no compute. Restoring the diagonal
+                # unconditionally is safe because a real position always matches itself.
+                same_example &= (eid >= 0)[:, :, None]
+                same_example.diagonal(dim1=-2, dim2=-1)[:] = True
                 combined = same_example & seg_rule if seg_rule is not None else same_example
                 and_mask = combined.unsqueeze(1)
             elif seg_rule is not None:

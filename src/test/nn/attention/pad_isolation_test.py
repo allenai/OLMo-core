@@ -26,9 +26,12 @@ def _example_ids(n_examples: int, tokens_each: int) -> torch.Tensor:
 
 def _computed_blocks(eid: torch.Tensor) -> int:
     bm = FlexAttentionBackend.build_block_mask_from_vectors(1, _S, _DEV, example_id=eid)
-    full = int(bm.kv_num_blocks.sum())
-    partial = int(bm.full_kv_num_blocks.sum()) if bm.full_kv_num_blocks is not None else 0
-    return full + partial
+    # Naming is counter-intuitive: `kv_num_blocks` counts *partially* masked blocks (the
+    # ones needing mask_mod evaluated per element) and `full_kv_num_blocks` counts fully
+    # unmasked ones. Both are computed, so the total is their sum.
+    partial = int(bm.kv_num_blocks.sum())
+    full = int(bm.full_kv_num_blocks.sum()) if bm.full_kv_num_blocks is not None else 0
+    return partial + full
 
 
 def _mask_mod(eid: torch.Tensor):
@@ -84,13 +87,55 @@ def test_sparse_pack_costs_far_fewer_blocks_than_it_did():
     assert sparse < dense
 
 
-def test_real_positions_are_bitwise_unchanged_by_the_fix():
-    """The fix must not perturb any position the model actually trains on.
+def test_flex_and_dense_rules_agree():
+    """The rule is duplicated in two places; pin that they cannot drift apart.
 
-    Reconstructs the pre-fix rule (plain ``example_id`` equality, which let the whole pad
-    tail attend to itself) and compares LM outputs against the shipped rule on the same
-    weights and inputs. Real positions must match bitwise; pad positions are expected to
-    differ, since that is precisely the discarded work being removed.
+    ``FlexAttentionBackend._build_mask_mod`` expresses it per (q, kv) pair, while
+    ``MultimodalLM.forward`` builds the same thing as a dense ``(B, S, S)`` tensor. Any
+    divergence would make the two backends produce different hidden states.
+    """
+    import torch as t
+
+    t.manual_seed(0)
+    for _ in range(50):
+        s_len = int(t.randint(8, 40, (1,)))
+        eid = t.full((1, s_len), -1, dtype=t.long)
+        pos, ex = 0, 0
+        while pos < s_len and float(t.rand(1)) < 0.8:
+            n = int(t.randint(1, 6, (1,)))
+            eid[0, pos : pos + n] = ex
+            pos += n
+            ex += 1
+
+        # Dense form, as built in MultimodalLM.forward.
+        dense = eid[:, :, None] == eid[:, None, :]
+        dense &= (eid >= 0)[:, :, None]
+        dense.diagonal(dim1=-2, dim2=-1)[:] = True
+
+        # Flex form, evaluated pointwise through the real predicate.
+        mod = _mask_mod(eid)
+        b = t.tensor(0)
+        flex = t.zeros_like(dense)
+        for q in range(s_len):
+            for kv in range(s_len):
+                flex[0, q, kv] = bool(mod(b, b, t.tensor(q), t.tensor(kv)))
+
+        # mask_mod folds in the causal base; the dense tensor is the and_mask only.
+        causal = t.tril(t.ones(s_len, s_len, dtype=t.bool))[None]
+        assert t.equal(flex, dense & causal)
+
+
+def test_padding_never_influences_real_positions():
+    """Invariant: no pad-row rule can perturb a real position's output.
+
+    This holds structurally -- the collator right-pads, attention is causal, and
+    ``same_example`` blocks real<->pad both ways -- so real tokens are a strict prefix that
+    never reads a pad. Worth pinning, because a future change that let pad reach real
+    would break it silently.
+
+    Note what this does **not** show: because it holds for *any* pad-row rule, it is not
+    evidence that this PR's rule specifically is behaviour-preserving. The per-quadrant
+    tests above are what pin the rule.
     """
     import torch as t
 
@@ -109,19 +154,13 @@ def test_real_positions_are_bitwise_unchanged_by_the_fix():
     eid[0, :12] = 0
     eid[0, 12:real] = 1  # two packed examples, then a 44-token pad tail
 
-    def run(pad_self_only: bool, tokens=ids):
+    def run(tokens):
         same = eid[:, :, None] == eid[:, None, :]
-        if pad_self_only:
-            same = same & ((eid >= 0)[:, :, None] | t.eye(seq, dtype=t.bool)[None])
+        same &= (eid >= 0)[:, :, None]
+        same.diagonal(dim1=-2, dim2=-1)[:] = True
         with t.no_grad():
             return lm(tokens, and_mask=same.unsqueeze(1))
 
-    new, old = run(True), run(False)
-    assert t.equal(new[:, :real], old[:, :real])
-    # Sanity: the pad tail really was computing something, so this is not a no-op test.
-    assert not t.equal(new[:, real:], old[:, real:])
-
-    # And the pad tail cannot leak into real positions even if its contents change.
-    other = ids.clone()
-    other[0, real:] = t.randint(3, vocab, (seq - real,))
-    assert t.equal(run(True)[:, :real], run(True, other)[:, :real])
+    scrambled = ids.clone()
+    scrambled[0, real:] = t.randint(3, vocab, (seq - real,))
+    assert t.equal(run(ids)[:, :real], run(scrambled)[:, :real])
