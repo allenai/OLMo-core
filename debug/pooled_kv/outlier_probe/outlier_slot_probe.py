@@ -210,7 +210,7 @@ def main():
     ap.add_argument("--rung", default="2k")
     ap.add_argument("--rows", type=int, default=200)
     ap.add_argument("--gen-rows", type=int, default=32, help="rows that also get FREE greedy generation (0 = none)")
-    ap.add_argument("--gen-max-new", type=int, default=28)
+    ap.add_argument("--gen-max-new", type=int, default=64)
     ap.add_argument("--ckpt-name", default="ds64-outlier-dense-u64M", choices=sorted(CKPTS))
     ap.add_argument("--ckpt", default=None, help="explicit override path")
     ap.add_argument("--jsonl", default=None, help="override eval JSONL (local runs)")
@@ -270,7 +270,7 @@ def main():
     n_fp_miss = 0
 
     acc = {c[0]: {"ce": [], "top1": [], "kl": [], "tf_em": [], "compaction": [], "sec": [],
-                  "gen_em": [], "gen_f1": [], "tf_f1": [],
+                  "gen_em": [], "gen_f1": [], "tf_f1": [], "tf_id1": [], "gen_ids": [],
                   "hit_gold_pooled": [], "hit_gold_real": [],
                   "pred_is_pooled": [], "base_pooled": [],
                   "rowsplit": []} for c in conds}
@@ -351,7 +351,12 @@ def main():
             r["kl"].append(float(F.kl_div(F.log_softmax(lg, -1), F.log_softmax(full_lg, -1),
                                           log_target=True, reduction="batchmean")))
             r["tf_em"].append(float((lg.argmax(-1) == targets).all()))
-            r["tf_f1"].append(set_f1(parse_ids(tok.decode(lg.argmax(-1).tolist())), true_ids))
+            tf_ids = parse_ids(tok.decode(lg.argmax(-1).tolist()))
+            r["tf_f1"].append(set_f1(tf_ids, true_ids))
+            # tf_f1 is LEAKY (teacher forcing puts the earlier true ids in the prefix); the FIRST
+            # id is predicted from a prefix that contains no id at all, so tf_id1 is honest.
+            if true_ids:
+                r["tf_id1"].append(float(bool(tf_ids) and tf_ids[0] == true_ids[0]))
             r["compaction"].append(comp)
 
             # --- pooled / real accounting for this row's gold documents -------------------------
@@ -375,6 +380,7 @@ def main():
                 gen = generate(model, x[:, :ans_start].clone(), a.gen_max_new, len(true_ids) or 3, tok)
                 gtext = tok.decode(gen)
                 gen_ids = parse_ids(gtext)
+                r["gen_ids"].append({"row": ri, "ids": gen_ids, "text": gtext})
                 r["gen_f1"].append(set_f1(gen_ids, true_ids))
                 r["gen_em"].append(float(set(gen_ids) == set(true_ids) and len(gen_ids) == len(true_ids)))
                 pred_docs = [i - off for i in gen_ids]
@@ -427,6 +433,8 @@ def main():
 def summarize(r):
     d = {}
     for k, v in r.items():
+        if k == "gen_ids":
+            continue
         if k == "rowsplit":
             d["rows_allgoldpooled"] = int(sum(1 for z in v if z == 0))
             d["rows_somegoldreal"] = int(sum(1 for z in v if z > 0))
@@ -438,7 +446,7 @@ def summarize(r):
 
 def table(acc, conds):
     hdr = (f"{'condition':12} {'CE':>7} {'top1':>6} {'KL':>7} {'tfEM':>6} {'tfF1':>6} "
-           f"{'genF1':>6} {'genEM':>6} {'R@gold_pooled':>14} {'R@gold_real':>12} "
+           f"{'tfID1':>6} {'genF1':>6} {'genEM':>6} {'R@gold_pooled':>14} {'R@gold_real':>12} "
            f"{'pred_pooled':>11} {'base_pooled':>11} {'compact':>8} {'s/row':>6}")
     print(hdr, flush=True)
     for name, _, _ in conds:
@@ -447,7 +455,7 @@ def table(acc, conds):
             continue
         m = lambda k: (np.mean(r[k]) if r[k] else float("nan"))  # noqa: E731
         print(f"{name:12} {m('ce'):7.3f} {m('top1'):6.3f} {m('kl'):7.3f} {m('tf_em'):6.2f} "
-              f"{m('tf_f1'):6.3f} {m('gen_f1'):6.3f} {m('gen_em'):6.2f} "
+              f"{m('tf_f1'):6.3f} {m('tf_id1'):6.3f} {m('gen_f1'):6.3f} {m('gen_em'):6.2f} "
               f"{m('hit_gold_pooled'):9.3f}[{len(r['hit_gold_pooled']):4d}] "
               f"{m('hit_gold_real'):7.3f}[{len(r['hit_gold_real']):4d}] "
               f"{m('pred_is_pooled'):11.3f} {m('base_pooled'):11.3f} "
