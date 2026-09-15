@@ -119,6 +119,7 @@ gantry run \
   --priority "${PRIORITY}" \
   --install true \
   --timeout 0 \
+  --allow-dirty \
   --env "DENSE=${DENSE}" \
   --env "COMPRESSIVE=${COMPRESSIVE}" \
   --env "EVAL_DIRS=${EVAL_DIRS}" \
