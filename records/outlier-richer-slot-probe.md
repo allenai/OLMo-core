@@ -70,6 +70,34 @@ block-local encode stays linear in pooled tokens.
 
 ## 4. Result A — the oracle readout: the signal IS there, and the plain mean is the thing hiding it
 
+### Canonical pairing: `ds64-outlier-dense-u64M` on the ds64 2k rung
+
+`outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl`, **eval_size = 240** (⚠ < 500; per-row SE
+printed with every number), 13.4 documents/row, k = 3, `k/n` floor **0.225** — the same floor the
+`xhdr*` training arms sat on.
+
+| slot | oracle R@k (centroid) | oracle R@k (no-neighbour) | gold rank pct | cos(gold, c) | cos(other, c) | extra cost |
+|---|---|---|---|---|---|---|
+| `mean` (the training slot) | 0.390 ± 0.019 | 0.307 ± 0.020 | 0.343 | 0.9375 | 0.9503 | — |
+| `meanrn` | 0.422 ± 0.019 | 0.307 ± 0.020 | 0.325 | 0.9362 | 0.9512 | free |
+| `cmean100` | 0.674 ± 0.020 | 0.382 ± 0.022 | 0.186 | 0.7125 | 0.7852 | free |
+| `cmean500` | 0.625 ± 0.021 | 0.376 ± 0.023 | 0.210 | 0.7073 | 0.7796 | free |
+| `centered` | 0.468 ± 0.022 | 0.331 ± 0.020 | 0.277 | 0.3027 | 0.5226 | free |
+| **`cent_cmean`** | **0.731 ± 0.021** | 0.374 ± 0.023 | **0.167** | 0.2825 | 0.4955 | **free** |
+| `idf` | 0.479 ± 0.019 | 0.318 ± 0.020 | 0.277 | 0.8400 | 0.8771 | free |
+| `g2` | 0.299 ± 0.017 | 0.265 ± 0.016 | 0.420 | 0.8877 | 0.8980 | +1 tok/doc |
+| `g4` | 0.261 ± 0.016 | 0.251 ± 0.016 | 0.468 | 0.7838 | 0.7943 | +3 tok/doc |
+| `g2cent` | 0.386 ± 0.021 | 0.301 ± 0.018 | 0.348 | 0.1436 | 0.3239 | +1 tok/doc |
+| `g2cc` | 0.603 ± 0.023 | 0.336 ± 0.020 | 0.227 | 0.1941 | 0.3463 | +1 tok/doc |
+| `enc2` | 0.646 ± 0.021 | 0.406 ± 0.021 | 0.201 | 0.9926 | 0.9952 | 0.058 dense / 0.68x compacted |
+| `enc4` | 0.726 ± 0.020 | 0.414 ± 0.021 | 0.171 | 0.9727 | 0.9842 | 0.115 dense / 1.36x compacted |
+| `lexidf` (reference: lexical TF-IDF) | 0.571 ± 0.022 | 0.324 ± 0.022 | 0.258 | 0.4727 | 0.5559 | free |
+
+**`cent_cmean` (free) and `enc4` (0.115 of a dense forward) are tied at 0.73 — 3.2x the `k/n`
+floor — so the block-local encoder buys nothing that decontaminating the mean does not.**
+
+### Replicate: `lmx-full-mixs160M-4b` on the local wiki corpora
+
 `lmx-full-mixs160M-4b` (dense) on the two local outlier corpora, **eval_size = 200 rows each**
 (⚠ < 500; the per-row SE is printed with every number). k = 3.
 
@@ -112,20 +140,24 @@ Four readings, in order of how much they change the picture.
 
 **1. The plain mean is dominated by common-word mass, and that is why it looks empty.** Every
 document's mean embedding is cosine **0.93–0.94** from the centroid — gold and non-gold alike
-(0.9349 vs 0.9444). The documents' topics are a rounding error on top of a shared "English prose"
+(0.9375 vs 0.9503 on ds64 2k; 0.9349 vs 0.9444 on the replicate). The documents' topics are a rounding error on top of a shared "English prose"
 vector. Renormalising (`meanrn`) does nothing for the same reason: it is a pure rescale, and the
 directions were never the problem — the *shared component* was.
 
-**2. Removing that component is free and worth 2.4–3.9× the floor.** Dropping punctuation and the
-top-100 corpus token ids (`cmean100`) moves cos(gold) − cos(other) from 0.009 to 0.057 and oracle
-recall from 0.230 to 0.427; also subtracting the corpus-mean embedding (`cent_cmean`) moves it to
+**2. Removing that component is free and worth 1.9–3.9× the plain mean.** Dropping punctuation and
+the top-100 corpus token ids (`cmean100`) moves cos(gold) − cos(other) from 0.013 to 0.073 on ds64
+(0.009 → 0.057 on the replicate) and oracle recall from 0.390 to 0.674 (0.230 → 0.427); also
+subtracting the corpus-mean embedding (`cent_cmean`) takes it to **0.731 ± 0.021 on the canonical
+ds64 2k rung against a 0.225 floor**, and on the replicate to
 0.188 and recall to **0.550 at 2k / 0.240 at 8k — 3.9× and 4.4× the `k/n` floor**, at zero extra
 tokens and zero extra FLOPs. So **the outlier signal is present in a mean-embedding slot**; the
 previous probe's "the slot carries nothing" was a statement about the *plain* mean, and it is the
 common-word mass, not the averaging, that destroys it.
 
-**3. Neither of the expensive ideas earns its cost.** `enc4` (0.440 at 2k, 0.142 at 8k) is *below*
-the free `cent_cmean` while costing 11.5% of a dense forward, and `enc2` is below both. The
+**3. Neither of the expensive ideas earns its cost.** `enc4` ties `cent_cmean` on the canonical
+rung (0.726 ± 0.020 vs 0.731 ± 0.021) and is *below* it on the replicate (0.440 vs 0.550 at 2k,
+0.142 vs 0.240 at ~8k) — while costing 11.5% of a dense forward, i.e. **1.36× the compacted forward
+it is attached to**. `enc2` is below both everywhere. The
 block-local hidden states are, if anything, even more dominated by a shared component
 (cos ≈ 0.99 for everything). `G > 1` segment means are *worse* than one mean at both lengths:
 splitting a document gives each half a noisier estimate and the min-over-segments readout picks up
