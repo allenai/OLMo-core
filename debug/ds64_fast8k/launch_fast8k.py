@@ -285,6 +285,12 @@ def do_eval(args):
         if st["evals"].get(name, {}).get("ex") and not args.force:
             print(f"[skip] eval {name} already launched ({st['evals'][name]['ex']})")
             continue
+        # Only score a FINISHED run: the eval reads the model-only export written after fit(), so
+        # launching against a still-training save folder finds no checkpoint and burns a GPU slot
+        # failing.
+        if r.get("state") != "DONE" and not args.force:
+            print(f"[wait] {name} train={r.get('state')} -- eval deferred")
+            continue
         task = r["task"]
         files = {task: RUNGS[task]}
         cmd = [sys.executable, "-u", EVAL_LAUNCHER, name, EVAL_CLUSTER,
@@ -320,6 +326,9 @@ def do_parity(args):
         r = st["runs"].get(name)
         if r is None:
             print(f"[skip] {name} not in state.json")
+            continue
+        if r.get("state") != "DONE" and not args.force:
+            print(f"[wait] {name} train={r.get('state')} -- parity deferred")
             continue
         arm = r["arm"]
         conds = args.parity_arms.split(",") if args.parity_arms else PARITY_ARMS.get(
