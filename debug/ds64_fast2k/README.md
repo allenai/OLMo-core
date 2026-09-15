@@ -144,3 +144,53 @@ in `train_ctc_suite.py` wires a **generative** task eval, and outlier is graded 
 list. Adding one would mean a generation loop inside the training step — heavy enough to dominate a
 30-step run. The in-loop signal is therefore the per-step train CE (logged every step to the
 console and to wandb) against `ce_floor`; the accuracy signal is the final 2k-rung eval.
+
+---
+
+## First sweep, 2026-09-14 (outlier, Qwen3.5-4B) — the loop validated against ds64
+
+7 arms, **7.8 GPU-hours total** (train + eval, job start → finalize), 20–42 min turnaround each
+(train 11–34 min + an 8-min eval). Dense anchors at three budgets; soft arms at the middle one.
+`eval_size = 500`, binomial SE ≈0.021 at f1 0.70 and ≈0.010 at 0.95.
+
+| run | steps | PF (meter) | ×dense | CE@10 | CE final | f1 2k | Δ vs dense @ same FLOPs |
+|---|---|---|---|---|---|---|---|
+| dense 2M | 30 | 48.5 | 1.00 | 0.090 | 0.053 | 0.954 | — (anchor) |
+| dense 4M | 61 | 98.4 | 1.00 | 0.128 | 0.020 | 0.987 | — (anchor) |
+| dense 8M | 122 | 196.9 | 1.00 | 0.093 | 0.013 | 0.996 | — (anchor) |
+| **kvgb50** 4M | 61 | 56.3 | 0.57 | 0.377 | **0.264** | **0.882** | −0.079 |
+| **xhdr50** 4M | 61 | 57.4 | 0.58 | 0.387 | **0.275** | **0.895** | −0.067 |
+| **xhdr17** 4M | 61 | 27.3 | 0.28 | 0.435 | **0.408** ⬅ FLOOR | **0.234** | −0.693 * |
+| **xhdr17-warm** 4M | 61 | 27.3 | 0.28 | 0.409 | **0.386** ⬅ FLOOR | **0.236** | −0.691 * |
+
+`ce_floor` = 0.390, uniform-guess f1 = 3/14 = 0.214. `*` = extrapolated below the measured dense
+range.
+
+**1. Both signals separate the known-good arm from the known-collapsed one.** `kvgb50` drives CE to
+0.264, well under the 0.390 floor, and scores 0.882; `xhdr17` never leaves the floor (0.408) and
+scores 0.234 — i.e. 3/14, the uniform guess. The CE verdict is available at the end of a 15-minute
+training job, before any eval.
+
+**2. It reproduces ds64's own 2k rung at ~1/14 the compute.** ds64 measured `xhdr17` 2k = 0.23 and
+`kvgb50` 2k ≈ 0.87 after 780+ PF ladder arms; fast2k gets 0.234 and 0.882 at 27–56 PF.
+
+**3. New: header-real does NOT collapse at keep 1/2.** `xhdr50` (header-real, gold-blind, keep 1/2)
+lands at 0.895 / CE 0.275 — statistically indistinguishable from its header-free twin `kvgb50`
+(0.882 / 0.264) at the same FLOPs. So the xhdr collapse is a **low-keep** phenomenon, not an
+unconditional property of pairing `--st-header-stop-id` with `--st-gold-blind`: with half the bodies
+real there is enough content supervision that the copyable id is not the cheapest policy.
+
+**4. New: the collapse is NOT a basin/optimization artifact.** `xhdr17-warm` starts from the
+*finished* `kvgb50` checkpoint — a model that already solves the task from content — and still falls
+all the way back to the guess policy (0.236, CE 0.386). A content-grounded initialisation does not
+save keep-1/6 header-real.
+
+**5. At 2k, dense is near ceiling (0.954 → 0.996), so no soft arm beats it.** Every matched-FLOP
+delta is negative. That is consistent with ds64's verdict that outlier is at best a parity task
+(dense's own scaling curve is ~6× steeper there than on the tasks compaction wins). ⚠ It also means
+2k has little accuracy headroom on **this** task — for a task where dense saturates, read the
+fast2k screen as a *kill filter* (does the recipe learn at all, and at what FLOP ratio) rather than
+as a matched-FLOP contest. A task whose dense 2k score sits well below 1.0 gives a sharper delta.
+
+⚠ All of the above is **2k only**. `kvgb50` and `xhdr50` look equivalent here; ds64's ladder is what
+decides whether either survives to 32k.

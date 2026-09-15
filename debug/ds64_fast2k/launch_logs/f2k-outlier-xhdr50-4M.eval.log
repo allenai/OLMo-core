@@ -1,0 +1,22 @@
+2026-09-14 21:51:13.513	radagast:0	olmo_core.utils:237	INFO	Setting env var 'OMP_NUM_THREADS' to '8'
+2026-09-14 21:51:13.513	radagast:0	olmo_core.utils:237	INFO	Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+=== Beaker multirung eval | run=f2k-outlier-xhdr50-4M variant=docchunk tasks=['outlier'] cluster=ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale dry_run=False ===
+2026-09-14 21:51:14.189	radagast:0	py.warnings:112	WARNING	/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/gantry/git_utils.py:298: UserWarning: Attempted to use the GitHub CLI to validate that the commit exists on the remote, however it appears that it's not installed. Please ensure the GitHub CLI is installed to avoid this warning message.
+  warnings.warn(msg, UserWarning)
+
+
+--- [outlier] ev-outlier-f2k-outlier-xhdr50-4M-749581d7 ---
+    cmd: RUN=f2k-outlier-xhdr50-4M TASK=outlier VARIANT=docchunk STEP='' CKPT='/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-xhdr50-4M' EVAL_OUT_DIR='' PROMPT_FORMAT='chat' QUERY_POSITION='after' MAX_TEST=500 MAX_LENGTH=8192 BATCH_SIZE=16 NGPU=2 LADDER_XLONG=0 XLONG_RUNGS='64k,128k' COT_MODE='none' LADDER_VERSION=v2 TOKENIZER=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base DC_RUNG_FILES='{"outlier": {"2k": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl"}}' DC_RUNGS='2k' WEKA_LLM=/weka/oe-training-default/ai2-llm bash src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh
+2026-09-14 21:51:16.361	radagast:0	olmo_core.launch.beaker:451	WARNING	Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2
+Experiment: prasanns/ev-outlier-f2k-outlier-xhdr50-4M-749581d7 → https://beaker.org/ex/01M2HPFFZ78RVXY755QD7917DK
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 01b7c53 outlier probe: markdown collector for the richer-… → https://github.com/allenai/OLMo-core/commit/01b7c53
+Branch: prasann/landmark → https://github.com/allenai/OLMo-core/tree/prasann/landmark
+    submitted: 01M2HPFFZ78RVXY755QD7917DK
+SUBMITTED id=01M2HPFFZ78RVXY755QD7917DK
+
+=== done ===
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/lib/python3.12/site-packages/fla/utils.py:356: UserWarning: Triton is not supported on current platform, roll back to CPU.
+  warnings.warn(('Triton is not supported on current platform, roll back to CPU.'), stacklevel=1)

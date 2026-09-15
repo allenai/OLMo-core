@@ -57,7 +57,8 @@
    "budget": "4M",
    "steps_expected": 62,
    "gpus": 2,
-   "state": "R"
+   "state": "DONE",
+   "rc": 0
   },
   "f2k-outlier-xhdr17-warm-4M": {
    "ex": "01M2HP7XFDNQXKWSE3YG09152J",
@@ -66,7 +67,8 @@
    "budget": "4M",
    "steps_expected": 62,
    "gpus": 2,
-   "state": "R"
+   "state": "DONE",
+   "rc": 0
   }
  },
  "evals": {
@@ -92,6 +94,16 @@
   },
   "f2k-outlier-xhdr17-4M": {
    "ex": "01M2HNMR3KNCYV1JN7J4YCK0EE",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-xhdr50-4M": {
+   "ex": "01M2HPFFZ78RVXY755QD7917DK",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-xhdr17-warm-4M": {
+   "ex": "01M2HQS4MQSWGR79XKAGRTP5W2",
    "state": "DONE",
    "rc": 0
   }

@@ -669,6 +669,9 @@ wandb group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/gr
 
 ### The third arm does NOT exist: `--st-mix-*` is a silent no-op on every gold-blind arm
 
+**RESOLVED 2026-09-14 (commit `7ce879b40`) — see the ADDENDUM below.** The diagnosis in this
+subsection is correct and worth reading; the *conclusion* ("the arm cannot be launched") is not.
+
 A `xh2mix17` (header + keep 1/6 with a fraction of rows trained DENSE) was planned and is **not
 launched**, because the knob it needs is unreachable from a gold-blind arm. `--st-mix-start-p /
 --st-mix-end-p / --st-mix-anneal-frac` are parsed unconditionally but are only ever *passed*
@@ -708,6 +711,80 @@ plateau is visible by step 8), and 64M buys nothing they do not already show.
 
 ---
 
+### ADDENDUM to section 9 (2026-09-14 ~19:50 PDT): the mix curriculum is FIXED, and the third arm IS now launched
+
+The subsection above ("The third arm does NOT exist") is **resolved**. `--st-mix-start-p /
+--st-mix-end-p / --st-mix-anneal-frac` now work under `--st-gold-blind`
+(commit `7ce879b40`, branch `prasann/landmark`):
+
+* `pooled_doc_kv.anneal_p_full()` — the linear anneal lifted out of the hook closure, now shared.
+* `resolve_keep_docs(mix_p_full=, mix_call=)` — on the gold-blind fallback draw, a per-ROW coin
+  (its own salt, so a *compressed* row's per-document draw is bit-unchanged) promotes the row to
+  fully real with probability `p_full`. `mix_p_full=0`, the default, is identical to before.
+* `Transformer.enable_pooled_soft_tokens(mix_start_p=, mix_end_p=, mix_total_calls=)` —
+  `_compact_pooled_soft_tokens` anneals off its own per-rank call counter and prints the SAME
+  `[pooled-kv] … p_full=` line the hook prints, but **only when no keep hook is installed**, so the
+  curriculum can never be applied twice on a gold-aware arm.
+* `train_ctc_suite.py` wires the flags through, records them in the run's `config.json`, and now
+  **`ap.error`s at parse time** if the flags are passed anywhere they would be ignored (a
+  non-`softtoken` variant, `--st-mix-anneal-frac` with both probabilities 0, a non-positive frac).
+  The silent no-op that produced `kvgbmix` is no longer reachable.
+* Test: `src/test/nn/attention/pooled_keep_mix_curriculum_test.py` (CPU, 15 cases), parametrized
+  over `gold_blind` True/False and two call indices.
+
+**Proof the curriculum is live in a job: the training log prints `[pooled-kv] call#N gold-blind:
+… p_full=` lines.** `kvgbmix` printed none — that absence *is* the signature of the old bug, and it
+is the first thing to check on any future mixing arm.
+
+**gen-4c arms, launched 2026-09-14 19:48–19:50 PDT** by the orchestrator (restarted with
+`DS64_GEN=3 DS64_NGPU=4 DS64_CLUSTER="ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale"`), 4 GPUs
+each, priority **urgent**, workspace `ai2/flex2` (unallocated), budgets 16M/32M pinned via
+`ARM_BUDGETS`:
+
+| arm | flags | question |
+|---|---|---|
+| `xh2mix17` | `--st-gold-blind --st-keep-prob 0.1667 --st-header-stop-id 5491 --st-header-stop-count 1 --st-mix-start-p 0.5 --st-mix-end-p 0.0 --st-mix-anneal-frac 0.5` | The third `xh2` arm §9 could not launch. If xhdr's collapse is story **(b)**, the uncompressed rows are exactly what keeps SGD out of the "sample 3 ids from the visible list" basin long enough to find the content-grounded one. Under **(a)** the CE still plateaus at ≈0.48. |
+| `kvgbmix2` | `--st-gold-blind --st-keep-prob 0.5 --st-mix-start-p 0.5 --st-mix-end-p 0.0 --st-mix-anneal-frac 0.5` | The control, and the arm `kvgbmix` was *supposed* to be: no header, curriculum only. Its twin `kvgb50` (keep 1/2, no mixing) is the parity arm, so this isolates what the curriculum alone buys on an arm that already works. |
+
+| run | Beaker | steps |
+|---|---|---|
+| `ds64-outlier-xh2mix17-b128f3-u16M` | `01M2HFEZNF70K9FG444617A6XS` | 28 |
+| `ds64-outlier-xh2mix17-b128f3-u32M` | `01M2HFFVZVHBM5CTSQT17JG7XE` | 56 |
+| `ds64-outlier-kvgbmix2-b128f3-u16M` | `01M2HFGXHQ9H6FGMB19S9RB921` | 28 |
+| `ds64-outlier-kvgbmix2-b128f3-u32M` | `01M2HFHW4KP174Y2MA13CVD162` | 56 |
+
+wandb group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/ds64-q35-4b
+
+**CONFIRMED LIVE 2026-09-15 03:50 UTC** in `ds64-outlier-xh2mix17-b128f3-u16M`
+(`01M2HFEZNF70K9FG444617A6XS`), the first gen-4c job to start:
+
+    [ctc-suite] softtoken: header_stop_id=5491 (count 1) ... gold_blind=True keep_prob=0.1667 mix=(0.5->0.0 over 464/928 calls)
+    [pooled-kv] call#1 gold-blind: B=1 n_docs<=57  keep_prob=0.1667 pooled_docs=50 p_full=0.50 mixed=0
+    [pooled-kv] call#1 gold-blind: B=1 n_docs<=387 keep_prob=0.1667 pooled_docs=0  p_full=0.50 mixed=1
+
+Two ranks, same call index: one row pooled 50 of 57 documents, the other was promoted to fully real
+(`pooled_docs=0 mixed=1`). That is the curriculum firing on a `--st-gold-blind` arm -- the thing
+`kvgbmix` never did.
+
+**`ARM_MICRO` is 1 for both, NOT 2** — a deliberate deviation from the other `xh2` arms. A row the
+curriculum promotes to uncompressed is its FULL original length, and `microbatch_sort_pad_id` puts
+the 56k rows together, so micro 2 would be ~112k tokens in one micro-batch: ~1.7x the dense arm's
+65536 and a likely OOM. `kvgb50` (keep 1/2, no mixing) is already at micro 1. Raise it only with a
+memory measurement in hand.
+
+### Trap 10: the running orchestrator picks up `soft_arms.json` live but NOT `launch_ds64.py`
+
+Section A2 re-reads `soft_arms.json` from disk every cycle, so a new arm name is seen within 5
+minutes — but `budgets_for`, `ARM_BUDGETS`, `ARM_MICRO` and `ARM_EXTRA` were imported into the
+*running* process at startup and are frozen there. Adding an arm to `soft_arms.json` without
+restarting therefore launches it on the TASK's budget grid, which for outlier is
+`4M, 8M, 16M, 32M, 64M, 128M` — including the 4M/8M one-step runs §8 exists to prevent. **Edit
+`soft_arms.json` only after the orchestrator is stopped**, and restart it to pick up the launcher.
+(Here: killed by pid — never `pkill -f` — at 19:45, one cycle boundary before it would have fired.)
+Before restarting, simulate: load the state + a fresh `launch_ds64` and print what sections A/A2/B/C
+would do. This restart's simulation showed exactly the 4 new runs, no `xhdr*` resurrection, and
+`done`/`finishing` already false.
+
 ## 10. fast2k: a <1 h screening loop at 2k (2026-09-14)
 
 `debug/ds64_fast2k/` — **read its README first**. Screens a soft-token recipe on **2k rows only**
@@ -740,3 +817,35 @@ Data build (tokenize-only gantry job, no GPU, ~90 s; slices the EXISTING ds64 2k
 `TASK=outlier bash debug/ds64_fast2k/build_fast2k_data_beaker.sh` → weka `ds64/fast2k/{arms,shards}`.
 Shards: `outlier_f2M` / `_f4M` / `_f8M`, `max_example_len` 2949, p50 2190.
 wandb group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f2k-q35-4b
+
+**Trap 11 (2026-09-14 21:25) — never edit `orchestrator_ds64_state.json` while the orchestrator runs.** It
+keeps state in memory and rewrites the file every cycle, so a hand-latched `FAILED` is overwritten, and a
+job you `beaker job cancel` comes back as `rc=1` → *relaunched*. Procedure: kill by pid → edit state →
+cancel every live job of the run's current experiment (`ex` may have changed after a relaunch) → restart.
+
+**First sweep, 2026-09-14 (outlier, 4B, 7 arms, 7.8 GPU-hours total, 20–42 min per arm).**
+Dense anchors 2M/4M/8M: `0.954 @ 48.5 PF | 0.987 @ 98.4 | 0.996 @ 196.9`. Soft arms at 4M:
+
+| arm | PF | ×dense | CE final (floor 0.390) | f1 2k |
+|---|---|---|---|---|
+| kvgb50 | 56.3 | 0.57 | 0.264 | 0.882 |
+| xhdr50 (header-real, keep 1/2) | 57.4 | 0.58 | 0.275 | **0.895** |
+| xhdr17 | 27.3 | 0.28 | **0.408 = floor** | 0.234 |
+| xhdr17-warm (from finished kvgb50) | 27.3 | 0.28 | **0.386 = floor** | 0.236 |
+
+1. **Both signals separate the known-good `kvgb50` from the known-collapsed `xhdr17`**, and the CE
+   verdict lands before the eval even starts. It reproduces ds64's own 2k rung (`xhdr17` 0.23,
+   `kvgb50` ≈0.87) at ~1/14 the compute.
+2. **Header-real does NOT collapse at keep 1/2** — `xhdr50` 0.895 is indistinguishable from its
+   header-free twin `kvgb50` 0.882 at the same FLOPs. §8's "never pair `--st-header-stop-id` with
+   `--st-gold-blind` when the answer is drawn from the header" is a **low-keep** rule, not an
+   unconditional one: with half the bodies real, content supervision outcompetes the copyable id.
+   This is the `xh2k50` question, answered in ~40 min of GPU.
+3. **The collapse is not a basin/optimization artifact.** `xh2warm17`'s hypothesis fails at 2k:
+   warm-starting keep-1/6 header-real from the *finished* `kvgb50` checkpoint still falls all the
+   way back to the guess policy (0.236, CE 0.386).
+4. At 2k dense is near ceiling (0.954→0.996) so every matched-FLOP delta is negative — consistent
+   with outlier being a parity task. On a task where dense saturates at 2k, use fast2k as a kill
+   filter (does it learn, at what FLOP ratio), not as a matched-FLOP contest.
+
+⚠ All 2k only — `kvgb50` and `xhdr50` look equivalent here; the ladder is what decides 32k.
