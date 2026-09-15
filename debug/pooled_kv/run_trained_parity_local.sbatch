@@ -50,17 +50,28 @@ mkdir -p "$WORKDIR"
 
 echo "running on $THIS_NODE, checkpoints staged on $SRC_NODE (waiting up to ${WAIT_MAX_S}s)"
 WAITED=0
+BOOTSTRAPPED=0
 while true; do
-  # bootstrap: local /data copy missing but the SRC_NODE (e.g. horton) already has it -> one-time
-  # bulk cp via /net (never repeated job I/O -- this loop only fires the copy once).
-  SRC_CK=$(ls -d "/net/$SRC_NODE/data/prasann/ckpts/$CKPT_NAME"*/model_and_optim 2>/dev/null | sort -V | tail -1)
-  if [ -n "$SRC_CK" ] && [ ! -e "$CKPT_ROOT"*/model_and_optim ] 2>/dev/null; then
-    SRC_RUN=$(dirname "$SRC_CK")
-    DST_RUN="/data/prasann/ckpts/$(basename "$SRC_RUN")"
-    if [ ! -d "$DST_RUN/model_and_optim" ]; then
-      echo "bootstrap: copying $SRC_RUN -> $DST_RUN (one-time, $(date +%T))"
+  # bootstrap: local /data copy missing but SRC_NODE (e.g. horton) has a COMPLETE copy -> rsync
+  # via /net (one bulk read, not repeated job I/O). Completeness gate = SRC's own .metadata file
+  # (the distributed checkpoint's own completion sentinel -- a transfer agent can still be mid-copy
+  # even once the run dir and config.json exist, so config.json alone is NOT a safe gate here; a
+  # premature `cp -r` silently grabs a PARTIAL file set and poisons the local dir since it then
+  # "exists". rsync -a is idempotent, so retry it every iteration until SRC is complete -- cheap
+  # no-op once nothing changed).
+  if [ "$BOOTSTRAPPED" -eq 0 ]; then
+    SRC_RUN="/net/$SRC_NODE/data/prasann/ckpts/$CKPT_NAME"
+    if [ -f "$SRC_RUN/model_and_optim/.metadata" ] && [ -f "$SRC_RUN/config.json" ]; then
+      DST_RUN="/data/prasann/ckpts/$CKPT_NAME"
+      echo "bootstrap: rsyncing $SRC_RUN -> $DST_RUN ($(date +%T))"
       mkdir -p "$DST_RUN"
-      cp -r "$SRC_RUN"/. "$DST_RUN"/ && echo "bootstrap copy done $(date +%T)"
+      rsync -a "$SRC_RUN"/ "$DST_RUN"/ && echo "bootstrap rsync done $(date +%T)"
+      # verify completeness locally too before trusting it (rsync over /net can still be interrupted)
+      if [ -f "$DST_RUN/model_and_optim/.metadata" ]; then
+        BOOTSTRAPPED=1
+      else
+        echo "bootstrap rsync incomplete (no local .metadata yet), will retry"
+      fi
     fi
   fi
   CK=$(ls -d "$CKPT_ROOT"*/model_and_optim "$CKPT_ROOT"*/step*/model_and_optim 2>/dev/null | sort -V | tail -1)
