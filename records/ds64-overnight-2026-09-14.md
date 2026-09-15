@@ -333,3 +333,54 @@ length-scaling:
   is rebuilt from the arm's own TRAINING shard, verified bit-identical to the training job's (1244 ids from
   20001129 tokens), and `--trained-parity` keeps the checkpoint's projector (`max|w_out| = 0` => identity).
   Commits 3c053b656 / 6b48341e7. Writeup + results: `records/outlier-cc00-evaltime-probe.md`.
+- 09-15 11:25 `--st-header-extra-tokens K` shipped (chunked_mask.py mark_doc_headers_free; slot excludes freed tokens
+  automatically; 5 CPU tests; hunks landed in b69674dd4 via a git-index race with a concurrent commit, formatting fix
+  83e387c7d; pushed tree verified). Arms ck08/ck16/ck32 defined in launch_ds64.py (uncommitted), NOT launched — gated on
+  the frozen real-token hunt (which k, if any, gives frozen-model parity). Decoded K=8 row:
+  'Document [1]: in his Gibson Motorsport-prepared Holden<SLOT>'.
+- 09-15 11:40 Trained cc00-128M eval-time parity (⚠240 rows/144 gold): 2k FULL genF1 0.750 vs OWN-construction 0.778 (parity,
+  reads slots: R@gold_pooled 0.78 vs 0.24 plain slot); 8k FULL 0.229 vs OWN 0.125 (digit-CE 0.63 vs 0.99) — soft is WORSE
+  than full at 8k, no parity; 32k (job mid-run, 50/120 rows) FULL 0.000 vs OWN 0.042 — both fail (the trained model is far
+  below dense at 32k anyway). Gold-real oracle D hurts the keep-0 model at every rung (distribution shift). Conclusion:
+  cc00's slot reading does not scale with doc count (13 docs ok, 56 not). Frozen-model hunts (real-token, saliency, preview)
+  are the live routes; realtoken 32k job queued, saliency probe launching.
+- 09-15 11:50 User guidance: outlier needs HARD NEGATIVES preserved in the kept context (ambiguous docs); uniform per-doc k
+  and random-doc keeps can starve them; the gradient probe should first be used as a DIAGNOSTIC (where does saliency mass
+  go: gold vs non-gold vs headers; concentration over docs; token types; correlation with embedding ambiguity; right vs
+  wrong rows). Actions: realtoken hunt += margin{M} (embedding-only ambiguity keep), margin+first-k, hardneg oracle, task
+  generator structure + measured hard-negative rate; saliency probe += row-level adaptive budget, diagnostic first;
+  fast8k agent: trim sweep, implement gold-blind `margin_keep` training mode (hold launch until frozen parity is shown).
+- 09-15 11:55 User's preferred keep rule: cluster docs by topic (cent_cmean vectors), keep EVERY doc in the C=3–5 smallest
+  categories REAL, pool the big categories (optionally one slot per pooled CATEGORY). Gold-blind, embedding-only, preserves
+  outliers + hard negatives by construction. Sent to the frozen hunt as `smallcat{C}` (priority construction, report rule
+  recall = fraction of gold in the kept set, compaction, ΔCE at 2k/8k/32k) and to the fast8k agent as training mode
+  `smallcat_keep` (`--st-keep-smallcat C`; arms sc3/sc5 defined, launch held until frozen parity is shown).
+- 09-15 12:00 User hypothesis on WHY gold-forcing collapsed: gold was the ONLY category kept WHOLE (all 3 outliers real)
+  while other categories got 1–2 random real docs → "complete real category" = gold signature (also explains the frozen
+  mixture effect). Refinement: keep gold, but every other kept doc's WHOLE category too. Actions: frozen probe += category-
+  completeness diagnostic on the old gold+1/3 construction, `smallcat{C}+decoy{D}`, and gold-aware `goldcats{K}` (gold whole
+  + K other whole categories); fast8k agent += training modes `smallcat_keep` (+decoy large cats) and `gold_plus_wholecats`
+  (`--st-keep-cats K`), categories never partial; arms sc3/sc5/gw3/gw5 defined, launch held for frozen parity.
+- 09-15 12:10 Task structure (records/outlier-realtoken-parity-probe.md §3b, read off the generators): a topic = one Wikipedia
+  article; majority articles sampled uniformly (no topical coherence, NO deliberate hard negatives); the 3 gold docs are one
+  further article; the outlier topic is by construction the STRICTLY SMALLEST category (every majority article ≥4 docs);
+  #majority topics ≈ 3/7/13/25 at 2k/8k/16k/32k; ~147 tok/doc. ⇒ `smallcat` is the task's generative rule read backwards:
+  rule recall (gold ∈ kept set) is the ceiling and the only failure mode is the clustering. Trained cc00-128M @32k final:
+  FULL 0.000 / own construction 0.042 — both fail; cc00 route closed for long rungs.
+- 09-15 19:15 **cc00 eval-time parity probe ANSWERED — the outlier gap is NOT eval-time distribution shift**
+  (`records/outlier-cc00-evaltime-probe.md`, 5 x 1-GPU jobs, ~2 GPU-h). Scoring `cc00-128M` twice per rung
+  (full real text vs its own training construction, same checkpoint): parity at **2k only**
+  (dCEdig +0.157, dF1 +0.028 at 9.5x compaction), then the SOFT side is the worse one --
+  dCEdig **+0.365 / +0.421 / +0.292** at 8k/16k/32k and genF1 **0.125 vs 0.229** at 8k. If the ladder loss
+  were distribution shift the soft side would be strong where full text is weak; it is the opposite, and the
+  gap WIDENS with document count. Controls: same construction with the PLAIN mean slot is at the k/n floor at
+  every rung (cent_cmean is worth +0.535 genF1 at 2k, +0.056 at 8k, +0.020 at 16k -- the readable slot bought
+  2k and nothing else); the gold-real ORACLE (gold bodies real, rest pooled) is WORSE than the pure-slot
+  construction at every rung (0.007 vs 0.125 at 8k, below the floor) -- a keep-0-trained reader cannot
+  integrate a real body next to slots, which closes the cheap exposure fix. `cc00-32M` has no parity at any
+  rung (+0.768 at 2k): 4x budget shrinks the 2k gap 4.9x and only halves the 8k+ gaps, from a level where both
+  inputs already sit on the floor. => Do NOT pursue exposure fixes or more cc00 budget; the outlier verdict
+  ("on the dense curve at best") stands, and the only live axis is per-document slot CAPACITY, which the
+  frozen-dense richer-slot probe already found hard (G=2/4 and enc2/enc4 rejected). Worth 20 GPU-min:
+  run `--trained-parity` on `occ00` (oolong keep 0, same slot, currently a 3.6x Pareto win) to check that win
+  is slot reading and not an eval-format artefact.
