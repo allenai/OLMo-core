@@ -251,6 +251,43 @@ The trends from 2k → 8k all continue, and two of them sharpen decisively:
 * **Headers take 0.217 of all attention at 32k** — more than every document body combined (0.286 ×
   0.76 excluded) and rising with n (0.167 → 0.190 → 0.217).
 
+### 5f. CONCENTRATION vs n — does saliency sparsify as the corpus grows? **No.**
+
+The hypothesis worth killing explicitly: at 32k the model might consult far fewer of the ~219
+documents than the ~80 % it consults at 8k, which would make a "keep a few documents" construction
+viable. It does not.
+
+| rung | docs/row | gold share of docs | **n50** | **n50/n** | **n90** | **n90/n** | AUC(gold) attn | AUC(gold) grad | gold share of doc-body mass (attn) | s/tok gold ÷ non-gold (attn) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2k | 13.4 | 22 % | 4.41 | 0.330 | 11.22 | **0.840** | 0.934 | 0.829 | 41 % (1.9×) | 2.4× |
+| 8k | 56.3 | 5.4 % | 15.86 | 0.282 | 44.61 | **0.793** | 0.964 | 0.875 | 19 % (3.5×) | 4.0× |
+| 32k | ~219 | 1.4 % | 53.08 | 0.242 | 164.96 | **0.753** | 0.965 | 0.925 | 9.8 % (7.0×) | 7.4× |
+
+(`attnlast`, the last 4 softmax layers, is the most concentrated variant and still only reaches
+`n90/n` 0.784 → 0.713 → 0.677. `grad` tracks `attn` within 0.01 on both fractions at every rung.)
+
+Read it as two facts pulling in opposite directions:
+
+* **In RELATIVE terms concentration barely moves**: `n90/n` 0.840 → 0.793 → 0.753 across a 16×
+  increase in document count. Fitting `n90 ∝ n^α` over the three points gives **α ≈ 0.96** — the
+  number of documents carrying 90 % of the mass grows very nearly *linearly* with n (11 → 45 → 165).
+  Saliency does not sparsify; it dilutes.
+* **In TARGETING terms the model gets much better with n**: gold's over-representation in doc-body
+  mass rises 1.9× → 3.5× → **7.0×**, per-token attention on gold vs the rest 2.4× → 4.0× → **7.4×**,
+  and AUC(gold) 0.934 → 0.964 → 0.965 for attention and 0.829 → 0.875 → **0.925** for the gradient.
+
+So the frozen model is *increasingly* good at saying **which** documents matter, while needing
+*proportionally as many* of them to answer. That is precisely why a per-document real-token budget
+(§5d) is the live idea and a document-selection scheme is not — and it is the reason the row-level
+allocator underperforms at 2k despite correctly concentrating on gold: concentration is not the
+lever, per-document detail is.
+
+**Caveat.** `n50`/`n90` are computed on the saliency *distribution*, which measures where signal
+flows in a model answering correctly — not the minimum set that would suffice. A causal ablation
+(drop the bottom-mass documents and re-score) would bound the latter; it is not run here. §5g is the
+cheap calibration instead: the same measurement on a task whose answer provably depends on 2–3
+documents.
+
 ### 5c. What this implies for the constructions
 
 1. **A per-document attention BUDGET is the signal, not the per-token identity.** AUC(gold) 0.93–0.97
