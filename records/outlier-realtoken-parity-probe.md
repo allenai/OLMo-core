@@ -405,24 +405,30 @@ separate 26 Wikipedia topics at n = 220.
 
 | quantity | 2k (n = 22) | 8k (n = 55) | 32k (n = 220) |
 |---|---|---|---|
-| clusters found / true topics | 3.73 ± 0.07 / ≈ 4 | 7.90 ± 0.05 / ≈ 8 | (clustering collapses) |
-| smallest / largest cluster | 2.77 / 8.83 | 1.90 / 12.75 | — |
-| **`gold_cat_purity`** (all 3 gold in one cluster) | **1.000 ± 0.000** | **1.000 ± 0.000** | — |
-| **`gold_in_smallest`** | 0.521 ± 0.073 | **0.250 ± 0.063** | — |
-| cos(gold, centroid) | −0.271 ± 0.047 | −0.024 ± 0.031 | — |
-| cos(other, centroid) | +0.087 ± 0.009 | +0.033 ± 0.003 | — |
-| **`hn_rate`** | 0.708 ± 0.066 | **1.000 ± 0.000** | — |
-| `oracle_cosR` ("3 lowest cosines are the outliers") | 0.396 ± 0.063 | **0.028 ± 0.017** | — |
-| **`gold_only_full`** under `gpr33` (the shortcut signature) | **0.708** | **0.583** | — |
-| `gold_only_full` under `goldonly` | 0.708 | 0.771 | — |
-| `gold_only_full` under `smallcat3` | 0.000 | 0.000 | — |
+| clusters found / true topics | 3.73 ± 0.07 / ≈ 4 | 7.90 ± 0.05 / ≈ 8 | 28.67 ± 0.07 / ≈ 26 |
+| smallest / largest cluster | 2.77 / 8.83 | 1.90 / 12.75 | 1.04 / 18.71 |
+| **`gold_cat_purity`** (all 3 gold in one cluster) | **1.000 ± 0.000** | **1.000 ± 0.000** | **1.000 ± 0.000** |
+| **`gold_in_smallest`** | 0.521 ± 0.073 | **0.250 ± 0.063** | **0.000 ± 0.000** |
+| cos(gold, centroid) | −0.271 ± 0.047 | −0.024 ± 0.031 | **+0.007 ± 0.026** |
+| cos(other, centroid) | +0.087 ± 0.009 | +0.033 ± 0.003 | +0.027 ± 0.002 |
+| **`hn_rate`** | 0.708 ± 0.066 | **1.000 ± 0.000** | **1.000 ± 0.000** |
+| `oracle_cosR` ("3 lowest cosines are the outliers") | 0.396 ± 0.063 | **0.028 ± 0.017** | 0.014 ± 0.010 |
+| **`gold_only_full`** under `gpr33` (the shortcut signature) | **0.708** | **0.583** | **0.167** |
+| `gold_only_full` under `goldonly` | 0.708 | 0.771 | 0.312 |
+| `gold_only_full` under `smallcat3` | 0.000 | 0.000 | 0.000 |
 
 The cosine margin between gold and non-gold **shrinks by an order of magnitude from 2k to 8k**
 (0.358 → 0.057 in cos units), the accidental hard-negative rate goes to **1.000**, and the oracle
 cosine rule drops from 0.396 to 0.028. The clustering keeps the three gold documents together
 perfectly at both rungs (`gold_cat_purity` 1.000) but increasingly fails to make their cluster the
 *smallest* one (0.521 → 0.250). That single quantity is the whole reason the category rules fade
-with length.
+with length: at n = 220 the clustering still puts the three gold documents together perfectly
+(`gold_cat_purity` 1.000) but **never** makes their cluster the smallest one
+(`gold_in_smallest` 0.000 ± 0.000, 48 rows), and the cosine margin has inverted
+(gold +0.007 vs other +0.027). Note also that **the gold-forcing shortcut is itself a
+short-context phenomenon** — `gold_only_full` under `gpr33` falls 0.708 → 0.583 → 0.167 from 2k to
+32k — so "gold-forcing taught the model a whole-category shortcut" explains the 2k/8k arms far
+better than the long ones.
 
 ## 5e. Verdict
 
