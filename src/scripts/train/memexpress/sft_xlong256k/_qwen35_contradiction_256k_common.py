@@ -77,7 +77,8 @@ def build_contradiction_experiment(cli_context: CliContext, *, arm: str) -> Expe
         mixer.name = AttentionType.fast_compressive_landmark
         mixer.backend = AttentionBackendName.flash_2
         mixer.mem_freq = mem_freq
-        mixer.num_landmarks = num_landmarks
+        assert num_landmarks == 1  # fast_compressive_landmark fixes this internally
+        mixer.num_landmarks = None  # only multi/sparse variants accept this model option
         mixer.gate_temperature = None  # disabled in the CPT checkpoint
         config.dataset = [
             LandmarkPackingInstanceSourceConfig(

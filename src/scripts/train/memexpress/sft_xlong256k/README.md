@@ -111,3 +111,18 @@ Checkpoints: `/weka/oe-training-default/ai2-llm/checkpoints/amandab/<run-name>/`
 Both replicas of each submitted job were verified as 8 GPUs, urgent, minRuntime=1h.
 The earlier minRuntime=0 submissions (`01M2H8XM0BKSANRMJHE8N2SPBD` and
 `01M2H8XRVAKKZQBB500VB1FN34`) were canceled before starting, following the runtime change.
+
+
+### Compressive startup fix (2026-09-15)
+
+The first compressive job failed before loading weights: the shared builder passed
+`num_landmarks=1` to `fast_compressive_landmark`, which rejects that option because it
+fixes the count at one internally. Removed the model option; the packer still explicitly
+inserts one landmark every 63 content tokens. CPT geometry, data, epochs, parallelism,
+LR, and strict weights-only loading are unchanged.
+
+Validation now actually constructs both attention modules on the meta device. The
+regression test is `src/test/scripts/contradiction_256k_config_test.py`; CPU prep now
+performs this construction too. The old `dry_run` only counted parameters and therefore
+missed the invalid model option. Dense was preempted after one hour, automatically
+resumed, and reached step 414/1005 in the inspected logs; it needs no replacement.
