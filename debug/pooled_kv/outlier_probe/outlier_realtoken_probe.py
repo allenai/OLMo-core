@@ -378,10 +378,20 @@ def doc_cent_vectors(model, x, cid, n_docs, stop_mask):
     return v.float().cpu().numpy(), present.cpu().numpy()
 
 
-def avg_linkage_clusters(V, present, kmax=12):
-    """Average-linkage agglomerative clustering on COSINE distance, cut at the largest relative
-    gap in the merge-distance sequence (parameter-free elbow) among cuts leaving 2..``kmax``
-    clusters.
+def avg_linkage_clusters(V, present, kmax=12, rule="nover8", min_size=4, big_frac=0.6):
+    """Average-linkage agglomerative clustering on COSINE distance.
+
+    Two cut rules:
+
+    * ``rule="gap"`` -- the largest relative gap in the merge-distance sequence among cuts leaving
+      2..``kmax`` clusters (parameter-free, but it over-splits on real embeddings: a Wikipedia
+      article's chunks are not one tight ball, so the elbow lands on many tiny clusters and
+      "keep the smallest categories" then keeps most of the row).
+    * ``rule="nover8"`` (default) -- use the task's own structure instead (record section 3b): at
+      rung ``n`` there are about ``n/8`` topics, the outlier topic holds exactly 3 documents and
+      every majority topic holds at least 4.  Start at ``round(n/8) + 1`` clusters and merge
+      further until at least ``big_frac`` of the documents sit in clusters of size
+      >= ``min_size`` -- i.e. until the partition looks like the generator's.
 
     :returns: ``(clusters, n_clusters, merge_gap)`` with ``clusters`` a list of doc-id lists
         sorted by size ASCENDING.
@@ -415,13 +425,25 @@ def avg_linkage_clusters(V, present, kmax=12):
         members[i] = members[i] + members[j]
         parts.append([list(members[k]) for k in np.nonzero(alive)[0]])
     best_c, best_gap = 2, -1.0
-    for c in range(2, min(kmax, n - 1) + 1):
-        t = n - c          # merges applied to leave c clusters
-        nxt = ds[t] if t < len(ds) else ds[-1]
-        cur = ds[t - 1] if t >= 1 else 1e-9
-        gap = nxt / max(cur, 1e-9)
-        if gap > best_gap:
-            best_c, best_gap = c, gap
+    if rule == "nover8":
+        target = max(2, int(round(n / 8.0)) + 1)
+        best_c = min(target, n - 1)
+        for c in range(min(target, n - 1), 1, -1):
+            pp = parts[n - c - 1]
+            frac_big = sum(len(g) for g in pp if len(g) >= min_size) / float(n)
+            best_c = c
+            if frac_big >= big_frac:
+                break
+        t = n - best_c
+        best_gap = (ds[t] if t < len(ds) else ds[-1]) / max(ds[t - 1] if t >= 1 else 1e-9, 1e-9)
+    else:
+        for c in range(2, min(kmax, n - 1) + 1):
+            t = n - c          # merges applied to leave c clusters
+            nxt = ds[t] if t < len(ds) else ds[-1]
+            cur = ds[t - 1] if t >= 1 else 1e-9
+            gap = nxt / max(cur, 1e-9)
+            if gap > best_gap:
+                best_c, best_gap = c, gap
     part = parts[n - best_c - 1] if best_c < n else [[k] for k in range(n)]
     clus = [sorted(ids[k] for k in grp) for grp in part]
     clus.sort(key=len)
@@ -572,6 +594,13 @@ def main():
     ap.add_argument("--idf-rows", type=int, default=512)
     ap.add_argument("--header-stop-id", type=int, default=HEADER_STOP_ID)
     ap.add_argument("--dump-rows", type=int, default=8)
+    ap.add_argument("--cluster-rule", default="nover8", choices=["nover8", "gap"],
+                    help="how the agglomerative dendrogram is cut (see avg_linkage_clusters)")
+    ap.add_argument("--cluster-min-size", type=int, default=4)
+    ap.add_argument("--cluster-big-frac", type=float, default=0.6)
+    ap.add_argument("--table-every", type=int, default=16,
+                    help="print the running table (and rewrite the JSON) every N rows, so a "
+                         "killed job still leaves a usable partial result")
     a = ap.parse_args()
     HEADER_STOP_ID = int(a.header_stop_id)
     a.rungs = a.rungs or a.rung
@@ -695,8 +724,9 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
                   for fp, val in gold_table.items()}
     log(f"gold sidecar: {len(gold_table)} fingerprints")
 
-    KEYS = ("ce", "ce_digit", "gen_f1", "gen_em", "compaction", "tok_per_doc", "body_per_doc",
-            "n_docs", "sec", "kept_docs", "rule_recall", "n_cats_full", "gold_only_full")
+    KEYS = ("ce", "ce_digit", "top1", "gen_f1", "gen_em", "compaction", "tok_per_doc",
+            "body_per_doc", "n_docs", "sec", "kept_docs", "rule_recall", "n_cats_full",
+            "gold_only_full")
     corpus = {k: [] for k in ("n_clusters", "smallest", "largest", "gold_in_smallest",
                               "gold_cat_purity", "cos_gold", "cos_other", "hn_rate",
                               "oracle_cosR")}
@@ -765,7 +795,9 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
         present = np.zeros(n_docs, dtype=bool)
         if need_vecs:
             dv, present = doc_cent_vectors(model, x, cid_h, n_docs, stop_mask_t)
-            clus, n_cl, gap = avg_linkage_clusters(dv, present)
+            clus, n_cl, gap = avg_linkage_clusters(
+                dv, present, rule=a.cluster_rule, min_size=a.cluster_min_size,
+                big_frac=a.cluster_big_frac)
             cos_c = robust_centroid_cos(dv, present)
             cl_of = {d: ci for ci, grp in enumerate(clus) for d in grp}
             gsz = sorted(len(g) for g in clus)
@@ -790,6 +822,7 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
                     float(len(low3 & set(gold_docs)) / max(1, len(gold_docs))))
 
         do_gen = ri < a.gen_rows
+        full_arg = None
         for cond in conds:
             name = cond["name"]
             t_cfg = time.time()
@@ -916,6 +949,10 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
             r["ce"].append(float(F.cross_entropy(lg, targets)))
             if digit_sel.numel():
                 r["ce_digit"].append(float(F.cross_entropy(lg[digit_sel], targets[digit_sel])))
+            if cond["mode"] == "full":
+                full_arg = lg.argmax(-1)
+            if full_arg is not None:
+                r["top1"].append(float((lg.argmax(-1) == full_arg).float().mean()))
             r["compaction"].append(comp)
             r["tok_per_doc"].append(tok_doc)
             r["body_per_doc"].append(body_doc)
@@ -974,7 +1011,7 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
             model.eval()
         _OV["cid"] = None
 
-        if ri + 1 in (1, 2, 5, 10) or (ri + 1) % 25 == 0:
+        if ri + 1 in (1, 2, 5, 10) or (ri + 1) % max(1, a.table_every) == 0:
             el = sum(sum(acc[c["name"]]["sec"]) for c in conds)
             eta = el / (ri + 1) * (len(rows) - ri - 1) / 60.0
             log(f"row {ri + 1}/{len(rows)}  full CE {acc['full']['ce'][-1]:.3f}  ETA {eta:.0f} min")
@@ -1075,7 +1112,7 @@ def summarize(r, full):
 
 
 def table(acc, conds):
-    print(f"{'condition':14} {'CE':>7} {'dCE':>8} {'CEdig':>7} {'dCEdig':>8} {'genF1':>6} "
+    print(f"{'condition':14} {'CE':>7} {'dCE':>8} {'CEdig':>7} {'dCEdig':>8} {'top1':>6} {'genF1':>6} "
           f"{'dF1':>7} {'R@gp':>11} {'R@gr':>11} {'rule_R':>7} {'keptD':>6} {'tok/doc':>8} "
           f"{'compact':>8} {'s/row':>6}", flush=True)
     fu = acc.get("full")
@@ -1088,7 +1125,7 @@ def table(acc, conds):
         dcd, _ = paired(r["ce_digit"], fu["ce_digit"])
         df1, _ = paired(r["gen_f1"], fu["gen_f1"])
         print(f"{c['name']:14} {m('ce'):7.3f} {dce:+8.3f} {m('ce_digit'):7.3f} {dcd:+8.3f} "
-              f"{m('gen_f1'):6.3f} {df1:+7.3f} "
+              f"{m('top1'):6.3f} {m('gen_f1'):6.3f} {df1:+7.3f} "
               f"{m('hit_gold_pooled'):6.3f}[{len(r['hit_gold_pooled']):3d}] "
               f"{m('hit_gold_real'):6.3f}[{len(r['hit_gold_real']):3d}] "
               f"{m('rule_recall'):7.3f} {m('kept_docs'):6.1f} "
