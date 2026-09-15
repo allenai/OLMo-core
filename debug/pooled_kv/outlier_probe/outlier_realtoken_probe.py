@@ -1138,17 +1138,23 @@ def table(acc, conds):
 
 
 def verdict(summ):
-    """The deliverable: the cheapest construction with dCE <= 1 SE and genF1 within noise of FULL."""
-    print("\n=== PARITY CHECK (dCE <= 1 paired SE AND |dF1| <= 1 paired SE) ===", flush=True)
+    """The deliverable: the cheapest construction at parity with FULL.
+
+    Parity is judged on **CE(digits)** and **genF1**, never on mean answer CE: on the outlier
+    corpora the answer wraps its ids in a prose topic sentence, so mean CE is up to ~95 % prose and
+    every construction "beats" FULL on it (records/outlier-slot-probe.md Sec. 4).  A dCE-based rule
+    therefore passes constructions that get most of the answers wrong.
+    """
+    print("\n=== PARITY CHECK (dCE(digits) <= 1 paired SE AND |dF1| <= 1 paired SE) ===", flush=True)
     print(f"{'condition':13} {'dCE':>8} {'SE':>6} {'dCEdig':>8} {'SE':>6} {'dF1':>7} {'SE':>6} "
           f"{'tok/doc':>8} {'FLOPfrac':>8}  verdict", flush=True)
     rows = []
     for name, s in summ.items():
         if name in ("full", "_corpus"):
             continue
-        ok_ce = s["dce"] <= s["dce_se"] if s["dce_se"] == s["dce_se"] else False
+        ok_ce = s["dce_digit"] <= s["dce_digit_se"] if s["dce_digit_se"] == s["dce_digit_se"] else False
         ok_f1 = abs(s["dgen_f1"]) <= s["dgen_f1_se"] if s["dgen_f1_se"] == s["dgen_f1_se"] else False
-        v = "PARITY" if (ok_ce and ok_f1) else ("ce-ok" if ok_ce else ("f1-ok" if ok_f1 else ""))
+        v = "PARITY" if (ok_ce and ok_f1) else ("cedig-ok" if ok_ce else ("f1-ok" if ok_f1 else ""))
         print(f"{name:13} {s['dce']:+8.3f} {s['dce_se']:6.3f} {s['dce_digit']:+8.3f} "
               f"{s['dce_digit_se']:6.3f} {s['dgen_f1']:+7.3f} {s['dgen_f1_se']:6.3f} "
               f"{s['tok_per_doc']:8.1f} {s['flop_lin']:8.3f}  {v}", flush=True)
@@ -1158,8 +1164,10 @@ def verdict(summ):
         rows.sort()
         print(f"CHEAPEST PARITY: {rows[0][1]} at {rows[0][0]:.1f} real tokens/doc", flush=True)
     else:
-        print("NO construction reaches parity at this rung -- read the dCE-vs-tokens curve above.",
+        print("NO construction reaches parity at this rung -- read the dCEdig-vs-tokens curve above.",
               flush=True)
+    print("(judged on CE(digits) + genF1; mean answer CE is prose-dominated on outlier and is NOT "
+          "a parity criterion)", flush=True)
 
 
 if __name__ == "__main__":
