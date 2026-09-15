@@ -105,10 +105,22 @@ def log(m):
 # --------------------------------------------------------------------------------------------
 # conditions
 # --------------------------------------------------------------------------------------------
-def C(name, sel, k, mode="pool", slot="cent_cmean", header=True, keep="none", swap=False):
+def C(name, sel, k, mode="pool", slot="cent_cmean", header=True, keep="none", swap=False,
+      group=None, gk=0, decoy=0, catslot=False):
     """``sel`` in {none, first, firstlast, idf, idfspan, sent1, all}; ``mode`` in {full, pool, drop};
-    ``keep`` in {none (every doc pooled), gold (gold docs real), all (no pooling)}."""
-    return dict(name=name, sel=sel, k=k, mode=mode, slot=slot, header=header, keep=keep, swap=swap)
+    ``keep`` in {none (every doc pooled), gold (gold docs real), gpr (gold + 1/3 random),
+    all (no pooling)}.
+
+    ``group`` selects a DOCUMENT-LEVEL keep rule computed from the per-document ``cent_cmean``
+    vectors (gold-blind unless noted): ``smallcat`` (keep every doc in the ``gk`` smallest topical
+    clusters whole), ``smallcatle`` (every cluster of size <= ``gk``), ``margin`` (the ``gk`` docs
+    farthest from the row centroid PLUS the ``gk`` nearest the k-outlier decision boundary), or
+    ``hardneg`` (ORACLE: gold pooled, the ``gk`` non-gold docs closest to gold kept real).
+    ``decoy`` additionally keeps ``decoy`` random LARGE clusters whole, so "kept whole" no longer
+    implies "small".  ``catslot`` gives each pooled CLUSTER one slot instead of each pooled doc.
+    Documents chosen by a ``group`` rule are kept WHOLE; ``sel``/``k`` still applies to the rest."""
+    return dict(name=name, sel=sel, k=k, mode=mode, slot=slot, header=header, keep=keep, swap=swap,
+                group=group, gk=gk, decoy=decoy, catslot=catslot)
 
 
 def build_conditions():
@@ -128,8 +140,31 @@ def build_conditions():
     for k in (8, 16, 32):
         cs.append(C(f"fl{k}", "firstlast", k))
     cs.append(C("sent1", "sent1", 32))
+    # --- document-level keep rules over the per-doc cent_cmean vectors --------------------------
+    for cc in (1, 2, 3, 5):
+        cs.append(C(f"smallcat{cc}", "none", 0, group="smallcat", gk=cc))
+        cs.append(C(f"smallcat{cc}cat", "none", 0, group="smallcat", gk=cc, catslot=True))
+        for kk in (8, 16):
+            cs.append(C(f"smallcat{cc}f{kk}", "first", kk, group="smallcat", gk=cc))
+        for dd in (1, 2):
+            cs.append(C(f"smallcat{cc}d{dd}", "none", 0, group="smallcat", gk=cc, decoy=dd))
+    for ss in (2, 3, 5):
+        cs.append(C(f"smallcatle{ss}", "none", 0, group="smallcatle", gk=ss))
+    for mm in (3, 6, 10):
+        cs.append(C(f"margin{mm}", "none", 0, group="margin", gk=mm))
+        cs.append(C(f"margin{mm}f16", "first", 16, group="margin", gk=mm))
+    for mm in (6, 10):
+        cs.append(C(f"hardneg{mm}", "none", 0, group="hardneg", gk=mm))  # ORACLE (uses gold)
+    for kk in (2, 4):
+        # GOLD-AWARE: the gold document's whole topical category real, plus K other whole
+        # categories, everything else pooled -- the proposed training recipe.
+        cs.append(C(f"goldcats{kk}", "none", 0, group="goldcats", gk=kk))
+        cs.append(C(f"goldcats{kk}r", "none", 0, group="goldcatsr", gk=kk))
+    # the old gold_plus_random construction, as the mechanistic diagnostic
+    cs.append(C("gpr33", "none", 0, keep="gpr"))
     # swap controls (the kept REAL tokens of gold docs exchanged with random non-gold docs')
-    for base in ("first8", "first16", "first32", "first64", "idfspan16", "sent1"):
+    for base in ("first8", "first16", "first32", "first64", "idfspan16", "sent1",
+                 "smallcat3", "smallcat5"):
         b = next(c for c in cs if c["name"] == base)
         cs.append(dict(b, name=f"{base}_swap", swap=True))
     return cs
@@ -137,6 +172,21 @@ def build_conditions():
 
 PRESETS = {
     "all": None,  # everything
+    # the topical-category keep rules (the user's priority construction) + the cheapest
+    # real-token subsets to compare them against + the mechanistic diagnostic
+    "cat": ["full", "goldonly", "goldonly_cc", "gpr33", "cc00",
+            "smallcat1", "smallcat2", "smallcat3", "smallcat5", "smallcat3cat",
+            "smallcat5cat", "smallcat3f16",
+            "smallcatle2", "smallcatle3", "smallcat3d1", "smallcat3d2",
+            "margin3", "margin6", "margin10", "margin6f16", "hardneg6", "hardneg10",
+            "goldcats2", "goldcats4", "goldcats2r",
+            "first16", "first32", "first64", "smallcat3_swap"],
+    "cat32k": ["full", "goldonly", "gpr33", "cc00",
+               "smallcat1", "smallcat3", "smallcat5", "smallcat3cat", "smallcat3f16",
+               "smallcatle3",
+               "smallcat3d1", "margin6", "margin6f16", "hardneg6",
+               "goldcats2", "goldcats4",
+               "first32", "first64", "smallcat3_swap"],
     "core": ["full", "goldonly", "goldonly_cc", "cc00", "first8", "first16", "first32", "first64",
              "first16d", "first32d", "idf16", "idfspan16", "fl32", "sent1", "first32_swap"],
     "lean": ["full", "goldonly", "goldonly_cc", "cc00", "first16", "first32", "first64",
@@ -281,6 +331,164 @@ def _firstlast(body_pos, k):
         return list(body_pos)
     a, b = k // 2, k - k // 2
     return list(body_pos[:a]) + list(body_pos[n - b:])
+
+
+
+
+# --------------------------------------------------------------------------------------------
+# document-level keep rules over the per-document cent_cmean vectors
+# --------------------------------------------------------------------------------------------
+N_OUTLIERS = 3  # the task constant k -- knowledge of the TASK, not of this row's gold
+
+
+def doc_cent_vectors(model, x, cid, n_docs, stop_mask):
+    """``(n_docs, D)`` L2-normalised ``cent_cmean`` vectors and a ``present`` mask.
+
+    Same construction as ``olmo_core.nn.pooled_soft_token.apply_slot_mode(mode='cent_cmean')``:
+    the mean input embedding over the document's CONTENT tokens (stop set dropped), minus the row
+    centroid over the same tokens.  A document with no surviving content token falls back to its
+    plain mean.  Normalised here because everything downstream is a cosine.
+    """
+    emb = model.embeddings(x)[0]
+    cidl = cid.to(x.device).long()[0]
+    is_ctx = cidl >= 0
+    content = is_ctx & ~stop_mask[x[0]]
+    D = emb.shape[-1]
+    dev = x.device
+
+    def acc(mask):
+        idx = cidl[mask]
+        sums = torch.zeros(n_docs, D, dtype=torch.float32, device=dev)
+        cnts = torch.zeros(n_docs, dtype=torch.float32, device=dev)
+        if idx.numel():
+            sums.index_add_(0, idx, emb[mask].float())
+            cnts.index_add_(0, idx, torch.ones(idx.numel(), device=dev))
+        return sums, cnts
+
+    sums, cnts = acc(content)
+    s2, c2 = acc(is_ctx)
+    empty = cnts == 0
+    if bool(empty.any()):
+        sums[empty], cnts[empty] = s2[empty], c2[empty]
+    present = c2 > 0
+    means = sums / cnts.clamp(min=1.0).unsqueeze(-1)
+    centroid = sums.sum(0) / cnts.sum().clamp(min=1.0)
+    v = means - centroid
+    v = v / v.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+    return v.float().cpu().numpy(), present.cpu().numpy()
+
+
+def avg_linkage_clusters(V, present, kmax=12):
+    """Average-linkage agglomerative clustering on COSINE distance, cut at the largest relative
+    gap in the merge-distance sequence (parameter-free elbow) among cuts leaving 2..``kmax``
+    clusters.
+
+    :returns: ``(clusters, n_clusters, merge_gap)`` with ``clusters`` a list of doc-id lists
+        sorted by size ASCENDING.
+    """
+    ids = [int(i) for i in np.nonzero(present)[0]]
+    n = len(ids)
+    if n <= 2:
+        return [[i] for i in ids], n, 0.0
+    X = V[ids]
+    Dm = (1.0 - X @ X.T).astype(np.float64)
+    np.fill_diagonal(Dm, np.inf)
+    alive = np.ones(n, dtype=bool)
+    size = np.ones(n)
+    members = [[i] for i in range(n)]
+    ds, parts = [], []
+    for _ in range(n - 1):
+        sub = np.nonzero(alive)[0]
+        M = Dm[np.ix_(sub, sub)]
+        f = int(np.argmin(M))
+        i_, j_ = divmod(f, len(sub))
+        i, j = int(sub[i_]), int(sub[j_])
+        ds.append(float(M[i_, j_]))
+        new = (size[i] * Dm[i, :] + size[j] * Dm[j, :]) / (size[i] + size[j])
+        Dm[i, :] = new
+        Dm[:, i] = new
+        Dm[i, i] = np.inf
+        Dm[j, :] = np.inf
+        Dm[:, j] = np.inf
+        alive[j] = False
+        size[i] += size[j]
+        members[i] = members[i] + members[j]
+        parts.append([list(members[k]) for k in np.nonzero(alive)[0]])
+    best_c, best_gap = 2, -1.0
+    for c in range(2, min(kmax, n - 1) + 1):
+        t = n - c          # merges applied to leave c clusters
+        nxt = ds[t] if t < len(ds) else ds[-1]
+        cur = ds[t - 1] if t >= 1 else 1e-9
+        gap = nxt / max(cur, 1e-9)
+        if gap > best_gap:
+            best_c, best_gap = c, gap
+    part = parts[n - best_c - 1] if best_c < n else [[k] for k in range(n)]
+    clus = [sorted(ids[k] for k in grp) for grp in part]
+    clus.sort(key=len)
+    return clus, len(clus), float(best_gap)
+
+
+def robust_centroid_cos(V, present):
+    """Cosine of every document to a ROBUST majority centroid (mean of the 75% of documents
+    closest to the plain mean, renormalised).  ``nan`` for absent documents."""
+    ids = np.nonzero(present)[0]
+    X = V[ids]
+    c = X.mean(0)
+    c /= max(np.linalg.norm(c), 1e-6)
+    cs = X @ c
+    keep = ids[np.argsort(-cs)[: max(2, int(round(0.75 * len(ids))))]]
+    c = V[keep].mean(0)
+    c /= max(np.linalg.norm(c), 1e-6)
+    out = np.full(V.shape[0], np.nan, dtype=np.float64)
+    out[ids] = V[ids] @ c
+    return out
+
+
+def group_keep(cond, clus, cos_c, V, present, gold_row, n_docs, seed):
+    """The set of documents this condition keeps WHOLE, and (for ``catslot``) the pooled-cluster
+    map.  Returns ``(keep_set, cluster_of_doc)``."""
+    g = cond["group"]
+    cl_of = {d: ci for ci, grp in enumerate(clus) for d in grp}
+    keep = set()
+    if g in ("smallcat", "smallcatle", "goldcats", "goldcatsr"):
+        if g == "smallcat":
+            chosen = list(range(min(cond["gk"], len(clus))))          # clus is size-ascending
+        elif g == "smallcatle":
+            chosen = [ci for ci, grp in enumerate(clus) if len(grp) <= cond["gk"]]
+        else:
+            gold_cl = sorted({cl_of[d] for d in range(n_docs) if bool(gold_row[d]) and d in cl_of})
+            rest = [ci for ci in range(len(clus)) if ci not in set(gold_cl)]
+            if g == "goldcats":
+                extra = rest[: cond["gk"]]                             # the K smallest non-gold
+            else:
+                rng = np.random.RandomState(seed + n_docs)
+                extra = list(rng.permutation(rest)[: cond["gk"]]) if rest else []
+            chosen = gold_cl + [int(c) for c in extra]
+        if cond["decoy"]:
+            big = [ci for ci in range(len(clus)) if ci not in set(chosen)][::-1]  # largest first
+            rng = np.random.RandomState(seed + 7 * n_docs)
+            chosen = chosen + [int(c) for c in rng.permutation(big[: max(1, len(big))])[: cond["decoy"]]]
+        for ci in chosen:
+            keep |= set(clus[ci])
+    elif g == "margin":
+        ids = np.nonzero(present)[0]
+        cs = cos_c[ids]
+        order = ids[np.argsort(cs)]                                    # farthest from centroid first
+        M = cond["gk"]
+        far = list(order[:M])
+        srt = np.sort(cs)
+        tau = 0.5 * (srt[N_OUTLIERS - 1] + srt[N_OUTLIERS]) if len(srt) > N_OUTLIERS else srt.mean()
+        amb = list(ids[np.argsort(np.abs(cs - tau))][:M])
+        keep = {int(d) for d in far} | {int(d) for d in amb}
+    elif g == "hardneg":
+        gold = [d for d in range(n_docs) if bool(gold_row[d]) and present[d]]
+        non = [d for d in range(n_docs) if not bool(gold_row[d]) and present[d]]
+        if gold and non:
+            sc = (V[non] @ V[gold].T).max(1)
+            keep = {int(non[i]) for i in np.argsort(-sc)[: cond["gk"]]}
+    else:
+        raise ValueError(g)
+    return keep, cl_of
 
 
 _ID_RE = re.compile(r"\[\s*(\d+)\s*\]")
@@ -488,7 +696,16 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
     log(f"gold sidecar: {len(gold_table)} fingerprints")
 
     KEYS = ("ce", "ce_digit", "gen_f1", "gen_em", "compaction", "tok_per_doc", "body_per_doc",
-            "n_docs", "sec")
+            "n_docs", "sec", "kept_docs", "rule_recall", "n_cats_full", "gold_only_full")
+    corpus = {k: [] for k in ("n_clusters", "smallest", "largest", "gold_in_smallest",
+                              "gold_cat_purity", "cos_gold", "cos_other", "hn_rate",
+                              "oracle_cosR")}
+    need_vecs = any(c["group"] or c["catslot"] or c["keep"] == "gpr" for c in conds) or True
+    stop_ids = pst.get("slot_stop_ids") or []
+    stop_mask_t = torch.zeros(int(P.VOCAB), dtype=torch.bool, device="cuda")
+    if stop_ids:
+        _t = torch.tensor(stop_ids, dtype=torch.long, device="cuda")
+        stop_mask_t[_t[_t < int(P.VOCAB)]] = True
     acc = {c["name"]: {k: [] for k in KEYS} for c in conds}
     for c in conds:
         acc[c["name"]]["hit_gold_pooled"] = []
@@ -543,6 +760,35 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
             if len(diffs) == 1:
                 off = diffs.pop()
 
+        # --- per-document cent_cmean vectors, topical clusters, centroid cosines ---------------
+        dv = clus = cos_c = cl_of = None
+        present = np.zeros(n_docs, dtype=bool)
+        if need_vecs:
+            dv, present = doc_cent_vectors(model, x, cid_h, n_docs, stop_mask_t)
+            clus, n_cl, gap = avg_linkage_clusters(dv, present)
+            cos_c = robust_centroid_cos(dv, present)
+            cl_of = {d: ci for ci, grp in enumerate(clus) for d in grp}
+            gsz = sorted(len(g) for g in clus)
+            gold_cl = sorted({cl_of[d] for d in gold_docs if d in cl_of})
+            corpus["n_clusters"].append(float(n_cl))
+            corpus["smallest"].append(float(gsz[0]))
+            corpus["largest"].append(float(gsz[-1]))
+            corpus["gold_in_smallest"].append(
+                1.0 if (len(gold_cl) == 1 and gold_cl[0] == 0) else 0.0)
+            corpus["gold_cat_purity"].append(
+                float(np.mean([1.0 if (d in cl_of and cl_of[d] in gold_cl) else 0.0
+                               for d in gold_docs])) if gold_docs else float("nan"))
+            gm = [cos_c[d] for d in gold_docs if d < n_docs and present[d]]
+            om = [cos_c[d] for d in range(n_docs) if present[d] and not bool(gold_row[d])]
+            if gm and om:
+                corpus["cos_gold"].append(float(np.mean(gm)))
+                corpus["cos_other"].append(float(np.mean(om)))
+                corpus["hn_rate"].append(1.0 if min(om) < max(gm) else 0.0)
+                ids_p = [d for d in range(n_docs) if present[d]]
+                low3 = set(np.asarray(ids_p)[np.argsort(cos_c[ids_p])][:len(gold_docs)].tolist())
+                corpus["oracle_cosR"].append(
+                    float(len(low3 & set(gold_docs)) / max(1, len(gold_docs))))
+
         do_gen = ri < a.gen_rows
         for cond in conds:
             name = cond["name"]
@@ -551,27 +797,75 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
 
             # ---- build this condition's chunk-id override and (for _swap) the modified row ----
             sel_by_doc = None
+            keep_real = torch.ones(n_docs, dtype=torch.bool)
+            rule_rec, n_cats_full, gold_only_full = float("nan"), float("nan"), float("nan")
             if cond["mode"] == "full":
                 _OV["cid"] = None
                 x_use = x
             else:
-                base = cid_h.clone() if cond["header"] else cid0.clone()
+                # 1. which documents are kept WHOLE
+                keep_real = torch.zeros(n_docs, dtype=torch.bool)
+                if cond["keep"] == "gold":
+                    keep_real = gold_row.clone()
+                elif cond["keep"] == "gpr":  # gold + a random 1/3 of the non-gold documents
+                    keep_real = gold_row.clone()
+                    non = [d for d in range(n_docs) if not bool(gold_row[d])]
+                    rng = np.random.RandomState(a.seed + n_docs)
+                    for d in rng.permutation(non)[: int(round(len(non) / 3.0))]:
+                        keep_real[int(d)] = True
+                elif cond["group"]:
+                    ks, _ = group_keep(cond, clus, cos_c, dv, present, gold_row, n_docs, a.seed)
+                    for d in ks:
+                        keep_real[int(d)] = True
+                if gold_docs:
+                    rule_rec = float(np.mean([1.0 if (d < n_docs and bool(keep_real[d])) else 0.0
+                                              for d in gold_docs]))
+                if clus is not None:
+                    comp = [float(np.mean([1.0 if bool(keep_real[d]) else 0.0 for d in g]))
+                            for g in clus]
+                    n_cats_full = float(sum(1 for c in comp if c >= 1.0))
+                    gcl = sorted({cl_of[d] for d in gold_docs if d in cl_of})
+                    gold_only_full = float(
+                        bool(gcl) and all(comp[ci] >= 1.0 for ci in gcl)
+                        and n_cats_full == len(gcl))
+                # 2. the real-token subset of every POOLED document
+                bn = (cid_h[0] if cond["header"] else cid0[0]).numpy().copy()
                 sel_by_doc = []
                 for d in range(n_docs):
-                    if cond["keep"] == "gold" or cond["sel"] == "none":
-                        s = []
+                    if bool(keep_real[d]) or cond["sel"] == "none":
+                        sel = []
                     elif cond["sel"] == "firstlast":
-                        s = _firstlast(body_pos_by_doc[d], cond["k"])
+                        sel = _firstlast(body_pos_by_doc[d], cond["k"])
                     else:
-                        s = select_positions(cond["sel"], cond["k"], body_pos_by_doc[d],
-                                             body_ids_by_doc[d], idf, sent_end)
-                    sel_by_doc.append([int(p) for p in s])
-                    if s:
-                        base[0, torch.tensor(list(s), dtype=torch.long)] = -1
-                _OV["cid"] = base.cuda()
+                        sel = select_positions(cond["sel"], cond["k"], body_pos_by_doc[d],
+                                               body_ids_by_doc[d], idf, sent_end)
+                    sel = [int(q) for q in sel]
+                    sel_by_doc.append(sel)
+                    if sel:
+                        bn[sel] = -1
+                # 3. one slot per pooled CLUSTER instead of per pooled document
+                if cond["catslot"] and clus is not None:
+                    rep = {}
+                    for grp in clus:
+                        pooled = [d for d in grp if not bool(keep_real[d])]
+                        if len(pooled) > 1:
+                            r = min(pooled)
+                            for d in pooled:
+                                rep[d] = r
+                    if rep:
+                        m = np.arange(n_docs, dtype=bn.dtype)
+                        for d, r in rep.items():
+                            m[d] = r
+                        ctx = bn >= 0
+                        bn[ctx] = m[bn[ctx].astype(np.int64)]
+                _OV["cid"] = torch.as_tensor(bn)[None].cuda()
                 x_use = x
                 if cond["swap"]:
-                    x_use = swap_kept(x_cpu, sel_by_doc, gold_row, n_docs, a.seed).cuda()
+                    sw = sel_by_doc
+                    if not any(sw):  # a group rule keeps WHOLE documents: swap their bodies
+                        sw = [[int(q) for q in body_pos_by_doc[d]] if bool(keep_real[d]) else []
+                              for d in range(n_docs)]
+                    x_use = swap_kept(x_cpu, sw, gold_row, n_docs, a.seed).cuda()
 
             pst["header_stop_id"] = HEADER_STOP_ID  # always on: the patch returns _OV["cid"]
             pst["header_stop_count"] = HEADER_STOP_COUNT
@@ -589,7 +883,7 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
                 body_doc = float("nan")
                 x_in, ans_start_in, base_pos = x, ans_start, None
             elif cond["mode"] == "pool":
-                keep_mask = gold_row.clone() if cond["keep"] == "gold" else torch.zeros(n_docs, dtype=torch.bool)
+                keep_mask = keep_real.clone()
                 model.train()
                 model._pooled_keep_holder = PooledDocKeepHolder(keep_docs=keep_mask[None].clone())
                 cb = model._compact_pooled_soft_tokens(x_use, None, -100)[0]
@@ -602,7 +896,9 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
                 tok_doc = float(cb.input_ids.shape[1] - n_free_nondoc) / max(1, n_docs)
                 x_in, ans_start_in, base_pos = x_use, ans_start, None
             else:  # drop: the same real-token subset with NO slot, at ORIGINAL positions
-                kmask = (_OV["cid"][0] == -1)
+                ovn = _OV["cid"][0]
+                kr = keep_real.to(ovn.device)
+                kmask = (ovn == -1) | ((ovn >= 0) & kr[ovn.clamp(min=0).long()])
                 newidx = torch.cumsum(kmask.to(torch.long), 0) - 1
                 x_in = x_use[:, kmask]
                 base_pos = kmask.nonzero(as_tuple=True)[0]
@@ -614,7 +910,7 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
                 body_doc = float(np.mean([len(s) for s in sel_by_doc])) if sel_by_doc else 0.0
                 tok_doc = float(x_in.shape[1] - n_free_nondoc) / max(1, n_docs)
                 ans_start_in = int(newidx[ans_start])
-                keep_mask = torch.zeros(n_docs, dtype=torch.bool)
+                keep_mask = keep_real.clone()
 
             r = acc[name]
             r["ce"].append(float(F.cross_entropy(lg, targets)))
@@ -624,6 +920,12 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
             r["tok_per_doc"].append(tok_doc)
             r["body_per_doc"].append(body_doc)
             r["n_docs"].append(float(n_docs))
+            r["kept_docs"].append(float(int(keep_real.sum())) if cond["mode"] != "full" else float(n_docs))
+            if rule_rec == rule_rec:
+                r["rule_recall"].append(rule_rec)
+            if n_cats_full == n_cats_full:
+                r["n_cats_full"].append(n_cats_full)
+                r["gold_only_full"].append(gold_only_full)
 
             if keep_mask is None:
                 pooled_gold, real_gold = [], list(gold_docs)
@@ -683,14 +985,36 @@ def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
         print(f"  dump row {d['row']:3d} {d['cond']:10} true={d['true_ids']} pred={d['gen_ids']} {d['gen']!r}",
               flush=True)
 
+    print("\n=== CORPUS STRUCTURE (per-row means over the cent_cmean document vectors) ===",
+          flush=True)
+    for k, v in corpus.items():
+        if v:
+            mm, se = mean_se(v)
+            print(f"  {k:18} {mm:8.3f} +- {se:.3f}   (n={len(v)})", flush=True)
+    print("  gold_in_smallest = the gold documents are exactly the SMALLEST cluster; "
+          "hn_rate = some non-gold document sits farther from the centroid than a gold one;\n"
+          "  oracle_cosR = recall of a 'the k lowest-cosine documents are the outliers' rule.",
+          flush=True)
+    print("\n=== CATEGORY COMPLETENESS IN THE KEPT SET (the gold-forcing signature) ===", flush=True)
+    print(f"{'condition':14} {'rule_R':>7} {'n_cats_full':>12} {'gold_only_full':>15}", flush=True)
+    for c in conds:
+        r = acc[c["name"]]
+        if r["n_cats_full"]:
+            print(f"{c['name']:14} {np.mean(r['rule_recall']) if r['rule_recall'] else float('nan'):7.3f} "
+                  f"{np.mean(r['n_cats_full']):12.2f} {np.mean(r['gold_only_full']):15.3f}", flush=True)
+    print("gold_only_full = the gold document's category is the ONLY fully-real category in the "
+          "row (the shortcut signature).", flush=True)
+
     summ = {c["name"]: summarize(acc[c["name"]], acc["full"]) for c in conds}
+    summ["_corpus"] = {k: mean_se(v)[0] for k, v in corpus.items() if v}
     verdict(summ)
     out = {
         "task": "outlier", "rung": rung, "eval_size": len(acc["full"]["ce"]),
         "rows_loaded": len(rows), "gen_rows": min(a.gen_rows, len(rows)),
         "ckpt": a.resolved_ckpt, "ckpt_name": a.ckpt_name, "seed": a.seed,
         "header_stop_id": HEADER_STOP_ID, "fingerprint_misses": n_miss,
-        "conditions": summ,
+        "conditions": {k: v for k, v in summ.items() if k != "_corpus"},
+        "corpus_structure": summ.get("_corpus", {}),
         "construction": {c["name"]: {k: c[k] for k in ("sel", "k", "mode", "slot", "header", "keep", "swap")}
                          for c in conds},
         "per_row": {c["name"]: {k: v for k, v in acc[c["name"]].items() if k != "gen"} for c in conds},
@@ -751,9 +1075,9 @@ def summarize(r, full):
 
 
 def table(acc, conds):
-    print(f"{'condition':13} {'CE':>7} {'dCE':>8} {'CEdig':>7} {'dCEdig':>8} {'genF1':>6} "
-          f"{'dF1':>7} {'R@gp':>11} {'R@gr':>11} {'tok/doc':>8} {'body':>6} {'compact':>8} {'s/row':>6}",
-          flush=True)
+    print(f"{'condition':14} {'CE':>7} {'dCE':>8} {'CEdig':>7} {'dCEdig':>8} {'genF1':>6} "
+          f"{'dF1':>7} {'R@gp':>11} {'R@gr':>11} {'rule_R':>7} {'keptD':>6} {'tok/doc':>8} "
+          f"{'compact':>8} {'s/row':>6}", flush=True)
     fu = acc.get("full")
     for c in conds:
         r = acc[c["name"]]
@@ -763,12 +1087,12 @@ def table(acc, conds):
         dce, _ = paired(r["ce"], fu["ce"])
         dcd, _ = paired(r["ce_digit"], fu["ce_digit"])
         df1, _ = paired(r["gen_f1"], fu["gen_f1"])
-        print(f"{c['name']:13} {m('ce'):7.3f} {dce:+8.3f} {m('ce_digit'):7.3f} {dcd:+8.3f} "
+        print(f"{c['name']:14} {m('ce'):7.3f} {dce:+8.3f} {m('ce_digit'):7.3f} {dcd:+8.3f} "
               f"{m('gen_f1'):6.3f} {df1:+7.3f} "
               f"{m('hit_gold_pooled'):6.3f}[{len(r['hit_gold_pooled']):3d}] "
               f"{m('hit_gold_real'):6.3f}[{len(r['hit_gold_real']):3d}] "
-              f"{m('tok_per_doc'):8.1f} {m('body_per_doc'):6.1f} {m('compaction'):8.3f} "
-              f"{m('sec'):6.2f}", flush=True)
+              f"{m('rule_recall'):7.3f} {m('kept_docs'):6.1f} "
+              f"{m('tok_per_doc'):8.1f} {m('compaction'):8.3f} {m('sec'):6.2f}", flush=True)
 
 
 def verdict(summ):
@@ -778,7 +1102,7 @@ def verdict(summ):
           f"{'tok/doc':>8} {'FLOPfrac':>8}  verdict", flush=True)
     rows = []
     for name, s in summ.items():
-        if name == "full":
+        if name in ("full", "_corpus"):
             continue
         ok_ce = s["dce"] <= s["dce_se"] if s["dce_se"] == s["dce_se"] else False
         ok_f1 = abs(s["dgen_f1"]) <= s["dgen_f1_se"] if s["dgen_f1_se"] == s["dgen_f1_se"] else False
