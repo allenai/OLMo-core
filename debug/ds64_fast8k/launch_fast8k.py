@@ -131,14 +131,30 @@ DEFAULT_MICRO = 2       # gpus/micro across any pair that will be compared at ma
 WARM_FROM = {"kvgb50-warm": ("kvgb50", f"{TASK}-cc00-P1"),
              "cpi33-warm": ("cpi33", f"{TASK}-cc00-P1")}
 
-#: Which registered eval-side construction to score a trained arm against in ``parity`` mode.
-#: ``cc00`` (everything pooled, header real, cent_cmean) is run for EVERY arm as the common,
-#: maximal-compaction reference, so dCE is comparable across arms; an arm whose own training
-#: construction has a registered twin in outlier_slot_probe.ARMS also gets that.
-#: ⚠ There is no ``cc33`` condition registered, and registering one means editing
-#: debug/pooled_kv/ -- out of scope here -- so cpi33 is reported against cc00 only.
+# --- eval-time CE parity -----------------------------------------------------------------------
+# The soft construction the probe runs beside FULL real text, written as the TRAINER's own flags
+# with commas for spaces (outlier_slot_probe.py --construction; commas so the spec survives a
+# launcher that splits argv on whitespace).
+#
+# ⚠ These are the GOLD-BLIND analogues of the cpi arms, not their literal training construction:
+# parse_construction REFUSES --st-keep-frac, because the probe implements the gold-blind keep_prob
+# path and the gold-only keep, not the gold-sidecar policies. That is the right thing to measure
+# anyway -- at eval there is no gold sidecar, so "keep p of the bodies real, blind" is the
+# construction a cpi arm would actually be DEPLOYED under, and the pooled-set shortcut a cpi arm
+# could learn in training (see collect_fast8k.pooled_floor) is not available here either.
+_SLOT = "--st-header-stop-id,5491,--st-header-stop-count,1,--st-slot-mode,cent_cmean"
+CONSTRUCTIONS = {
+    # everything pooled -- the COMMON maximal-compaction reference, run for every arm so dCE is
+    # comparable across arms and across budgets
+    "cc00": f"--st-gold-blind,--st-keep-prob,0.0,{_SLOT}",
+    "gb17c": f"--st-gold-blind,--st-keep-prob,0.1667,{_SLOT}",
+    "gb33c": f"--st-gold-blind,--st-keep-prob,0.3333,{_SLOT}",
+    "gb50c": f"--st-gold-blind,--st-keep-prob,0.5,{_SLOT}",
+    "kvgb50": "--st-gold-blind,--st-keep-prob,0.5",     # plain mean slot, no header
+}
+#: arm -> the constructions to score it under. First entry is the one promoted into results.csv.
 PARITY_ARMS = {"dense": ["cc00"], "cc00": ["cc00"], "kvgb50": ["kvgb50", "cc00"],
-               "cpi17": ["cc17", "cc00"], "cpi33": ["cc00"], "cpi50": ["cc50", "cc00"]}
+               "cpi17": ["gb17c", "cc00"], "cpi33": ["gb33c", "cc00"], "cpi50": ["gb50c", "cc00"]}
 PARITY_RUNGS = os.environ.get("F8K_PARITY_RUNGS", "8k,32k")
 PARITY_ROWS = os.environ.get("F8K_PARITY_ROWS", "200")
 PARITY_GEN_ROWS = os.environ.get("F8K_PARITY_GEN_ROWS", "32")
@@ -290,8 +306,11 @@ def do_parity(args):
             if st.setdefault("parity", {}).get(key, {}).get("ex") and not args.force:
                 print(f"[skip] parity {key} already launched ({st['parity'][key]['ex']})")
                 continue
+            spec = CONSTRUCTIONS.get(cond, cond)
             extra = [
-                "--parity", "--arm", cond,
+                # --trained-parity implies --no-reset-projector and scores every rung in ONE
+                # process, so the 4B checkpoint is loaded once.
+                "--trained-parity", "--arm", "none", "--construction", spec,
                 "--rungs", args.parity_rungs, "--rows", args.parity_rows,
                 "--gen-rows", args.parity_gen_rows,
                 "--ckpt", f"{CKPTS}/{name}", "--ckpt-name", name,
@@ -300,12 +319,7 @@ def do_parity(args):
                 # the stop set MUST come from the TRAINING shard, or the eval-side cent_cmean slot
                 # is not the slot the arm trained with
                 "--slot-stop-shard", f"{SHARDS}/{r['task']}_g{r['budget']}",
-                "--header-stop-id", "5491",
             ]
-            if arm != "dense":
-                # a trained soft arm keeps its own pooled_projector; a dense checkpoint has none,
-                # so it must fall back to the identity (the probe's default).
-                extra.append("--no-reset-projector")
             cmd = [sys.executable, "-u", PROBE_LAUNCHER, "--cluster", EVAL_CLUSTER,
                    "--script", PROBE, "--gpus", "1", "--priority", "urgent",
                    "--extra", " ".join(extra)]
