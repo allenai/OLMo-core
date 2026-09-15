@@ -229,6 +229,101 @@ and corpus (`lmx-full-mixs160M-4b`, 24 rows) whose answer CE **is** ~95 % prose;
 reading is the one that holds up. Note `first16` already beats `goldonly` on every column while
 being **gold-blind** and cheaper (0.210 vs 0.282 compaction).
 
+### 5c. Replicate pairing, 2k — **COMPLETE, 48 rows**, the full construction set
+
+`lmx-full-mixs160M-4b` (frozen dense) on `outlier_wiki100w_n22_k3_eval_600.jsonl`, **eval_size = 48**
+(⚠ < 500; the SE of every Δ is printed beside it), 21.4 documents/row, `k/n` floor **0.140**,
+generation on the first 8 rows (24 gold documents — ⚠ genF1/R columns have SE ≈ 0.04–0.18).
+sneetches job `3552630`.
+
+**Corpus structure measured on these rows** (48 rows):
+
+| quantity | value |
+|---|---|
+| clusters found per row | 3.73 ± 0.07 (true majority topics ≈ 3 + the outlier topic) |
+| smallest / largest cluster | 2.77 ± 0.17 / 8.83 ± 0.19 documents |
+| **`gold_cat_purity`** | **1.000 ± 0.000** — all three gold documents always land in the SAME cluster |
+| **`gold_in_smallest`** | **0.521 ± 0.073** — but that cluster is the smallest only about half the time |
+| cos(gold, centroid) / cos(other, centroid) | **−0.271 ± 0.047** / **+0.087 ± 0.009** |
+| **`hn_rate`** | **0.708 ± 0.066** — in 71 % of rows some non-gold document sits farther from the centroid than a gold one |
+| `oracle_cosR` | 0.396 ± 0.063 — "the 3 lowest-cosine documents are the outliers" recovers 40 % of gold |
+
+So accidental hard negatives are **common** (71 % of rows) even though the generator never makes them
+on purpose, and the cosine margin between gold and non-gold is real but far from separating.
+
+| condition | CE | ΔCE (SE) | CE(dig) | ΔCE(dig) (SE) | top1 | genF1 | ΔF1 (SE) | rule_R | kept docs | tok/doc | compaction |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `full` | 1.804 | — | 0.053 | — | 1.000 | **0.825** | — | — | 21.4 | 146 | 1.000 |
+| `goldonly` | 1.396 | −0.400 (.024) | 0.280 | **+0.259** (.026) | 0.909 | **0.250** | −0.575 (.182) | 1.000 | 3.0 | 21.5 | 0.184 |
+| `goldonly_cc` | 1.328 | −0.483 | 0.301 | +0.296 (.027) | 0.908 | 0.375 | −0.450 (.165) | 1.000 | 3.0 | 21.5 | 0.184 |
+| `gpr33` (gold + 1/3 random) | 1.645 | −0.165 | 0.564 | +0.605 (.073) | 0.934 | 0.350 | −0.475 (.164) | 1.000 | 8.9 | 64.5 | 0.466 |
+| `cc00` (control) | 1.481 | −0.281 | 1.514 | +1.536 (.055) | 0.786 | 0.083 | −0.742 (.127) | 0.000 | 0 | 6.6 | 0.085 |
+| `smallcat1` | 1.595 | −0.193 | 1.323 | +1.212 (.067) | 0.839 | 0.208 | −0.617 (.165) | **0.528** | 2.6 | 24.8 | 0.205 |
+| `smallcat2` | 1.632 | −0.201 | 0.677 | +0.587 (.094) | 0.920 | 0.292 | −0.533 (.182) | 0.826 | 7.6 | 55.6 | 0.407 |
+| `smallcat3` | 1.661 | −0.128 | 0.145 | +0.213 (.067) | 0.979 | 0.500 | −0.325 (.181) | **0.951** | 14.9 | 106 | 0.739 |
+| `smallcat3cat` (slot/cluster) | 1.708 | −0.073 | 0.196 | +0.222 (.069) | 0.975 | 0.500 | −0.325 (.181) | 0.951 | 14.9 | 106 | 0.738 |
+| **`smallcat3f16`** | 1.703 | −0.090 | **0.063** | **+0.064** (.030) | 0.996 | **0.825** | **+0.000** (.038) | 0.951 | 14.9 | 111 | 0.770 |
+| `smallcatle3` | 1.558 | −0.227 | 1.062 | +1.047 (.063) | 0.871 | 0.208 | −0.617 (.165) | 0.708 | 2.9 | 26.1 | 0.214 |
+| `smallcat5`, `smallcat5cat`, `smallcat3d1/d2`, `goldcats4` | — | +0.000 | — | +0.000 | 1.000 | 0.825 | +0.000 | 1.000 | 21.4 | 146 | **1.000 (degenerate: they keep the whole row at n = 22)** |
+| `goldcats2` | 1.675 | −0.129 | 0.118 | +0.153 (.052) | 0.979 | 0.500 | −0.325 (.181) | 1.000 | 15.5 | 109 | 0.756 |
+| `goldcats2r` (random cats) | 1.752 | −0.064 | 0.114 | +0.039 (.018) | 0.993 | 0.775 | −0.050 (.050) | 1.000 | 18.9 | 130 | 0.901 |
+| `margin6` | 1.732 | −0.101 | 1.329 | +1.173 (.123) | 0.873 | 0.271 | −0.554 (.157) | 0.618 | 6.0 | 47.6 | 0.355 |
+| `margin6f16` | 1.639 | −0.188 | 0.278 | +0.271 (.047) | 0.947 | 0.637 | −0.188 (.137) | 0.618 | 6.0 | 59.1 | 0.431 |
+| `hardneg6` (ORACLE) | 1.946 | **+0.144** | 2.275 | +2.234 (.090) | 0.810 | 0.217 | −0.608 (.122) | 0.000 | 6.0 | 45.8 | 0.343 |
+| `first16` | 1.521 | −0.292 | 0.488 | +0.467 (.057) | 0.906 | 0.458 | −0.367 (.175) | — | 0 | 22.6 | 0.191 |
+| **`first32`** | 1.513 | −0.237 | 0.207 | +0.262 (.050) | 0.940 | **0.787** | **−0.038** (.080) | — | 0 | 38.6 | **0.296** |
+| `first64` | 1.593 | −0.164 | 0.120 | +0.170 (.055) | 0.962 | 0.775 | −0.050 (.050) | — | 0 | 70.6 | 0.507 |
+| `first64d` (no slot) | 1.632 | −0.147 | 0.179 | +0.172 (.050) | 0.972 | 0.738 | −0.087 (.058) | — | 0 | 69.6 | 0.501 |
+| `fl16` | 1.461 | −0.294 | 0.468 | +0.513 (.075) | 0.906 | 0.537 | −0.287 (.160) | — | 0 | 22.6 | 0.191 |
+| **`fl32`** | 1.522 | −0.283 | 0.267 | +0.204 (.052) | 0.950 | **0.800** | **−0.025** (.045) | — | 0 | 38.6 | **0.296** |
+| `sent1` | 1.540 | −0.265 | 0.833 | +0.705 (.090) | 0.870 | 0.617 | −0.208 (.131) | — | 0 | 24.1 | 0.201 |
+| `idfspan16` | 1.483 | −0.319 | 0.523 | +0.469 (.067) | 0.906 | 0.479 | −0.346 (.147) | — | 0 | 22.6 | 0.191 |
+| `smallcat3_swap` | 2.547 | +0.764 | 2.970 | +3.110 (.143) | 0.812 | **0.050** | −0.775 (.133) | 0.951 | 14.9 | 106 | 0.739 |
+| `first32_swap` | 2.439 | +0.637 | 3.223 | +3.203 (.126) | 0.790 | **0.000** | −0.825 (.122) | — | 0 | 38.6 | 0.296 |
+
+⚠ **Read the CE(digits) column, not CE.** On this corpus the answer is a prose sentence wrapping the
+ids, so mean answer CE is ~95 % prose and every construction "beats" `full` on it — the driver's own
+`PARITY` verdict therefore mislabels anything with negative ΔCE as `ce-ok`. The discriminating
+columns are ΔCE(digits) and ΔgenF1. (Fixed for future runs; the printed verdict line in these logs
+should be re-read with that substitution.)
+
+**1. A flat per-document token budget beats every category rule at equal cost.** At compaction
+0.296, `first32` and `fl32` reach genF1 0.787 / 0.800 against `full`'s 0.825 — ΔF1 −0.038 ± 0.080
+and −0.025 ± 0.045, i.e. **parity within noise**. `smallcat3` needs compaction 0.739 to reach only
+0.500, and `goldcats2` 0.756 for 0.500. Keeping categories WHOLE spends the whole budget on a few
+documents and leaves the rest unreadable.
+
+**2. The one place the category structure helps is as a *floor*, not a *replacement*.**
+`smallcat3f16` — whole small categories **plus** 16 real tokens on every pooled document — is the
+only construction that matches `full` on **both** ΔCE(digits) (+0.064 ± 0.030) and genF1 (0.825,
+ΔF1 +0.000) — but at compaction 0.770 it saves almost nothing. `margin6f16` shows the same shape
+more cheaply and less well (0.637 at 0.431).
+
+**3. The clustering, not the rule, is what limits `smallcat`.** `gold_cat_purity` is **1.000** — the
+three gold documents always land in one cluster — but `gold_in_smallest` is only **0.521**, so
+`smallcat1` has rule recall 0.528 and `smallcatle3` 0.708. Only at C = 3 does rule recall reach
+0.951, and by then the rule is keeping 15 of 21 documents. The generator's guarantee ("the outlier
+topic is strictly the smallest") is true of the *articles*; it is not recoverable from a
+mean-embedding clustering at this accuracy.
+
+**4. The gold-forcing signature is real and large.** Under the old `gpr33` construction the gold
+document's category is the **ONLY fully-real category** in **0.708** of rows (`goldonly`: 0.708
+likewise). Under `smallcat3` it is **0.000** — three categories are always complete — and under
+`smallcat1` 0.521. So the user's mechanism is confirmed: gold-forcing hands the model a
+"whole category ⇒ gold" shortcut in 7 of 10 rows, and the category rules remove it by construction.
+`smallcat3d1/d2` (decoys) would remove it too, but at n = 22 they degenerate to keeping the whole
+row.
+
+**5. The oracle `hardneg6` is the only construction that is WORSE than `cc00` on ΔCE** (+0.144 vs
+−0.281 on CE, +2.234 vs +1.536 on digits). Keeping the six non-gold documents most similar to gold,
+with gold itself pooled, is actively harmful — consistent with §3b: the generator makes no
+deliberate hard negatives, so "preserve the near-misses" is not the binding constraint.
+
+**6. Both swap controls fire.** `first32` 0.787 → `first32_swap` **0.000**; `smallcat3` 0.500 →
+`smallcat3_swap` **0.050**, with CE(digits) blowing up to 3.1–3.2 — worse than seeing nothing at
+all. The frozen model is genuinely reading the kept tokens, which is exactly what no slot-vector
+construction ever achieved.
+
 ### 5b. The 32k rung — INTERIM at row 5/100 (⚠ eval_size 5 — shape only)
 
 `rung_32768.jsonl`, job `01M2K3F8JZYHR1HJNNMY8N77MZ` (ETA ~4 h).
