@@ -83,6 +83,26 @@ def _splitmix64(x: torch.Tensor) -> torch.Tensor:
     return x ^ (x >> 31)
 
 
+def anneal_p_full(
+    calls: int, *, mix_start_p: float, mix_end_p: float, mix_total_calls: int
+) -> float:
+    """
+    The **compression-mixing curriculum**'s probability that a row trains UNCOMPRESSED on call
+    ``calls``: a linear anneal from ``mix_start_p`` to ``mix_end_p`` over ``mix_total_calls``
+    invocations (constant ``mix_start_p`` when ``mix_total_calls <= 0``).
+
+    Shared by both keep-set paths so they anneal identically: the gold-aware hook
+    (:func:`make_fingerprint_keep_docs_fn`) and the **gold-blind** fallback draw
+    (:func:`resolve_keep_docs`, via ``mix_p_full``).
+
+    :param calls: Number of *previous* invocations on this rank (``0`` on the first call).
+    """
+    if mix_total_calls > 0:
+        frac = min(1.0, calls / max(1, mix_total_calls))
+        return mix_start_p + (mix_end_p - mix_start_p) * frac
+    return mix_start_p
+
+
 def resolve_keep_docs(
     chunk_ids: torch.Tensor,
     n_docs: int,
@@ -90,6 +110,8 @@ def resolve_keep_docs(
     holder: Optional["PooledDocKeepHolder"],
     keep_prob: float,
     keep_seed: int,
+    mix_p_full: float = 0.0,
+    mix_call: int = 0,
 ) -> torch.Tensor:
     """
     The ``(B, n_docs)`` bool keep mask for one forward: the holder's gold-aware set when the
@@ -98,6 +120,16 @@ def resolve_keep_docs(
     activation-checkpoint recompute, and epochs). Shared by :class:`PooledDocKVAttention` (per-layer
     KV pooling) and the soft-token pooling feature on
     :class:`~olmo_core.nn.transformer.model.Transformer`.
+
+    :param mix_p_full: **Compression-mixing curriculum, gold-blind form.** Probability that a row
+        trains UNCOMPRESSED (every document real) on this call; the per-document ``keep_prob`` draw
+        decides the rest. Applies to the *fallback* path only -- with a holder installed the hook
+        (:func:`make_fingerprint_keep_docs_fn`) carries the curriculum itself. Get the value from
+        :func:`anneal_p_full` so both paths anneal identically. ``0.0`` (the default) is exactly
+        the pre-curriculum behaviour.
+    :param mix_call: Call index for the curriculum draw, so a given row flips between
+        compressed/full across epochs while staying deterministic given the data order (and
+        identical across layers and activation-checkpoint recompute within one forward).
     """
     B = chunk_ids.shape[0]
     device = chunk_ids.device
@@ -123,7 +155,15 @@ def resolve_keep_docs(
     d = torch.arange(n_docs, dtype=torch.int64, device=device)
     h = _splitmix64(sig[:, None] ^ _splitmix64(d[None, :] + keep_seed))
     u = (h & 0xFFFFFF).to(torch.float32) / float(1 << 24)
-    return u < keep_prob
+    keep = u < keep_prob
+    if mix_p_full > 0.0:
+        # Per-ROW curriculum draw, on a different salt from the per-doc draw above, so turning the
+        # curriculum on does not perturb which documents a *compressed* row keeps.
+        salt = _splitmix64(torch.full_like(sig, int(mix_call) * 2 + 1 + int(keep_seed)))
+        hr = _splitmix64(_splitmix64(sig + 0x2545F4914F6CDD1D) ^ salt)
+        ur = (hr & 0xFFFFFF).to(torch.float32) / float(1 << 24)
+        keep = keep | (ur < mix_p_full).unsqueeze(1)
+    return keep
 
 
 @dataclass
@@ -537,11 +577,12 @@ def make_fingerprint_keep_docs_fn(
 
     def fn(input_ids: torch.Tensor) -> torch.Tensor:
         # Curriculum probability for THIS call (linear anneal; constant mix_start_p if no total).
-        if mix_total_calls > 0:
-            frac = min(1.0, state["calls"] / max(1, mix_total_calls))
-            p_full = mix_start_p + (mix_end_p - mix_start_p) * frac
-        else:
-            p_full = mix_start_p
+        p_full = anneal_p_full(
+            state["calls"],
+            mix_start_p=mix_start_p,
+            mix_end_p=mix_end_p,
+            mix_total_calls=mix_total_calls,
+        )
         ids_cpu = input_ids.detach().to("cpu")
         roles = build_chunk_ids_from_tokens(
             ids_cpu, doc_start_id=doc_start_id, doc_end_id=doc_end_id, eos_id=eos_id, mode="chunked"

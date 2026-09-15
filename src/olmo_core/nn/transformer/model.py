@@ -320,6 +320,9 @@ class Transformer(nn.Module):
         header_stop_count: int = 1,
         header_cap: int = 32,
         detach_soft_gdn: bool = True,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_calls: int = 0,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -346,6 +349,16 @@ class Transformer(nn.Module):
             (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`). The eval-side
             construction that reproduces full attention on contradiction (``":"``, count 1) and
             oolong (``":"``, count 3); see records/pooled-doc-kv-attention.md (2026-09-08).
+        :param mix_start_p: **Compression-mixing curriculum.** Probability that a row trains
+            UNCOMPRESSED (no pooling at all), annealed linearly to ``mix_end_p`` over
+            ``mix_total_calls`` training forwards
+            (:func:`~olmo_core.nn.attention.pooled_doc_kv.anneal_p_full`). This is the GOLD-BLIND
+            arm of the curriculum: it applies to the seeded ``keep_prob`` fallback draw. When the
+            :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep` hook is installed
+            the hook's own curriculum is used instead and these are ignored (the hook sees gold, so
+            it must make the same decision). ``0.0`` = no curriculum, the historical behaviour.
+        :param mix_end_p: End point of the anneal (see ``mix_start_p``).
+        :param mix_total_calls: Forwards over which to anneal; ``0`` holds ``mix_start_p`` constant.
         :param detach_soft_gdn: With ``detach_soft_kv``, ALSO sever the backward through the
             slots' recurrent-mixer write channels (``k``/``v`` before the conv, ``beta``, ``g``)
             on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
@@ -373,6 +386,14 @@ class Transformer(nn.Module):
             "placeholder_id": int(placeholder_id),
             "keep_prob": float(keep_prob),
             "keep_seed": int(keep_seed),
+            # Compression-mixing curriculum for the GOLD-BLIND keep draw (see anneal_p_full). The
+            # gold-aware hook carries its own copy; ``mix_calls`` counts training compactions on
+            # this rank and is the anneal's clock.
+            "mix_start_p": float(mix_start_p),
+            "mix_end_p": float(mix_end_p),
+            "mix_total_calls": int(mix_total_calls),
+            "mix_calls": 0,
+            "mix_debug_calls": 12,
             # Aux attention-contribution matching (see pooled_soft_token.aux_matching_loss): train
             # the projector ONLINE so a soft token's per-layer KV reproduces its doc's real
             # attention behavior, using the keep set as the supervision source. > 0 enables
@@ -737,7 +758,7 @@ class Transformer(nn.Module):
         the batch has no context documents. ``soft_inject = (rows, cols, mean_embeds)`` is consumed
         after the embedding lookup.
         """
-        from ..attention.pooled_doc_kv import resolve_keep_docs
+        from ..attention.pooled_doc_kv import anneal_p_full, resolve_keep_docs
         from ..pooled_soft_token import compact_pooled_rows
 
         cfg = self._pooled_soft_tokens
@@ -768,13 +789,43 @@ class Transformer(nn.Module):
                 stop_count=cfg["header_stop_count"],
                 cap=cfg["header_cap"],
             )
+        # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row
+        # trains uncompressed. With the gold-aware hook installed the hook already applied it
+        # (it needs the gold table), so this stays off to avoid applying it twice.
+        mix_on = (cfg.get("mix_start_p", 0.0) > 0.0 or cfg.get("mix_end_p", 0.0) > 0.0) and (
+            self._pooled_keep_holder is None
+        )
+        p_full = (
+            anneal_p_full(
+                cfg["mix_calls"],
+                mix_start_p=cfg["mix_start_p"],
+                mix_end_p=cfg["mix_end_p"],
+                mix_total_calls=cfg["mix_total_calls"],
+            )
+            if mix_on
+            else 0.0
+        )
         keep = resolve_keep_docs(
             chunk_ids,
             n_docs,
             holder=self._pooled_keep_holder,
             keep_prob=cfg["keep_prob"],
             keep_seed=cfg["keep_seed"],
+            mix_p_full=p_full,
+            mix_call=cfg["mix_calls"] if mix_on else 0,
         )
+        if mix_on:
+            cfg["mix_calls"] += 1
+            calls, B_ = cfg["mix_calls"], keep.shape[0]
+            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
+                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
+                # greps in debug/ds64 and records/ see the curriculum on either path.
+                print(
+                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
+                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
+                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
+                    flush=True,
+                )
         # Mean input embedding per pooled doc (from the ORIGINAL row), the projector's feature.
         emb = self.embeddings(input_ids)  # type: ignore[misc]
         B, T, D = emb.shape

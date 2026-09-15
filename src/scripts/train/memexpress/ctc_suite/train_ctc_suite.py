@@ -1259,6 +1259,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             header_stop_id=opts.st_header_stop_id,
             header_stop_count=opts.st_header_stop_count,
             detach_soft_gdn=not opts.st_no_detach_soft_gdn,
+            # Compression-mixing curriculum. With --st-gold-blind there is NO keep hook, so the
+            # model applies it to the seeded keep_prob draw itself; otherwise the hook installed
+            # below carries it (the model side then stays off, see _compact_pooled_soft_tokens).
+            mix_start_p=opts.st_mix_start_p,
+            mix_end_p=opts.st_mix_end_p,
+            mix_total_calls=int(total_calls * opts.st_mix_anneal_frac),
         )
         print(
             f"[ctc-suite] softtoken: header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
@@ -1266,7 +1272,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
-            f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob}",
+            f"gold_blind={opts.st_gold_blind} keep_prob={opts.st_keep_prob} "
+            f"mix=({opts.st_mix_start_p}->{opts.st_mix_end_p} over "
+            f"{int(total_calls * opts.st_mix_anneal_frac)}/{total_calls} calls)",
             flush=True,
         )
     train_module = train_module_config.build(model)
@@ -1514,6 +1522,9 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                         "keep_mode": opts.st_keep_mode,
                         "gold_blind": opts.st_gold_blind,
                         "len_bias": opts.st_len_bias,
+                        "mix_start_p": opts.st_mix_start_p,
+                        "mix_end_p": opts.st_mix_end_p,
+                        "mix_anneal_frac": opts.st_mix_anneal_frac,
                     }
                     if opts.variant == "softtoken"
                     else None
@@ -2026,6 +2037,25 @@ def parse_args() -> argparse.Namespace:
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False
+    # The compression-mixing curriculum is only implemented on the softtoken path (gold-aware hook
+    # or gold-blind keep draw). It used to be parsed everywhere and applied nowhere else -- and, up
+    # to 2026-09-14, nowhere at all under --st-gold-blind, which turned the ds64 `kvgbmix` arm into
+    # a byte-identical re-run of `kvgb` with no warning. Refuse the flags instead of ignoring them.
+    mix_requested = (
+        opts.st_mix_start_p > 0.0 or opts.st_mix_end_p > 0.0 or opts.st_mix_anneal_frac != 1.0
+    )
+    if mix_requested and opts.variant != "softtoken":
+        ap.error(
+            "--st-mix-start-p/--st-mix-end-p/--st-mix-anneal-frac are only honoured by "
+            f"--variant softtoken (got --variant {opts.variant!r}); they would be ignored."
+        )
+    if mix_requested and opts.st_mix_start_p <= 0.0 and opts.st_mix_end_p <= 0.0:
+        ap.error(
+            "--st-mix-anneal-frac was given but both --st-mix-start-p and --st-mix-end-p are 0, "
+            "so the compression-mixing curriculum would never fire."
+        )
+    if mix_requested and opts.st_mix_anneal_frac <= 0.0:
+        ap.error("--st-mix-anneal-frac must be > 0 (it scales the anneal horizon in forwards).")
     if opts.variant in ("ffnmoe", "flexcompute") and opts.compile:
         print("[ctc-suite] ffnmoe: forcing --no-compile (data-dependent per-rung GEMM shapes)")
         opts.compile = False
