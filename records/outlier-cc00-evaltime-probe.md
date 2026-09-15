@@ -1,6 +1,6 @@
 # Does the ds64 `cc00` checkpoint have EVAL-TIME loss parity? (trained-arm probe)
 
-**Date** 2026-09-15 · **Status** RUNNING — jobs launched, numbers pending · **Branch** `prasann/landmark`
+**Date** 2026-09-15 · **Status** ANSWERED — all 5 jobs complete (cc00 at 128M and 32M, rungs 2k/8k/16k/32k) · **Branch** `prasann/landmark`
 **Driver** `debug/pooled_kv/outlier_probe/outlier_slot_probe.py --trained-parity`
 **Context** `records/ds64-overnight-2026-09-14.md` (the cc00 family, log entries from 09-15 02:30),
 `records/outlier-slot-probe.md` (the frozen-dense eval-side probe this extends).
@@ -166,9 +166,27 @@ is one generated id set out of 48 on a rung where full text scores **0.000**, i.
   32k       120 |    0.458    0.578   +0.120 |      1.074      1.366   +0.292 |    0.000    0.042  +0.042 |   0.055
 ```
 
-### 4.2 `ds64-outlier-cc00-b128f3-u32M` (the lower-budget twin)
+### 4.2 `ds64-outlier-cc00-b128f3-u32M` (the lower-budget twin, conditions A and B only)
 
-_(running — jobs D/E)_
+Same probe, same rungs, 1/4 the training budget (ladder: 2k 0.531 · 8k 0.081 · 16k 0.027 · 32k
+0.012). eval_size 240 at 2k/8k/16k and 120 at 32k (⚠ all < 500), generation on 24 rows (72 gold
+documents) at 2k/8k/16k and 16 rows (48 documents) at 32k.
+
+```
+ rung eval_size |  CE_full  CE_soft      dCE | CEdig_full CEdig_soft   dCEdig |  F1_full  F1_soft     dF1 | compact
+   2k       240 |    0.120    0.319   +0.200 |      0.451      1.219   +0.768 |    0.625    0.306  -0.319 |   0.105
+   8k       240 |    0.293    0.557   +0.264 |      0.810      1.611   +0.801 |    0.125    0.042  -0.083 |   0.062
+  16k       240 |    0.385    0.669   +0.284 |      1.013      1.824   +0.812 |    0.069    0.028  -0.042 |   0.056
+  32k       120 |    0.520    0.735   +0.215 |      1.214      1.750   +0.536 |    0.000    0.042  +0.042 |   0.055
+```
+
+**The pattern holds and sharpens the reading: the parity gap is a function of BUDGET at 2k and of
+DOCUMENT COUNT everywhere else.** At 32M there is no parity even at 2k — ΔCE(digits) **+0.768**
+and ΔgenF1 **−0.319** (0.306 against 0.625). Going 32M → 128M (4×) shrinks the 2k gap **4.9×** to
++0.157 and flips ΔgenF1 to +0.028, i.e. **the slot readout is genuinely learned with budget and
+converges to full-text parity at 2k**. The same 4× at the longer rungs only halves the gap, from a
+level where both inputs are already on the guess floor: +0.801 → +0.365 (8k), +0.812 → +0.421
+(16k), +0.536 → +0.292 (32k).
 
 ## 5. Interpretation
 
@@ -192,6 +210,14 @@ weak*. It is the opposite: the ΔCE(digits) gap **widens** from +0.157 to +0.421
 grows, and at 8k — the one rung where the model still has real signal on full text (0.229, 4× its
 floor) — feeding it its own training construction **halves** the generation score to 0.125. Four
 consequences, in order of how much they should change what we do next:
+
+**0. Budget buys the readout — at 2k, and only at 2k.** The `u32M` twin (§4.2) has no parity at
+any rung: ΔCE(digits) **+0.768** and ΔgenF1 **−0.319** even at 2k. Four times the budget shrinks
+the 2k gap **4.9×** and reaches parity; the same 4× only halves the 8k/16k/32k gaps, from a level
+where both inputs already sit on the guess floor. Extrapolating the 8k gap (+0.801 → +0.365 per
+4×) puts CE parity at 8k somewhere around 16–64× the 128M budget — and it would be parity at
+`full` genF1 0.229, i.e. parity at a number that is not worth having. Budget is not the lever
+either.
 
 **1. The `cent_cmean` win is real, and it is a 2k win only.** Condition C is the clean control:
 the identical keep-0, header-real construction with the PLAIN mean slot, same checkpoint, same
@@ -271,6 +297,8 @@ and the same table goes to stdout, so `beaker job logs <job>` is enough to read 
 | C | cc00-u128M | 32k | 120 | 16 | full, arm, gb00h, ccgold | `01M2K35DEVE4SR8S387FB9DN48` | `01M2K35DN8PVACVB7FBMENP9S9` |
 | D | cc00-u32M | 2k, 8k, 16k | 240 | 24 | full, arm | `01M2K366ZSVKFT0BVE9Q4S5XCQ` | `01M2K3676JT9GXSZPCKB5YJV71` |
 | E | cc00-u32M | 32k | 120 | 16 | full, arm | `01M2K379XDN0SD6A8T8CCGTGR1` | `01M2K37A2MYAGTT96MG3WCGK1X` |
+
+All five finished clean; every rung's JSON is on weka at the path above. Total ~2 GPU-hours.
 
 ⚠ **eval_size is below 500 on every rung** (240 at 2k/8k/16k, 120 at 32k). Binomial SE on a
 right/wrong metric at f1 ≈ 0.5 is **±0.032** at 240 rows and **±0.046** at 120; generation metrics
