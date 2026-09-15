@@ -95,8 +95,21 @@ CKPTS = {
 }
 CKPT_ROOT = f"{W}/ctc_suite/ckpts"
 DS64_SHARDS = f"{W}/ds64/shards"
-RUNGS = {r: f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_{n}.jsonl"
-         for r, n in (("2k", 2048), ("8k", 8192), ("16k", 16384), ("32k", 32768))}
+# The ds64 eval ladders, copied from debug/ds64/orchestrate_ds64.py:RUNG_FILES so a rung here is the
+# same file the ladder evals score.
+RUNGS_BY_TASK = {
+    "outlier": {r: f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_{n}.jsonl"
+                for r, n in (("2k", 2048), ("8k", 8192), ("16k", 16384), ("32k", 32768))},
+    "contradiction": {
+        "2k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl",
+        "8k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl",
+        "16k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n385_k3.jsonl",
+        "32k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n765_k3.jsonl"},
+}
+RUNGS = RUNGS_BY_TASK["outlier"]  # rebound from --task in main()
+# Token that ends a document header: outlier's `\n\nDocument [N]:` ends on ']:' (5491); the
+# contradiction ladder renders `\n\nClaim N:` and ends on ':' (25).  Both with count 1.
+HEADER_STOP_BY_TASK = {"outlier": 5491, "contradiction": 25}
 
 
 def ckpt_path_for(name):
@@ -760,6 +773,9 @@ def main():
     global HEADER_STOP_ID
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", default="saliency", choices=["diag", "saliency", "preview"])
+    ap.add_argument("--task", default="outlier", choices=sorted(RUNGS_BY_TASK),
+                    help="which ds64 eval ladder to read; also selects the header stop id and the "
+                         "default idf / slot-stop-set training shard")
     ap.add_argument("--rung", default="8k")
     ap.add_argument("--rungs", default=None, help="comma list, scored in ONE process")
     ap.add_argument("--rows", type=int, default=240)
@@ -780,14 +796,19 @@ def main():
     ap.add_argument("--tag", default="")
     ap.add_argument("--idf-shard", default=None)
     ap.add_argument("--idf-rows", type=int, default=512)
-    ap.add_argument("--header-stop-id", type=int, default=HEADER_STOP_ID)
+    ap.add_argument("--header-stop-id", type=int, default=-1,
+                    help="token that ends a document header; -1 = by --task "
+                         "(outlier ']:' = 5491, contradiction ':' = 25)")
     ap.add_argument("--n-query", type=int, default=32,
                     help="prompt positions used as attention queries for the attention saliency")
     ap.add_argument("--dump-rows", type=int, default=6)
     ap.add_argument("--no-ckpt-blocks", action="store_true",
                     help="do NOT gradient-checkpoint the backward (faster, much more memory)")
     a = ap.parse_args()
-    HEADER_STOP_ID = int(a.header_stop_id)
+    global RUNGS
+    RUNGS = RUNGS_BY_TASK[a.task]
+    HEADER_STOP_ID = (HEADER_STOP_BY_TASK[a.task] if int(a.header_stop_id) < 0
+                      else int(a.header_stop_id))
     a.rungs = a.rungs or a.rung
     ks = [int(v) for v in a.ks.split(",")]
     if a.tokenizer:
@@ -818,7 +839,7 @@ def main():
     idf_shard = a.idf_shard
     if idf_shard is None:
         bud = a.ckpt_name.rsplit("-u", 1)[-1] if "-u" in a.ckpt_name else "64M"
-        idf_shard = f"{DS64_SHARDS}/outlier_u{bud}"
+        idf_shard = f"{DS64_SHARDS}/{a.task}_u{bud}"
     t0 = time.time()
     idf, n_idf_tok = build_idf(idf_shard, vocab, n_rows=a.idf_rows)
     sent_end, is_cap, is_dig, plen = build_piece_tables(tok, vocab)
@@ -921,10 +942,10 @@ def run_diag(a, rung, model, pst, tok, ctx0, capture, attn_layers):
     """Report WHERE the answer's input-gradient (and attention) saliency sits, before asking any
     construction to reproduce FULL.  No compaction, no keep sets -- one dense forward, one backward
     and one attention capture per row."""
-    shard = f"{a.work}/outlier_{rung}"
-    P.convert("outlier", a.jsonl or RUNGS[rung], a.rows, shard)
+    shard = f"{a.work}/{a.task}_{rung}"
+    P.convert(a.task, a.jsonl or RUNGS[rung], a.rows, shard)
     rows, masks = P.load_rows(shard, a.rows)
-    log(f"=== DIAG rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:5]]}")
+    log(f"=== DIAG {a.task} rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:5]]}")
     if len(rows) < 500:
         log(f"WARNING eval_size={len(rows)} (<500): SE on a right/wrong metric at f1~0.5 is "
             f"{0.5 / max(1, len(rows)) ** 0.5:.3f}")
@@ -1079,7 +1100,7 @@ def run_diag(a, rung, model, pst, tok, ctx0, capture, attn_layers):
         for it in sn["top20"]:
             print(f"      {it}", flush=True)
 
-    out = {"task": "outlier", "mode": "diag", "rung": rung, "eval_size": len({r['row'] for r in REC}),
+    out = {"task": a.task, "mode": "diag", "rung": rung, "eval_size": len({r['row'] for r in REC}),
            "ckpt": a.resolved_ckpt, "ckpt_name": a.ckpt_name, "per_row": REC, "snippets": snippets,
            "summary": diag_summary(REC)}
     local = a.out if a.out.endswith(".json") else f"{a.out}/diag_{rung}.json"
@@ -1087,7 +1108,7 @@ def run_diag(a, rung, model, pst, tok, ctx0, capture, attn_layers):
         local = local[:-5] + f"_{rung}.json"
     sfx = f"_{a.tag}" if a.tag else ""
     weka = None if a.weka_out in ("", "none") else \
-        f"{a.weka_out}/saliency_preview_diag_{a.ckpt_name}_{rung}{sfx}.json"
+        f"{a.weka_out}/saliency_preview_diag_{a.task}_{a.ckpt_name}_{rung}{sfx}.json"
     for path in [local] + ([weka] if weka else []):
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1172,8 +1193,8 @@ def row_layout(x_cpu):
 
 
 def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_layers, n_layers):
-    shard = f"{a.work}/outlier_{rung}"
-    P.convert("outlier", a.jsonl or RUNGS[rung], a.rows + a.fit_rows, shard)
+    shard = f"{a.work}/{a.task}_{rung}"
+    P.convert(a.task, a.jsonl or RUNGS[rung], a.rows + a.fit_rows, shard)
     rows, masks = P.load_rows(shard, a.rows + a.fit_rows)
     score_rows = rows[: a.rows]
     fit_rows = rows[a.rows: a.rows + a.fit_rows]
@@ -1550,7 +1571,7 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
                                         for k, v in sel_stats[c["name"]].items()}
     verdict(summ)
     out = {
-        "task": "outlier", "mode": a.mode, "rung": rung, "eval_size": len(acc["full"]["ce"]),
+        "task": a.task, "mode": a.mode, "rung": rung, "eval_size": len(acc["full"]["ce"]),
         "rows_loaded": len(score_rows), "gen_rows": min(a.gen_rows, len(score_rows)),
         "fit_rows": len(fit_rows), "rule_fit": rule_info,
         "ckpt": a.resolved_ckpt, "ckpt_name": a.ckpt_name, "seed": a.seed,
@@ -1567,7 +1588,7 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
     if len(a.rungs.split(",")) > 1 and f"_{rung}" not in local:
         local = local[:-5] + f"_{rung}.json"
     weka = None if a.weka_out in ("", "none") else \
-        f"{a.weka_out}/saliency_preview_{a.mode}_{a.ckpt_name}_{rung}{sfx}.json"
+        f"{a.weka_out}/saliency_preview_{a.mode}_{a.task}_{a.ckpt_name}_{rung}{sfx}.json"
     for path in [local] + ([weka] if weka else []):
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
