@@ -340,6 +340,7 @@ def new_audit():
         "no_gold_text": Counter(),
         "gold_normalize_failed": Counter(),
         "alignment_failed": {},
+        "alignment_where": Counter(),
     }
 
 
@@ -454,17 +455,24 @@ def load_gold_texts(bundle_root, ladder_version, max_test_samples, cot_mode, xlo
     return texts, golds
 
 
-def attach_gold_texts(records, texts, golds, audit):
+def attach_gold_texts(records, texts, golds, audit, banned=frozenset()):
     """Add the emitted-length fields, and gate each task on the alignment check.
 
     A task is reported only if EVERY one of its examples has a reconstructed gold identical to the
     gold the eval recorded. Anything less means the rung file or the sampling no longer lines up
     with what was scored, and a length computed from a misaligned example is worse than no number
     at all -- so the whole task is dropped and named in the report.
+
+    ``banned`` carries tasks another model already failed on. The gate has to be GLOBAL: pairing
+    copies the gold length from the first model, so a task dropped for only one model would have
+    that model's score re-attached to the other model's length and sail straight past the check.
+
+    :returns: ``(records, n_annotated, failed_tasks)``.
     """
     mismatch, matched = Counter(), Counter()
     for r in records:
         key = (r["task"], r["rung"], r["idx"])
+        where = (r["task"], r["rung"], r["eval_tag"])
         rebuilt = golds.get(key)
         try:
             stored = _normalize_gold(r["task"], r["stored_gold"])
@@ -474,12 +482,15 @@ def attach_gold_texts(records, texts, golds, audit):
             stored = None
         if rebuilt is None or stored is None or rebuilt != stored:
             mismatch[r["task"]] += 1
+            audit["alignment_where"][where] += 1
         else:
             matched[r["task"]] += 1
 
-    bad = {t for t in mismatch}
-    for t in sorted(bad):
+    bad = set(mismatch) | set(banned)
+    for t in sorted(mismatch):
         audit["alignment_failed"][t] = f"{mismatch[t]} mismatched / {matched[t]} matched"
+    for t in sorted(set(banned) - set(mismatch)):
+        audit["alignment_failed"][t] = "dropped: failed the alignment check for another model"
 
     # Records are ANNOTATED, never dropped. A task that fails the alignment check loses only the
     # emitted-length axis (its fields stay None and the aggregation skips it there); its scores are
@@ -500,7 +511,7 @@ def attach_gold_texts(records, texts, golds, audit):
         r["gold_output_chars"] = len(text)
         r["gold_has_cot"] = "\n" in text.strip()
         n_annotated += 1
-    return records, n_annotated
+    return records, n_annotated, bad
 
 
 # --------------------------------------------------------------------------------------
@@ -562,6 +573,11 @@ def aggregate(paired, length_field, edges, include_fixed, models):
         task = rec["task"]
         if not include_fixed and task in FIXED_OUTPUT_TASKS:
             continue
+        if rec["gold_mismatch"]:
+            # The models recorded different gold at this key, so they did not score the same
+            # example. Excluded from EVERY axis: there is no sense in which the two numbers
+            # describe the same thing. Counted and broken down in the pairing warning.
+            continue
         value = rec.get(length_field)
         if value is None:  # axis unavailable for this example (e.g. alignment-failed task)
             continue
@@ -622,9 +638,19 @@ def pair_records(by_model: dict[str, list[dict]], models: list[str]):
         common, key=lambda k: (k[0], str(k[1]), k[3], k[2] if k[2] is not None else -1)
     ):
         base = indexed[models[0]][key]
-        # Gold is a property of the example, not the model; if the two disagree the join is
-        # wrong (different bundle or different ordering) and the whole comparison is void.
-        mismatch = [m for m in models[1:] if indexed[m][key]["gold_items"] != base["gold_items"]]
+        # Gold is a property of the EXAMPLE, not of the model, so at a shared key the two models
+        # must have recorded the same gold. Comparing only its SIZE was too weak: these ladders
+        # are fixed-k, so every gold has the same size and the check could never fire even when
+        # the models had genuinely different examples at that index. Compare the gold itself.
+        try:
+            base_gold = _normalize_gold(base["task"], base["stored_gold"])
+            mismatch = [
+                m
+                for m in models[1:]
+                if _normalize_gold(base["task"], indexed[m][key]["stored_gold"]) != base_gold
+            ]
+        except Exception:  # noqa: BLE001 -- an uncomparable gold is a mismatch, not a crash
+            mismatch = list(models[1:])
         paired.append(
             {
                 "task": base["task"],
@@ -740,6 +766,8 @@ def render_length_distribution(paired, models):
         defaultdict(list),
     )
     for r in paired:
+        if r["gold_mismatch"]:
+            continue
         items[r["task"]][r["gold_items"]] += 1
         if r.get("gold_output_words") is not None:
             words[r["task"]].append(r["gold_output_words"])
@@ -833,6 +861,10 @@ def render_audit(audits, coverage, model_roots, files_per_model):
                 f"- **tasks DROPPED on the gold-alignment check**: {dict(a['alignment_failed'])} "
                 f"-- rebuilt gold != recorded gold, so emitted length could not be trusted"
             )
+            if a["alignment_where"]:
+                lines.append("- where the mismatches land (task@rung [eval_tag]: count):")
+                for (t, rung, tag), n in a["alignment_where"].most_common(40):
+                    lines.append(f"    - {t}@{rung} [{tag}]: {n}")
         if a["no_gold_text"]:
             lines.append(f"- no rebuilt gold text: {dict(a['no_gold_text'])}")
         if a["build_output_failed"]:
@@ -999,14 +1031,27 @@ def main():
             f"(cot_mode={args.cot_mode}); {len(shared_audit['rung_missing'])} rung(s) missing",
             flush=True,
         )
+        # Two passes: collect every task ANY model fails on, then re-annotate with that global
+        # ban set. One pass would let a task dropped for model B keep model A's length and slip
+        # through pairing, which copies the length from the first model.
+        banned: set = set()
+        for name in models:
+            _, _, failed = attach_gold_texts(by_model[name], texts, golds, new_audit())
+            banned |= failed
         n_with_text = {}
         for name in models:
-            by_model[name], n_with_text[name] = attach_gold_texts(
-                by_model[name], texts, golds, audits[name]
+            by_model[name], n_with_text[name], _ = attach_gold_texts(
+                by_model[name], texts, golds, audits[name], banned=banned
             )
             print(
                 f"[gold] {name}: {n_with_text[name]}/{len(by_model[name])} examples carry a "
                 f"rebuilt gold answer",
+                flush=True,
+            )
+        if banned:
+            print(
+                f"[gold] emitted-length axis EXCLUDES {sorted(banned)} for every model "
+                f"(failed the alignment check for at least one)",
                 flush=True,
             )
         for name in models:
@@ -1030,11 +1075,15 @@ def main():
     print(f"[pair] {len(paired)} examples present in all {len(by_model)} models", flush=True)
     mismatched = [r for r in paired if r["gold_mismatch"]]
     if mismatched:
+        where = Counter((r["task"], r["rung"], r["eval_tag"]) for r in mismatched)
         print(
-            f"[pair] WARNING: {len(mismatched)} paired examples disagree on gold between models "
-            f"-- the (task, rung, idx) join is NOT aligned; results are void until this is 0.",
+            f"[pair] WARNING: {len(mismatched)} paired examples disagree on gold BETWEEN MODELS "
+            f"-- at those keys the two models did not score the same example, so every number "
+            f"for them (on any axis) compares different data. Breakdown:",
             flush=True,
         )
+        for (t, rung, tag), n in where.most_common(30):
+            print(f"[pair]     {t}@{rung} [{tag}]: {n}", flush=True)
 
     item_edges = [int(x) for x in args.item_edges.split(",")]
     token_edges = [int(x) for x in args.token_edges.split(",")]
