@@ -130,14 +130,14 @@ def build_conditions():
         C("goldonly_cc", "none", 0, mode="pool", slot="cent_cmean", header=False, keep="gold"),
         C("cc00", "none", 0),
     ]
-    for k in (4, 8, 16, 32, 64):
+    for k in (4, 8, 16, 32, 48, 64):
         cs.append(C(f"first{k}", "first", k))
-    for k in (4, 8, 16, 32, 64):
+    for k in (4, 8, 16, 32, 48, 64):
         cs.append(C(f"first{k}d", "first", k, mode="drop"))
-    for k in (4, 8, 16):
+    for k in (4, 8, 16, 32):
         cs.append(C(f"idf{k}", "idf", k))
         cs.append(C(f"idfspan{k}", "idfspan", k))
-    for k in (8, 16, 32):
+    for k in (8, 16, 32, 48):
         cs.append(C(f"fl{k}", "firstlast", k))
     cs.append(C("sent1", "sent1", 32))
     # --- document-level keep rules over the per-doc cent_cmean vectors --------------------------
@@ -163,7 +163,7 @@ def build_conditions():
     # the old gold_plus_random construction, as the mechanistic diagnostic
     cs.append(C("gpr33", "none", 0, keep="gpr"))
     # swap controls (the kept REAL tokens of gold docs exchanged with random non-gold docs')
-    for base in ("first8", "first16", "first32", "first64", "idfspan16", "sent1",
+    for base in ("first8", "first16", "first32", "first48", "first64", "idfspan16", "sent1",
                  "smallcat3", "smallcat5"):
         b = next(c for c in cs if c["name"] == base)
         cs.append(dict(b, name=f"{base}_swap", swap=True))
@@ -172,6 +172,11 @@ def build_conditions():
 
 PRESETS = {
     "all": None,  # everything
+    # the 2026-09-15 finalists: the constructions that reached (or came closest to) FULL on the
+    # canonical 2k rung, plus the two anchors and one swap control.  Small enough to finish a
+    # rung in well under an hour, which is the whole point.
+    "finalists": ["full", "cc00", "goldonly", "first32", "first48", "first64", "first48d",
+                  "idf16", "idf32", "fl32", "fl48", "first48_swap"],
     # the topical-category keep rules (the user's priority construction) + the cheapest
     # real-token subsets to compare them against + the mechanistic diagnostic
     "cat": ["full", "goldonly", "goldonly_cc", "gpr33", "cc00",
