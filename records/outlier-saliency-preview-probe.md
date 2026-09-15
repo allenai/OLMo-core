@@ -1,6 +1,6 @@
 # Saliency-selected real tokens, and the one-layer preview — can either reach FULL parity on outlier?
 
-**Date** 2026-09-15 · **Status** RUNNING (9 Beaker jobs — 3 diagnostic, 6 parity; tables filled as rungs land) · **Branch** `prasann/landmark`
+**Date** 2026-09-15 · **Status** ANSWERED — all 6 parity runs and all 3 outlier diagnostics complete; contradiction counterfactual complete at 8k/32k (2k relaunched) · **Branch** `prasann/landmark`
 **Driver** `debug/pooled_kv/outlier_probe/outlier_saliency_preview_probe.py` (eval only, 1 GPU, frozen `ds64-outlier-dense-u64M`)
 
 ## 1. Where this starts
@@ -215,7 +215,7 @@ spreads 90 % of its doc-side mass over ~45 of them.
 flatter (n50/n 0.283 → 0.297). The direction is "when FULL fails, it failed to single out the gold
 documents and spread itself over the distractors", but at 7 rows this is a hypothesis, not a result.
 
-### 5b-32k. The saliency diagnostic — 32k rung, COMPLETE (eval_size 100; generation on 12, ⚠ « 500)
+### 5c. The saliency diagnostic — 32k rung, COMPLETE (eval_size 100; generation on 12, ⚠ « 500)
 
 ~219 documents per row, k = 3 gold (**1.4 %** of documents). FULL itself answers only **6 of 12**
 generation rows exactly, so at this rung FULL is near its own ceiling and the right/wrong split
@@ -251,7 +251,7 @@ The trends from 2k → 8k all continue, and two of them sharpen decisively:
 * **Headers take 0.217 of all attention at 32k** — more than every document body combined (0.286 ×
   0.76 excluded) and rising with n (0.167 → 0.190 → 0.217).
 
-### 5f. CONCENTRATION vs n — does saliency sparsify as the corpus grows? **No.**
+### 5d. CONCENTRATION vs n — does saliency sparsify as the corpus grows? **No.**
 
 The hypothesis worth killing explicitly: at 32k the model might consult far fewer of the ~219
 documents than the ~80 % it consults at 8k, which would make a "keep a few documents" construction
@@ -284,11 +284,45 @@ lever, per-document detail is.
 
 **Caveat.** `n50`/`n90` are computed on the saliency *distribution*, which measures where signal
 flows in a model answering correctly — not the minimum set that would suffice. A causal ablation
-(drop the bottom-mass documents and re-score) would bound the latter; it is not run here. §5g is the
+(drop the bottom-mass documents and re-score) would bound the latter; it is not run here. §5e is the
 cheap calibration instead: the same measurement on a task whose answer provably depends on 2–3
 documents.
 
-### 5c. What this implies for the constructions
+### 5e. COUNTERFACTUAL — the same diagnostic on CONTRADICTION (a task with 2-3 load-bearing docs)
+
+Frozen `ds64-contradiction-dense-u64M` on the ds64 contradiction ladder, `--task contradiction`
+(header stop id 25, `Claim N:`). This calibrates the concentration metric: contradiction's answer
+provably depends on a handful of claims, so if `n90/n` is small here and large on outlier, the
+0.75-0.85 measured on outlier is a property of the task rather than of the measurement.
+⚠ eval_size 64 (8k) / 48 (32k); the 2k rung died on a transient HuggingFace 429 while fetching the
+tokenizer and was relaunched with the weka-local copy (`01M2KQ4JBKN25EN02AWNAQW98K`).
+
+| task | rung | docs/row | **n50/n** | **n90/n** | `attnlast` n50/n | **AUC(gold)** attn | s/tok gold : non-gold | hdr/doc |
+|---|---|---|---|---|---|---|---|---|
+| **contradiction** | 8k | 190 | **0.079** | **0.617** | **0.043** | **0.995** | **11-19x** | 0.746 |
+| **contradiction** | 32k | 765 | **0.085** | **0.627** | **0.030** | **0.994** | **16-43x** | 0.758 |
+| outlier | 8k | 56 | 0.282 | 0.793 | 0.203 | 0.964 | 4.0x | 0.428 |
+| outlier | 32k | ~219 | 0.242 | 0.753 | 0.178 | 0.965 | 7.4x | 0.432 |
+
+**The metric is fine; outlier is genuinely diffuse.** On contradiction half the doc-side attention
+mass lands in **8 % of the claims** (3 % for the last-4-layer variant) against **24-28 %** of the
+documents on outlier — a 3.5x difference at the same measurement — while AUC(gold) is **0.995**,
+essentially perfect, and gold claims get **11-43x** the per-token attention of the rest against
+outlier's 4-7x. Contradiction's `n90/n` is 0.62 rather than something tiny because 90 % of a
+*normalised* mass distribution is a long-tail statistic, which is exactly why `n50/n` and the gold
+ratio are the columns to compare.
+
+Two further contrasts worth keeping:
+
+* **Headers dominate contradiction far more**: 75 % of a claim's saliency is its `Claim N:` header
+  (against 43 % on outlier). With one-sentence claims there is little body to look at, which is why
+  header-real alone reaches CE parity there and not here.
+* **The within-document profile inverts.** On outlier both signals are front-loaded
+  (z_sent1 1.3-1.6 > z_rest 0.94-0.98); on contradiction attention prefers the *rest* of the claim
+  (z_sent1 0.99 vs z_rest 1.63 at 8k, 1.23 at 32k) and piles onto capitalised tokens (1.59-1.95).
+  A "keep the first k tokens" heuristic is an outlier-shaped prior, not a general one.
+
+### 5f. What this implies for the constructions
 
 1. **A per-document attention BUDGET is the signal, not the per-token identity.** AUC(gold) 0.93–0.97
    says document-level saliency is highly informative; (c) says the individual top-attention tokens
@@ -307,101 +341,133 @@ documents.
 4. **`idf{k}` and `attn{k}` will select nearly disjoint tokens** (IDF quartile profiles are inverted),
    so the `overlap@k with grad` column in the parity tables is the thing to read alongside ΔCE.
 
-### 5d. Parity constructions — 2k rung (INTERIM, eval_size 5; ⚠ shape check ONLY, do not quote)
+### 5g. Parity constructions — FINAL, all three rungs
 
-First table off the `sal2k` job. FULL CE 0.003, genF1 1.000. Read the *ordering*, not the values.
+Frozen `ds64-outlier-dense-u64M`. ΔCE is **paired** against FULL on the same rows, SE in the next
+column. eval_size 240 / 240 / 120 at 2k / 8k / 32k (⚠ all < 500); free generation on 64 / 48 / 24
+rows. `FLOPfrac` prices the construction against FULL with the model's own per-block coefficients.
 
-| condition | CE | ΔCE | genF1 | tok/doc real | FLOPfrac | gold / hard / easy tokens | docs with 0 |
-|---|---|---|---|---|---|---|---|
-| `cc00` (k = 0) | 0.470 | +0.467 | 0.067 | 0 | 0.101 | — | — |
-| `rand8` | 0.558 | +0.555 | 0.267 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| `first8` | 0.263 | +0.260 | 0.533 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| `idf8` | 0.262 | +0.259 | 0.333 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| `attn8` | 0.319 | +0.317 | 0.400 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| **`grad8`** (oracle) | **0.072** | +0.069 | 0.800 | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| **`rule8`** (deployable) | **0.071** | +0.068 | **0.867** | 8 | 0.151 | 8 / 8 / 8 | 0.00 |
-| `grad16` (oracle) | 0.037 | +0.034 | 0.800 | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
-| `rule16` | 0.046 | +0.043 | 0.800 | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
-| `gradrow8` (row budget) | 0.300 | +0.297 | 0.467 | 8 | 0.151 | **13.9 / 4.5 / 7.4** | 0.22 |
-| `attnrow8` | 0.288 | +0.285 | 0.200 | 8 | 0.151 | **16.9 / 6.1 / 5.1** | 0.01 |
-| `rulerow8` | 0.106 | +0.103 | 0.667 | 8 | 0.151 | 6.7 / 8.9 / 8.0 | 0.00 |
-| **`grad16_swap`** (control) | 0.911 | +0.909 | **0.000** | 16 | 0.202 | 16 / 16 / 16 | 0.00 |
+FULL's own genF1 falls with the rung (≈0.98 at 2k, ≈0.85 at 8k, ≈0.44 at 32k), so ΔF1 at 32k is
+against a weak reference and is not the column to rank on; **ΔCE and ΔCE(digits) are.**
 
-Three things are already visible and are the reason the full runs are worth waiting for.
+| construction | 2k ΔCE ± SE | 8k ΔCE ± SE | 32k ΔCE ± SE | FLOPfrac 2k / 8k / 32k |
+|---|---|---|---|---|
+| `cc00` (k = 0, the floor) | +0.454 ± .008 | +0.688 ± .009 | +0.778 ± .015 | 0.103 / 0.058 / 0.043 |
+| `rand8` | +0.362 ± .012 | +0.651 ± .013 | +0.717 ± .023 | 0.153 / 0.109 / 0.087 |
+| `first8` | +0.268 ± .013 | +0.546 ± .017 | +0.591 ± .025 | 0.153 / 0.109 / 0.087 |
+| `first16` | +0.152 ± .012 | +0.366 ± .016 | +0.442 ± .025 | 0.204 / 0.160 / 0.132 |
+| `idf16` | +0.113 ± .009 | +0.198 ± .012 | +0.269 ± .022 | 0.204 / 0.160 / 0.132 |
+| `attn16` | +0.117 ± .010 | +0.198 ± .014 | +0.249 ± .022 | 0.204 / 0.160 / 0.132 |
+| `rule8` (deployable) | +0.182 ± .011 | +0.391 ± .016 | +0.459 ± .025 | 0.153 / 0.109 / 0.087 |
+| `rule16` (deployable) | +0.082 ± .008 | +0.201 ± .012 | +0.288 ± .022 | 0.204 / 0.160 / 0.132 |
+| **`grad16`** (ORACLE) | **+0.066 ± .008** | +0.162 ± .011 | +0.203 ± .020 | 0.204 / 0.160 / 0.132 |
+| `gradrow8` (row budget) | +0.295 ± .012 | +0.290 ± .013 | +0.211 ± .018 | 0.153 / 0.109 / 0.087 |
+| **`gradrow16`** (row budget, ORACLE) | +0.179 ± .009 | **+0.146 ± .008** | **+0.131 ± .016** | 0.204 / 0.160 / 0.132 |
+| **`attnrow8`** (row budget, deployable-ish) | +0.281 ± .010 | +0.274 ± .010 | **+0.169 ± .014** | 0.153 / **0.109** / **0.087** |
+| `rulerow8` | +0.208 ± .011 | +0.394 ± .016 | +0.476 ± .026 | 0.153 / 0.109 / 0.087 |
+| **`grad16_swap`** (CONTROL) | +0.910 ± .016 | +1.272 ± .015 | +1.212 ± .020 | 0.204 / 0.160 / 0.132 |
 
-* **The swap control fires hard** — `grad16` 0.037 / genF1 0.800 versus `grad16_swap` 0.911 / genF1
-  **0.000**. Unlike every slot construction in the two previous records, the model is unambiguously
-  *reading* the kept tokens.
-* **`rand8` is worse than keeping nothing** (0.558 vs `cc00` 0.470): eight arbitrary real tokens per
-  document are an active distraction. Which tokens are kept is the whole effect.
-* **The transferable rule matches the oracle** (`rule8` 0.071 vs `grad8` 0.072; `rule16` 0.046 vs
-  `grad16` 0.037) from six free features — and it is not doing what attention does (`attn8` 0.319).
-* **The row-level budget is behind the uniform one at 2k**, on all three saliencies
-  (`gradrow8` 0.300 vs `grad8` 0.072), even though it does concentrate on the gold documents
-  (13.9 tokens/gold vs 4.5/hard, 7.4/easy) — because it strands 22 % of documents with no real token
-  at all, and (b) of the diagnostic says 90 % of the model's mass needs 84 % of the documents. Whether
-  this reverses at 8k/32k, where the per-document budget is the binding constraint, is exactly what
-  the running jobs answer.
+**The headline is a crossover.** Uniform per-document top-k wins at 2k (`grad16` +0.066 vs
+`gradrow16` +0.179) and the row-level budget wins at 8k and 32k, by more the longer the context:
 
-### 5e. The one-layer preview — 2k rung (INTERIM, eval_size 5; ⚠ shape check ONLY, do not quote)
+| pair, same total tokens | 2k | 8k | 32k |
+|---|---|---|---|
+| `grad16` → `gradrow16` | +0.066 → +0.179 (**worse**) | +0.162 → **+0.146** | +0.203 → **+0.131** (−35 %) |
+| `grad8` → `gradrow8` | +0.206 → +0.295 (**worse**) | +0.385 → **+0.290** | +0.394 → **+0.211** (−46 %) |
+| `attn8` → `attnrow8` | +0.229 → +0.281 (**worse**) | +0.343 → **+0.274** | +0.467 → **+0.169** (−64 %) |
 
-FULL CE 0.003 / genF1 1.000; `cc00` (no preview, plain `cent_cmean` slot) CE 0.469 at FLOP 0.101.
+At 2k a document is ~10 tokens of body and 8 per document is most of it, so redistributing only
+strands documents (22 % get nothing). At 32k there are ~219 documents, a uniform 8-per-document
+budget spends almost all of it on documents that do not matter, and the allocator's 7.4× attention
+advantage on gold (§5d) turns into real CE. **`attnrow8` at 32k is the best cell in the whole study
+per FLOP: ΔCE +0.169 ± 0.014 at FLOPfrac 0.087**, and the only condition anywhere to pass the ΔF1
+half of the parity test (−0.111 ± 0.118).
 
-| condition | CE | ΔCE | genF1 | real tok/doc | compaction | **FLOPfrac** |
-|---|---|---|---|---|---|---|
-| `cc00` | 0.469 | +0.466 | 0.067 | 0 | 0.103 | 0.101 |
-| `prev0` (slot = layer-0 input mean) | 0.456 | +0.453 | 0.067 | 0 | 0.103 | 0.101 |
-| `prev1` | 0.514 | +0.511 | 0.067 | 0 | 0.103 | **0.129** |
-| `prev2` | 0.560 | +0.557 | 0.067 | 0 | 0.103 | **0.156** |
-| `prev4` | 0.471 | +0.468 | 0.133 | 0 | 0.103 | **0.213** |
-| `prev4_k4` | 0.446 | +0.443 | 0.133 | 4 | 0.128 | 0.235 |
-| `prev4_k8` | 0.444 | +0.441 | 0.333 | 8 | 0.154 | 0.257 |
-| `prev4_k16` | 0.078 | +0.075 | 0.800 | 16 | 0.205 | 0.301 |
-| `prev4_row8` | 0.433 | +0.431 | 0.333 | 8 (10.7 / 7.5 / 7.6) | 0.154 | 0.257 |
-| `prev4_row16` | 0.279 | +0.276 | 0.533 | 16 (20.5 / 13.9 / 15.7) | 0.205 | 0.301 |
-| `prev4_first8` | **0.227** | +0.224 | 0.467 | 8 | 0.154 | 0.257 |
-| `prev4_k8_swap` (control) | 0.624 | +0.621 | 0.200 | 8 | 0.154 | 0.257 |
+Other readings:
 
-**The dense preview buys nothing on outlier, and it is not free.** `prev0` / `prev1` / `prev2` /
-`prev4` are all sitting on the `cc00` floor (0.456 / 0.514 / 0.560 / 0.471 against 0.469), with no
-monotone improvement in L, while the FLOP fraction climbs 0.101 → 0.129 → 0.156 → **0.213**. So
-contextualising a document's slot across the whole real row — the construction that reached CE
-parity on contradiction (`records/layer-soft-probe.md` §2, `fromL` + `layer_input_mean` with headers
-real) — **does not transfer to outlier**. That is consistent with the diagnostic: outlier's problem
-is not that each document's summary lacks context, it is that the answer needs per-document detail
-from ~80 % of the documents at once (`n90/n` 0.79–0.85).
+* **The swap control fires hard at every rung** (`grad16` +0.066/+0.162/+0.203 vs `grad16_swap`
+  +0.910/+1.272/+1.212). Unlike every slot construction in the two preceding records, the model is
+  unambiguously *reading* the kept tokens.
+* **`rand8` is barely better than keeping nothing** (+0.362 vs +0.454 at 2k; +0.651 vs +0.688 at 8k).
+  Which tokens are kept is most of the effect.
+* **The transferable rule holds at 2k and decays with n.** `rule16` +0.082 vs oracle `grad16` +0.066
+  at 2k (85 % of the oracle's gain over `cc00`), but +0.201 vs +0.162 at 8k and +0.288 vs +0.203 at
+  32k. And it does **not** transfer to the row-level setting — `rulerow8` is *worse* than `rule8`
+  at every rung (+0.476 vs +0.459 at 32k), because a within-document feature model is not calibrated
+  to compare *across* documents, which is exactly what a row-wide ranking needs.
+* **`idf16` is the surprise cheap baseline**: +0.113 / +0.198 / +0.269, statistically tied with
+  `rule16` everywhere and needing no fitting at all. If a uniform per-document selector is wanted,
+  IDF is the one to use.
+* **Nothing reaches parity.** The best ΔCE anywhere is +0.131 ± 0.016 (`gradrow16` @32k) against a
+  FULL CE of ~0.06, and no condition passes both halves of the ΔCE ≤ 1 SE / ΔF1 ≤ 1 SE test at any
+  rung.
 
-**Layer-3 attention is a worse token selector than "the first k".** `prev4_k8` 0.444 vs
-`prev4_first8` **0.227** at identical cost. This is the diagnostic's §5c point 1 landing exactly:
-attention mass identifies *which document* matters (AUC 0.96) but its top tokens *inside* a document
-are sinks — digits 1.7×, stopwords 1.5×, most-frequent IDF quartile 1.6× — so selecting by it picks
-uninformative tokens.
+### 5h. The one-layer preview — FINAL, all three rungs: **dominated**
 
-**Whatever `prev4_k16` achieves, the real-token route achieves more cheaply.** `prev4_k16` reaches
-CE 0.078 / genF1 0.800 at FLOP **0.301**; `grad16` (§5d) reaches 0.037 / 0.800 and `rule16` 0.046 /
-0.800 at FLOP **0.202**, with no preview at all. The preview's four dense layers are pure overhead
-here.
+| condition | 2k ΔCE | 8k ΔCE | 32k ΔCE | FLOPfrac 2k / 8k / 32k |
+|---|---|---|---|---|
+| `cc00` (no preview) | +0.454 | +0.688 | +0.779 | 0.103 / 0.058 / 0.043 |
+| `prev0` (slot = layer-0 mean, free) | +0.452 | +0.651 | +0.696 | 0.103 / 0.058 / 0.043 |
+| `prev1` | +0.469 | +0.664 | +0.703 | 0.131 / 0.086 / 0.066 |
+| `prev2` | +0.489 | +0.696 | +0.737 | 0.159 / 0.113 / 0.089 |
+| `prev4` | +0.431 | +0.671 | +0.701 | 0.215 / 0.176 / 0.163 |
+| `prev4_k16` | +0.157 | +0.440 | +0.539 | 0.304 / 0.265 / 0.241 |
+| `prev4_first8` | +0.250 | +0.530 | +0.575 | 0.259 / 0.220 / 0.201 |
+| `prev4_k8` (layer-3 attention selector) | +0.299 | +0.589 | +0.649 | 0.259 / 0.220 / 0.201 |
+| `prev4_k8_swap` (CONTROL) | +0.580 | +0.813 | +0.800 | 0.259 / 0.220 / 0.201 |
 
-The swap control fires on the preview path too (`prev4_k8` 0.444 → `prev4_k8_swap` 0.624), so the
-model is reading the kept tokens rather than reacting to their presence.
+**Dense preview layers buy nothing on outlier and are not free.** `prev0` — which costs exactly what
+`cc00` costs — is the best of the whole `prev{L}` family at every rung; `prev1`, `prev2` and `prev4`
+are flat-to-worse while FLOPs climb to 0.215 / 0.176 / 0.163. So `fromL` + `layer_input_mean`, the
+construction that reached CE parity on contradiction with headers real
+(`records/layer-soft-probe.md` §1-2), **does not transfer to outlier**. §5d says why: outlier's
+answer needs per-document detail from 75-85 % of the documents, not better context in each
+document's one summary vector.
+
+**And the preview route is strictly dominated by the no-preview one.** `prev4_k16` reaches +0.440 at
+8k for FLOPfrac 0.265; plain `gradrow16` reaches **+0.146 at 0.160**, and even `idf16` reaches +0.198
+at 0.160. Every preview cell is beaten on both axes.
+
+**Layer-3 attention is a worse in-document selector than "the first k"** at every rung
+(`prev4_k8` +0.299/+0.589/+0.649 vs `prev4_first8` +0.250/+0.530/+0.575), exactly as §5f predicted
+from the token-type profile: attention identifies *which document* matters but its top tokens
+*inside* a document are sinks. Note this is the opposite of what happens when the same attention is
+used to set a per-document **budget** (`attnrow8`), which is the best deployable cell at 32k — the
+distinction between "which document" and "which token" is the single most useful thing this study
+found.
 
 ## 6. Verdict
 
-_(pending the full rungs — the interim tables above are 5 rows each)_
+**No construction reaches frozen-model parity on outlier.** Best ΔCE anywhere is
+**+0.131 ± 0.016** (`gradrow16`, 32k, FLOPfrac 0.132) against a FULL CE of ~0.06, and nothing passes
+both halves of the ΔCE ≤ 1 SE / |ΔF1| ≤ 1 SE test at any rung. Ranked by cost at 32k, the frontier
+is `attnrow8` (+0.169 at **0.087**) → `gradrow16` (+0.131 at 0.132) → `attn16`/`idf16`
+(+0.249/+0.269 at 0.132).
 
-Direction of travel at 2k, to be confirmed at 8k/32k:
+**Idea 2 (one-layer preview) is closed.** No L improves on the free `prev0`, every L costs more, and
+the whole family is dominated by the no-preview constructions on both axes. Unlike contradiction,
+outlier has no fidelity for a dense prefix to recover.
 
-* **Idea 2 (one-layer preview) looks dead on outlier** — no L improves on `cc00`, and every L costs
-  more. Unlike contradiction, there is no fidelity for a dense prefix to recover.
-* **Idea 1 is alive, and its deployable form is the winner so far** — `rule{k}`, a ridge over six
-  free token features fit on disjoint rows, matches the gradient ORACLE (`rule8` 0.071 vs `grad8`
-  0.072; `rule16` 0.046 vs `grad16` 0.037) and beats `first`, `idf`, `attn` and `rand` at equal cost.
-* **Uniform per-document top-k beats the row-level budget** at 2k on every saliency, despite the
-  row-level one correctly concentrating on the gold documents — stranding ~22 % of documents with no
-  real token costs more than the concentration gains, which is what `n90/n ≈ 0.85` predicts.
-* **Neither has yet reached parity**: the best 2k cell is ΔCE +0.034 against a FULL CE of 0.003, and
-  genF1 0.80–0.87 against 1.00. The question the full runs answer is whether that gap closes with k,
-  and what it costs at 8k and 32k.
+**Idea 1 (saliency-selected real tokens) is alive and the ranking is length-dependent** — which is
+the useful result for the training-side arms:
+
+1. **At long context, allocate the token budget ROW-WIDE, not per document.** Same total tokens,
+   ΔCE −35 % to −64 % at 32k. `attnrow8` is the cheapest good cell and needs no gradients.
+2. **At short context, uniform per-document top-k is better** — do not carry the row-level allocator
+   down to 2k.
+3. **For a uniform selector, use IDF.** `idf16` ties the fitted rule at every rung for free.
+4. **The fitted rule works within a document, not across documents.** `rule16` captures ~85 % of the
+   oracle's gain at 2k but `rulerow8` is worse than `rule8` everywhere.
+
+**Relation to the trained arms.** The coordinator reports that trained first-k arms (`ck32`/`ck64`)
+already dominate dense on the outlier ladder (`ck64-32M` 0.466 @ 396 PF vs dense-32M 0.452 @ 1582),
+so this study is not a gate on that direction — it is a **ranking of constructions** for the next
+arms. On that reading its recommendation is concrete: the trained first-k arms use the *uniform*
+per-document budget that these numbers say is the wrong one beyond 2k, and an `attnrow`-style
+row-wide allocator (a per-document budget from layer-L attention mass, no gradients, no second
+network) is the cheapest thing on this frontier at 32k. It is also worth noting that the frozen
+model's ΔCE stays large for *every* construction while the trained arms do well — i.e. the frozen
+probe is a lower bound on what a trained reader achieves, and should be used to rank, not to reject.
 
 ## 7. Runs
 
@@ -417,8 +483,15 @@ Direction of travel at 2k, to be confirmed at 8k/32k:
 | preview | 8k | 240 (48) | `01M2K6817RT1JHX0SE6GNV6M87` | `01M2K681B9KDA8BTHXGWBEFC2G` |
 | preview | 32k | 120 (16) | `01M2K698PJH9C1GSQSGT4T3DZT` | `01M2K698T64HVZV4SANJE14XGJ` |
 
-(An earlier batch of the same six parity jobs, `01M2K5DN…`–`01M2K5JK…`, was cancelled while still
-queued so the row-level budget variants could be added before anything ran.)
+| **c-diag** | contradiction 2k | 64 (32) | `01M2KQ4JBKN25EN02AWNAQW98K` | relaunched (HF 429) |
+| **c-diag** | contradiction 8k | 64 (24) | `01M2KBDC2NZ54EPANWT6N0D6Q0` | `01M2KBDC6F6Q8ZKRNNDDQZVKCN` |
+| **c-diag** | contradiction 32k | 48 (10) | `01M2KBEC26VXNFE84FNN7D4FGK` | `01M2KBEC5RTK9XVWB1XJ0C3ZX0` |
+
+All nine outlier jobs and both completed contradiction jobs finished with no tracebacks. (An earlier
+batch of the same six parity jobs, `01M2K5DN…`–`01M2K5JK…`, was cancelled while still queued so the
+row-level budget variants could be added before anything ran. The first contradiction 2k attempt,
+`01M2KBC67QWW0CZRY6W72A1T12`, died on a transient HuggingFace 429 fetching the tokenizer — not a
+code fault; the relaunch passes the weka-local tokenizer.)
 
 All 1 GPU, `urgent`, workspace `ai2/flex2`, budget `ai2/oe-other`, cluster list
 `ai2/ceres-cirrascale,ai2/saturn-cirrascale,ai2/jupiter-cirrascale-2`. JSON is written to
