@@ -1,4 +1,77 @@
 {
- "runs": {},
- "evals": {}
+ "runs": {
+  "f2k-outlier-dense-2M": {
+   "ex": "01M2HGRDXR2HB0PMS4FQEFXM8M",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "2M",
+   "steps_expected": 31,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-dense-4M": {
+   "ex": "01M2HGSDK6N2NAX4N6ZA1SYG3M",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-dense-8M": {
+   "ex": "01M2HGTBBAPQ8906BH0W0JF2C9",
+   "task": "outlier",
+   "arm": "dense",
+   "budget": "8M",
+   "steps_expected": 123,
+   "gpus": 2,
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-kvgb50-4M": {
+   "ex": "01M2HGV458HFJDEHV1D7N65BXP",
+   "task": "outlier",
+   "arm": "kvgb50",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "R"
+  },
+  "f2k-outlier-xhdr17-4M": {
+   "ex": "01M2HGVX148129YYQPPXPJ9SR3",
+   "task": "outlier",
+   "arm": "xhdr17",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "R"
+  },
+  "f2k-outlier-xhdr50-4M": {
+   "ex": "01M2HGWRX45SJPEHAKNMB8ZFAW",
+   "task": "outlier",
+   "arm": "xhdr50",
+   "budget": "4M",
+   "steps_expected": 62,
+   "gpus": 2,
+   "state": "R"
+  }
+ },
+ "evals": {
+  "f2k-outlier-dense-2M": {
+   "ex": "01M2HK5BTA5D6CGJ5468XWKQT1",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-dense-4M": {
+   "ex": "01M2HM84DKD2TRV3P5RY3P6W1V",
+   "state": "DONE",
+   "rc": 0
+  },
+  "f2k-outlier-dense-8M": {
+   "ex": "01M2HN3TEBEDZ0ANHSG2KMSVCX",
+   "state": "R"
+  }
+ }
 }

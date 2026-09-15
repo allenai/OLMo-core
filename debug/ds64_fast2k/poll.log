@@ -102,3 +102,305 @@ f2k-outlier-kvgb50-4M              train=S            01M2HEJEME7XF7P7G9KDC730MD
 f2k-outlier-xhdr17-4M              train=S            01M2HEK7TABD47V8VEN2YCYXZV  eval=-            
 f2k-outlier-xhdr50-4M              train=S            01M2HEM3NC4WRNTSVFEQYPGSA7  eval=-            
 PENDING 6
+=== cycle 1 20:13:51 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 2 20:15:53 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 3 20:17:55 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 4 20:19:58 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 5 20:22:00 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 6 20:24:02 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 7 20:26:04 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 8 20:28:06 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 9 20:30:09 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 10 20:32:17 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 11 20:34:19 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 12 20:36:21 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 13 20:38:24 ===
+f2k-outlier-dense-2M               train=S            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 14 20:40:28 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 15 20:42:30 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 16 20:44:32 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 17 20:46:39 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 18 20:48:41 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 19 20:50:43 ===
+f2k-outlier-dense-2M               train=R            01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=S            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=S            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 20 20:52:46 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=-            
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+--- launching evals: f2k-outlier-dense-2M
+eval f2k-outlier-dense-2M -> 01M2HK5BTA5D6CGJ5468XWKQT1
+PENDING 6
+=== cycle 21 20:55:25 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 22 20:57:27 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 23 20:59:31 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=S            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 24 21:01:33 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 25 21:03:36 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 26 21:05:38 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 27 21:07:40 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 28 21:09:43 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=R            01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=S            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 29 21:11:45 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=-            
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+--- launching evals: f2k-outlier-dense-4M
+eval f2k-outlier-dense-4M -> 01M2HM84DKD2TRV3P5RY3P6W1V
+PENDING 6
+=== cycle 30 21:14:24 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=S            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=S            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=S            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 31 21:16:32 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=R            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=S            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 32 21:18:34 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=R            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=S            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 33 21:20:36 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=R            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=R            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 34 21:22:39 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=R            01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=R            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 6
+=== cycle 35 21:24:41 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=DONE         01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=R            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=R            01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 5
+=== cycle 36 21:26:43 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=DONE         01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=R            01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=DONE         01M2HGTBBAPQ8906BH0W0JF2C9  eval=-            
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+--- launching evals: f2k-outlier-dense-8M
+eval f2k-outlier-dense-8M -> 01M2HN3TEBEDZ0ANHSG2KMSVCX
+PENDING 5
+=== cycle 37 21:29:32 ===
+f2k-outlier-dense-2M               train=DONE         01M2HGRDXR2HB0PMS4FQEFXM8M  eval=DONE         01M2HK5BTA5D6CGJ5468XWKQT1
+f2k-outlier-dense-4M               train=DONE         01M2HGSDK6N2NAX4N6ZA1SYG3M  eval=DONE         01M2HM84DKD2TRV3P5RY3P6W1V
+f2k-outlier-dense-8M               train=DONE         01M2HGTBBAPQ8906BH0W0JF2C9  eval=R            01M2HN3TEBEDZ0ANHSG2KMSVCX
+f2k-outlier-kvgb50-4M              train=R            01M2HGV458HFJDEHV1D7N65BXP  eval=-            
+f2k-outlier-xhdr17-4M              train=R            01M2HGVX148129YYQPPXPJ9SR3  eval=-            
+f2k-outlier-xhdr50-4M              train=R            01M2HGWRX45SJPEHAKNMB8ZFAW  eval=-            
+PENDING 4

@@ -11,3 +11,15 @@ fast2k	4b	outlier	xhdr17	4M	f2k-outlier-xhdr17-4M	ai2/jupiter-cirrascale-2,ai2/s
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 fast2k	4b	outlier	xhdr50	4M	f2k-outlier-xhdr50-4M	ai2/jupiter-cirrascale-2,ai2/saturn-cirrascale	2026-09-14 19:34	LAUNCHED	"01M2HEM3NC4WRNTSVFEQYPGSA7   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	dense	2M	f2k-outlier-dense-2M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:12	LAUNCHED	"01M2HGRDXR2HB0PMS4FQEFXM8M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	dense	4M	f2k-outlier-dense-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:12	LAUNCHED	"01M2HGSDK6N2NAX4N6ZA1SYG3M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	dense	8M	f2k-outlier-dense-8M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:12	LAUNCHED	"01M2HGTBBAPQ8906BH0W0JF2C9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	kvgb50	4M	f2k-outlier-kvgb50-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:13	LAUNCHED	"01M2HGV458HFJDEHV1D7N65BXP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	xhdr17	4M	f2k-outlier-xhdr17-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:13	LAUNCHED	"01M2HGVX148129YYQPPXPJ9SR3   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fast2k	4b	outlier	xhdr50	4M	f2k-outlier-xhdr50-4M	ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale	2026-09-14 20:13	LAUNCHED	"01M2HGWRX45SJPEHAKNMB8ZFAW   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

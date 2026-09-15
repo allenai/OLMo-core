@@ -1,0 +1,2154 @@
+Logs for job 01M2HGRE18D4QP4W71E6277P11 of task train:
+2026-09-15T03:39:35.801Z [36m[1m
+2026-09-15T03:39:35.801Z ##########################################
+2026-09-15T03:39:35.801Z ### [GANTRY] Validating environment... ###  
+2026-09-15T03:39:35.801Z ##########################################
+2026-09-15T03:39:35.801Z [0m
+2026-09-15T03:39:35.804Z [36m[1m❯ [GANTRY INFO][0m Shell is GNU bash, version 5.1.16(1)-release (x86_64-pc-linux-gnu).
+2026-09-15T03:39:35.804Z [36m[1m❯ [GANTRY INFO][0m Running on Beaker node 'saturn-cs-aus-252.reviz.ai2.in' (01K1TXPMZKX5T46VTGP7ZFHG4D)
+2026-09-15T03:39:35.804Z [36m[1m❯ [GANTRY INFO][0m Results dataset [94m[4mhttps://beaker.org/ds/01M2HGRDXYHFQE335PS1HCW3E1[0m mounted to '/results'.
+2026-09-15T03:39:35.804Z [36m[1m❯ [GANTRY INFO][0m Checking for required tools...
+2026-09-15T03:39:35.808Z [36m[1m❯ [GANTRY INFO][0m Using git version 2.34.1.
+2026-09-15T03:39:35.816Z [36m[1m❯ [GANTRY INFO][0m Using curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 (+libidn2/2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 OpenLDAP/2.5.19.
+2026-09-15T03:39:35.816Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:35.816Z [36m[1m❯ [GANTRY INFO][0m Installing AWS config...
+2026-09-15T03:39:35.820Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:35.820Z [36m[1m❯ [GANTRY INFO][0m Installing AWS credentials...
+2026-09-15T03:39:35.822Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:35.822Z [36m[1m❯ [GANTRY INFO][0m Installing Google Cloud credentials...
+2026-09-15T03:39:35.825Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:35.825Z [36m[1m❯ [GANTRY INFO][0m Creating PyTorch kernel cache directory...
+2026-09-15T03:39:35.825Z [33m[1m❯ [GANTRY WARN][0m 'gcloud' CLI not found so credentials can't be activated globally. As a result some tools like 'gsutil' may not be able to authenticate.
+2026-09-15T03:39:35.827Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:35.827Z [36m[1m
+2026-09-15T03:39:35.827Z #######################################
+2026-09-15T03:39:35.827Z ### [GANTRY] Cloning source code... ###  
+2026-09-15T03:39:35.827Z #######################################
+2026-09-15T03:39:35.827Z [0m
+2026-09-15T03:39:35.840Z [36m[1m❯ [GANTRY INFO][0m Cloning source from 'allenai/OLMo-core' @ '5ee1264fe3e0272bb492fdad2512e67c3a2b5616'...
+2026-09-15T03:39:40.436Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:40.437Z [36m[1m❯ [GANTRY INFO][0m Initializing git submodules...
+2026-09-15T03:39:40.474Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:40.474Z [36m[1m
+2026-09-15T03:39:40.474Z #######################################
+2026-09-15T03:39:40.474Z ### [GANTRY] Building Python env... ###  
+2026-09-15T03:39:40.474Z #######################################
+2026-09-15T03:39:40.474Z [0m
+2026-09-15T03:39:40.475Z [36m[1m❯ [GANTRY INFO][0m Installing uv...
+2026-09-15T03:39:41.432Z [36m[1m❯ [GANTRY INFO][0m Done. Installed uv 0.12.14 (x86_64-unknown-linux-gnu).
+2026-09-15T03:39:41.436Z [36m[1m❯ [GANTRY INFO][0m Using existing Python 3.12.12 installation at '/opt/conda/bin/python'.
+2026-09-15T03:39:41.439Z [36m[1m❯ [GANTRY INFO][0m Acquiring lock for uv install at '/results/lockfile'...
+2026-09-15T03:39:41.440Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:41.440Z [36m[1m❯ [GANTRY INFO][0m Installing local project...
+2026-09-15T03:39:45.686Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T03:39:45.709Z [36m[1m
+2026-09-15T03:39:45.710Z ########################################
+2026-09-15T03:39:45.710Z ### [GANTRY] Python environment info ###  
+2026-09-15T03:39:45.710Z ########################################
+2026-09-15T03:39:45.710Z [0m
+2026-09-15T03:39:45.714Z [36m[1m❯ [GANTRY INFO][0m Using Python 3.12.12 from '/opt/conda/bin/python'.
+2026-09-15T03:39:45.714Z [36m[1m❯ [GANTRY INFO][0m Packages:
+2026-09-15T03:39:45.715Z [1mai2-olmo-core[0m @ file:///gantry-runtime
+2026-09-15T03:39:45.715Z [1mai2-olmo-eval[0m==0.9.0
+2026-09-15T03:39:45.715Z [1maiohappyeyeballs[0m==2.6.1
+2026-09-15T03:39:45.715Z [1maiohttp[0m==3.13.2
+2026-09-15T03:39:45.715Z [1maiosignal[0m==1.4.0
+2026-09-15T03:39:45.715Z [1malabaster[0m==0.7.16
+2026-09-15T03:39:45.715Z [1mannotated-types[0m==0.7.0
+2026-09-15T03:39:45.715Z [1mantlr4-python3-runtime[0m==4.9.3
+2026-09-15T03:39:45.715Z [1manyio[0m==4.11.0
+2026-09-15T03:39:45.715Z [1mapache-tvm-ffi[0m==0.1.13.post3
+2026-09-15T03:39:45.715Z [1marchspec[0m @ file:///home/conda/feedstock_root/build_artifacts/archspec_1737352602016/work
+2026-09-15T03:39:45.715Z [1masttokens[0m @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1763409923949/work
+2026-09-15T03:39:45.715Z [1mattrs[0m @ file:///home/conda/feedstock_root/build_artifacts/attrs_1759762205280/work
+2026-09-15T03:39:45.715Z [1mbabel[0m==2.17.0
+2026-09-15T03:39:45.715Z [1mbeaker-gantry[0m==3.7.0
+2026-09-15T03:39:45.715Z [1mbeaker-py[0m==2.8.0
+2026-09-15T03:39:45.715Z [1mbeautifulsoup4[0m @ file:///home/conda/feedstock_root/build_artifacts/beautifulsoup4_1759146011391/work
+2026-09-15T03:39:45.715Z [1mbettermap[0m==1.3.1
+2026-09-15T03:39:45.715Z [1mblack[0m==23.12.1
+2026-09-15T03:39:45.715Z [1mboltons[0m @ file:///home/conda/feedstock_root/build_artifacts/boltons_1749686179973/work
+2026-09-15T03:39:45.715Z [1mboto3[0m==1.41.3
+2026-09-15T03:39:45.715Z [1mbotocore[0m==1.41.3
+2026-09-15T03:39:45.715Z [1mbrotli[0m @ file:///home/conda/feedstock_root/build_artifacts/brotli-split_1756599151967/work
+2026-09-15T03:39:45.715Z [1mbuild[0m==1.3.0
+2026-09-15T03:39:45.715Z [1mcached-path[0m==1.8.0
+2026-09-15T03:39:45.715Z [1mcachetools[0m==6.2.2
+2026-09-15T03:39:45.715Z [1mcertifi[0m @ file:///home/conda/feedstock_root/build_artifacts/certifi_1762976168352/work/certifi
+2026-09-15T03:39:45.715Z [1mcffi[0m @ file:///home/conda/feedstock_root/build_artifacts/cffi_1761202850602/work
+2026-09-15T03:39:45.715Z [1mchardet[0m @ file:///home/conda/feedstock_root/build_artifacts/chardet_1741797914774/work
+2026-09-15T03:39:45.715Z [1mcharset-normalizer[0m @ file:///home/conda/feedstock_root/build_artifacts/charset-normalizer_1760437218288/work
+2026-09-15T03:39:45.715Z [1mclick[0m @ file:///home/conda/feedstock_root/build_artifacts/click_1763248546991/work
+2026-09-15T03:39:45.715Z [1mclick-help-colors[0m==0.9.4
+2026-09-15T03:39:45.715Z [1mclick-option-group[0m==0.5.9
+2026-09-15T03:39:45.716Z [1mcolorama[0m @ file:///home/conda/feedstock_root/build_artifacts/colorama_1733218098505/work
+2026-09-15T03:39:45.716Z [1mcomet-ml[0m==3.54.2
+2026-09-15T03:39:45.716Z [1mconda[0m @ file:///home/conda/feedstock_root/build_artifacts/conda_1760108593422/work/conda-src
+2026-09-15T03:39:45.716Z [1mconda-build[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-build_1763816195874/work
+2026-09-15T03:39:45.716Z [1mconda-index[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-index_1760661811794/work
+2026-09-15T03:39:45.716Z [1mconda-libmamba-solver[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-libmamba-solver_1745834476052/work/src
+2026-09-15T03:39:45.716Z [1mconda-package-handling[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-package-handling_1736345463896/work
+2026-09-15T03:39:45.716Z [1mconda-package-streaming[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-package-streaming_1751548120229/work
+2026-09-15T03:39:45.716Z [1mconfigobj[0m==5.0.9
+2026-09-15T03:39:45.716Z [1mcontourpy[0m==1.4.0
+2026-09-15T03:39:45.716Z [1mcryptography[0m==46.0.3
+2026-09-15T03:39:45.716Z [1mcuda-bindings[0m==13.4.1
+2026-09-15T03:39:45.716Z [1mcuda-core[0m==1.2.0
+2026-09-15T03:39:45.716Z [1mcuda-pathfinder[0m==1.8.1
+2026-09-15T03:39:45.716Z [1mcuda-python[0m==13.4.1
+2026-09-15T03:39:45.716Z [1mcycler[0m==0.12.1
+2026-09-15T03:39:45.716Z [1mdataclass-extensions[0m==0.5.0
+2026-09-15T03:39:45.716Z [1mdatasets[0m==3.6.0
+2026-09-15T03:39:45.716Z [1mdecorator[0m @ file:///home/conda/feedstock_root/build_artifacts/decorator_1740384970518/work
+2026-09-15T03:39:45.716Z [1mdill[0m==0.3.8
+2026-09-15T03:39:45.716Z [1mdion[0m @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b
+2026-09-15T03:39:45.716Z [1mdistro[0m @ file:///home/conda/feedstock_root/build_artifacts/distro_1734729835256/work
+2026-09-15T03:39:45.716Z [1mdocker[0m==7.1.0
+2026-09-15T03:39:45.716Z [1mdocutils[0m==0.20.1
+2026-09-15T03:39:45.716Z [1mdulwich[0m==0.24.10
+2026-09-15T03:39:45.716Z [1meinops[0m==0.8.1
+2026-09-15T03:39:45.716Z [1mevalidate[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_evalidate_1746793833/work
+2026-09-15T03:39:45.716Z [1meverett[0m==3.1.0
+2026-09-15T03:39:45.716Z [1mexecnet[0m==2.1.2
+2026-09-15T03:39:45.716Z [1mexecuting[0m @ file:///home/conda/feedstock_root/build_artifacts/executing_1756729339227/work
+2026-09-15T03:39:45.716Z [1mfilelock[0m @ file:///home/conda/feedstock_root/build_artifacts/filelock_1759948064277/work
+2026-09-15T03:39:45.716Z [1mfla-core[0m==0.4.1
+2026-09-15T03:39:45.716Z [1mflash-attn[0m==2.8.2
+2026-09-15T03:39:45.716Z [1mflash-attn-4[0m==4.0.0b30
+2026-09-15T03:39:45.716Z [1mflash-linear-attention[0m==0.4.1
+2026-09-15T03:39:45.716Z [1mfonttools[0m==4.65.0
+2026-09-15T03:39:45.716Z [1mfrozendict[0m @ file:///home/conda/feedstock_root/build_artifacts/frozendict_1756047928019/work
+2026-09-15T03:39:45.716Z [1mfrozenlist[0m==1.8.0
+2026-09-15T03:39:45.716Z [1mfsspec[0m==2025.3.0
+2026-09-15T03:39:45.716Z [1mfuro[0m==2024.8.6
+2026-09-15T03:39:45.716Z [1mgitdb[0m==4.0.12
+2026-09-15T03:39:45.716Z [1mgitpython[0m==3.1.45
+2026-09-15T03:39:45.716Z [1mgoogle-api-core[0m==2.28.1
+2026-09-15T03:39:45.716Z [1mgoogle-auth[0m==2.43.0
+2026-09-15T03:39:45.716Z [1mgoogle-cloud-compute[0m==1.40.0
+2026-09-15T03:39:45.716Z [1mgoogle-cloud-core[0m==2.5.0
+2026-09-15T03:39:45.716Z [1mgoogle-cloud-storage[0m==2.19.0
+2026-09-15T03:39:45.716Z [1mgoogle-crc32c[0m==1.7.1
+2026-09-15T03:39:45.716Z [1mgoogle-resumable-media[0m==2.8.0
+2026-09-15T03:39:45.716Z [1mgoogleapis-common-protos[0m==1.72.0
+2026-09-15T03:39:45.716Z [1mgrouped-gemm[0m @ git+https://git@github.com/tgale96/grouped_gemm.git@f1429a3c44c98f7912aa4b00125144cdf4e7fdb2
+2026-09-15T03:39:45.716Z [1mgrpcio[0m==1.76.0
+2026-09-15T03:39:45.716Z [1mgrpcio-status[0m==1.76.0
+2026-09-15T03:39:45.716Z [1mh11[0m==0.16.0
+2026-09-15T03:39:45.716Z [1mh2[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_h2_1756364871/work
+2026-09-15T03:39:45.716Z [1mhf-xet[0m==1.2.0
+2026-09-15T03:39:45.716Z [1mhpack[0m @ file:///home/conda/feedstock_root/build_artifacts/hpack_1737618293087/work
+2026-09-15T03:39:45.716Z [1mhttpcore[0m==1.0.9
+2026-09-15T03:39:45.716Z [1mhttpx[0m==0.28.1
+2026-09-15T03:39:45.716Z [1mhuggingface-hub[0m==0.36.0
+2026-09-15T03:39:45.716Z [1mhyperframe[0m @ file:///home/conda/feedstock_root/build_artifacts/hyperframe_1737618333194/work
+2026-09-15T03:39:45.716Z [1mid[0m==1.5.0
+2026-09-15T03:39:45.716Z [1midna[0m @ file:///home/conda/feedstock_root/build_artifacts/idna_1760286409563/work
+2026-09-15T03:39:45.716Z [1mimagesize[0m==1.4.1
+2026-09-15T03:39:45.716Z [1mimportlib-metadata[0m==8.7.0
+2026-09-15T03:39:45.716Z [1mimportlib-resources[0m==6.5.2
+2026-09-15T03:39:45.716Z [1miniconfig[0m==2.3.0
+2026-09-15T03:39:45.716Z [1mipython[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_ipython_1762350942/work
+2026-09-15T03:39:45.716Z [1mipython-pygments-lexers[0m @ file:///home/conda/feedstock_root/build_artifacts/ipython_pygments_lexers_1737123620466/work
+2026-09-15T03:39:45.716Z [1misort[0m==5.13.2
+2026-09-15T03:39:45.716Z [1mjaraco-classes[0m==3.4.0
+2026-09-15T03:39:45.716Z [1mjaraco-context[0m==6.0.1
+2026-09-15T03:39:45.716Z [1mjaraco-functools[0m==4.3.0
+2026-09-15T03:39:45.716Z [1mjedi[0m @ file:///home/conda/feedstock_root/build_artifacts/jedi_1733300866624/work
+2026-09-15T03:39:45.716Z [1mjeepney[0m==0.9.0
+2026-09-15T03:39:45.716Z [1mjinja2[0m @ file:///home/conda/feedstock_root/build_artifacts/jinja2_1741263328855/work
+2026-09-15T03:39:45.716Z [1mjmespath[0m==1.0.1
+2026-09-15T03:39:45.716Z [1mjsonpatch[0m @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1733814567314/work
+2026-09-15T03:39:45.716Z [1mjsonpointer[0m @ file:///home/conda/feedstock_root/build_artifacts/jsonpointer_1756754132407/work
+2026-09-15T03:39:45.716Z [1mjsonschema[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_jsonschema_1755595646/work
+2026-09-15T03:39:45.716Z [1mjsonschema-specifications[0m @ file:///tmp/tmptzik3dqa/src
+2026-09-15T03:39:45.716Z [1mkeyring[0m==25.7.0
+2026-09-15T03:39:45.716Z [1mkiwisolver[0m==1.5.1
+2026-09-15T03:39:45.716Z [1mlibarchive-c[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-libarchive-c_1754663558/work
+2026-09-15T03:39:45.716Z [1mlibmambapy[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_libmambapy_1760729597/work/libmambapy
+2026-09-15T03:39:45.716Z [1mlief[0m @ file:///home/conda/feedstock_root/build_artifacts/lief_1760811648956/work/api/python
+2026-09-15T03:39:45.716Z [1mliger-kernel[0m==0.6.4
+2026-09-15T03:39:45.716Z [1mlightning-utilities[0m==0.15.2
+2026-09-15T03:39:45.716Z [1mlinkify-it-py[0m==2.0.3
+2026-09-15T03:39:45.716Z [1mmarkdown-it-py[0m==3.0.0
+2026-09-15T03:39:45.716Z [1mmarkupsafe[0m @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1759055168201/work
+2026-09-15T03:39:45.716Z [1mmatplotlib[0m==3.11.2
+2026-09-15T03:39:45.716Z [1mmatplotlib-inline[0m @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_1761214490209/work
+2026-09-15T03:39:45.716Z [1mmdit-py-plugins[0m==0.5.0
+2026-09-15T03:39:45.716Z [1mmdurl[0m==0.1.2
+2026-09-15T03:39:45.716Z [1mmemray[0m==1.19.1
+2026-09-15T03:39:45.716Z [1mmenuinst[0m @ file:///home/conda/feedstock_root/build_artifacts/menuinst_1761299738838/work
+2026-09-15T03:39:45.716Z [1mml-dtypes[0m==0.5.4
+2026-09-15T03:39:45.716Z [1mmore-itertools[0m==10.8.0
+2026-09-15T03:39:45.716Z [1mmpmath[0m==1.3.0
+2026-09-15T03:39:45.716Z [1mmsgpack[0m @ file:///home/conda/feedstock_root/build_artifacts/msgpack-python_1762503974934/work
+2026-09-15T03:39:45.716Z [1mmultidict[0m==6.7.0
+2026-09-15T03:39:45.716Z [1mmultiprocess[0m==0.70.16
+2026-09-15T03:39:45.716Z [1mmypy[0m==1.3.0
+2026-09-15T03:39:45.716Z [1mmypy-extensions[0m==1.1.0
+2026-09-15T03:39:45.716Z [1mmyst-parser[0m==2.0.0
+2026-09-15T03:39:45.716Z [1mnetworkx[0m==3.5
+2026-09-15T03:39:45.716Z [1mnh3[0m==0.3.2
+2026-09-15T03:39:45.716Z [1mninja[0m==1.13.0
+2026-09-15T03:39:45.716Z [1mnumpy[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpy_1763351074/work/dist/numpy-2.3.5-cp312-cp312-linux_x86_64.whl#sha256=585a706a3c889590365479b2cdbe308c23addd9fae26c7937f4b74887269b6e3
+2026-09-15T03:39:45.716Z [1mnvidia-cublas-cu12[0m==12.8.4.1
+2026-09-15T03:39:45.716Z [1mnvidia-cuda-cupti-cu12[0m==12.8.90
+2026-09-15T03:39:45.716Z [1mnvidia-cuda-nvdisasm[0m==13.4.49
+2026-09-15T03:39:45.716Z [1mnvidia-cuda-nvrtc-cu12[0m==12.8.93
+2026-09-15T03:39:45.716Z [1mnvidia-cuda-runtime-cu12[0m==12.8.90
+2026-09-15T03:39:45.716Z [1mnvidia-cudnn-cu12[0m==9.10.2.21
+2026-09-15T03:39:45.716Z [1mnvidia-cufft-cu12[0m==11.3.3.83
+2026-09-15T03:39:45.716Z [1mnvidia-cufile-cu12[0m==1.13.1.3
+2026-09-15T03:39:45.716Z [1mnvidia-curand-cu12[0m==10.3.9.90
+2026-09-15T03:39:45.716Z [1mnvidia-cusolver-cu12[0m==11.7.3.90
+2026-09-15T03:39:45.716Z [1mnvidia-cusparse-cu12[0m==12.5.8.93
+2026-09-15T03:39:45.716Z [1mnvidia-cusparselt-cu12[0m==0.7.1
+2026-09-15T03:39:45.716Z [1mnvidia-cutlass-dsl[0m==4.7.1
+2026-09-15T03:39:45.716Z [1mnvidia-cutlass-dsl-libs-base[0m==4.7.1
+2026-09-15T03:39:45.716Z [1mnvidia-cutlass-dsl-libs-core[0m==4.7.1
+2026-09-15T03:39:45.716Z [1mnvidia-cutlass-dsl-libs-cu12[0m==4.7.1
+2026-09-15T03:39:45.716Z [1mnvidia-nccl-cu12[0m==2.27.5
+2026-09-15T03:39:45.716Z [1mnvidia-nvjitlink-cu12[0m==12.8.93
+2026-09-15T03:39:45.716Z [1mnvidia-nvshmem-cu12[0m==3.3.20
+2026-09-15T03:39:45.716Z [1mnvidia-nvtx-cu12[0m==12.8.90
+2026-09-15T03:39:45.716Z [1momegaconf[0m==2.3.0
+2026-09-15T03:39:45.716Z [1monnx[0m==1.19.1
+2026-09-15T03:39:45.716Z [1monnx-ir[0m==0.1.12
+2026-09-15T03:39:45.716Z [1monnxscript[0m==0.5.6
+2026-09-15T03:39:45.716Z [1mpackaging[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1745345660/work
+2026-09-15T03:39:45.716Z [1mpandas[0m==2.3.3
+2026-09-15T03:39:45.716Z [1mparso[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_parso_1755974222/work
+2026-09-15T03:39:45.716Z [1mpathspec[0m==0.12.1
+2026-09-15T03:39:45.716Z [1mpetname[0m==2.9
+2026-09-15T03:39:45.716Z [1mpexpect[0m @ file:///home/conda/feedstock_root/build_artifacts/pexpect_1733301927746/work
+2026-09-15T03:39:45.716Z [1mpillow[0m==11.3.0
+2026-09-15T03:39:45.716Z [1mpip[0m==25.3
+2026-09-15T03:39:45.716Z [1mpkginfo[0m @ file:///home/conda/feedstock_root/build_artifacts/pkginfo_1739984581450/work
+2026-09-15T03:39:45.716Z [1mplatformdirs[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_platformdirs_1759953252/work
+2026-09-15T03:39:45.716Z [1mpluggy[0m @ file:///home/conda/feedstock_root/build_artifacts/pluggy_1747339660894/work
+2026-09-15T03:39:45.716Z [1mprompt-toolkit[0m @ file:///home/conda/feedstock_root/build_artifacts/prompt-toolkit_1756321756983/work
+2026-09-15T03:39:45.716Z [1mpropcache[0m==0.4.1
+2026-09-15T03:39:45.716Z [1mproto-plus[0m==1.26.1
+2026-09-15T03:39:45.716Z [1mprotobuf[0m==6.33.1
+2026-09-15T03:39:45.716Z [1mpsutil[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_psutil_1762092914/work
+2026-09-15T03:39:45.716Z [1mptyprocess[0m @ file:///home/conda/feedstock_root/build_artifacts/ptyprocess_1733302279685/work/dist/ptyprocess-0.7.0-py2.py3-none-any.whl#sha256=92c32ff62b5fd8cf325bec5ab90d7be3d2a8ca8c8a3813ff487a8d2002630d1f
+2026-09-15T03:39:45.716Z [1mpure-eval[0m @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1733569405015/work
+2026-09-15T03:39:45.716Z [1mpyarrow[0m==19.0.1
+2026-09-15T03:39:45.716Z [1mpyasn1[0m==0.6.1
+2026-09-15T03:39:45.716Z [1mpyasn1-modules[0m==0.4.2
+2026-09-15T03:39:45.716Z [1mpycosat[0m @ file:///home/conda/feedstock_root/build_artifacts/pycosat_1757744639790/work
+2026-09-15T03:39:45.716Z [1mpycparser[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pycparser_1733195786/work
+2026-09-15T03:39:45.716Z [1mpydantic[0m==2.12.4
+2026-09-15T03:39:45.716Z [1mpydantic-core[0m==2.41.5
+2026-09-15T03:39:45.716Z [1mpygments[0m @ file:///home/conda/feedstock_root/build_artifacts/pygments_1750615794071/work
+2026-09-15T03:39:45.716Z [1mpyparsing[0m==3.3.2
+2026-09-15T03:39:45.716Z [1mpyproject-hooks[0m==1.2.0
+2026-09-15T03:39:45.716Z [1mpysocks[0m @ file:///home/conda/feedstock_root/build_artifacts/pysocks_1733217236728/work
+2026-09-15T03:39:45.716Z [1mpytest[0m==9.0.1
+2026-09-15T03:39:45.716Z [1mpytest-memray[0m==1.8.0
+2026-09-15T03:39:45.716Z [1mpytest-sphinx[0m==0.6.3
+2026-09-15T03:39:45.716Z [1mpytest-xdist[0m==3.8.0
+2026-09-15T03:39:45.716Z [1mpython-box[0m==6.1.0
+2026-09-15T03:39:45.716Z [1mpython-dateutil[0m==2.9.0.post0
+2026-09-15T03:39:45.716Z [1mpytz[0m @ file:///home/conda/feedstock_root/build_artifacts/pytz_1742920838005/work
+2026-09-15T03:39:45.716Z [1mpyyaml[0m @ file:///home/conda/feedstock_root/build_artifacts/pyyaml_1758891829620/work
+2026-09-15T03:39:45.716Z [1mquack-kernels[0m==0.6.5
+2026-09-15T03:39:45.716Z [1mreadme-renderer[0m==43.0
+2026-09-15T03:39:45.716Z [1mreferencing[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_referencing_1760379115/work
+2026-09-15T03:39:45.716Z [1mregex[0m==2025.11.3
+2026-09-15T03:39:45.716Z [1mrequests[0m @ file:///home/conda/feedstock_root/build_artifacts/requests_1755614211359/work
+2026-09-15T03:39:45.716Z [1mrequests-toolbelt[0m==1.0.0
+2026-09-15T03:39:45.716Z [1mrfc3986[0m==2.0.0
+2026-09-15T03:39:45.716Z [1mrich[0m==13.9.4
+2026-09-15T03:39:45.716Z [1mring-flash-attn[0m==0.1.8
+2026-09-15T03:39:45.716Z [1mrpds-py[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_rpds-py_1763327046/work
+2026-09-15T03:39:45.716Z [1mrsa[0m==4.9.1
+2026-09-15T03:39:45.716Z [1mruamel-yaml[0m @ file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml_1761160588389/work
+2026-09-15T03:39:45.716Z [1mruamel-yaml-clib[0m @ file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml.clib_1760564169582/work
+2026-09-15T03:39:45.716Z [1mruff[0m==0.14.6
+2026-09-15T03:39:45.716Z [1ms3transfer[0m==0.15.0
+2026-09-15T03:39:45.716Z [1msafetensors[0m==0.7.0
+2026-09-15T03:39:45.716Z [1msecretstorage[0m==3.5.0
+2026-09-15T03:39:45.716Z [1msemantic-version[0m==2.10.0
+2026-09-15T03:39:45.716Z [1msentry-sdk[0m==2.46.0
+2026-09-15T03:39:45.716Z [1msetuptools[0m==69.5.1
+2026-09-15T03:39:45.716Z [1msimplejson[0m==3.20.2
+2026-09-15T03:39:45.716Z [1msix[0m==1.17.0
+2026-09-15T03:39:45.716Z [1msmmap[0m==5.0.2
+2026-09-15T03:39:45.716Z [1msniffio[0m==1.3.1
+2026-09-15T03:39:45.716Z [1msnowballstemmer[0m==3.0.1
+2026-09-15T03:39:45.716Z [1msoupsieve[0m @ file:///home/conda/feedstock_root/build_artifacts/soupsieve_1756330469801/work
+2026-09-15T03:39:45.716Z [1msphinx[0m==7.4.7
+2026-09-15T03:39:45.716Z [1msphinx-autobuild[0m==2025.8.25
+2026-09-15T03:39:45.716Z [1msphinx-autodoc-typehints[0m==1.23.3
+2026-09-15T03:39:45.716Z [1msphinx-basic-ng[0m==1.0.0b2
+2026-09-15T03:39:45.716Z [1msphinx-copybutton[0m==0.5.2
+2026-09-15T03:39:45.716Z [1msphinx-inline-tabs[0m==2023.4.21
+2026-09-15T03:39:45.716Z [1msphinxcontrib-applehelp[0m==2.0.0
+2026-09-15T03:39:45.716Z [1msphinxcontrib-devhelp[0m==2.0.0
+2026-09-15T03:39:45.716Z [1msphinxcontrib-htmlhelp[0m==2.1.0
+2026-09-15T03:39:45.716Z [1msphinxcontrib-jsmath[0m==1.0.1
+2026-09-15T03:39:45.716Z [1msphinxcontrib-qthelp[0m==2.0.0
+2026-09-15T03:39:45.716Z [1msphinxcontrib-serializinghtml[0m==2.0.0
+2026-09-15T03:39:45.716Z [1mstack-data[0m @ file:///home/conda/feedstock_root/build_artifacts/stack_data_1733569443808/work
+2026-09-15T03:39:45.716Z [1mstarlette[0m==0.50.0
+2026-09-15T03:39:45.716Z [1msympy[0m==1.14.0
+2026-09-15T03:39:45.716Z [1mtextual[0m==6.2.1
+2026-09-15T03:39:45.716Z [1mtokenizers[0m==0.22.1
+2026-09-15T03:39:45.716Z [1mtomli[0m==2.4.1
+2026-09-15T03:39:45.716Z [1mtorch[0m==2.9.1+cu128
+2026-09-15T03:39:45.716Z [1mtorch-c-dlpack-ext[0m==0.1.5
+2026-09-15T03:39:45.716Z [1mtorchao[0m==0.15.0
+2026-09-15T03:39:45.716Z [1mtorchaudio[0m==2.9.1+cu128
+2026-09-15T03:39:45.716Z [1mtorchmetrics[0m==1.8.2
+2026-09-15T03:39:45.716Z [1mtorchvision[0m==0.24.1+cu128
+2026-09-15T03:39:45.716Z [1mtqdm[0m @ file:///home/conda/feedstock_root/build_artifacts/tqdm_1735661334605/work
+2026-09-15T03:39:45.716Z [1mtraitlets[0m @ file:///home/conda/feedstock_root/build_artifacts/traitlets_1733367359838/work
+2026-09-15T03:39:45.716Z [1mtransformer-engine[0m==2.9.0
+2026-09-15T03:39:45.716Z [1mtransformer-engine-cu12[0m==2.9.0
+2026-09-15T03:39:45.716Z [1mtransformer-engine-torch[0m==2.9.0
+2026-09-15T03:39:45.716Z [1mtransformers[0m==4.57.3
+2026-09-15T03:39:45.716Z [1mtriton[0m==3.5.1
+2026-09-15T03:39:45.716Z [1mtruststore[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_truststore_1753886790/work
+2026-09-15T03:39:45.716Z [1mtwine[0m==6.2.0
+2026-09-15T03:39:45.716Z [1mtyping-extensions[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_extensions_1756220668/work
+2026-09-15T03:39:45.716Z [1mtyping-inspection[0m==0.4.2
+2026-09-15T03:39:45.716Z [1mtzdata[0m==2025.2
+2026-09-15T03:39:45.716Z [1muc-micro-py[0m==1.0.3
+2026-09-15T03:39:45.716Z [1murllib3[0m @ file:///home/conda/feedstock_root/build_artifacts/urllib3_1750271362675/work
+2026-09-15T03:39:45.716Z [1muvicorn[0m==0.38.0
+2026-09-15T03:39:45.716Z [1mwandb[0m==0.23.0
+2026-09-15T03:39:45.716Z [1mwatchfiles[0m==1.1.1
+2026-09-15T03:39:45.716Z [1mwcwidth[0m @ file:///home/conda/feedstock_root/build_artifacts/wcwidth_1758622279606/work
+2026-09-15T03:39:45.716Z [1mwebsockets[0m==15.0.1
+2026-09-15T03:39:45.716Z [1mwheel[0m==0.45.1
+2026-09-15T03:39:45.716Z [1mwrapt[0m==2.0.1
+2026-09-15T03:39:45.716Z [1mwurlitzer[0m==3.1.1
+2026-09-15T03:39:45.716Z [1mxxhash[0m==3.6.0
+2026-09-15T03:39:45.716Z [1myarl[0m==1.22.0
+2026-09-15T03:39:45.716Z [1mzipp[0m==3.23.0
+2026-09-15T03:39:45.716Z [1mzstandard[0m==0.25.0
+2026-09-15T03:39:45.716Z [36m[1m
+2026-09-15T03:39:45.716Z #####################################
+2026-09-15T03:39:45.716Z ### [GANTRY] NVIDIA system status ###  
+2026-09-15T03:39:45.716Z #####################################
+2026-09-15T03:39:45.716Z [0m
+2026-09-15T03:39:45.761Z Tue Sep 15 03:39:45 2026       
+2026-09-15T03:39:45.762Z +-----------------------------------------------------------------------------------------+
+2026-09-15T03:39:45.762Z | NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version: 12.8     |
+2026-09-15T03:39:45.762Z |-----------------------------------------+------------------------+----------------------+
+2026-09-15T03:39:45.762Z | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+2026-09-15T03:39:45.762Z | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+2026-09-15T03:39:45.762Z |                                         |                        |               MIG M. |
+2026-09-15T03:39:45.762Z |=========================================+========================+======================|
+2026-09-15T03:39:45.801Z |   0  NVIDIA A100-SXM4-80GB          On  |   00000000:C0:00.0 Off |                    0 |
+2026-09-15T03:39:45.801Z | N/A   29C    P0             60W /  400W |       1MiB /  81920MiB |      0%      Default |
+2026-09-15T03:39:45.801Z |                                         |                        |             Disabled |
+2026-09-15T03:39:45.801Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T03:39:45.808Z |   1  NVIDIA A100-SXM4-80GB          On  |   00000000:C3:00.0 Off |                    0 |
+2026-09-15T03:39:45.809Z | N/A   32C    P0             62W /  400W |       1MiB /  81920MiB |      0%      Default |
+2026-09-15T03:39:45.809Z |                                         |                        |             Disabled |
+2026-09-15T03:39:45.809Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T03:39:45.809Z                                                                                          
+2026-09-15T03:39:45.809Z +-----------------------------------------------------------------------------------------+
+2026-09-15T03:39:45.809Z | Processes:                                                                              |
+2026-09-15T03:39:45.809Z |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+2026-09-15T03:39:45.809Z |        ID   ID                                                               Usage      |
+2026-09-15T03:39:45.809Z |=========================================================================================|
+2026-09-15T03:39:45.810Z |  No running processes found                                                             |
+2026-09-15T03:39:45.810Z +-----------------------------------------------------------------------------------------+
+2026-09-15T03:39:46.600Z [36m[1m
+2026-09-15T03:39:46.600Z ###############################
+2026-09-15T03:39:46.600Z ### [GANTRY] Setup complete ###  (finished in 11 seconds)
+2026-09-15T03:39:46.600Z ###############################
+2026-09-15T03:39:46.600Z [0m
+2026-09-15T03:39:55.525Z /opt/conda/lib/python3.12/site-packages/torchao/quantization/quant_api.py:2525: SyntaxWarning: invalid escape sequence '\.'
+2026-09-15T03:39:55.525Z   * regex for parameter names, must start with `re:`, e.g. `re:language\.layers\..+\.q_proj.weight`.
+2026-09-15T03:39:55.917Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:39:55.921Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:39:56.067Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:39:56.071Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:39:57.161Z Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+2026-09-15T03:39:57.161Z Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+2026-09-15T03:39:57.161Z Running in beaker on node 'saturn-cs-aus-252.reviz.ai2.in'
+2026-09-15T03:39:57.352Z Initializing process group with timeout=datetime.timedelta(seconds=900)...
+2026-09-15T03:39:57.552Z Setting env var 'TORCH_NCCL_AVOID_RECORD_STREAMS' to '1'
+2026-09-15T03:39:57.552Z Setting env var 'TORCH_DIST_INIT_BARRIER' to '1'
+2026-09-15T03:39:57.552Z Running in beaker on node 'saturn-cs-aus-252.reviz.ai2.in'
+2026-09-15T03:39:57.750Z Initializing process group with timeout=datetime.timedelta(seconds=900)...
+2026-09-15T03:39:57.783Z [Gloo] Rank [Gloo] Rank 01 is connected to  is connected to 11 peer ranks. Expected number of connected peer ranks is :  peer ranks. 1Expected number of connected peer ranks is : 1
+2026-09-15T03:39:57.783Z 
+2026-09-15T03:39:57.783Z [W915 03:39:57.816141777 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+2026-09-15T03:39:57.783Z [W915 03:39:57.816141417 ProcessGroupNCCL.cpp:924] Warning: TORCH_NCCL_AVOID_RECORD_STREAMS is the default now, this environment variable is thus deprecated. (function operator())
+2026-09-15T03:39:57.784Z Global rank 0 = local rank 0 = file system local rank 0
+2026-09-15T03:39:57.784Z Global rank 1 = local rank 1 = file system local rank 1
+2026-09-15T03:39:57.786Z [2;36m[2026-09-15 03:39:57][0m [34mINFO    [0m [2m[olmo_core.utils:237, 057f53cd8b8e, rank=0][0m Env var 'OMP_NUM_THREADS' already set to '8'
+2026-09-15T03:39:57.786Z [2;36m[2026-09-15 03:39:57][0m [34mINFO    [0m [2m[olmo_core.utils:237, 057f53cd8b8e, rank=0][0m Setting env var 'TOKENIZERS_PARALLELISM' to 'false'
+2026-09-15T03:39:57.786Z [2;36m[2026-09-15 03:39:57][0m [34mINFO    [0m [2m[olmo_core.train:148, 057f53cd8b8e, rank=0][0m Using distributed backend cpu:gloo,cuda:nccl
+2026-09-15T03:39:57.814Z [ctc-suite] task=outlier variant=full scale=4b n_examples=977 epochs=1 seq_len=4096 global_batch=32 world_size=2 curriculum=None
+2026-09-15T03:39:57.814Z [ctc-suite] wandb group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f2k-q35-4b
+2026-09-15T03:39:57.814Z [ctc-suite] task=outlier variant=full scale=4b n_examples=977 epochs=1 seq_len=4096 global_batch=32 world_size=2 curriculum=None
+2026-09-15T03:39:57.814Z [ctc-suite] wandb group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f2k-q35-4b
+2026-09-15T03:39:57.840Z [2;36m[2026-09-15 03:39:57][0m [34mINFO    [0m [2m[olmo_core.nn.transformer.config:373, 057f53cd8b8e, rank=0][0m Building transformer with 4,841,450,496 total params, 4,205,751,296 non-embedding params
+2026-09-15T03:39:58.611Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.616Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.622Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.628Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.633Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.640Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.645Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.651Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.attention:1150, 057f53cd8b8e, rank=0][0m Using attention backend 'flash_2'
+2026-09-15T03:39:58.662Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.transformer.config:446, 057f53cd8b8e, rank=0][0m Transformer(
+2026-09-15T03:39:58.662Z   (embeddings): Embedding(248320, 2560)
+2026-09-15T03:39:58.662Z   (blocks): ModuleDict(
+2026-09-15T03:39:58.662Z     (0): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (1): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (2): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (3): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): Attention(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.662Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.662Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.662Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (4): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (5): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.662Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.662Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.662Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.662Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.662Z         (dropout): Identity()
+2026-09-15T03:39:58.662Z       )
+2026-09-15T03:39:58.662Z     )
+2026-09-15T03:39:58.662Z     (6): TransformerBlock(
+2026-09-15T03:39:58.662Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.662Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.662Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.662Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.662Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.662Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.662Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (7): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): Attention(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.663Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (8): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (9): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (10): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (11): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): Attention(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.663Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (12): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (13): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (14): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.663Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (15): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): Attention(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.663Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.663Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.663Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.663Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.663Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.663Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.663Z         (dropout): Identity()
+2026-09-15T03:39:58.663Z       )
+2026-09-15T03:39:58.663Z     )
+2026-09-15T03:39:58.663Z     (16): TransformerBlock(
+2026-09-15T03:39:58.663Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.663Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.663Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.663Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.663Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (17): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (18): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (19): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): Attention(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.664Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.664Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.664Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (20): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (21): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (22): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (23): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): Attention(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.664Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.664Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.664Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (24): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (25): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.664Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.664Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.664Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.664Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.664Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.664Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.664Z         (dropout): Identity()
+2026-09-15T03:39:58.664Z       )
+2026-09-15T03:39:58.664Z     )
+2026-09-15T03:39:58.664Z     (26): TransformerBlock(
+2026-09-15T03:39:58.664Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.664Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.664Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.664Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z     (27): TransformerBlock(
+2026-09-15T03:39:58.665Z       (attention): Attention(
+2026-09-15T03:39:58.665Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.665Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.665Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.665Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.665Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z     (28): TransformerBlock(
+2026-09-15T03:39:58.665Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.665Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z     (29): TransformerBlock(
+2026-09-15T03:39:58.665Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.665Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z     (30): TransformerBlock(
+2026-09-15T03:39:58.665Z       (attention): GatedDeltaNet(
+2026-09-15T03:39:58.665Z         (w_q): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_k): Linear(in_features=2560, out_features=2048, bias=False)
+2026-09-15T03:39:58.665Z         (w_v): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_a): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (w_b): Linear(in_features=2560, out_features=32, bias=False)
+2026-09-15T03:39:58.665Z         (q_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (k_conv1d): CausalConv1d(2048, 2048, kernel_size=(4,), stride=(1,), padding=(3,), groups=2048, bias=False)
+2026-09-15T03:39:58.665Z         (v_conv1d): CausalConv1d(4096, 4096, kernel_size=(4,), stride=(1,), padding=(3,), groups=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (o_norm): FusedRMSNormGated(128, eps=1e-06, activation=swish)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z     (31): TransformerBlock(
+2026-09-15T03:39:58.665Z       (attention): Attention(
+2026-09-15T03:39:58.665Z         (w_q): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (w_k): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.665Z         (w_v): Linear(in_features=2560, out_features=1024, bias=False)
+2026-09-15T03:39:58.665Z         (w_out): Linear(in_features=4096, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w_g): Linear(in_features=2560, out_features=4096, bias=False)
+2026-09-15T03:39:58.665Z         (q_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.665Z         (k_norm): QwenRMSNorm((256,), eps=1e-06)
+2026-09-15T03:39:58.665Z         (rope): RotaryEmbedding()
+2026-09-15T03:39:58.665Z         (backend): FlashAttention2Backend()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (attention_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (attention_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward): FeedForward(
+2026-09-15T03:39:58.665Z         (w1): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z         (w2): Linear(in_features=9216, out_features=2560, bias=False)
+2026-09-15T03:39:58.665Z         (w3): Linear(in_features=2560, out_features=9216, bias=False)
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z       (feed_forward_norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z       (feed_forward_residual_stream): ResidualStream(
+2026-09-15T03:39:58.665Z         (dropout): Identity()
+2026-09-15T03:39:58.665Z       )
+2026-09-15T03:39:58.665Z     )
+2026-09-15T03:39:58.665Z   )
+2026-09-15T03:39:58.665Z   (lm_head): LMHead(
+2026-09-15T03:39:58.665Z     (norm): QwenRMSNorm((2560,), eps=1e-06)
+2026-09-15T03:39:58.665Z     (w_out): Linear(in_features=2560, out_features=248320, bias=False)
+2026-09-15T03:39:58.665Z   )
+2026-09-15T03:39:58.665Z )
+2026-09-15T03:39:58.665Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.nn.transformer.config:447, 057f53cd8b8e, rank=0][0m Built model with:
+2026-09-15T03:39:58.665Z - 4,841,450,496 total params
+2026-09-15T03:39:58.665Z - 4,205,751,296 non-embedding params
+2026-09-15T03:39:58.665Z - 4,841,450,496 trainable params
+2026-09-15T03:39:58.689Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.distributed.parallel:246, 057f53cd8b8e, rank=0][0m Built 1D device mesh with shape (dp=2,)
+2026-09-15T03:39:58.690Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.train.train_module.transformer.train_module:142, 057f53cd8b8e, rank=0][0m Data parallel world size = 2
+2026-09-15T03:39:58.691Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.train.train_module.transformer.common:103, 057f53cd8b8e, rank=0][0m Applied 'full' activation checkpointing to the model
+2026-09-15T03:39:58.842Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.train.train_module.transformer.common:136, 057f53cd8b8e, rank=0][0m Applied FSDP to the model with 1D device mesh with shape (dp=2,)
+2026-09-15T03:39:58.842Z [2;36m[2026-09-15 03:39:58][0m [34mINFO    [0m [2m[olmo_core.train.train_module.transformer.common:147, 057f53cd8b8e, rank=0][0m Initializing model weights...
+2026-09-15T03:39:59.062Z NCCL version 2.27.5+cuda12.9
+2026-09-15T03:40:00.231Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.train.train_module.transformer.train_module:200, 057f53cd8b8e, rank=0][0m Building optimizer...
+2026-09-15T03:40:00.234Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.optim.config:202, 057f53cd8b8e, rank=0][0m Building SkipStepAdamW optimizer with 2 param group(s)...
+2026-09-15T03:40:00.235Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.optim.config:210, 057f53cd8b8e, rank=0][0m Group 0, 1 parameter(s):
+2026-09-15T03:40:00.235Z  - weight_decay: 0.0
+2026-09-15T03:40:00.235Z  - lr: 5e-06
+2026-09-15T03:40:00.235Z  - betas: (0.9, 0.95)
+2026-09-15T03:40:00.235Z  - eps: 1e-08
+2026-09-15T03:40:00.235Z  - initial_lr: 5e-06
+2026-09-15T03:40:00.235Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.optim.config:210, 057f53cd8b8e, rank=0][0m Group 1, 530 parameter(s):
+2026-09-15T03:40:00.235Z  - lr: 5e-06
+2026-09-15T03:40:00.235Z  - betas: (0.9, 0.95)
+2026-09-15T03:40:00.235Z  - eps: 1e-08
+2026-09-15T03:40:00.235Z  - weight_decay: 0.0
+2026-09-15T03:40:00.235Z  - initial_lr: 5e-06
+2026-09-15T03:40:00.235Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.data.composable.numpy_document_source:778, 057f53cd8b8e, rank=0][0m Assuming dtype 'uint32' based on vocab size
+2026-09-15T03:40:00.235Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.data.composable.numpy_document_source:232, 057f53cd8b8e, rank=0][0m Expanding globs...
+2026-09-15T03:40:00.240Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.data.composable.numpy_document_source:257, 057f53cd8b8e, rank=0][0m Expanded '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/token_ids_part_*.npy' into 1 paths:
+2026-09-15T03:40:00.240Z - '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/token_ids_part_000000.npy'
+2026-09-15T03:40:00.240Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.data.composable.numpy_document_source:232, 057f53cd8b8e, rank=0][0m Expanding globs...
+2026-09-15T03:40:00.241Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.data.composable.numpy_document_source:257, 057f53cd8b8e, rank=0][0m Expanded '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/labels_mask_*.npy' into 1 paths:
+2026-09-15T03:40:00.241Z - '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f2M/labels_mask_part_000000.npy'
+2026-09-15T03:40:00.243Z 
+2026-09-15T03:40:00.260Z [1;36m PadToLengthInstanceSource[0m[36m(a119ac3)[0m: [32m4.0M[0m tokens
+2026-09-15T03:40:00.260Z └─ [1;36m NumpyDocumentSource[0m[36m(fc908c0)[0m: [32m2.2M[0m tokens[35m [/weka/oe-trai.../shards/outlier_f2M/token_ids_part_*.npy][0m
+2026-09-15T03:40:00.260Z 
+2026-09-15T03:40:00.261Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.train.trainer:373, 057f53cd8b8e, rank=0][0m Creating new process group for async bookkeeping
+2026-09-15T03:40:00.262Z [Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+2026-09-15T03:40:00.262Z [Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+2026-09-15T03:40:00.266Z [2;36m[2026-09-15 03:40:00][0m [34mINFO    [0m [2m[olmo_core.train.trainer:901, 057f53cd8b8e, rank=0][0m Loading checkpoint from '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim'...
+2026-09-15T03:40:21.346Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:922, 057f53cd8b8e, rank=0][0m Checkpoint successfully loaded
+2026-09-15T03:40:21.356Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:713, 057f53cd8b8e, rank=0][0m Callback order:
+2026-09-15T03:40:21.356Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 1: checkpointer
+2026-09-15T03:40:21.356Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 2: config_saver
+2026-09-15T03:40:21.356Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 3: wandb
+2026-09-15T03:40:21.356Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 4: flop_meter
+2026-09-15T03:40:21.357Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 5: console_logger
+2026-09-15T03:40:21.357Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 6: garbage_collector
+2026-09-15T03:40:21.357Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 7: gpu_monitor
+2026-09-15T03:40:21.357Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:715, 057f53cd8b8e, rank=0][0m   - Callback 8: speed_monitor
+2026-09-15T03:40:21.357Z [2;36m[2026-09-15 03:40:21][0m [34mINFO    [0m [2m[olmo_core.train.trainer:718, 057f53cd8b8e, rank=0][0m Training for 30 steps
+2026-09-15T03:40:22.040Z wandb: Currently logged in as: prasanns (allennlp) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+2026-09-15T03:40:22.840Z wandb: setting up run axz5aym1
+2026-09-15T03:40:23.324Z wandb: Tracking run with wandb version 0.23.0
+2026-09-15T03:40:23.326Z wandb: Run data is saved locally in /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-dense-2M/wandb/wandb/run-20260915_034022-axz5aym1
+2026-09-15T03:40:23.326Z wandb: Run `wandb offline` to turn off syncing.
+2026-09-15T03:40:23.326Z wandb: Syncing run f2k-outlier-dense-2M
+2026-09-15T03:40:23.326Z wandb: ⭐️ View project at https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks
+2026-09-15T03:40:23.326Z wandb: 🚀 View run at https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/runs/axz5aym1
+2026-09-15T03:40:23.491Z [2;36m[2026-09-15 03:40:23][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.garbage_collector:33, 057f53cd8b8e, rank=0][0m Automatic GC disabled for training, will run GC every 1000 steps
+2026-09-15T03:40:23.492Z [2;36m[2026-09-15 03:40:23][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.gpu_memory_monitor:41, 057f53cd8b8e, rank=0][0m GPU capacity: NVIDIA A100-SXM4-80GB with 79.25GiB memory of which 9.03GiB is currently allocated and 9.05GiB is currently reserved.
+2026-09-15T03:40:23.493Z [2;36m[2026-09-15 03:40:23][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.speed_monitor:114, 057f53cd8b8e, rank=0][0m Device: NVIDIA A100-SXM4-80GB, Device peak Flops/s: 312000000000000
+2026-09-15T03:40:23.506Z [2;36m[2026-09-15 03:40:23][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1452, 057f53cd8b8e, rank=0][0m Starting forward/backward dry-run batch...
+2026-09-15T03:42:54.804Z [2;36m[2026-09-15 03:42:54][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1454, 057f53cd8b8e, rank=0][0m Dry-run complete
+2026-09-15T03:42:54.807Z [2;36m[2026-09-15 03:42:54][0m [34mINFO    [0m [2m[olmo_core.data.composable.data_loader:575, 057f53cd8b8e, rank=0][0m Saving global data order indices for seed 34521 and epoch 1 to:
+2026-09-15T03:42:54.807Z '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite/global_indices_epoch1_max_seq_len4096_seed34521_seq_len4096_shuffleinter_source_size977_v1.npy'...
+2026-09-15T03:42:54.810Z [2;36m[2026-09-15 03:42:54][0m [34mINFO    [0m [2m[olmo_core.data.composable.data_loader:585, 057f53cd8b8e, rank=0][0m Global data order indices saved to:
+2026-09-15T03:42:54.810Z '/weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite/global_indices_epoch1_max_seq_len4096_seed34521_seq_len4096_shuffleinter_source_size977_v1.npy'
+2026-09-15T03:42:54.811Z [2;36m[2026-09-15 03:42:54][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1459, 057f53cd8b8e, rank=0][0m Starting epoch 1...
+2026-09-15T03:43:00.876Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.880Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.893Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.896Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.906Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.907Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.909Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:00.911Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T03:43:18.222Z [2;36m[2026-09-15 03:43:18][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=0][0m /opt/conda/lib/python3.12/site-packages/torch/distributed/utils.py:106: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:18.222Z   return (obj.to(target_device),)
+2026-09-15T03:43:18.222Z 
+2026-09-15T03:43:18.224Z [2;36m[2026-09-15 03:43:18][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/torch/distributed/utils.py:106: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:18.224Z   return (obj.to(target_device),)
+2026-09-15T03:43:18.224Z 
+2026-09-15T03:43:18.226Z [2;36m[2026-09-15 03:43:18][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=1/30,epoch=1]
+2026-09-15T03:43:18.226Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:43:18.226Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:43:18.226Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:43:18.226Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:43:18.226Z     optim/LR (group 0)=5.00E-06
+2026-09-15T03:43:18.226Z     optim/LR (group 1)=5.00E-06
+2026-09-15T03:43:18.226Z     optim/step skipped=0.0
+2026-09-15T03:43:18.226Z     optim/total grad norm=87.26
+2026-09-15T03:43:18.226Z     train/CE loss=0.7760
+2026-09-15T03:43:18.226Z     throughput/device/data loading (s)=7.287
+2026-09-15T03:43:18.226Z     train/PPL=2.173
+2026-09-15T03:43:18.972Z [2;36m[2026-09-15 03:43:18][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=0][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:75: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:18.972Z   total_n_non_ignore = target_mask.sum().item()
+2026-09-15T03:43:18.972Z 
+2026-09-15T03:43:18.974Z [2;36m[2026-09-15 03:43:18][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:75: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:18.974Z   total_n_non_ignore = target_mask.sum().item()
+2026-09-15T03:43:18.974Z 
+2026-09-15T03:43:19.708Z [2;36m[2026-09-15 03:43:19][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=0][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:233: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:19.709Z   if not torch.equal(grad_output, torch.tensor(1.0, device=grad_output.device)):
+2026-09-15T03:43:19.709Z 
+2026-09-15T03:43:19.711Z [2;36m[2026-09-15 03:43:19][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:233: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:43:19.711Z   if not torch.equal(grad_output, torch.tensor(1.0, device=grad_output.device)):
+2026-09-15T03:43:19.711Z 
+2026-09-15T03:43:33.103Z [2;36m[2026-09-15 03:43:33][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=2/30,epoch=1,eta=7m]
+2026-09-15T03:43:33.103Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:43:33.103Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:43:33.103Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:43:33.103Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:43:33.103Z     optim/LR (group 0)=4.83E-06
+2026-09-15T03:43:33.103Z     optim/LR (group 1)=4.83E-06
+2026-09-15T03:43:33.103Z     optim/step skipped=0.0
+2026-09-15T03:43:33.103Z     optim/total grad norm=17.10
+2026-09-15T03:43:33.103Z     throughput/chinchilla multiple=3.12E-06
+2026-09-15T03:43:33.103Z     throughput/device/BPS=0.0673
+2026-09-15T03:43:33.103Z     throughput/device/BPS (actual avg)=0.0673
+2026-09-15T03:43:33.103Z     throughput/device/MFU=32.36
+2026-09-15T03:43:33.104Z     throughput/device/MFU (actual avg)=32.36
+2026-09-15T03:43:33.104Z     throughput/device/TPS=4,408
+2026-09-15T03:43:33.104Z     throughput/device/TPS (actual avg)=4,408
+2026-09-15T03:43:33.104Z     throughput/device/flopsPS=101.0T
+2026-09-15T03:43:33.104Z     throughput/device/flopsPS (actual avg)=101.0T
+2026-09-15T03:43:33.104Z     throughput/total petaflops=6.003
+2026-09-15T03:43:33.104Z     throughput/total tokens=262,144
+2026-09-15T03:43:33.104Z     train/CE loss=0.2822
+2026-09-15T03:43:33.104Z     throughput/device/data loading (%)=0.0563
+2026-09-15T03:43:33.104Z     throughput/device/data loading (s)=0.0084
+2026-09-15T03:43:33.104Z     train/PPL=1.326
+2026-09-15T03:43:48.004Z [2;36m[2026-09-15 03:43:48][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=3/30,epoch=1,eta=7m]
+2026-09-15T03:43:48.004Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:43:48.004Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:43:48.004Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:43:48.004Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:43:48.004Z     optim/LR (group 0)=4.66E-06
+2026-09-15T03:43:48.004Z     optim/LR (group 1)=4.66E-06
+2026-09-15T03:43:48.004Z     optim/step skipped=0.0
+2026-09-15T03:43:48.004Z     optim/total grad norm=13.33
+2026-09-15T03:43:48.004Z     throughput/chinchilla multiple=4.67E-06
+2026-09-15T03:43:48.004Z     throughput/device/BPS=0.0671
+2026-09-15T03:43:48.004Z     throughput/device/BPS (actual avg)=0.0672
+2026-09-15T03:43:48.004Z     throughput/device/MFU=32.28
+2026-09-15T03:43:48.004Z     throughput/device/MFU (actual avg)=32.32
+2026-09-15T03:43:48.004Z     throughput/device/TPS=4,398
+2026-09-15T03:43:48.004Z     throughput/device/TPS (actual avg)=4,403
+2026-09-15T03:43:48.004Z     throughput/device/flopsPS=100.7T
+2026-09-15T03:43:48.004Z     throughput/device/flopsPS (actual avg)=100.8T
+2026-09-15T03:43:48.004Z     throughput/total petaflops=9.004
+2026-09-15T03:43:48.004Z     throughput/total tokens=393,216
+2026-09-15T03:43:48.004Z     train/CE loss=0.2312
+2026-09-15T03:43:48.004Z     throughput/device/data loading (%)=0.0115
+2026-09-15T03:43:48.004Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:43:48.004Z     train/PPL=1.260
+2026-09-15T03:44:02.920Z [2;36m[2026-09-15 03:44:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=4/30,epoch=1,eta=7m]
+2026-09-15T03:44:02.920Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:44:02.920Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:44:02.920Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:44:02.920Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:44:02.920Z     optim/LR (group 0)=4.48E-06
+2026-09-15T03:44:02.920Z     optim/LR (group 1)=4.48E-06
+2026-09-15T03:44:02.920Z     optim/step skipped=0.0
+2026-09-15T03:44:02.920Z     optim/total grad norm=7.299
+2026-09-15T03:44:02.920Z     throughput/chinchilla multiple=6.23E-06
+2026-09-15T03:44:02.920Z     throughput/device/BPS=0.0670
+2026-09-15T03:44:02.920Z     throughput/device/BPS (actual avg)=0.0671
+2026-09-15T03:44:02.920Z     throughput/device/MFU=32.25
+2026-09-15T03:44:02.920Z     throughput/device/MFU (actual avg)=32.30
+2026-09-15T03:44:02.920Z     throughput/device/TPS=4,393
+2026-09-15T03:44:02.920Z     throughput/device/TPS (actual avg)=4,400
+2026-09-15T03:44:02.920Z     throughput/device/flopsPS=100.6T
+2026-09-15T03:44:02.920Z     throughput/device/flopsPS (actual avg)=100.8T
+2026-09-15T03:44:02.920Z     throughput/total petaflops=12.01
+2026-09-15T03:44:02.920Z     throughput/total tokens=524,288
+2026-09-15T03:44:02.920Z     train/CE loss=0.1712
+2026-09-15T03:44:02.920Z     throughput/device/data loading (%)=0.0142
+2026-09-15T03:44:02.920Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:44:02.920Z     train/PPL=1.187
+2026-09-15T03:44:17.845Z [2;36m[2026-09-15 03:44:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=5/30,epoch=1,eta=6m]
+2026-09-15T03:44:17.845Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:44:17.845Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:44:17.845Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:44:17.845Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:44:17.845Z     optim/LR (group 0)=4.31E-06
+2026-09-15T03:44:17.845Z     optim/LR (group 1)=4.31E-06
+2026-09-15T03:44:17.845Z     optim/step skipped=0.0
+2026-09-15T03:44:17.845Z     optim/total grad norm=5.394
+2026-09-15T03:44:17.845Z     throughput/chinchilla multiple=7.79E-06
+2026-09-15T03:44:17.845Z     throughput/device/BPS=0.0670
+2026-09-15T03:44:17.845Z     throughput/device/BPS (actual avg)=0.0671
+2026-09-15T03:44:17.845Z     throughput/device/MFU=32.22
+2026-09-15T03:44:17.845Z     throughput/device/MFU (actual avg)=32.28
+2026-09-15T03:44:17.845Z     throughput/device/TPS=4,390
+2026-09-15T03:44:17.845Z     throughput/device/TPS (actual avg)=4,397
+2026-09-15T03:44:17.845Z     throughput/device/flopsPS=100.5T
+2026-09-15T03:44:17.845Z     throughput/device/flopsPS (actual avg)=100.7T
+2026-09-15T03:44:17.845Z     throughput/total petaflops=15.01
+2026-09-15T03:44:17.845Z     throughput/total tokens=655,360
+2026-09-15T03:44:17.845Z     train/CE loss=0.1252
+2026-09-15T03:44:17.845Z     throughput/device/data loading (%)=0.0134
+2026-09-15T03:44:17.845Z     throughput/device/data loading (s)=0.0020
+2026-09-15T03:44:17.845Z     train/PPL=1.133
+2026-09-15T03:44:32.786Z [2;36m[2026-09-15 03:44:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=6/30,epoch=1,eta=6m]
+2026-09-15T03:44:32.786Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:44:32.786Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:44:32.786Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:44:32.786Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:44:32.786Z     optim/LR (group 0)=4.14E-06
+2026-09-15T03:44:32.786Z     optim/LR (group 1)=4.14E-06
+2026-09-15T03:44:32.786Z     optim/step skipped=0.0
+2026-09-15T03:44:32.786Z     optim/total grad norm=10.44
+2026-09-15T03:44:32.786Z     throughput/chinchilla multiple=9.35E-06
+2026-09-15T03:44:32.786Z     throughput/device/BPS=0.0669
+2026-09-15T03:44:32.786Z     throughput/device/BPS (actual avg)=0.0671
+2026-09-15T03:44:32.786Z     throughput/device/MFU=32.19
+2026-09-15T03:44:32.786Z     throughput/device/MFU (actual avg)=32.26
+2026-09-15T03:44:32.786Z     throughput/device/TPS=4,386
+2026-09-15T03:44:32.786Z     throughput/device/TPS (actual avg)=4,395
+2026-09-15T03:44:32.786Z     throughput/device/flopsPS=100.4T
+2026-09-15T03:44:32.786Z     throughput/device/flopsPS (actual avg)=100.7T
+2026-09-15T03:44:32.786Z     throughput/total petaflops=18.01
+2026-09-15T03:44:32.786Z     throughput/total tokens=786,432
+2026-09-15T03:44:32.786Z     train/CE loss=0.1276
+2026-09-15T03:44:32.786Z     throughput/device/data loading (%)=0.0140
+2026-09-15T03:44:32.786Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:44:32.786Z     train/PPL=1.136
+2026-09-15T03:44:41.871Z [2;36m[2026-09-15 03:44:41][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:233: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:44:41.871Z   if not torch.equal(grad_output, torch.tensor(1.0, device=grad_output.device)):
+2026-09-15T03:44:41.871Z 
+2026-09-15T03:44:44.056Z [2;36m[2026-09-15 03:44:44][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/torch/distributed/utils.py:106: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:44:44.056Z   return (obj.to(target_device),)
+2026-09-15T03:44:44.056Z 
+2026-09-15T03:44:44.814Z [2;36m[2026-09-15 03:44:44][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/liger_kernel/ops/fused_linear_cross_entropy.py:75: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:44:44.814Z   total_n_non_ignore = target_mask.sum().item()
+2026-09-15T03:44:44.814Z 
+2026-09-15T03:44:47.980Z [2;36m[2026-09-15 03:44:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=7/30,epoch=1,eta=6m]
+2026-09-15T03:44:47.980Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:44:47.980Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:44:47.980Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:44:47.980Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:44:47.980Z     optim/LR (group 0)=3.97E-06
+2026-09-15T03:44:47.980Z     optim/LR (group 1)=3.97E-06
+2026-09-15T03:44:47.980Z     optim/step skipped=0.0
+2026-09-15T03:44:47.980Z     optim/total grad norm=6.637
+2026-09-15T03:44:47.981Z     throughput/chinchilla multiple=1.09E-05
+2026-09-15T03:44:47.981Z     throughput/device/BPS=0.0658
+2026-09-15T03:44:47.981Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:44:47.981Z     throughput/device/MFU=31.66
+2026-09-15T03:44:47.981Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:44:47.981Z     throughput/device/TPS=4,313
+2026-09-15T03:44:47.981Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:44:47.981Z     throughput/device/flopsPS=98.77T
+2026-09-15T03:44:47.981Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:44:47.981Z     throughput/total petaflops=21.01
+2026-09-15T03:44:47.981Z     throughput/total tokens=917,504
+2026-09-15T03:44:47.981Z     train/CE loss=0.1047
+2026-09-15T03:44:47.981Z     throughput/device/data loading (%)=0.0141
+2026-09-15T03:44:47.981Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:44:47.981Z     train/PPL=1.110
+2026-09-15T03:45:02.934Z [2;36m[2026-09-15 03:45:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=8/30,epoch=1,eta=6m]
+2026-09-15T03:45:02.934Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:45:02.934Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:45:02.934Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:45:02.934Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:45:02.934Z     optim/LR (group 0)=3.79E-06
+2026-09-15T03:45:02.934Z     optim/LR (group 1)=3.79E-06
+2026-09-15T03:45:02.934Z     optim/step skipped=0.0
+2026-09-15T03:45:02.934Z     optim/total grad norm=10.83
+2026-09-15T03:45:02.934Z     throughput/chinchilla multiple=1.25E-05
+2026-09-15T03:45:02.934Z     throughput/device/BPS=0.0669
+2026-09-15T03:45:02.934Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:45:02.934Z     throughput/device/MFU=32.17
+2026-09-15T03:45:02.934Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:45:02.934Z     throughput/device/TPS=4,382
+2026-09-15T03:45:02.934Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:45:02.934Z     throughput/device/flopsPS=100.4T
+2026-09-15T03:45:02.934Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:45:02.934Z     throughput/total petaflops=24.01
+2026-09-15T03:45:02.934Z     throughput/total tokens=1,048,576
+2026-09-15T03:45:02.934Z     train/CE loss=0.1186
+2026-09-15T03:45:02.934Z     throughput/device/data loading (%)=0.0115
+2026-09-15T03:45:02.934Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:45:02.934Z     train/PPL=1.126
+2026-09-15T03:45:17.887Z [2;36m[2026-09-15 03:45:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=9/30,epoch=1,eta=5m]
+2026-09-15T03:45:17.887Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:45:17.887Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:45:17.887Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:45:17.887Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:45:17.887Z     optim/LR (group 0)=3.62E-06
+2026-09-15T03:45:17.887Z     optim/LR (group 1)=3.62E-06
+2026-09-15T03:45:17.887Z     optim/step skipped=0.0
+2026-09-15T03:45:17.887Z     optim/total grad norm=6.556
+2026-09-15T03:45:17.887Z     throughput/chinchilla multiple=1.40E-05
+2026-09-15T03:45:17.887Z     throughput/device/BPS=0.0669
+2026-09-15T03:45:17.887Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:45:17.887Z     throughput/device/MFU=32.17
+2026-09-15T03:45:17.887Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:45:17.887Z     throughput/device/TPS=4,382
+2026-09-15T03:45:17.887Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:45:17.887Z     throughput/device/flopsPS=100.4T
+2026-09-15T03:45:17.887Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:45:17.887Z     throughput/total petaflops=27.01
+2026-09-15T03:45:17.887Z     throughput/total tokens=1,179,648
+2026-09-15T03:45:17.887Z     train/CE loss=0.0916
+2026-09-15T03:45:17.887Z     throughput/device/data loading (%)=0.0146
+2026-09-15T03:45:17.887Z     throughput/device/data loading (s)=0.0022
+2026-09-15T03:45:17.887Z     train/PPL=1.096
+2026-09-15T03:45:32.847Z [2;36m[2026-09-15 03:45:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=10/30,epoch=1,eta=5m]
+2026-09-15T03:45:32.847Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:45:32.847Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:45:32.847Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:45:32.847Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:45:32.847Z     optim/LR (group 0)=3.45E-06
+2026-09-15T03:45:32.847Z     optim/LR (group 1)=3.45E-06
+2026-09-15T03:45:32.847Z     optim/step skipped=0.0
+2026-09-15T03:45:32.847Z     optim/total grad norm=6.270
+2026-09-15T03:45:32.847Z     throughput/chinchilla multiple=1.56E-05
+2026-09-15T03:45:32.847Z     throughput/device/BPS=0.0668
+2026-09-15T03:45:32.847Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:45:32.847Z     throughput/device/MFU=32.15
+2026-09-15T03:45:32.847Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:45:32.847Z     throughput/device/TPS=4,379
+2026-09-15T03:45:32.847Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:45:32.847Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:45:32.847Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:45:32.847Z     throughput/total petaflops=30.01
+2026-09-15T03:45:32.847Z     throughput/total tokens=1,310,720
+2026-09-15T03:45:32.847Z     train/CE loss=0.0897
+2026-09-15T03:45:32.847Z     throughput/device/data loading (%)=0.0129
+2026-09-15T03:45:32.847Z     throughput/device/data loading (s)=0.0019
+2026-09-15T03:45:32.847Z     train/PPL=1.094
+2026-09-15T03:45:47.814Z [2;36m[2026-09-15 03:45:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=11/30,epoch=1,eta=5m]
+2026-09-15T03:45:47.814Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:45:47.814Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:45:47.814Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:45:47.814Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:45:47.814Z     optim/LR (group 0)=3.28E-06
+2026-09-15T03:45:47.814Z     optim/LR (group 1)=3.28E-06
+2026-09-15T03:45:47.814Z     optim/step skipped=0.0
+2026-09-15T03:45:47.814Z     optim/total grad norm=4.584
+2026-09-15T03:45:47.814Z     throughput/chinchilla multiple=1.71E-05
+2026-09-15T03:45:47.814Z     throughput/device/BPS=0.0668
+2026-09-15T03:45:47.814Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:45:47.814Z     throughput/device/MFU=32.14
+2026-09-15T03:45:47.814Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:45:47.814Z     throughput/device/TPS=4,379
+2026-09-15T03:45:47.814Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:45:47.814Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:45:47.814Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:45:47.814Z     throughput/total petaflops=33.02
+2026-09-15T03:45:47.814Z     throughput/total tokens=1,441,792
+2026-09-15T03:45:47.814Z     train/CE loss=0.0811
+2026-09-15T03:45:47.814Z     throughput/device/data loading (%)=0.0120
+2026-09-15T03:45:47.814Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:45:47.814Z     train/PPL=1.084
+2026-09-15T03:46:02.782Z [2;36m[2026-09-15 03:46:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=12/30,epoch=1,eta=5m]
+2026-09-15T03:46:02.782Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:46:02.782Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:46:02.782Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:46:02.782Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:46:02.782Z     optim/LR (group 0)=3.10E-06
+2026-09-15T03:46:02.782Z     optim/LR (group 1)=3.10E-06
+2026-09-15T03:46:02.782Z     optim/step skipped=0.0
+2026-09-15T03:46:02.782Z     optim/total grad norm=7.526
+2026-09-15T03:46:02.782Z     throughput/chinchilla multiple=1.87E-05
+2026-09-15T03:46:02.782Z     throughput/device/BPS=0.0668
+2026-09-15T03:46:02.782Z     throughput/device/BPS (actual avg)=0.0669
+2026-09-15T03:46:02.782Z     throughput/device/MFU=32.14
+2026-09-15T03:46:02.782Z     throughput/device/MFU (actual avg)=32.16
+2026-09-15T03:46:02.782Z     throughput/device/TPS=4,378
+2026-09-15T03:46:02.782Z     throughput/device/TPS (actual avg)=4,381
+2026-09-15T03:46:02.783Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:46:02.783Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:46:02.783Z     throughput/total petaflops=36.02
+2026-09-15T03:46:02.783Z     throughput/total tokens=1,572,864
+2026-09-15T03:46:02.783Z     train/CE loss=0.0936
+2026-09-15T03:46:02.783Z     throughput/device/data loading (%)=0.0118
+2026-09-15T03:46:02.783Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:46:02.783Z     train/PPL=1.098
+2026-09-15T03:46:17.747Z [2;36m[2026-09-15 03:46:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=13/30,epoch=1,eta=4m]
+2026-09-15T03:46:17.747Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:46:17.747Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:46:17.747Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:46:17.747Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:46:17.747Z     optim/LR (group 0)=2.93E-06
+2026-09-15T03:46:17.747Z     optim/LR (group 1)=2.93E-06
+2026-09-15T03:46:17.747Z     optim/step skipped=0.0
+2026-09-15T03:46:17.747Z     optim/total grad norm=8.279
+2026-09-15T03:46:17.747Z     throughput/chinchilla multiple=2.03E-05
+2026-09-15T03:46:17.747Z     throughput/device/BPS=0.0668
+2026-09-15T03:46:17.747Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:46:17.747Z     throughput/device/MFU=32.14
+2026-09-15T03:46:17.747Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:46:17.747Z     throughput/device/TPS=4,378
+2026-09-15T03:46:17.747Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:46:17.747Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:46:17.747Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:46:17.747Z     throughput/total petaflops=39.02
+2026-09-15T03:46:17.747Z     throughput/total tokens=1,703,936
+2026-09-15T03:46:17.747Z     train/CE loss=0.0905
+2026-09-15T03:46:17.747Z     throughput/device/data loading (%)=0.0111
+2026-09-15T03:46:17.747Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:46:17.747Z     train/PPL=1.095
+2026-09-15T03:46:32.709Z [2;36m[2026-09-15 03:46:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=14/30,epoch=1,eta=4m]
+2026-09-15T03:46:32.709Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:46:32.709Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:46:32.709Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:46:32.709Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:46:32.709Z     optim/LR (group 0)=2.76E-06
+2026-09-15T03:46:32.709Z     optim/LR (group 1)=2.76E-06
+2026-09-15T03:46:32.709Z     optim/step skipped=0.0
+2026-09-15T03:46:32.709Z     optim/total grad norm=4.562
+2026-09-15T03:46:32.709Z     throughput/chinchilla multiple=2.18E-05
+2026-09-15T03:46:32.709Z     throughput/device/BPS=0.0668
+2026-09-15T03:46:32.709Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:46:32.709Z     throughput/device/MFU=32.15
+2026-09-15T03:46:32.709Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:46:32.709Z     throughput/device/TPS=4,380
+2026-09-15T03:46:32.709Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:46:32.709Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:46:32.709Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:46:32.709Z     throughput/total petaflops=42.02
+2026-09-15T03:46:32.709Z     throughput/total tokens=1,835,008
+2026-09-15T03:46:32.709Z     train/CE loss=0.0784
+2026-09-15T03:46:32.709Z     throughput/device/data loading (%)=0.0120
+2026-09-15T03:46:32.709Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:46:32.709Z     train/PPL=1.082
+2026-09-15T03:46:47.677Z [2;36m[2026-09-15 03:46:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=15/30,epoch=1,eta=4m]
+2026-09-15T03:46:47.677Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:46:47.677Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:46:47.677Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:46:47.677Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:46:47.677Z     optim/LR (group 0)=2.59E-06
+2026-09-15T03:46:47.677Z     optim/LR (group 1)=2.59E-06
+2026-09-15T03:46:47.677Z     optim/step skipped=0.0
+2026-09-15T03:46:47.677Z     optim/total grad norm=3.949
+2026-09-15T03:46:47.677Z     throughput/chinchilla multiple=2.34E-05
+2026-09-15T03:46:47.677Z     throughput/device/BPS=0.0668
+2026-09-15T03:46:47.677Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:46:47.677Z     throughput/device/MFU=32.14
+2026-09-15T03:46:47.677Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:46:47.677Z     throughput/device/TPS=4,378
+2026-09-15T03:46:47.677Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:46:47.677Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:46:47.677Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:46:47.677Z     throughput/total petaflops=45.02
+2026-09-15T03:46:47.677Z     throughput/total tokens=1,966,080
+2026-09-15T03:46:47.677Z     train/CE loss=0.0698
+2026-09-15T03:46:47.677Z     throughput/device/data loading (%)=0.0142
+2026-09-15T03:46:47.677Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:46:47.677Z     train/PPL=1.072
+2026-09-15T03:47:02.637Z [2;36m[2026-09-15 03:47:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=16/30,epoch=1,eta=4m]
+2026-09-15T03:47:02.637Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:47:02.637Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:47:02.637Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:47:02.637Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:47:02.637Z     optim/LR (group 0)=2.41E-06
+2026-09-15T03:47:02.637Z     optim/LR (group 1)=2.41E-06
+2026-09-15T03:47:02.637Z     optim/step skipped=0.0
+2026-09-15T03:47:02.637Z     optim/total grad norm=4.949
+2026-09-15T03:47:02.637Z     throughput/chinchilla multiple=2.49E-05
+2026-09-15T03:47:02.637Z     throughput/device/BPS=0.0668
+2026-09-15T03:47:02.637Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:47:02.637Z     throughput/device/MFU=32.15
+2026-09-15T03:47:02.637Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:47:02.637Z     throughput/device/TPS=4,380
+2026-09-15T03:47:02.637Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:47:02.637Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:47:02.637Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:47:02.637Z     throughput/total petaflops=48.02
+2026-09-15T03:47:02.637Z     throughput/total tokens=2,097,152
+2026-09-15T03:47:02.637Z     train/CE loss=0.0695
+2026-09-15T03:47:02.637Z     throughput/device/data loading (%)=0.0106
+2026-09-15T03:47:02.637Z     throughput/device/data loading (s)=0.0016
+2026-09-15T03:47:02.637Z     train/PPL=1.072
+2026-09-15T03:47:17.604Z [2;36m[2026-09-15 03:47:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=17/30,epoch=1,eta=3m]
+2026-09-15T03:47:17.604Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:47:17.604Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:47:17.604Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:47:17.605Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:47:17.605Z     optim/LR (group 0)=2.24E-06
+2026-09-15T03:47:17.605Z     optim/LR (group 1)=2.24E-06
+2026-09-15T03:47:17.605Z     optim/step skipped=0.0
+2026-09-15T03:47:17.605Z     optim/total grad norm=7.932
+2026-09-15T03:47:17.605Z     throughput/chinchilla multiple=2.65E-05
+2026-09-15T03:47:17.605Z     throughput/device/BPS=0.0668
+2026-09-15T03:47:17.605Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:47:17.605Z     throughput/device/MFU=32.14
+2026-09-15T03:47:17.605Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:47:17.605Z     throughput/device/TPS=4,378
+2026-09-15T03:47:17.605Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:47:17.605Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:47:17.605Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:47:17.605Z     throughput/total petaflops=51.02
+2026-09-15T03:47:17.605Z     throughput/total tokens=2,228,224
+2026-09-15T03:47:17.605Z     train/CE loss=0.0840
+2026-09-15T03:47:17.605Z     throughput/device/data loading (%)=0.0111
+2026-09-15T03:47:17.605Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:47:17.605Z     train/PPL=1.088
+2026-09-15T03:47:32.567Z [2;36m[2026-09-15 03:47:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=18/30,epoch=1,eta=3m]
+2026-09-15T03:47:32.568Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:47:32.568Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:47:32.568Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:47:32.568Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:47:32.568Z     optim/LR (group 0)=2.07E-06
+2026-09-15T03:47:32.568Z     optim/LR (group 1)=2.07E-06
+2026-09-15T03:47:32.568Z     optim/step skipped=0.0
+2026-09-15T03:47:32.568Z     optim/total grad norm=5.977
+2026-09-15T03:47:32.568Z     throughput/chinchilla multiple=2.80E-05
+2026-09-15T03:47:32.568Z     throughput/device/BPS=0.0668
+2026-09-15T03:47:32.568Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:47:32.568Z     throughput/device/MFU=32.15
+2026-09-15T03:47:32.568Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:47:32.568Z     throughput/device/TPS=4,379
+2026-09-15T03:47:32.568Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:47:32.568Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:47:32.568Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:47:32.568Z     throughput/total petaflops=54.03
+2026-09-15T03:47:32.568Z     throughput/total tokens=2,359,296
+2026-09-15T03:47:32.568Z     train/CE loss=0.0609
+2026-09-15T03:47:32.568Z     throughput/device/data loading (%)=0.0113
+2026-09-15T03:47:32.568Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:47:32.568Z     train/PPL=1.063
+2026-09-15T03:47:47.527Z [2;36m[2026-09-15 03:47:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=19/30,epoch=1,eta=3m]
+2026-09-15T03:47:47.527Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:47:47.527Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:47:47.527Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:47:47.527Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:47:47.527Z     optim/LR (group 0)=1.90E-06
+2026-09-15T03:47:47.527Z     optim/LR (group 1)=1.90E-06
+2026-09-15T03:47:47.527Z     optim/step skipped=0.0
+2026-09-15T03:47:47.527Z     optim/total grad norm=12.88
+2026-09-15T03:47:47.527Z     throughput/chinchilla multiple=2.96E-05
+2026-09-15T03:47:47.527Z     throughput/device/BPS=0.0668
+2026-09-15T03:47:47.527Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:47:47.527Z     throughput/device/MFU=32.15
+2026-09-15T03:47:47.527Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:47:47.527Z     throughput/device/TPS=4,380
+2026-09-15T03:47:47.527Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:47:47.527Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:47:47.527Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:47:47.527Z     throughput/total petaflops=57.03
+2026-09-15T03:47:47.527Z     throughput/total tokens=2,490,368
+2026-09-15T03:47:47.527Z     train/CE loss=0.0825
+2026-09-15T03:47:47.527Z     throughput/device/data loading (%)=0.0115
+2026-09-15T03:47:47.527Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:47:47.527Z     train/PPL=1.086
+2026-09-15T03:48:02.493Z [2;36m[2026-09-15 03:48:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=20/30,epoch=1,eta=3m]
+2026-09-15T03:48:02.493Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:48:02.493Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:48:02.493Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:48:02.493Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:48:02.493Z     optim/LR (group 0)=1.72E-06
+2026-09-15T03:48:02.493Z     optim/LR (group 1)=1.72E-06
+2026-09-15T03:48:02.493Z     optim/step skipped=0.0
+2026-09-15T03:48:02.493Z     optim/total grad norm=6.443
+2026-09-15T03:48:02.493Z     throughput/chinchilla multiple=3.12E-05
+2026-09-15T03:48:02.493Z     throughput/device/BPS=0.0668
+2026-09-15T03:48:02.493Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:48:02.493Z     throughput/device/MFU=32.14
+2026-09-15T03:48:02.493Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:48:02.493Z     throughput/device/TPS=4,379
+2026-09-15T03:48:02.493Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:48:02.493Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:48:02.493Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:48:02.493Z     throughput/total petaflops=60.03
+2026-09-15T03:48:02.493Z     throughput/total tokens=2,621,440
+2026-09-15T03:48:02.493Z     train/CE loss=0.0734
+2026-09-15T03:48:02.493Z     throughput/device/data loading (%)=0.0121
+2026-09-15T03:48:02.493Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:48:02.493Z     train/PPL=1.076
+2026-09-15T03:48:17.451Z [2;36m[2026-09-15 03:48:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=21/30,epoch=1,eta=2m]
+2026-09-15T03:48:17.451Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:48:17.451Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:48:17.451Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:48:17.451Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:48:17.451Z     optim/LR (group 0)=1.55E-06
+2026-09-15T03:48:17.451Z     optim/LR (group 1)=1.55E-06
+2026-09-15T03:48:17.451Z     optim/step skipped=0.0
+2026-09-15T03:48:17.451Z     optim/total grad norm=28.71
+2026-09-15T03:48:17.451Z     throughput/chinchilla multiple=3.27E-05
+2026-09-15T03:48:17.451Z     throughput/device/BPS=0.0669
+2026-09-15T03:48:17.451Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:48:17.451Z     throughput/device/MFU=32.16
+2026-09-15T03:48:17.451Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:48:17.452Z     throughput/device/TPS=4,381
+2026-09-15T03:48:17.452Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:48:17.452Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:48:17.452Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:48:17.452Z     throughput/total petaflops=63.03
+2026-09-15T03:48:17.452Z     throughput/total tokens=2,752,512
+2026-09-15T03:48:17.452Z     train/CE loss=0.0536
+2026-09-15T03:48:17.452Z     throughput/device/data loading (%)=0.0121
+2026-09-15T03:48:17.452Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:48:17.452Z     train/PPL=1.055
+2026-09-15T03:48:32.407Z [2;36m[2026-09-15 03:48:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=22/30,epoch=1,eta=2m]
+2026-09-15T03:48:32.407Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:48:32.407Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:48:32.407Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:48:32.407Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:48:32.407Z     optim/LR (group 0)=1.38E-06
+2026-09-15T03:48:32.407Z     optim/LR (group 1)=1.38E-06
+2026-09-15T03:48:32.407Z     optim/step skipped=0.0
+2026-09-15T03:48:32.407Z     optim/total grad norm=6.123
+2026-09-15T03:48:32.407Z     throughput/chinchilla multiple=3.43E-05
+2026-09-15T03:48:32.407Z     throughput/device/BPS=0.0669
+2026-09-15T03:48:32.407Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:48:32.407Z     throughput/device/MFU=32.16
+2026-09-15T03:48:32.407Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:48:32.407Z     throughput/device/TPS=4,382
+2026-09-15T03:48:32.407Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:48:32.407Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:48:32.407Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:48:32.407Z     throughput/total petaflops=66.03
+2026-09-15T03:48:32.407Z     throughput/total tokens=2,883,584
+2026-09-15T03:48:32.407Z     train/CE loss=0.0674
+2026-09-15T03:48:32.407Z     throughput/device/data loading (%)=0.0112
+2026-09-15T03:48:32.407Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:48:32.407Z     train/PPL=1.070
+2026-09-15T03:48:47.374Z [2;36m[2026-09-15 03:48:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=23/30,epoch=1,eta=2m]
+2026-09-15T03:48:47.374Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:48:47.374Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:48:47.374Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:48:47.374Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:48:47.374Z     optim/LR (group 0)=1.21E-06
+2026-09-15T03:48:47.374Z     optim/LR (group 1)=1.21E-06
+2026-09-15T03:48:47.374Z     optim/step skipped=0.0
+2026-09-15T03:48:47.374Z     optim/total grad norm=4.392
+2026-09-15T03:48:47.374Z     throughput/chinchilla multiple=3.58E-05
+2026-09-15T03:48:47.374Z     throughput/device/BPS=0.0668
+2026-09-15T03:48:47.374Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:48:47.374Z     throughput/device/MFU=32.14
+2026-09-15T03:48:47.374Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:48:47.374Z     throughput/device/TPS=4,378
+2026-09-15T03:48:47.374Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:48:47.374Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:48:47.374Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:48:47.374Z     throughput/total petaflops=69.03
+2026-09-15T03:48:47.374Z     throughput/total tokens=3,014,656
+2026-09-15T03:48:47.374Z     train/CE loss=0.0510
+2026-09-15T03:48:47.374Z     throughput/device/data loading (%)=0.0125
+2026-09-15T03:48:47.374Z     throughput/device/data loading (s)=0.0019
+2026-09-15T03:48:47.374Z     train/PPL=1.052
+2026-09-15T03:49:02.333Z [2;36m[2026-09-15 03:49:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=24/30,epoch=1,eta=2m]
+2026-09-15T03:49:02.333Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:49:02.333Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:49:02.333Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:49:02.333Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:49:02.333Z     optim/LR (group 0)=1.03E-06
+2026-09-15T03:49:02.333Z     optim/LR (group 1)=1.03E-06
+2026-09-15T03:49:02.333Z     optim/step skipped=0.0
+2026-09-15T03:49:02.334Z     optim/total grad norm=3.977
+2026-09-15T03:49:02.334Z     throughput/chinchilla multiple=3.74E-05
+2026-09-15T03:49:02.334Z     throughput/device/BPS=0.0668
+2026-09-15T03:49:02.334Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:49:02.334Z     throughput/device/MFU=32.16
+2026-09-15T03:49:02.334Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:49:02.334Z     throughput/device/TPS=4,381
+2026-09-15T03:49:02.334Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:49:02.334Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:49:02.334Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:49:02.334Z     throughput/total petaflops=72.04
+2026-09-15T03:49:02.334Z     throughput/total tokens=3,145,728
+2026-09-15T03:49:02.334Z     train/CE loss=0.0504
+2026-09-15T03:49:02.334Z     throughput/device/data loading (%)=0.0111
+2026-09-15T03:49:02.334Z     throughput/device/data loading (s)=0.0017
+2026-09-15T03:49:02.334Z     train/PPL=1.052
+2026-09-15T03:49:17.303Z [2;36m[2026-09-15 03:49:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=25/30,epoch=1,eta=1m]
+2026-09-15T03:49:17.303Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:49:17.303Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:49:17.303Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:49:17.303Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:49:17.303Z     optim/LR (group 0)=8.62E-07
+2026-09-15T03:49:17.303Z     optim/LR (group 1)=8.62E-07
+2026-09-15T03:49:17.303Z     optim/step skipped=0.0
+2026-09-15T03:49:17.303Z     optim/total grad norm=6.583
+2026-09-15T03:49:17.303Z     throughput/chinchilla multiple=3.90E-05
+2026-09-15T03:49:17.303Z     throughput/device/BPS=0.0668
+2026-09-15T03:49:17.303Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:49:17.303Z     throughput/device/MFU=32.13
+2026-09-15T03:49:17.303Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:49:17.303Z     throughput/device/TPS=4,377
+2026-09-15T03:49:17.303Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:49:17.303Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:49:17.303Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:49:17.303Z     throughput/total petaflops=75.04
+2026-09-15T03:49:17.303Z     throughput/total tokens=3,276,800
+2026-09-15T03:49:17.303Z     train/CE loss=0.0651
+2026-09-15T03:49:17.303Z     throughput/device/data loading (%)=0.0117
+2026-09-15T03:49:17.303Z     throughput/device/data loading (s)=0.0018
+2026-09-15T03:49:17.303Z     train/PPL=1.067
+2026-09-15T03:49:32.273Z [2;36m[2026-09-15 03:49:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=26/30,epoch=1,eta=1m]
+2026-09-15T03:49:32.273Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:49:32.273Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:49:32.273Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:49:32.273Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:49:32.273Z     optim/LR (group 0)=6.90E-07
+2026-09-15T03:49:32.273Z     optim/LR (group 1)=6.90E-07
+2026-09-15T03:49:32.273Z     optim/step skipped=0.0
+2026-09-15T03:49:32.273Z     optim/total grad norm=4.102
+2026-09-15T03:49:32.273Z     throughput/chinchilla multiple=4.05E-05
+2026-09-15T03:49:32.273Z     throughput/device/BPS=0.0668
+2026-09-15T03:49:32.273Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:49:32.273Z     throughput/device/MFU=32.14
+2026-09-15T03:49:32.273Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:49:32.273Z     throughput/device/TPS=4,378
+2026-09-15T03:49:32.273Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:49:32.273Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:49:32.273Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:49:32.273Z     throughput/total petaflops=78.04
+2026-09-15T03:49:32.273Z     throughput/total tokens=3,407,872
+2026-09-15T03:49:32.273Z     train/CE loss=0.0692
+2026-09-15T03:49:32.273Z     throughput/device/data loading (%)=0.0131
+2026-09-15T03:49:32.273Z     throughput/device/data loading (s)=0.0020
+2026-09-15T03:49:32.273Z     train/PPL=1.072
+2026-09-15T03:49:47.241Z [2;36m[2026-09-15 03:49:47][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=27/30,epoch=1,eta=1m]
+2026-09-15T03:49:47.241Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:49:47.241Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:49:47.241Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:49:47.241Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:49:47.241Z     optim/LR (group 0)=5.17E-07
+2026-09-15T03:49:47.241Z     optim/LR (group 1)=5.17E-07
+2026-09-15T03:49:47.241Z     optim/step skipped=0.0
+2026-09-15T03:49:47.242Z     optim/total grad norm=4.587
+2026-09-15T03:49:47.242Z     throughput/chinchilla multiple=4.21E-05
+2026-09-15T03:49:47.242Z     throughput/device/BPS=0.0668
+2026-09-15T03:49:47.242Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:49:47.242Z     throughput/device/MFU=32.13
+2026-09-15T03:49:47.242Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:49:47.242Z     throughput/device/TPS=4,377
+2026-09-15T03:49:47.242Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:49:47.242Z     throughput/device/flopsPS=100.2T
+2026-09-15T03:49:47.242Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:49:47.242Z     throughput/total petaflops=81.04
+2026-09-15T03:49:47.242Z     throughput/total tokens=3,538,944
+2026-09-15T03:49:47.242Z     train/CE loss=0.0552
+2026-09-15T03:49:47.242Z     throughput/device/data loading (%)=0.0143
+2026-09-15T03:49:47.242Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:49:47.242Z     train/PPL=1.057
+2026-09-15T03:50:02.203Z [2;36m[2026-09-15 03:50:02][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=28/30,epoch=1,eta=1m]
+2026-09-15T03:50:02.203Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:50:02.203Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:50:02.204Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:50:02.204Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:50:02.204Z     optim/LR (group 0)=3.45E-07
+2026-09-15T03:50:02.204Z     optim/LR (group 1)=3.45E-07
+2026-09-15T03:50:02.204Z     optim/step skipped=0.0
+2026-09-15T03:50:02.204Z     optim/total grad norm=2.587
+2026-09-15T03:50:02.204Z     throughput/chinchilla multiple=4.36E-05
+2026-09-15T03:50:02.204Z     throughput/device/BPS=0.0668
+2026-09-15T03:50:02.204Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:50:02.204Z     throughput/device/MFU=32.15
+2026-09-15T03:50:02.204Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:50:02.204Z     throughput/device/TPS=4,380
+2026-09-15T03:50:02.204Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:50:02.204Z     throughput/device/flopsPS=100.3T
+2026-09-15T03:50:02.204Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:50:02.204Z     throughput/total petaflops=84.04
+2026-09-15T03:50:02.204Z     throughput/total tokens=3,670,016
+2026-09-15T03:50:02.204Z     train/CE loss=0.0412
+2026-09-15T03:50:02.204Z     throughput/device/data loading (%)=0.0124
+2026-09-15T03:50:02.204Z     throughput/device/data loading (s)=0.0019
+2026-09-15T03:50:02.204Z     train/PPL=1.042
+2026-09-15T03:50:17.154Z [2;36m[2026-09-15 03:50:17][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=29/30,epoch=1]
+2026-09-15T03:50:17.154Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:50:17.154Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:50:17.154Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:50:17.154Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:50:17.154Z     optim/LR (group 0)=1.72E-07
+2026-09-15T03:50:17.154Z     optim/LR (group 1)=1.72E-07
+2026-09-15T03:50:17.154Z     optim/step skipped=0.0
+2026-09-15T03:50:17.154Z     optim/total grad norm=3.681
+2026-09-15T03:50:17.154Z     throughput/chinchilla multiple=4.52E-05
+2026-09-15T03:50:17.154Z     throughput/device/BPS=0.0669
+2026-09-15T03:50:17.154Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:50:17.154Z     throughput/device/MFU=32.17
+2026-09-15T03:50:17.154Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:50:17.154Z     throughput/device/TPS=4,382
+2026-09-15T03:50:17.154Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:50:17.154Z     throughput/device/flopsPS=100.4T
+2026-09-15T03:50:17.154Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:50:17.154Z     throughput/total petaflops=87.04
+2026-09-15T03:50:17.154Z     throughput/total tokens=3,801,088
+2026-09-15T03:50:17.154Z     train/CE loss=0.0534
+2026-09-15T03:50:17.154Z     throughput/device/data loading (%)=0.0130
+2026-09-15T03:50:17.154Z     throughput/device/data loading (s)=0.0019
+2026-09-15T03:50:17.154Z     train/PPL=1.055
+2026-09-15T03:50:32.125Z [2;36m[2026-09-15 03:50:32][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.console_logger:68, 057f53cd8b8e, rank=0][0m [step=30/30,epoch=1]
+2026-09-15T03:50:32.125Z     gpu_memory/GPU active mem (%)=78.46
+2026-09-15T03:50:32.125Z     gpu_memory/GPU active mem (GiB)=62.18
+2026-09-15T03:50:32.125Z     gpu_memory/GPU reserved mem (%)=83.74
+2026-09-15T03:50:32.125Z     gpu_memory/GPU reserved mem (GiB)=66.36
+2026-09-15T03:50:32.125Z     optim/LR (group 0)=0.0
+2026-09-15T03:50:32.125Z     optim/LR (group 1)=0.0
+2026-09-15T03:50:32.125Z     optim/step skipped=0.0
+2026-09-15T03:50:32.125Z     optim/total grad norm=4.800
+2026-09-15T03:50:32.125Z     throughput/chinchilla multiple=4.67E-05
+2026-09-15T03:50:32.125Z     throughput/device/BPS=0.0668
+2026-09-15T03:50:32.125Z     throughput/device/BPS (actual avg)=0.0668
+2026-09-15T03:50:32.125Z     throughput/device/MFU=32.13
+2026-09-15T03:50:32.125Z     throughput/device/MFU (actual avg)=32.15
+2026-09-15T03:50:32.125Z     throughput/device/TPS=4,377
+2026-09-15T03:50:32.125Z     throughput/device/TPS (actual avg)=4,380
+2026-09-15T03:50:32.125Z     throughput/device/flopsPS=100.2T
+2026-09-15T03:50:32.125Z     throughput/device/flopsPS (actual avg)=100.3T
+2026-09-15T03:50:32.125Z     throughput/total petaflops=90.04
+2026-09-15T03:50:32.125Z     throughput/total tokens=3,932,160
+2026-09-15T03:50:32.125Z     train/CE loss=0.0533
+2026-09-15T03:50:32.125Z     throughput/device/data loading (%)=0.0138
+2026-09-15T03:50:32.125Z     throughput/device/data loading (s)=0.0021
+2026-09-15T03:50:32.125Z     train/PPL=1.055
+2026-09-15T03:50:33.072Z [W915 03:50:33.104588640 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:33.076Z [W915 03:50:33.108698693 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:33.133Z [W915 03:50:33.165718393 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:33.208Z [W915 03:50:33.240974749 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:33.414Z [2;36m[2026-09-15 03:50:33][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1520, 057f53cd8b8e, rank=0][0m Epoch complete
+2026-09-15T03:50:33.421Z [2;36m[2026-09-15 03:50:33][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.flop_meter:200, 057f53cd8b8e, rank=0][0m [flop-meter] wrote /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-dense-2M/flops.json: {'actual_pflops': 48.49522587535565, 'dense_equivalent_pflops': 48.49522587535565, 'actual_over_dense': 1.0, 'tokens_processed': 2117754, 'tokens_are_real': True, 'ffn_cost_frac': None, 'block_skip_keep_frac': None, 'kv_route_keep_frac': None, 'steps': 30, 'seq_len': 4096}
+2026-09-15T03:50:33.421Z [2;36m[2026-09-15 03:50:33][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1361, 057f53cd8b8e, rank=0][0m Waiting for bookkeeping ops to finish: 'reduce_metrics' (1 ops)...
+2026-09-15T03:50:33.422Z [2;36m[2026-09-15 03:50:33][0m [34mINFO    [0m [2m[olmo_core.train.trainer:1366, 057f53cd8b8e, rank=0][0m All bookkeeping ops complete
+2026-09-15T03:50:33.423Z [2;36m[2026-09-15 03:50:33][0m [34mINFO    [0m [2m[olmo_core.train.callbacks.wandb:116, 057f53cd8b8e, rank=0][0m Finalizing successful W&B run...
+2026-09-15T03:50:33.424Z wandb: WARNING The `quiet` argument to `wandb.run.finish()` is deprecated, use `wandb.Settings(quiet=...)` to set this instead.
+2026-09-15T03:50:33.526Z wandb: updating run metadata
+2026-09-15T03:50:33.928Z wandb: uploading history steps 29-30, summary, console lines 703-732
+2026-09-15T03:50:34.060Z wandb: 
+2026-09-15T03:50:34.060Z wandb: Run history:
+2026-09-15T03:50:34.060Z wandb:        checkpoint/load_duration_s ▁
+2026-09-15T03:50:34.060Z wandb:      flop_meter/actual_over_dense ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+2026-09-15T03:50:34.060Z wandb:          flop_meter/actual_pflops ▁▁▁▂▂▂▂▃▃▃▃▄▄▄▄▅▅▅▅▆▆▆▆▇▇▇▇███
+2026-09-15T03:50:34.060Z wandb:           flop_meter/dense_pflops ▁▁▁▂▂▂▂▃▃▃▃▄▄▄▄▅▅▅▅▆▆▆▆▇▇▇▇███
+2026-09-15T03:50:34.060Z wandb:     gpu_memory/GPU active mem (%) ▁▁▂▂▂▂▂▂▄▄▄▄▄▄▄▅▅▅▅▅▅▇▇▇▇▇▇███
+2026-09-15T03:50:34.060Z wandb:   gpu_memory/GPU active mem (GiB) ▁▁▂▂▂▃▃▃▃▃▄▄▄▅▅▅▅▅▅▅▅▆▆▆▆▆▇▇▇█
+2026-09-15T03:50:34.060Z wandb:   gpu_memory/GPU reserved mem (%) ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+2026-09-15T03:50:34.060Z wandb: gpu_memory/GPU reserved mem (GiB) ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+2026-09-15T03:50:34.060Z wandb:                optim/LR (group 0) ███▇▇▇▇▆▆▆▆▅▅▅▅▄▄▄▄▃▃▃▃▂▂▂▂▁▁▁
+2026-09-15T03:50:34.060Z wandb:                optim/LR (group 1) ███▇▇▇▇▆▆▆▆▅▅▅▅▄▄▄▄▃▃▃▃▂▂▂▂▁▁▁
+2026-09-15T03:50:34.060Z wandb:                               +18 ...
+2026-09-15T03:50:34.060Z wandb: 
+2026-09-15T03:50:34.060Z wandb: Run summary:
+2026-09-15T03:50:34.060Z wandb:        checkpoint/load_duration_s 21.08846
+2026-09-15T03:50:34.060Z wandb:      flop_meter/actual_over_dense 1
+2026-09-15T03:50:34.060Z wandb:          flop_meter/actual_pflops 48.49522
+2026-09-15T03:50:34.060Z wandb:           flop_meter/dense_pflops 48.49522
+2026-09-15T03:50:34.060Z wandb:     gpu_memory/GPU active mem (%) 78.45793
+2026-09-15T03:50:34.060Z wandb:   gpu_memory/GPU active mem (GiB) 62.17925
+2026-09-15T03:50:34.060Z wandb:   gpu_memory/GPU reserved mem (%) 83.73735
+2026-09-15T03:50:34.060Z wandb: gpu_memory/GPU reserved mem (GiB) 66.36328
+2026-09-15T03:50:34.060Z wandb:                optim/LR (group 0) 0
+2026-09-15T03:50:34.060Z wandb:                optim/LR (group 1) 0
+2026-09-15T03:50:34.060Z wandb:                               +18 ...
+2026-09-15T03:50:34.060Z wandb: 
+2026-09-15T03:50:34.060Z wandb: 🚀 View run f2k-outlier-dense-2M at: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/runs/axz5aym1
+2026-09-15T03:50:34.060Z wandb: ⭐️ View project at: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks
+2026-09-15T03:50:34.060Z wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+2026-09-15T03:50:34.060Z wandb: Find logs at: /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-dense-2M/wandb/wandb/run-20260915_034022-axz5aym1/logs
+2026-09-15T03:50:35.443Z [2;36m[2026-09-15 03:50:35][0m [34mINFO    [0m [2m[olmo_core.train.trainer:763, 057f53cd8b8e, rank=0][0m Training complete
+2026-09-15T03:50:36.112Z [2;36m[2026-09-15 03:50:36][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=1][0m /opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:183: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:50:36.112Z   ret = ret.to(cpu_device)
+2026-09-15T03:50:36.112Z 
+2026-09-15T03:50:36.116Z [2;36m[2026-09-15 03:50:36][0m [33mWARNING [0m [2m[py.warnings:112, 057f53cd8b8e, rank=0][0m /opt/conda/lib/python3.12/site-packages/torch/distributed/_state_dict_utils.py:183: UserWarning: called a synchronizing CUDA operation (Triggered internally at /pytorch/c10/cuda/CUDAFunctions.cpp:162.)
+2026-09-15T03:50:36.116Z   ret = ret.to(cpu_device)
+2026-09-15T03:50:36.116Z 
+2026-09-15T03:50:46.871Z [ctc-suite] saved model-only checkpoint -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-dense-2M
+2026-09-15T03:50:48.669Z [W915 03:50:48.701737926 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:48.675Z [W915 03:50:48.707778351 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T03:50:49.891Z [W915 03:50:49.924241381 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())

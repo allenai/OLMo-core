@@ -14,8 +14,8 @@ THE TWO EARLY SIGNALS, and what they mean:
 
 * ``ce_floor`` is ``ln C(n, k) / answer_tokens`` for the shard (computed by ``fast2k_stats.py`` at
   build time and cached in ``debug/ds64_fast2k/fast2k_stats.json``). It is the cross-entropy a model
-  that has learned only the OUTPUT FORMAT cannot beat. ``at_floor_step10`` fires when the CE at
-  step 10 is within ``--floor-tol`` of it: that is the signature of the xhdr collapse
+  that has learned only the OUTPUT FORMAT cannot beat. ``at_floor_step10`` / ``at_floor_final`` fire
+  when the CE has NOT dropped below ``ce_floor - --floor-tol``: that is the signature of the xhdr collapse
   (``debug/ds64/xhdr_collapse_diagnosis.md``) -- "sample k ids from the visible list" -- and it is
   readable ~3 minutes into a run instead of after a 500-row eval. A run that fires it is dead; a run
   that does NOT fire it still has to clear the matched-FLOP bar.
@@ -148,7 +148,7 @@ def stats_for(run, stats):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--floor-tol", type=float, default=0.03,
-                    help="CE within this of ce_floor at step 10 -> at_floor_step10")
+                    help="a CE at or above ce_floor - tol counts as 'parked at the floor'")
     ap.add_argument("--stats-from-job", default="",
                     help="data-build experiment id: pull the fast2k_stats.json blocks out of its log")
     args = ap.parse_args()
@@ -200,7 +200,15 @@ def main():
             "ce_1": ce.get(1), "ce_5": ce.get(5), "ce_10": ce.get(10), "ce_20": ce.get(20),
             "ce_final": ce[max(ce)] if ce else None,
             "ce_floor": floor,
-            "at_floor_step10": (None if (floor is None or ce10 is None) else bool(ce10 - floor <= args.floor_tol)),
+            # "at the floor" = the CE has NOT gone meaningfully BELOW ln C(n,k)/answer_tokens, i.e.
+            # the run has learned the output format and nothing else. (An earlier version tested
+            # `ce - floor <= tol`, which fires for every HEALTHY run -- a model that learns the task
+            # drives CE far below the floor. The test is `>=`, not `<=`.)
+            "at_floor_step10": (None if (floor is None or ce10 is None) else bool(ce10 >= floor - args.floor_tol)),
+            # The step-10 flag is an EARLY HINT only: a slow-starting but healthy soft arm can still
+            # be at the floor at step 10 (kvgb50 measured 0.377 at step 10 vs a 0.390 floor, then
+            # finished at 0.296). at_floor_final is the decision.
+            "at_floor_final": (None if (floor is None or not ce) else bool(ce[max(ce)] >= floor - args.floor_tol)),
             "f1_2k": f1, "eval_size": esz, "se": se,
             "train_ex": r.get("ex"), "eval_ex": e.get("ex"),
         })
@@ -225,7 +233,7 @@ def main():
     for x in sorted(rows, key=lambda z: (z["arm"], z["budget"])):
         def g(k, f="{:.3f}"):
             return f.format(x[k]) if x[k] is not None else "-"
-        flag = " FLOOR" if x["at_floor_step10"] else ""
+        flag = (" FLOOR" if x["at_floor_final"] else ("  ~f10" if x["at_floor_step10"] else ""))
         ext = "*" if x["extrapolated"] else ""
         print(f"{x['run']:32} {str(x['train_state'])[:5]:5} {str(x['steps'] or '-'):>6} "
               f"{g('actual_pflops','{:.1f}'):>8} {g('actual_over_dense','{:.2f}'):>6} "

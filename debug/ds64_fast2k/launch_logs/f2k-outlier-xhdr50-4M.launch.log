@@ -4,28 +4,28 @@
 [beaker_ctc_suite] save_folder=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-xhdr50-4M
 [beaker_ctc_suite] wandb: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f2k-q35-4b
 [beaker_ctc_suite] cmd=src/scripts/train/memexpress/ctc_suite/train_ctc_suite.py --task outlier --data /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ds64/fast2k/shards/outlier_f4M --variant softtoken --model-scale 4b --seq-len 4096 --epochs 1 --lr 5e-06 --global-batch 32 --micro-batch-instances 2 --base-checkpoint /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim --work-dir /weka/oe-training-default/ai2-llm/checkpoints/prasanns/dataset-cache-ctc-suite --save-folder /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-xhdr50-4M --run-name f2k-outlier-xhdr50-4M --wandb-group f2k-q35-4b --wandb-entity prasanns-allen-institute-for-ai --model-family qwen3_5 --save-checkpoint --no-final-checkpoint --no-compile --st-gold-blind --st-keep-prob 0.5 --st-header-stop-id 5491 --st-header-stop-count 1 --attn-backend flash_2
-Experiment: prasanns/f2k-outlier-xhdr50-4M-a1674611 → 
-https://beaker.org/ex/01M2HEM3NC4WRNTSVFEQYPGSA7
+Experiment: prasanns/f2k-outlier-xhdr50-4M-0c7d2160 → 
+https://beaker.org/ex/01M2HGWRX45SJPEHAKNMB8ZFAW
 Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
-Commit: 0b1059c outlier slot probe: CE over the ANSWER's digit to… → 
-https://github.com/allenai/OLMo-core/commit/0b1059c
+Commit: 5ee1264 records: outlier slot probe -- the xhdr collapse … → 
+https://github.com/allenai/OLMo-core/commit/5ee1264
 Branch: prasann/landmark → 
 https://github.com/allenai/OLMo-core/tree/prasann/landmark
-[beaker_ctc_suite] SUBMITTED id=01M2HEM3NC4WRNTSVFEQYPGSA7 name=f2k-outlier-xhdr50-4M
-[beaker_ctc_suite] url=https://beaker.org/ex/01M2HEM3NC4WRNTSVFEQYPGSA7
+[beaker_ctc_suite] SUBMITTED id=01M2HGWRX45SJPEHAKNMB8ZFAW name=f2k-outlier-xhdr50-4M
+[beaker_ctc_suite] url=https://beaker.org/ex/01M2HGWRX45SJPEHAKNMB8ZFAW
 [beaker_ctc_suite] launched: experiment {
-  id: "01M2HEM3NC4WRNTSVFEQYPGSA7"
-  name: "f2k-outlier-xhdr50-4M-a1674611"
+  id: "01M2HGWRX45SJPEHAKNMB8ZFAW"
+  name: "f2k-outlier-xhdr50-4M-0c7d2160"
   author_id: "01K31JPADAHRBWED2VT05703Z0"
   workspace_id: "01K1DJ083DM56DQTHPR4JWS7DD"
   tasks {
-    id: "01M2HEM3NMA2BJTAJ4VM8Y1SM8"
-    experiment_id: "01M2HEM3NC4WRNTSVFEQYPGSA7"
+    id: "01M2HGWRX81WXNCWST2GB48GKA"
+    experiment_id: "01M2HGWRX45SJPEHAKNMB8ZFAW"
     name: "train"
     author_id: "01K31JPADAHRBWED2VT05703Z0"
     created {
-      seconds: 1789439643
-      nanos: 308146000
+      seconds: 1789442024
+      nanos: 356323000
     }
     container_spec {
       resource_request {
@@ -92,7 +92,7 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
       }
       environment_variables {
         name: "GIT_REF"
-        literal: "0b1059c1a3081b13b7d90e83e3dedf9fc4b47c6d"
+        literal: "5ee1264fe3e0272bb492fdad2512e67c3a2b5616"
       }
       environment_variables {
         name: "GANTRY_TASK_NAME"
@@ -237,6 +237,7 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
         type: JOB_PLACEMENT_CONSTRAINT_TYPE_CLUSTER
         values: "ai2/saturn"
         values: "ai2/jupiter"
+        values: "ai2/ceres"
       }
       min_runtime {
       }
@@ -245,8 +246,8 @@ https://github.com/allenai/OLMo-core/tree/prasann/landmark
     status: STATUS_QUEUED
   }
   created {
-    seconds: 1789439643
-    nanos: 308146000
+    seconds: 1789442024
+    nanos: 356323000
   }
 }
 status: STATUS_QUEUED
