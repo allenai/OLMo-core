@@ -131,6 +131,15 @@ block-local hidden states are, if anything, even more dominated by a shared comp
 splitting a document gives each half a noisier estimate and the min-over-segments readout picks up
 that noise, so the extra token per document buys a loss. The `G > 1` path is closed for outlier.
 
+**3b. Why this was never learned away in training.** The ds64 soft-token arms run with
+`detach_soft_kv=True` (the default; `--st-no-detach-soft-kv` was never passed), and under it the
+POOLED slots are injected **detached** -- `model.py` concatenates `soft_vecs[:n_slots].detach()`
+before writing them into `h`. So the projector receives no LM gradient for pooled slots and the slot
+stays the **raw mean input embedding for the whole run**. Centring and content-filtering are exactly
+the kind of thing a trained projector could absorb (subtracting a constant is a bias), but on this
+path it never gets the chance -- which is why substituting a better mean is a drop-in change to the
+recipe rather than something training would have found on its own.
+
 **4. The ceiling is real but it is not dense.** The best free slot recovers 0.550 of gold at 2k
 where full attention scores ~0.98. A one-vector-per-document summary does not make outlier a solved
 task — it makes it a **4× better-than-chance** task. Note also that a purely lexical TF-IDF vector
