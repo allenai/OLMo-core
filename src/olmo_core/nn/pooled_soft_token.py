@@ -30,7 +30,7 @@ Design notes (validated by the probes in ``records/pooled-doc-kv-attention.md``)
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -306,6 +306,142 @@ def compact_pooled_rows(
         shadow_doc_cols=sh_doc_cols,
         is_shadow=is_shadow,
     )
+
+
+SLOT_MODES = ("mean", "cmean", "cent_cmean")
+
+
+def build_slot_stop_ids(
+    token_ids,
+    *,
+    top_k: int = 100,
+    extra_ids: Iterable[int] = (),
+    decode: Optional[Callable[[int], str]] = None,
+    sample: int = 24,
+) -> Tuple[List[int], List[str]]:
+    """
+    Build the **stop set** of token ids that :func:`apply_slot_mode` drops from a pooled
+    document's mean input embedding (``cmean`` / ``cent_cmean``).
+
+    The mean input embedding of a document is dominated by common-word mass: every document in a
+    corpus sits at cosine 0.93-0.94 from the corpus centroid, gold and non-gold alike, which is
+    why the plain-mean slot reads as empty (``records/outlier-richer-slot-probe.md``). The stop set
+    removes that mass: the ``top_k`` most frequent ids of the training corpus (which is what
+    punctuation, whitespace and function words are), plus any ``extra_ids`` the caller knows are
+    not content (markers, pad, the placeholder). When ``decode`` is given, every id whose decoded
+    piece has no alphanumeric character is also dropped, so punctuation that is rare in *this*
+    corpus still goes.
+
+    :param token_ids: A 1-D array/sequence of training token ids to take frequencies over (e.g.
+        the first N rows of the training shard). Frequencies are only used for the ranking.
+    :param top_k: How many of the most frequent ids to drop.
+    :param extra_ids: Ids to drop unconditionally (markers / pad / placeholder).
+    :param decode: Optional ``Callable[[int], str]`` (a tokenizer's single-id decode) used for the
+        punctuation/whitespace rule and for the returned sample. ``None`` = frequency only.
+    :param sample: How many decoded dropped pieces to return for logging.
+
+    :returns: ``(sorted stop ids, decoded sample)``. The sample is raw ``"<id>"`` strings when
+        ``decode`` is ``None``.
+    """
+    import numpy as np
+
+    arr = np.asarray(token_ids).reshape(-1)
+    uniq, counts = np.unique(arr, return_counts=True)
+    order = np.argsort(-counts, kind="stable")
+    stop = {int(t) for t in uniq[order[: max(0, int(top_k))]].tolist()}
+    stop |= {int(t) for t in extra_ids}
+    if decode is not None:
+        for t in uniq.tolist():
+            piece = decode(int(t))
+            if not any(ch.isalnum() for ch in piece):
+                stop.add(int(t))
+    ranked = [int(t) for t in uniq[order].tolist() if int(t) in stop]
+    head = ranked[:sample]
+    if decode is None:
+        shown = [str(t) for t in head]
+    else:
+        shown = [repr(decode(t)) for t in head]
+    return sorted(stop), shown
+
+
+def apply_slot_mode(
+    emb: torch.Tensor,
+    input_ids: torch.Tensor,
+    chunk_ids: torch.Tensor,
+    n_docs: int,
+    plain_means: torch.Tensor,
+    *,
+    mode: str,
+    stop_mask: torch.Tensor,
+    centroid: str = "row",
+    eps: float = 1e-6,
+) -> Tuple[torch.Tensor, int]:
+    """
+    Rebuild the per-document slot feature from **content tokens only**, optionally centred.
+
+    * ``cmean`` -- mean input embedding over the document's tokens whose id is NOT in the stop set.
+    * ``cent_cmean`` -- the same, minus the **row centroid** (the identically-filtered mean over
+      *all* of that row's document tokens) and rescaled to the row's mean real-token embedding
+      norm. The row centroid is the online, zero-extra-pass stand-in for the corpus centroid used
+      eval-side in ``debug/pooled_kv/outlier_probe/outlier_richer_slot_probe.py``: a training row
+      holds 14-56 documents drawn from the same corpus, so its content mean estimates the corpus
+      content mean, and it needs no precomputed vector and no second pass over the shard. (Pass a
+      corpus centroid instead only if rows ever hold a single document.)
+
+    A document with no surviving token falls back to its plain mean (and is still centred /
+    rescaled under ``cent_cmean``, matching the eval-side construction).
+
+    :param emb: ``(B, T, D)`` input embeddings of ``input_ids``.
+    :param input_ids: ``(B, T)`` token ids.
+    :param chunk_ids: ``(B, T)`` document ids, ``< 0`` for free/pad tokens.
+    :param n_docs: Number of document slots per row.
+    :param plain_means: ``(B, n_docs, D)`` plain means, used for the empty-document fallback.
+    :param mode: ``"cmean"`` or ``"cent_cmean"`` (``"mean"`` should not reach here).
+    :param stop_mask: ``(vocab,)`` bool; ``True`` = drop this id from the mean.
+    :param centroid: ``"row"`` (the only implemented centre; see above).
+
+    :returns: ``((B, n_docs, D) slot features, number of fallback documents)``.
+
+    :raises ValueError: On an unknown ``mode`` or ``centroid``.
+    """
+    if mode not in ("cmean", "cent_cmean"):
+        raise ValueError(
+            f"apply_slot_mode: unknown slot mode {mode!r} (expected one of {SLOT_MODES})"
+        )
+    if centroid != "row":
+        raise ValueError(
+            f"apply_slot_mode: unknown centroid {centroid!r} (only 'row' is implemented)"
+        )
+    B, T, D = emb.shape
+    cid = chunk_ids.to(torch.long)
+    is_ctx = (cid >= 0).reshape(-1)
+    flat_doc = (torch.arange(B, device=emb.device)[:, None] * n_docs + cid.clamp(min=0)).reshape(
+        -1
+    )[is_ctx]
+    flat_row = torch.arange(B, device=emb.device)[:, None].expand(B, T).reshape(-1)[is_ctx]
+    e = emb.reshape(B * T, D)[is_ctx].float()
+    w = (~stop_mask.to(emb.device)[input_ids]).reshape(-1)[is_ctx].float()
+
+    sums = torch.zeros(B * n_docs, D, device=emb.device).index_add(0, flat_doc, e * w[:, None])
+    mass = torch.zeros(B * n_docs, device=emb.device).index_add(0, flat_doc, w)
+    n_tok = torch.zeros(B * n_docs, device=emb.device).index_add(0, flat_doc, torch.ones_like(w))
+    cmean = (sums / mass.clamp(min=eps)[:, None]).reshape(B, n_docs, D)
+    empty = (mass <= 0).reshape(B, n_docs)
+    # Documents that HAVE tokens but lost every one of them to the stop set: the fallback the
+    # caller counts. Slots past a row's document count are empty too, but are never read.
+    n_fallback = int(((mass <= 0) & (n_tok > 0)).sum().item())
+    feats = torch.where(empty[..., None], plain_means.float(), cmean)
+
+    if mode == "cent_cmean":
+        r_sums = torch.zeros(B, D, device=emb.device).index_add(0, flat_row, e * w[:, None])
+        r_mass = torch.zeros(B, device=emb.device).index_add(0, flat_row, w)
+        r_norm = torch.zeros(B, device=emb.device).index_add(0, flat_row, e.norm(dim=-1) * w)
+        centre = r_sums / r_mass.clamp(min=eps)[:, None]
+        target = (r_norm / r_mass.clamp(min=eps)).clamp(min=eps)
+        feats = feats - centre[:, None, :]
+        feats = feats / feats.norm(dim=-1, keepdim=True).clamp(min=eps) * target[:, None, None]
+
+    return feats.to(emb.dtype), n_fallback
 
 
 def add_soft_len_bias(

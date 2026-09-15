@@ -96,6 +96,20 @@ ARM_EXTRA = {
     "xhdr17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR}",
     "xhdr33": f"--st-gold-blind --st-keep-prob 0.3333 {_XHDR}",
     "xhdr50": f"--st-gold-blind --st-keep-prob 0.5 {_XHDR}",
+    # Content-only slot arms (records/outlier-richer-slot-probe.md). The xhdr* collapse is a
+    # READOUT failure, not a keep-policy one: a pooled doc's plain mean input embedding is ~94%
+    # shared common-word mass, so every document sits at cosine 0.93-0.94 from the corpus
+    # centroid and the slot is unreadable. --st-slot-mode rebuilds it from CONTENT tokens
+    # (cmean) and additionally centres + rescales it (cent_cmean), which lifts the eval-side
+    # ORACLE readout from 0.390 to 0.731 at 2k (k/n floor 0.225) and 0.075 to 0.239 at 8k, at
+    # zero extra tokens and zero extra FLOPs. It has to happen in the slot construction because
+    # detach_soft_kv gives the projector no LM gradient on pooled slots. Same header-real,
+    # gold-blind construction as xhdr*, so cc17/cm17 are read against xhdr17 (0.234 = the 3/14
+    # guess floor) and cc50 against xhdr50 (0.895).
+    "cm17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cmean",
+    "cc17": f"--st-gold-blind --st-keep-prob 0.1667 {_XHDR} --st-slot-mode cent_cmean",
+    "cc00": f"--st-gold-blind --st-keep-prob 0.0 {_XHDR} --st-slot-mode cent_cmean",
+    "cc50": f"--st-gold-blind --st-keep-prob 0.5 {_XHDR} --st-slot-mode cent_cmean",
 }
 ARM_MICRO = {"dense": 4}
 DEFAULT_MICRO = 2

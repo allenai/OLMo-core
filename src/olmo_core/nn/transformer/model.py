@@ -323,6 +323,9 @@ class Transformer(nn.Module):
         mix_start_p: float = 0.0,
         mix_end_p: float = 0.0,
         mix_total_calls: int = 0,
+        slot_mode: str = "mean",
+        slot_stop_ids: Optional[Sequence[int]] = None,
+        slot_centroid: str = "row",
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -359,6 +362,29 @@ class Transformer(nn.Module):
             it must make the same decision). ``0.0`` = no curriculum, the historical behaviour.
         :param mix_end_p: End point of the anneal (see ``mix_start_p``).
         :param mix_total_calls: Forwards over which to anneal; ``0`` holds ``mix_start_p`` constant.
+        :param slot_mode: How the pooled slot's feature vector is built from the document's input
+            embeddings (:func:`~olmo_core.nn.pooled_soft_token.apply_slot_mode`).
+
+            * ``"mean"`` (default, the historical behaviour) -- the plain mean.
+            * ``"cmean"`` -- the mean over CONTENT tokens only, i.e. dropping ``slot_stop_ids``
+              (punctuation/whitespace, the markers/pad, and the top-K most frequent corpus ids).
+            * ``"cent_cmean"`` -- ``cmean`` minus the row centroid, rescaled to the row's mean
+              real-token embedding norm.
+
+            A document's mean input embedding is ~94% shared common-word mass, which is why the
+            plain-mean slot is unreadable for outlier (every document sits at cosine 0.93-0.94
+            from the corpus centroid, gold and non-gold alike). Removing that mass is free and
+            lifts the oracle readout 3.2x/4.5x over the ``k/n`` floor at 2k/8k -- see
+            ``records/outlier-richer-slot-probe.md``. This has to happen in the slot CONSTRUCTION,
+            not in training: with ``detach_soft_kv`` (the default) the projector gets no LM
+            gradient on pooled slots, so the slot stays whatever this makes it for the whole run.
+        :param slot_stop_ids: The stop set for ``cmean``/``cent_cmean``, built once at startup by
+            :func:`~olmo_core.nn.pooled_soft_token.build_slot_stop_ids`. Required (and only used)
+            when ``slot_mode != "mean"``.
+        :param slot_centroid: Which centre ``cent_cmean`` subtracts. Only ``"row"`` (the mean over
+            all of that row's document content tokens, computed online, no extra pass) is
+            implemented; the eval-side probe used the corpus centroid, which a row of 14-56
+            documents from the same corpus estimates.
         :param detach_soft_gdn: With ``detach_soft_kv``, ALSO sever the backward through the
             slots' recurrent-mixer write channels (``k``/``v`` before the conv, ``beta``, ``g``)
             on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
@@ -370,7 +396,17 @@ class Transformer(nn.Module):
                 "enable_pooled_soft_tokens is mutually exclusive with "
                 "enable_document_chunk_attention (the compacted sequence is plain causal)."
             )
-        from ..pooled_soft_token import PooledDocProjector
+        from ..pooled_soft_token import SLOT_MODES, PooledDocProjector
+
+        if slot_mode not in SLOT_MODES:
+            raise OLMoConfigurationError(
+                f"unknown slot_mode {slot_mode!r} (expected one of {SLOT_MODES})"
+            )
+        if slot_mode != "mean" and not slot_stop_ids:
+            raise OLMoConfigurationError(
+                f"slot_mode={slot_mode!r} needs a non-empty slot_stop_ids (build it with "
+                "olmo_core.nn.pooled_soft_token.build_slot_stop_ids)"
+            )
 
         emb_weight = self.embeddings.weight  # type: ignore[union-attr]
         self.pooled_projector = PooledDocProjector(
@@ -437,6 +473,15 @@ class Transformer(nn.Module):
             "header_stop_count": int(header_stop_count),
             "header_cap": int(header_cap),
             "detach_soft_gdn": bool(detach_soft_gdn),
+            # Slot construction (pooled_soft_token.apply_slot_mode). "mean" is the historical
+            # path and is bit-identical to it; the others need ``slot_stop_ids``. The vocab-sized
+            # bool mask is built lazily on the first compaction (the embedding may be on meta
+            # here) and cached under "slot_stop_mask".
+            "slot_mode": slot_mode,
+            "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
+            "slot_stop_mask": None,
+            "slot_centroid": str(slot_centroid),
+            "_slot_stats": {"calls": 0, "fallback_docs": 0},
         }
         for mod in self.modules():
             if hasattr(mod, "detach_masked_writes"):
@@ -759,7 +804,7 @@ class Transformer(nn.Module):
         after the embedding lookup.
         """
         from ..attention.pooled_doc_kv import anneal_p_full, resolve_keep_docs
-        from ..pooled_soft_token import compact_pooled_rows
+        from ..pooled_soft_token import apply_slot_mode, compact_pooled_rows
 
         cfg = self._pooled_soft_tokens
         assert cfg is not None
@@ -843,6 +888,37 @@ class Transformer(nn.Module):
             .clamp(min=1.0)
         )
         doc_means = (sums / counts.unsqueeze(-1).to(emb.dtype)).reshape(B, n_docs, D)
+        if cfg.get("slot_mode", "mean") != "mean":
+            # Content-only (and optionally centred) slot: the plain mean is ~94% shared
+            # common-word mass, which is what makes it unreadable -- records/outlier-richer-slot-probe.md.
+            mask = cfg.get("slot_stop_mask")
+            if mask is None or mask.device != emb.device:
+                V = int(self.embeddings.weight.shape[0])  # type: ignore[union-attr]
+                mask = torch.zeros(V, dtype=torch.bool, device=emb.device)
+                ids_t = torch.tensor(cfg["slot_stop_ids"], dtype=torch.long, device=emb.device)
+                mask[ids_t[ids_t < V]] = True
+                cfg["slot_stop_mask"] = mask
+            doc_means, n_fallback = apply_slot_mode(
+                emb,
+                input_ids,
+                chunk_ids,
+                n_docs,
+                doc_means,
+                mode=cfg["slot_mode"],
+                stop_mask=mask,
+                centroid=cfg.get("slot_centroid", "row"),
+            )
+            st_slot = cfg["_slot_stats"]
+            st_slot["calls"] += 1
+            st_slot["fallback_docs"] += n_fallback
+            if n_fallback and st_slot["calls"] % 100 == 1:
+                log.warning(
+                    "[soft-slot] %s: %d documents lost every token to the stop set so far and "
+                    "fell back to the plain mean (%d compactions)",
+                    cfg["slot_mode"],
+                    st_slot["fallback_docs"],
+                    st_slot["calls"],
+                )
 
         cb = compact_pooled_rows(
             input_ids,

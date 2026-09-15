@@ -45,7 +45,7 @@ import functools
 import json
 import os
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from olmo_core.config import DType
 from olmo_core.data import TokenizerConfig
@@ -722,6 +722,64 @@ def announce_wandb(opts: argparse.Namespace) -> None:
         )
 
 
+def build_slot_stop_set(opts: argparse.Namespace, ids: Any, meta: Dict[str, Any]) -> List[int]:
+    """Build the ``--st-slot-mode`` stop set ONCE, from token frequencies over the head of the
+    training shard.
+
+    Source: the first ``--st-slot-stop-rows`` rows' worth of tokens of the first
+    ``token_ids_part_*.npy`` (the shard IS accessible at model-build time -- it is the same path
+    ``resolve_plan`` globs -- so no tokenizer-vocab heuristic is needed for the frequency half).
+    The ``--st-slot-topk`` most frequent ids go in the set, plus the marker/pad/landmark/eos ids,
+    plus (when a tokenizer loads) every id whose decoded piece has no alphanumeric character.
+
+    :returns: The sorted stop-set token ids.
+    """
+    import glob
+
+    import numpy as np
+
+    from olmo_core.nn.pooled_soft_token import build_slot_stop_ids
+
+    parts = sorted(glob.glob(os.path.join(opts.data, "token_ids_part_*.npy")))
+    if not parts:
+        raise SystemExit(
+            f"--st-slot-mode {opts.st_slot_mode} needs {opts.data}/token_ids_part_*.npy"
+        )
+    arr = np.load(parts[0], mmap_mode="r")
+    row_len = int(meta.get("max_example_len") or opts.seq_len)
+    n_tok = min(int(arr.shape[0]), max(1, opts.st_slot_stop_rows) * max(1, row_len))
+    decode = None
+    tok_id = opts.st_slot_tokenizer or FAMILY_TOKENIZER[opts.model_family]
+    try:
+        from transformers import AutoTokenizer
+
+        _tk = AutoTokenizer.from_pretrained(tok_id)
+
+        def decode(t: int) -> str:  # noqa: F811
+            return _tk.decode([t])
+
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[ctc-suite] slot stop set: tokenizer {tok_id!r} did not load ({exc}); "
+            "using FREQUENCY-ONLY stop ids (the top-K already covers common punctuation)",
+            flush=True,
+        )
+    stop, shown = build_slot_stop_ids(
+        np.asarray(arr[:n_tok]),
+        top_k=opts.st_slot_stop_topk,
+        extra_ids=(ids.doc_start, ids.doc_end, ids.eos, ids.landmark, ids.pad),
+        decode=decode,
+    )
+    print(
+        f"[ctc-suite] slot stop set: {len(stop)} ids from {n_tok} tokens of "
+        f"{os.path.basename(parts[0])} (top-{opts.st_slot_stop_topk} + markers"
+        f"{' + punctuation/whitespace' if decode is not None else ''}); "
+        f"most frequent dropped: {' '.join(shown)}",
+        flush=True,
+    )
+    return stop
+
+
 def resolve_plan(opts: argparse.Namespace, world_size: int) -> Dict[str, Any]:
     """Resolve everything derivable without CUDA: metadata, batch geometry, curriculum, configs.
 
@@ -1265,9 +1323,15 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             mix_start_p=opts.st_mix_start_p,
             mix_end_p=opts.st_mix_end_p,
             mix_total_calls=int(total_calls * opts.st_mix_anneal_frac),
+            slot_mode=opts.st_slot_mode,
+            slot_stop_ids=(
+                None
+                if opts.st_slot_mode == "mean"
+                else build_slot_stop_set(opts, ids, plan["meta"])
+            ),
         )
         print(
-            f"[ctc-suite] softtoken: header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
+            f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} (count {opts.st_header_stop_count}) "
             f"detach_gdn={not opts.st_no_detach_soft_gdn} "
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
@@ -1768,6 +1832,43 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--st-header-stop-count", type=int, default=1)
     ap.add_argument(
+        "--st-slot-mode",
+        choices=["mean", "cmean", "cent_cmean"],
+        default="mean",
+        help="softtoken: how a pooled doc's slot vector is built. 'mean' (default) = the plain "
+        "mean input embedding, bit-identical to every run before 2026-09-15. 'cmean' = the mean "
+        "over CONTENT tokens only (drop punctuation/whitespace, the markers/pad, and the top-K "
+        "most frequent training-shard ids). 'cent_cmean' = that, minus the row centroid and "
+        "rescaled to the row's mean real-token embedding norm. A document's plain mean is ~94% "
+        "shared common-word mass -- every doc sits at cosine 0.93-0.94 from the corpus centroid "
+        "-- which is why the plain slot is unreadable for outlier; removing it is free and lifts "
+        "the oracle readout 3.2x/4.5x over the k/n floor at 2k/8k "
+        "(records/outlier-richer-slot-probe.md). It has to happen HERE, not in training: with "
+        "detach_soft_kv the projector gets no gradient on pooled slots",
+    )
+    ap.add_argument(
+        "--st-slot-stop-topk",
+        type=int,
+        default=100,
+        help="softtoken: how many of the most frequent training-shard token ids go in the "
+        "--st-slot-mode stop set (K=100 matches the eval-side cmean100 probe)",
+    )
+    ap.add_argument(
+        "--st-slot-stop-rows",
+        type=int,
+        default=512,
+        help="softtoken: how many shard rows' worth of tokens to take the stop-set frequencies "
+        "over (read once at startup from the first token_ids_part_*.npy)",
+    )
+    ap.add_argument(
+        "--st-slot-tokenizer",
+        default=None,
+        help="softtoken: tokenizer dir/identifier used ONLY to (a) also drop ids whose decoded "
+        "piece has no alphanumeric character and (b) log a decoded sample of the stop set. "
+        "Defaults to the family identifier; if it will not load the stop set is frequency-only "
+        "(the top-K already covers the common punctuation) and says so",
+    )
+    ap.add_argument(
         "--torch-profile",
         action="store_true",
         help="profile steps 3-4 with torch.profiler and print the top ops (rank 0)",
@@ -2044,6 +2145,11 @@ def parse_args() -> argparse.Namespace:
     mix_requested = (
         opts.st_mix_start_p > 0.0 or opts.st_mix_end_p > 0.0 or opts.st_mix_anneal_frac != 1.0
     )
+    if opts.st_slot_mode != "mean" and opts.variant != "softtoken":
+        ap.error(
+            f"--st-slot-mode is only honoured by --variant softtoken (got {opts.variant!r}); "
+            "it would be ignored."
+        )
     if mix_requested and opts.variant != "softtoken":
         ap.error(
             "--st-mix-start-p/--st-mix-end-p/--st-mix-anneal-frac are only honoured by "
