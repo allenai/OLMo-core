@@ -346,10 +346,15 @@ class Attention(SequenceMixer):
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
-    :param use_head_qk_norm: Apply the QK norm head-wise, i.e. to each head separately with
-        normalization statistics computed over ``head_dim`` instead of the full hidden dimension.
-    :param qk_norm_per_head_gains: Give each head its own norm gain (and bias) parameters instead
-        of sharing them across heads. Requires ``use_head_qk_norm=True``.
+    :param use_head_qk_norm: Compute the QK norm **statistics** head-wise, i.e., each head has
+        normalization statistics separately computed. Turning this off results in "classic"
+        OLMo-style QK norm, where statistics are computed over (n_heads, head_dim) and
+        thus for any given token all heads receive the same statistics.
+    :param qk_norm_per_head_gains: Learn the QK norm **gains** head-wise, i.e., each head has
+        its own norm gain (and bias) parameters instead of sharing them across heads.
+        Requires ``use_head_qk_norm=True``. Turning this option off while keeping
+        ``use_head_qk_norm`` on results in Qwen/Gemma-style QK norm, where the same gain
+        (and bias) vector is shared by all heads via broadcasting.
     :param dropout: Dropout probability.
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
