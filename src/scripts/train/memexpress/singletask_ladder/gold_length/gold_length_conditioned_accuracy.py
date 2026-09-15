@@ -338,6 +338,7 @@ def new_audit():
         "rungs_loaded": [],
         "build_output_failed": Counter(),
         "no_gold_text": Counter(),
+        "gold_normalize_failed": Counter(),
         "alignment_failed": {},
     }
 
@@ -363,21 +364,38 @@ def _stored_gold_key(task):
 
 
 def _normalize_gold(task, value):
-    """Stored gold and freshly-loaded gold in one comparable shape.
+    """The gold the SIDECAR recorded, in a comparable shape.
 
-    The eval's detail dicts store a normalized view (retrieval/outlier gold are 1-indexed and
-    sorted; contradiction pairs are kept as-is), so the raw example's `gold_doc_indices` has to be
-    put through the same transform before the two can be compared.
+    Shapes differ by eval function, so each is handled explicitly rather than coerced:
+      * contradiction / contra_fever -- a list of 1-indexed ``[a, b]`` pairs.
+      * oolong -- a list of free-TEXT answers ("negative", "3 stars"). Coercing these to int is
+        what crashed the first attempt; they are compared as normalized strings.
+      * everything else -- a sorted list of 1-indexed integer document ids.
     """
     if value is None:
         return None
     if task in ("contradiction", "contra_fever"):
         return [list(p) for p in value]
-    return sorted(int(g) for g in value)
+    if task == "oolong":
+        return [str(g).strip().lower() for g in value]
+    try:
+        return sorted(int(g) for g in value)
+    except (TypeError, ValueError):
+        # Unexpected shape: compare as text rather than crash. A genuine mismatch still fails the
+        # alignment check and drops the task, which is the safe direction.
+        return [str(g).strip().lower() for g in value]
 
 
 def _gold_from_raw(task, ex):
-    """The same normalized gold, computed from a raw bundle example."""
+    """The same gold, computed from a raw bundle example, in the same shape as _normalize_gold."""
+    if task == "oolong":
+        # Mirrors _eval_oolong: the per-example _meta carries gold_list; absent it, answers[0].
+        meta = ex.get("_meta") or {}
+        gold_list = meta.get("gold_list") or ([ex["answers"][0]] if ex.get("answers") else None)
+        if gold_list is None:
+            return None
+        return [str(g).strip().lower() for g in gold_list]
+
     gold = ex.get("gold_doc_indices")
     if gold is None:
         return None
@@ -385,8 +403,14 @@ def _gold_from_raw(task, ex):
         return [list(p) for p in gold]  # already 1-indexed claim ids
     if task in ("nq", "fiqa", "scifact"):
         flat = gold[0] if gold and isinstance(gold[0], list) else gold
-        return sorted(int(g) + 1 for g in flat)  # compute_retrieval_metrics_single: 0 -> 1 indexed
-    return sorted(int(g) + 1 for g in gold)  # outlier / rerank: same +1 convention
+        try:
+            return sorted(int(g) + 1 for g in flat)  # compute_retrieval_metrics_single: 0 -> 1
+        except (TypeError, ValueError):
+            return None
+    try:
+        return sorted(int(g) + 1 for g in gold)  # outlier / rerank: same +1 convention
+    except (TypeError, ValueError):
+        return None
 
 
 def load_gold_texts(bundle_root, ladder_version, max_test_samples, cot_mode, xlong, audit):
@@ -442,7 +466,12 @@ def attach_gold_texts(records, texts, golds, audit):
     for r in records:
         key = (r["task"], r["rung"], r["idx"])
         rebuilt = golds.get(key)
-        stored = _normalize_gold(r["task"], r["stored_gold"])
+        try:
+            stored = _normalize_gold(r["task"], r["stored_gold"])
+        except Exception as exc:  # noqa: BLE001 -- one odd row must not abort the analysis
+            audit["gold_normalize_failed"][r["task"]] += 1
+            del exc
+            stored = None
         if rebuilt is None or stored is None or rebuilt != stored:
             mismatch[r["task"]] += 1
         else:
@@ -808,6 +837,8 @@ def render_audit(audits, coverage, model_roots, files_per_model):
             lines.append(f"- no rebuilt gold text: {dict(a['no_gold_text'])}")
         if a["build_output_failed"]:
             lines.append(f"- _build_output raised: {dict(a['build_output_failed'])}")
+        if a["gold_normalize_failed"]:
+            lines.append(f"- gold normalize raised: {dict(a['gold_normalize_failed'])}")
         lines.append("")
         for task in sorted(a["detail_keys"]):
             lines.append(f"    - detail keys [{task}]: {sorted(a['detail_keys'][task])}")
