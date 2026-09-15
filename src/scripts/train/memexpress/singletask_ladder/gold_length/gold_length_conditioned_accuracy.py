@@ -63,9 +63,13 @@ import glob
 import json
 import math
 import os
+import random
 import statistics
 import sys
 from collections import Counter, defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ladder_paths  # noqa: E402  (local module, path set above)
 
 # --------------------------------------------------------------------------------------
 # Task table.
@@ -296,7 +300,8 @@ def load_examples(path: str, model_root: str, tokenizer: GoldTokenizer, audit: d
                 audit["no_metric"][task] += 1
                 continue
 
-            gold_text = spec["render"](gold)
+            payload_text = spec["render"](gold)
+            generation = rec.get("generation") or ""
             out.append(
                 {
                     "task": task,
@@ -305,9 +310,14 @@ def load_examples(path: str, model_root: str, tokenizer: GoldTokenizer, audit: d
                     "eval_tag": tag,
                     "score": score,
                     "metric": used_metric,
+                    # PAYLOAD-only length: how many things the answer names. Constant for most of
+                    # these ladders, and NOT the length of what the model actually emits -- the
+                    # gold_output_* fields added by attach_gold_texts() are that.
                     "gold_items": len(gold),
-                    "gold_tokens": tokenizer.count(gold_text),
-                    "gold_chars": len(gold_text),
+                    "gold_payload_tokens": tokenizer.count(payload_text),
+                    # kept raw so the gold-text reconstruction can be VERIFIED against it
+                    "stored_gold": gold,
+                    "gen_words": len(generation.split()),
                 }
             )
             audit["kept"][task] += 1
@@ -323,7 +333,145 @@ def new_audit():
         "no_metric": Counter(),
         "kept": Counter(),
         "detail_keys": defaultdict(set),
+        "rung_missing": [],
+        "rung_unreadable": [],
+        "rungs_loaded": [],
+        "build_output_failed": Counter(),
+        "no_gold_text": Counter(),
+        "alignment_failed": {},
     }
+
+
+# --------------------------------------------------------------------------------------
+# Gold ANSWER TEXT reconstruction.
+#
+# The point of this block: `gold_items` counts the payload of the answer (3 outlier ids, 3
+# contradiction pairs) and is constant for most of these ladders -- but that is NOT what the model
+# was trained to emit. `_build_output` in ctc_eval/lib/data_format.py is the single definition of
+# the target string, and for several tasks it prefixes a chain-of-thought whose length varies a
+# lot (outlier's "Most passages are about X, Y, Z and the outliers are about W." grows with the
+# number of majority topics). Measuring emitted length means measuring THAT string.
+#
+# The generations sidecar does not store it -- _record_gens keeps only the prompt tail -- so it is
+# rebuilt here from the same rung file, through the same loader steps, in the same order.
+# --------------------------------------------------------------------------------------
+
+
+def _stored_gold_key(task):
+    """The gold field the sidecar already recorded for this task -- our alignment check."""
+    return GOLD_SPEC[task]["gold_key"]
+
+
+def _normalize_gold(task, value):
+    """Stored gold and freshly-loaded gold in one comparable shape.
+
+    The eval's detail dicts store a normalized view (retrieval/outlier gold are 1-indexed and
+    sorted; contradiction pairs are kept as-is), so the raw example's `gold_doc_indices` has to be
+    put through the same transform before the two can be compared.
+    """
+    if value is None:
+        return None
+    if task in ("contradiction", "contra_fever"):
+        return [list(p) for p in value]
+    return sorted(int(g) for g in value)
+
+
+def _gold_from_raw(task, ex):
+    """The same normalized gold, computed from a raw bundle example."""
+    gold = ex.get("gold_doc_indices")
+    if gold is None:
+        return None
+    if task in ("contradiction", "contra_fever"):
+        return [list(p) for p in gold]  # already 1-indexed claim ids
+    if task in ("nq", "fiqa", "scifact"):
+        flat = gold[0] if gold and isinstance(gold[0], list) else gold
+        return sorted(int(g) + 1 for g in flat)  # compute_retrieval_metrics_single: 0 -> 1 indexed
+    return sorted(int(g) + 1 for g in gold)  # outlier / rerank: same +1 convention
+
+
+def load_gold_texts(bundle_root, ladder_version, max_test_samples, cot_mode, xlong, audit):
+    """``{(task, rung, idx): gold_text}`` rebuilt from the eval bundle.
+
+    Reproduces load_unified_examples' sampling exactly -- ``random.seed(42)`` then
+    ``random.sample`` on the loaded list when the file is larger than ``max_test_samples`` -- so
+    position ``idx`` here is the same example the eval scored at ``idx``. That assumption is not
+    trusted: the caller verifies every reconstructed example against the gold the sidecar already
+    recorded, and drops any task where they disagree.
+    """
+    from ctc_eval.lib.data_format import _build_output
+
+    found, missing = ladder_paths.resolve(bundle_root, ladder_version, xlong=xlong)
+    for task, lab, path in missing:
+        audit["rung_missing"].append(f"{task}@{lab}: {path}")
+
+    texts, golds = {}, {}
+    for (task, rung), path in sorted(found.items()):
+        loadtask = ladder_paths.LOAD_TASK.get(task)
+        if loadtask is None:
+            continue
+        try:
+            with open(path) as fh:
+                examples = [json.loads(ln) for ln in fh if ln.strip()]
+        except (OSError, json.JSONDecodeError) as exc:
+            audit["rung_unreadable"].append(f"{task}@{rung}: {type(exc).__name__}: {exc}")
+            continue
+        if max_test_samples and len(examples) > max_test_samples:
+            random.seed(42)
+            examples = random.sample(examples, max_test_samples)
+        for i, ex in enumerate(examples):
+            try:
+                texts[(task, rung, i)] = _build_output(ex, task=loadtask, cot_mode=cot_mode)
+            except Exception as exc:  # noqa: BLE001 -- one bad row must not lose the rung
+                audit["build_output_failed"][task] += 1
+                texts[(task, rung, i)] = None
+                del exc
+            golds[(task, rung, i)] = _gold_from_raw(task, ex)
+        audit["rungs_loaded"].append(f"{task}@{rung} n={len(examples)}")
+    return texts, golds
+
+
+def attach_gold_texts(records, texts, golds, audit):
+    """Add the emitted-length fields, and gate each task on the alignment check.
+
+    A task is reported only if EVERY one of its examples has a reconstructed gold identical to the
+    gold the eval recorded. Anything less means the rung file or the sampling no longer lines up
+    with what was scored, and a length computed from a misaligned example is worse than no number
+    at all -- so the whole task is dropped and named in the report.
+    """
+    mismatch, matched = Counter(), Counter()
+    for r in records:
+        key = (r["task"], r["rung"], r["idx"])
+        rebuilt = golds.get(key)
+        stored = _normalize_gold(r["task"], r["stored_gold"])
+        if rebuilt is None or stored is None or rebuilt != stored:
+            mismatch[r["task"]] += 1
+        else:
+            matched[r["task"]] += 1
+
+    bad = {t for t in mismatch}
+    for t in sorted(bad):
+        audit["alignment_failed"][t] = f"{mismatch[t]} mismatched / {matched[t]} matched"
+
+    # Records are ANNOTATED, never dropped. A task that fails the alignment check loses only the
+    # emitted-length axis (its fields stay None and the aggregation skips it there); its scores are
+    # still perfectly good on the payload axis, which does not depend on the bundle at all.
+    n_annotated = 0
+    for r in records:
+        text = None if r["task"] in bad else texts.get((r["task"], r["rung"], r["idx"]))
+        if text is None:
+            if r["task"] not in bad:
+                audit["no_gold_text"][r["task"]] += 1
+            r["gold_text"] = None
+            r["gold_output_words"] = None
+            r["gold_output_chars"] = None
+            r["gold_has_cot"] = None
+            continue
+        r["gold_text"] = text
+        r["gold_output_words"] = len(text.split())
+        r["gold_output_chars"] = len(text)
+        r["gold_has_cot"] = "\n" in text.strip()
+        n_annotated += 1
+    return records, n_annotated
 
 
 # --------------------------------------------------------------------------------------
@@ -385,7 +533,10 @@ def aggregate(paired, length_field, edges, include_fixed, models):
         task = rec["task"]
         if not include_fixed and task in FIXED_OUTPUT_TASKS:
             continue
-        b = bucket_label(rec[length_field], edges)
+        value = rec.get(length_field)
+        if value is None:  # axis unavailable for this example (e.g. alignment-failed task)
+            continue
+        b = bucket_label(value, edges)
         for model, score in rec["scores"].items():
             per_task[b][task][model].append(score)
 
@@ -452,10 +603,16 @@ def pair_records(by_model: dict[str, list[dict]], models: list[str]):
                 "idx": base["idx"],
                 "eval_tag": base["eval_tag"],
                 "gold_items": base["gold_items"],
-                "gold_tokens": base["gold_tokens"],
-                "gold_chars": base["gold_chars"],
+                "gold_payload_tokens": base["gold_payload_tokens"],
+                # present only when the emitted-length axis is enabled and the task passed
+                # the alignment check
+                "gold_output_words": base.get("gold_output_words"),
+                "gold_output_chars": base.get("gold_output_chars"),
+                "gold_has_cot": base.get("gold_has_cot"),
+                "gold_text": base.get("gold_text"),
                 "gold_mismatch": mismatch,
                 "scores": {m: indexed[m][key]["score"] for m in models},
+                "gen_words": {m: indexed[m][key]["gen_words"] for m in models},
             }
         )
     coverage = {m: {"loaded": len(indexed[m]), "paired": len(common)} for m in models}
@@ -476,9 +633,10 @@ def render_table(table, models, length_field, tokenizer_kind, min_eval_size):
     per the repo's reporting rule -- a small slice must never be readable as a bare number."""
     lines = []
     axis = {
-        "gold_items": "gold items (pairs / ids / list entries)",
-        "gold_tokens": f"gold tokens ({tokenizer_kind})",
-        "gold_chars": "gold characters",
+        "gold_output_words": "EMITTED length: words in the full gold answer, CoT prefix included",
+        "gold_items": "answer PAYLOAD size (pairs / ids / list entries) -- not what is emitted",
+        "gold_payload_tokens": f"payload-only tokens ({tokenizer_kind})",
+        "gold_output_chars": "characters in the full gold answer",
     }[length_field]
     lines.append(f"### Accuracy by gold output length -- {axis}")
     lines.append("")
@@ -538,36 +696,93 @@ def render_per_task(table, models, length_field, min_eval_size):
 
 
 def render_length_distribution(paired, models):
-    """How much the gold length actually VARIES per task.
+    """How much each task's gold actually VARIES, on both axes.
 
-    Without this the headline table is unreadable: a task whose gold is always k=3 contributes
-    one bucket and tells you nothing about length sensitivity, but it still shifts the macro
-    average in whatever bucket it lands in.
+    Without this the headline table is unreadable: a task whose payload is always k=3 contributes
+    one payload bucket and tells you nothing, but still shifts the macro average in whatever
+    bucket it lands in. The emitted-length columns are the ones that matter -- a task can be
+    constant in payload and highly variable in what must actually be produced, which is exactly
+    what a chain-of-thought prefix does (outlier).
     """
-    dist = defaultdict(Counter)
+    items, words, cot, gen = (
+        defaultdict(Counter),
+        defaultdict(list),
+        defaultdict(list),
+        defaultdict(list),
+    )
     for r in paired:
-        dist[r["task"]][r["gold_items"]] += 1
+        items[r["task"]][r["gold_items"]] += 1
+        if r.get("gold_output_words") is not None:
+            words[r["task"]].append(r["gold_output_words"])
+            cot[r["task"]].append(bool(r.get("gold_has_cot")))
+        for m in models:
+            gen[(r["task"], m)].append(r["gen_words"][m])
+
     lines = [
         "",
-        "### Gold-length variation per task",
+        "### What actually varies, per task",
         "",
-        "| task | gold_kind | distinct gold_items | distribution (items x count) | varies? |",
-        "|---|---|---|---|---|",
+        "| task | payload size | distinct payload | EMITTED words (min/median/max) | %CoT | varies? |",
+        "|---|---|---|---|---|---|",
     ]
-    for task in sorted(dist):
-        c = dist[task]
-        shown = ", ".join(f"{k}x{v}" for k, v in sorted(c.items())[:8])
-        if len(c) > 8:
+    for task in sorted(items):
+        c = items[task]
+        shown = ", ".join(f"{k}x{v}" for k, v in sorted(c.items())[:5])
+        if len(c) > 5:
             shown += ", ..."
-        varies = "yes" if len(c) > 1 else "**NO (single bucket)**"
-        kind = GOLD_SPEC[task]["gold_kind"]
-        lines.append(f"| {task} | {kind} | {len(c)} | {shown} | {varies} |")
+        w = sorted(words.get(task, []))
+        if w:
+            wcol = f"{w[0]} / {w[len(w) // 2]} / {w[-1]}"
+            n_distinct_w = len(set(w))
+            pct_cot = f"{100.0 * sum(cot[task]) / len(cot[task]):.0f}%"
+            varies = "yes" if n_distinct_w > 1 else "**NO (single bucket)**"
+        else:
+            wcol, pct_cot = "n/a", "n/a"
+            varies = "yes" if len(c) > 1 else "**NO (single bucket)**"
+        lines.append(f"| {task} | {len(c)} distinct | {shown} | {wcol} | {pct_cot} | {varies} |")
+
+    lines += [
+        "",
+        "`%CoT` = share of gold answers carrying a reasoning prefix before the answer line. A task "
+        "at 0% has the answer line only; the emitted length there is just the payload rendered.",
+        "",
+        "### Emitted length, gold vs each model's own generations",
+        "",
+        "| task | gold words (median) | "
+        + " | ".join(f"{m} generated (median)" for m in models)
+        + " |",
+        "|---|---|" + "|".join(["---"] * len(models)) + "|",
+    ]
+    for task in sorted(items):
+        w = sorted(words.get(task, []))
+        cells = [task, str(w[len(w) // 2]) if w else "n/a"]
+        for m in models:
+            g = sorted(gen[(task, m)])
+            cells.append(str(g[len(g) // 2]) if g else "n/a")
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(
+        "A model generating far more or far fewer words than the gold is not answering in the "
+        "trained format, which changes what a length-conditioned score means."
+    )
     return "\n".join(lines)
 
 
 def render_audit(audits, coverage, model_roots, files_per_model):
     lines = ["", "### Input audit", ""]
-    for m in sorted(audits):
+    bundle = audits.get("_bundle")
+    if bundle is not None:
+        lines.append(f"- rungs loaded from the bundle: {len(bundle['rungs_loaded'])}")
+        for r in bundle["rungs_loaded"]:
+            lines.append(f"    - {r}")
+        if bundle["rung_missing"]:
+            lines.append(f"- rungs MISSING from the bundle: {len(bundle['rung_missing'])}")
+            for r in bundle["rung_missing"]:
+                lines.append(f"    - {r}")
+        if bundle["rung_unreadable"]:
+            lines.append(f"- rungs UNREADABLE: {bundle['rung_unreadable']}")
+        lines.append("")
+    for m in sorted(k for k in audits if k != "_bundle"):
         a = audits[m]
         lines.append(f"**{m}** -- `{model_roots[m]}`")
         lines.append("")
@@ -584,6 +799,15 @@ def render_audit(audits, coverage, model_roots, files_per_model):
             f"- loaded={coverage[m]['loaded']} paired={coverage[m]['paired']} "
             f"(unpaired={coverage[m]['loaded'] - coverage[m]['paired']})"
         )
+        if a["alignment_failed"]:
+            lines.append(
+                f"- **tasks DROPPED on the gold-alignment check**: {dict(a['alignment_failed'])} "
+                f"-- rebuilt gold != recorded gold, so emitted length could not be trusted"
+            )
+        if a["no_gold_text"]:
+            lines.append(f"- no rebuilt gold text: {dict(a['no_gold_text'])}")
+        if a["build_output_failed"]:
+            lines.append(f"- _build_output raised: {dict(a['build_output_failed'])}")
         lines.append("")
         for task in sorted(a["detail_keys"]):
             lines.append(f"    - detail keys [{task}]: {sorted(a['detail_keys'][task])}")
@@ -629,8 +853,34 @@ def main():
         default="Qwen/Qwen3.5-0.8B",
         help="HF tokenizer for gold token counts; '' to force the word-count fallback.",
     )
+    ap.add_argument(
+        "--bundle-root",
+        default="/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean",
+        help="eval bundle the ladder read (EVAL500_ROOT). Used to rebuild the GOLD ANSWER TEXT, "
+        "which the generations sidecar does not store. '' disables the emitted-length axis and "
+        "leaves only the payload-count axis.",
+    )
+    ap.add_argument(
+        "--max-test-samples",
+        type=int,
+        default=600,
+        help="MAX_TEST the eval ran with. Must match, or the seeded subsample lands on different "
+        "examples and the alignment check will (correctly) reject every task.",
+    )
+    ap.add_argument(
+        "--cot-mode",
+        default="label",
+        help="cot_mode passed to _build_output when rebuilding the gold answer. 'label' is the "
+        "library default and the one the eval's own loader uses; 'none' strips the reasoning "
+        "prefix, which is the control for 'is the effect just CoT length?'.",
+    )
     ap.add_argument("--item-edges", default=",".join(map(str, DEFAULT_ITEM_EDGES)))
     ap.add_argument("--token-edges", default=",".join(map(str, DEFAULT_TOKEN_EDGES)))
+    ap.add_argument(
+        "--output-edges",
+        default="1,4,8,16,24,32,48,64",
+        help="bucket edges for the emitted-length axis (gold answer tokens incl. any CoT).",
+    )
     ap.add_argument(
         "--include-fixed-output-tasks",
         action="store_true",
@@ -698,6 +948,53 @@ def main():
         )
         return 2
 
+    # ---- emitted-length axis -------------------------------------------------------------
+    # gold_items counts the answer PAYLOAD and is constant on most of these ladders. What the
+    # model was trained to emit is _build_output's string, which for outlier (and for any task
+    # built with a CoT cot_mode) carries a reasoning prefix whose length varies. Rebuild it.
+    have_output_axis = False
+    if args.bundle_root:
+        shared_audit = new_audit()
+        texts, golds = load_gold_texts(
+            args.bundle_root,
+            args.ladder_version,
+            args.max_test_samples,
+            args.cot_mode,
+            xlong=True,
+            audit=shared_audit,
+        )
+        print(
+            f"[gold] rebuilt {len(texts)} gold answers from {args.bundle_root} "
+            f"(cot_mode={args.cot_mode}); {len(shared_audit['rung_missing'])} rung(s) missing",
+            flush=True,
+        )
+        n_with_text = {}
+        for name in models:
+            by_model[name], n_with_text[name] = attach_gold_texts(
+                by_model[name], texts, golds, audits[name]
+            )
+            print(
+                f"[gold] {name}: {n_with_text[name]}/{len(by_model[name])} examples carry a "
+                f"rebuilt gold answer",
+                flush=True,
+            )
+        for name in models:
+            for task, why in sorted(audits[name]["alignment_failed"].items()):
+                print(
+                    f"[gold] DROPPED task {task!r} for {name}: gold rebuilt from the bundle does "
+                    f"not match the gold the eval recorded ({why}). The rung file or the seeded "
+                    f"subsample no longer lines up with what was scored.",
+                    flush=True,
+                )
+        audits["_bundle"] = shared_audit
+        have_output_axis = any(n_with_text.values())
+        if not have_output_axis:
+            print(
+                "[gold] no example survived the alignment check -- emitted-length axis disabled. "
+                "The payload-count axis below is unaffected (it never reads the bundle).",
+                flush=True,
+            )
+
     paired, coverage = pair_records(by_model, models)
     print(f"[pair] {len(paired)} examples present in all {len(by_model)} models", flush=True)
     mismatched = [r for r in paired if r["gold_mismatch"]]
@@ -710,9 +1007,17 @@ def main():
 
     item_edges = [int(x) for x in args.item_edges.split(",")]
     token_edges = [int(x) for x in args.token_edges.split(",")]
+    output_edges = [int(x) for x in args.output_edges.split(",")]
+
+    axes = []
+    if have_output_axis:
+        # PRIMARY: the length of what the model actually has to emit.
+        axes.append(("gold_output_words", output_edges))
+    axes.append(("gold_items", item_edges))
+    axes.append(("gold_payload_tokens", token_edges))
 
     sections, summary = [], {}
-    for field, edges in (("gold_items", item_edges), ("gold_tokens", token_edges)):
+    for field, edges in axes:
         table = aggregate(paired, field, edges, args.include_fixed_output_tasks, models)
         sections.append(render_table(table, models, field, tokenizer.kind, args.min_eval_size))
         sections.append(render_per_task(table, models, field, args.min_eval_size))

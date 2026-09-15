@@ -29,23 +29,58 @@ in `src/scripts/ctc_eval/eval/evaluate.py`:
 Multi-query retrieval examples aggregate away the per-query gold and are dropped — counted and
 reported in the audit section, never dropped silently.
 
-## Two length axes
+## Three length axes, and only one of them is the right one
 
-- **`gold_items`** — how many things the gold contains (pairs / ids / list entries). The primary
-  axis: it is the natural "how much must be produced".
-- **`gold_tokens`** — tokens in the canonical rendering of the gold answer, via the Qwen3.5
-  tokenizer staged on weka. Falls back to a whitespace word count if that is unreachable, and
-  the report always says which was used.
+**`gold_output_words` (primary).** Words in the full gold answer string as
+`_build_output` (`src/scripts/ctc_eval/lib/data_format.py`) builds it — the single definition of
+what the model was trained to emit. For outlier that is a chain-of-thought sentence *plus* the id
+line:
+
+```
+Most passages are about Geology, Volcano, Mineral and the outliers are about Jazz.
+Outliers: [3], [8], [12]
+```
+
+The CoT grows with the number of majority topics, so the emitted length varies a lot even though
+the payload is always 3 ids. This axis is the one that answers "does accuracy depend on how much
+has to be produced".
+
+**`gold_items` (secondary).** How many things the answer names — 3 pairs, 3 ids, 1 entry. On these
+ladders it is *constant* for most tasks, and it is **not** the length of the output. Kept because
+it needs nothing but the sidecar, so it still works when the bundle is unreachable.
+
+**`gold_payload_tokens` (secondary).** Tokens in the payload rendering only. Same caveat.
+
+### Where the gold text comes from, and why it is trustworthy
+
+`_record_gens` saves only the prompt tail, not `expected_output`, so the gold answer is rebuilt
+here from the same rung file through the same steps: `load_jsonl`, then the same seeded
+subsample (`random.seed(42)`, `random.sample`) when the file exceeds `MAX_TEST`, then
+`_build_output`. `ladder_paths.py` holds the rung→file map transcribed from `eval_lc_native.py`.
+
+That reconstruction is **verified, not assumed**. Every rebuilt example's gold is compared against
+the gold the eval already recorded in the sidecar, and a task where even one example disagrees is
+dropped from the emitted-length axis and named in the report. A stale path, a changed bundle, or a
+`MAX_TEST` mismatch therefore surfaces as "task DROPPED" — never as a plausible-looking wrong
+number. The payload axes never read the bundle, so they survive such a failure untouched.
+
+`--cot-mode` selects the reasoning prefix (`label` is the library default and what the eval's own
+loader uses). **`COT_MODE=none` is the control**: rebuild the same golds without the CoT and see
+whether the effect survives. If it does, the effect is about the answer; if it vanishes, it was
+about the reasoning prefix.
 
 ## Reading the output
 
 Three things are load-bearing and printed before the headline table:
 
-1. **Gold-length variation per task.** Several of these tasks are generated at a fixed `k`
-   (`..._k3` rungs), so their gold length may not vary at all. A task with one distinct
-   `gold_items` value contributes a single bucket and says nothing about length sensitivity —
-   but it still moves the macro-average in whatever bucket it lands in. The table flags those
-   with **NO (single bucket)**.
+1. **What actually varies, per task.** Several tasks are generated at a fixed `k` (`..._k3`
+   rungs), so their *payload* never varies — but their emitted length can still vary through the
+   CoT prefix, and the table shows both plus `%CoT`. A task that is constant on the axis being
+   plotted contributes a single bucket and says nothing about length sensitivity, while still
+   moving the macro-average in whatever bucket it lands in; those are flagged
+   **NO (single bucket)**.
+   A second table compares gold emitted length against each model's own median generation length
+   — a model answering far outside the trained format changes what the score means.
 2. **Pairing.** Only `(task, rung, idx, eval_tag)` keys present in *both* models enter the
    headline table, so a bucket never compares one model's examples against a different subset
    of the other's. `eval_tag` is part of the key because `eval_xlong256k` and the `eval_yarn2-*`
@@ -75,6 +110,10 @@ EVAL_DIRS='eval,eval_xlong,eval_xlong256k,eval_yarn2-256k,eval_yarn2-512k,eval_y
 
 # Short rungs only, to separate "long output" from "long context"
 RUNGS='2k,3k,8k,16k,32k' NAME=gold-len-short-rungs src/scripts/train/memexpress/singletask_ladder/gold_length/launch_gold_length_gantry.sh
+
+# CONTROL: same golds with the CoT stripped. If the effect survives, it is about the answer;
+# if it vanishes, it was about the reasoning prefix.
+COT_MODE=none NAME=gold-len-nocot src/scripts/train/memexpress/singletask_ladder/gold_length/launch_gold_length_gantry.sh
 ```
 
 The full report goes to stdout as well as to `$OUT_DIR/report.md`, so it can be pulled from the
