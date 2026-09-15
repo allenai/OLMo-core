@@ -244,6 +244,77 @@ def select_positions(kind, k, body_pos, body_ids, ctx, rng=None):
     return topk_positions(body_pos, sal[body_pos], k)
 
 
+SAL_KEY = {"grad": "sal_grad", "attn": "sal_attn", "attnlast": "sal_attn_last",
+           "rule": "sal_rule", "prevattn": "sal_prev"}
+
+
+def select_row_budget(kind, k, bpos, bids, ctx):
+    """ROW-WIDE allocation of the SAME budget a per-document top-k would spend.
+
+    Budget ``B = sum_d min(k, |body_d|)`` -- identical to the uniform selector's total -- handed
+    out to the B most salient body tokens in the whole row, so the allocation is adaptive: an
+    ambiguous document can take many tokens and an obviously-typical one none.
+
+    :returns: list (per document) of kept ORIGINAL positions.
+    """
+    sal = ctx.get(SAL_KEY.get(kind))
+    n_docs = len(bpos)
+    if sal is None:
+        return [[] for _ in range(n_docs)]
+    B = int(sum(min(k, len(bp)) for bp in bpos))
+    flat_pos = np.concatenate([bp for bp in bpos if len(bp)]) if any(len(bp) for bp in bpos) \
+        else np.zeros(0, dtype=np.int64)
+    if B <= 0 or flat_pos.size == 0:
+        return [[] for _ in range(n_docs)]
+    flat_doc = np.concatenate([np.full(len(bp), d, dtype=np.int64)
+                               for d, bp in enumerate(bpos) if len(bp)])
+    sc = sal[flat_pos]
+    take = np.argsort(-sc.astype(np.float64), kind="stable")[: min(B, len(sc))]
+    out = [[] for _ in range(n_docs)]
+    for i in take:
+        out[int(flat_doc[i])].append(int(flat_pos[i]))
+    return [sorted(v) for v in out]
+
+
+def doc_content_vectors(model, x, bpos, bids, stop_mask):
+    """Per-document ``cmean``-style content mean embedding and its cosine to the ROW centroid.
+
+    This is the ambiguity score of ``records/outlier-richer-slot-probe.md``: a LOW cosine means the
+    document is topically unlike the rest of the row, i.e. outlier-like.  Used here only to label
+    documents (gold / hard negative / easy), never to choose tokens.
+    """
+    emb = model.embeddings(x)[0].float()
+    vecs = []
+    for d in range(len(bpos)):
+        if len(bpos[d]) == 0:
+            vecs.append(torch.zeros(emb.shape[1], device=emb.device))
+            continue
+        sel = np.asarray(bpos[d])
+        keep = ~stop_mask[bids[d]]
+        if keep.sum() < 2:
+            keep = np.ones(len(sel), dtype=bool)
+        vecs.append(emb[torch.tensor(sel[keep], device=emb.device)].mean(0))
+    V = torch.stack(vecs)
+    c = V.mean(0)
+    return F.cosine_similarity(V, c[None], dim=-1).cpu().numpy()
+
+
+def label_docs(cos_to_centroid, gold_row, k):
+    """``0 = gold, 1 = hard negative, 2 = easy``.
+
+    Hard negatives are the non-gold documents that a topical-distance readout would rank inside the
+    top ``2k`` most outlier-like -- the ones the task actually confuses.
+    """
+    n = len(cos_to_centroid)
+    lab = np.full(n, 2, dtype=np.int64)
+    order = np.argsort(cos_to_centroid)          # most distant (most outlier-like) first
+    for d in order[: min(n, 2 * max(1, k))]:
+        if not bool(gold_row[d]):
+            lab[d] = 1
+    lab[np.asarray([bool(g) for g in gold_row])] = 0
+    return lab
+
+
 def swap_kept(x_cpu, sel_by_doc, gold_row, n_docs, seed):
     """CONTROL: exchange the KEPT REAL tokens of each gold document with those of a random non-gold
     document.  Positions, ids, headers and slot means are untouched (kept tokens are FREE, so they
@@ -635,9 +706,15 @@ def apply_ridge(X, fit):
 # =============================================================================================
 # conditions
 # =============================================================================================
-def C(name, kind, k=0, mode="pool", L=0, swap=False, slot="cent_cmean"):
-    """``mode``: full | pool (compacted, cent_cmean slot) | preview (dense prefix then compact)."""
-    return dict(name=name, kind=kind, k=k, mode=mode, L=L, swap=swap, slot=slot)
+def C(name, kind, k=0, mode="pool", L=0, swap=False, slot="cent_cmean", row=False):
+    """``mode``: full | pool (compacted, cent_cmean slot) | preview (dense prefix then compact).
+
+    ``row=True`` spends the SAME total token budget -- ``sum_d min(k, |body_d|)`` -- as a
+    per-document top-k, but allocates it ROW-WIDE by saliency, so an ambiguous document can take
+    many tokens and a clear-majority document ~none.  Uniform vs adaptive at identical totals is
+    the comparison the coordinator asked for.
+    """
+    return dict(name=name, kind=kind, k=k, mode=mode, L=L, swap=swap, slot=slot, row=row)
 
 
 def build_conditions(mode, ks):
@@ -655,6 +732,12 @@ def build_conditions(mode, ks):
         for k in ks:
             cs.append(C(f"rule{k}", "rule", k))
         cs.append(C(f"rand{ks[1]}", "rand", ks[1]))
+        # ROW-LEVEL budget: same total tokens, allocated across the whole row
+        for k in ks:
+            cs.append(C(f"gradrow{k}", "grad", k, row=True))
+        for k in (ks[1],):
+            cs.append(C(f"attnrow{k}", "attn", k, row=True))
+            cs.append(C(f"rulerow{k}", "rule", k, row=True))
         cs.append(C(f"grad{ks[-1]}_swap", "grad", ks[-1], swap=True))
         return cs
     if mode == "preview":
@@ -663,6 +746,8 @@ def build_conditions(mode, ks):
             cs.append(C(f"prev{L}", "none", 0, mode="preview", L=L))
         for k in ks:
             cs.append(C(f"prev4_k{k}", "prevattn", k, mode="preview", L=4))
+        for k in ks:
+            cs.append(C(f"prev4_row{k}", "prevattn", k, mode="preview", L=4, row=True))
         cs.append(C(f"prev4_first{ks[1]}", "first", ks[1], mode="preview", L=4))
         cs.append(C(f"prev4_k{ks[1]}_swap", "prevattn", ks[1], mode="preview", L=4, swap=True))
         return cs
@@ -674,7 +759,7 @@ def build_conditions(mode, ks):
 def main():
     global HEADER_STOP_ID
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", default="saliency", choices=["saliency", "preview"])
+    ap.add_argument("--mode", default="saliency", choices=["diag", "saliency", "preview"])
     ap.add_argument("--rung", default="8k")
     ap.add_argument("--rungs", default=None, help="comma list, scored in ONE process")
     ap.add_argument("--rows", type=int, default=240)
@@ -708,9 +793,11 @@ def main():
     if a.tokenizer:
         P.TOKENIZER = a.tokenizer
 
-    all_conds = build_conditions(a.mode, ks)
+    all_conds = [] if a.mode == "diag" else build_conditions(a.mode, ks)
     known = {c["name"]: c for c in all_conds}
-    if a.conditions == "all":
+    if a.mode == "diag":
+        conds = []
+    elif a.conditions == "all":
         conds = all_conds
     else:
         want = [w for w in a.conditions.split(",") if w]
@@ -721,6 +808,8 @@ def main():
             raise SystemExit(f"unknown conditions {miss}; known: {sorted(known)}")
         conds = [known[w] for w in want]
     log(f"mode={a.mode} conditions ({len(conds)}): {[c['name'] for c in conds]}")
+    if a.mode == "diag":
+        log("DIAG: no constructions -- one dense forward + backward + attention capture per row")
 
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(P.TOKENIZER)
@@ -767,19 +856,298 @@ def main():
     pst["slot_stop_ids"] = [int(t) for t in stop]
     pst["slot_stop_mask"] = None
     log(f"slot stop set: {len(stop)} ids; most frequent dropped: {' '.join(shown[:12])}")
+    stop_mask_np = np.zeros(vocab, dtype=bool)
+    ids_t = np.asarray([int(t) for t in stop if int(t) < vocab], dtype=np.int64)
+    stop_mask_np[ids_t] = True
 
     capture = AttnCapture(model)
-    ctx0 = {"idf": idf, "sent_end": sent_end, "is_cap": is_cap, "is_dig": is_dig, "plen": plen}
+    ctx0 = {"idf": idf, "sent_end": sent_end, "is_cap": is_cap, "is_dig": is_dig, "plen": plen,
+            "stop_mask": stop_mask_np}
 
     summaries = {}
     for rung in [r for r in a.rungs.split(",") if r]:
+        if a.mode == "diag":
+            summaries[rung] = run_diag(a, rung, model, pst, tok, ctx0, capture, attn_layers)
+            continue
         summaries[rung] = run_rung(a, rung, conds, model, pst, tok, ctx0, capture,
                                    lin, quad, attn_layers, n_layers)
+    if a.mode == "diag":
+        return
     if len(summaries) > 1:
         for rung, s in summaries.items():
             print(f"\n### rung {rung}", flush=True)
             verdict(s)
 
+
+
+# =============================================================================================
+# the saliency DIAGNOSTIC (``--mode diag``): where does the answer's gradient actually go?
+# =============================================================================================
+def _share(mass, sel):
+    return float(mass[sel].sum()) if len(sel) else 0.0
+
+
+def _cover(v, frac):
+    """How many documents carry ``frac`` of the doc-side saliency mass."""
+    if len(v) == 0 or v.sum() <= 0:
+        return float("nan")
+    w = np.sort(v)[::-1]
+    c = np.cumsum(w) / w.sum()
+    return float(np.searchsorted(c, frac) + 1)
+
+
+def _auc(score, pos):
+    """AUC of ``score`` separating ``pos`` from the rest (ties = 0.5)."""
+    pos = np.asarray(pos, dtype=bool)
+    if pos.all() or not pos.any():
+        return float("nan")
+    a, b = score[pos], score[~pos]
+    gt = (a[:, None] > b[None, :]).sum()
+    eq = (a[:, None] == b[None, :]).sum()
+    return float((gt + 0.5 * eq) / (len(a) * len(b)))
+
+
+def _spearman(a, b):
+    if len(a) < 3:
+        return float("nan")
+    ra = np.argsort(np.argsort(a)).astype(float)
+    rb = np.argsort(np.argsort(b)).astype(float)
+    if ra.std() == 0 or rb.std() == 0:
+        return float("nan")
+    return float(np.corrcoef(ra, rb)[0, 1])
+
+
+def run_diag(a, rung, model, pst, tok, ctx0, capture, attn_layers):
+    """Report WHERE the answer's input-gradient (and attention) saliency sits, before asking any
+    construction to reproduce FULL.  No compaction, no keep sets -- one dense forward, one backward
+    and one attention capture per row."""
+    shard = f"{a.work}/outlier_{rung}"
+    P.convert("outlier", a.jsonl or RUNGS[rung], a.rows, shard)
+    rows, masks = P.load_rows(shard, a.rows)
+    log(f"=== DIAG rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:5]]}")
+    if len(rows) < 500:
+        log(f"WARNING eval_size={len(rows)} (<500): SE on a right/wrong metric at f1~0.5 is "
+            f"{0.5 / max(1, len(rows)) ** 0.5:.3f}")
+    max_pos = max(len(r) for r in rows) + a.gen_max_new + 8
+    for mod in model.modules():
+        rope = getattr(mod, "rope", None)
+        if rope is not None and hasattr(rope, "warmup_cache"):
+            rope.warmup_cache(max_pos, torch.device("cuda"))
+    gold_table = json.load(open(f"{shard}/gold_fingerprints.json"))
+    gold_table = {fp: sorted({int(i) for v in val for i in (v if isinstance(v, (list, tuple)) else [v])})
+                  for fp, val in gold_table.items()}
+    stop_mask_np = ctx0["stop_mask"]
+    last4 = attn_layers[-4:]
+
+    REC = []          # one dict per (row, saliency kind)
+    snippets = []
+    t_start = time.time()
+    for ri, row in enumerate(rows):
+        rmask = masks[ri]
+        x = torch.tensor(row[None], device="cuda")
+        x_cpu = x.cpu()
+        xr = x_cpu[0].numpy()
+        T = x.shape[1]
+        ans_pos = torch.tensor(np.nonzero(rmask)[0], device="cuda")
+        pred_pos = ans_pos - 1
+        targets = x[0, ans_pos]
+        true_ids = parse_ids(tok.decode(targets.tolist()))
+        ans_start = int(ans_pos[0])
+        fp = content_fingerprint_from_row(row.tolist(), IDS.eos)
+        gold_docs = gold_table.get(fp)
+        if gold_docs is None:
+            continue
+
+        cid0, cid_h, n_docs, bpos, bids, n_free_nondoc = row_layout(x_cpu)
+        c0, ch = cid0[0].numpy(), cid_h[0].numpy()
+        is_marker = (xr == IDS.doc_start) | (xr == IDS.doc_end)
+        hdr_pos = [np.nonzero((c0 == d) & (ch == -1) & ~is_marker)[0] for d in range(n_docs)]
+        gold_row = torch.zeros(n_docs, dtype=torch.bool)
+        gold_row[[d for d in gold_docs if 0 <= d < n_docs]] = True
+        goldv = gold_row.numpy()
+        q_pos = np.nonzero((c0 == -1) & (np.arange(T) < ans_start))[0]
+        a_pos = np.arange(ans_start, T)
+
+        cos = doc_content_vectors(model, x, bpos, bids, stop_mask_np)
+        lab = label_docs(cos, gold_row, len(true_ids) or 3)
+
+        # is FULL right on this row?  (free generation, same protocol as the parity probe)
+        # Generation is a full forward per token, so it is capped at --gen-rows; rows past the cap
+        # get f1_full = NaN and land only in the "all" bucket, never in right/wrong.
+        f1_full = float("nan")
+        if ri < a.gen_rows:
+            model.eval()
+            model._pooled_keep_holder = None
+            _OV["cid"] = None
+            gen = generate(lambda seq: model(seq, logits_to_keep=1)[0][-1],
+                           x[:, :ans_start].clone(), a.gen_max_new, len(true_ids) or 3, tok)
+            f1_full = set_f1(parse_ids(tok.decode(gen)), true_ids)
+
+        sals = {}
+        sals["grad"] = grad_saliency(model, x, pred_pos, targets,
+                                     ckpt_blocks=not a.no_ckpt_blocks).numpy().astype(np.float64)
+        q_oracle = torch.cat([torch.arange(max(0, ans_start - 16), ans_start, device="cuda"),
+                              pred_pos]).unique()
+        per_layer = capture.run(model, x, q_oracle)
+        if per_layer:
+            sals["attn"] = sum(per_layer.values()).numpy().astype(np.float64)
+            sals["attnlast"] = sum(per_layer[li] for li in last4
+                                   if li in per_layer).numpy().astype(np.float64)
+
+        for kind, sal in sals.items():
+            tot = float(sal.sum()) or 1.0
+            doc_mass = np.asarray([_share(sal, bpos[d]) for d in range(n_docs)])
+            hdr_mass = np.asarray([_share(sal, hdr_pos[d]) for d in range(n_docs)])
+            body_tot = float(doc_mass.sum())
+            npt = np.asarray([doc_mass[d] / max(1, len(bpos[d])) for d in range(n_docs)])
+            rec = dict(row=ri, kind=kind, n_docs=n_docs, T=T, f1_full=f1_full,
+                       share_gold=float(doc_mass[goldv].sum()) / tot,
+                       share_nongold=float(doc_mass[~goldv].sum()) / tot,
+                       share_header=float(hdr_mass.sum()) / tot,
+                       share_marker=_share(sal, np.nonzero(is_marker)[0]) / tot,
+                       share_question=_share(sal, q_pos) / tot,
+                       share_answer=_share(sal, a_pos) / tot,
+                       n50=_cover(doc_mass, 0.5), n90=_cover(doc_mass, 0.9),
+                       n50_frac=_cover(doc_mass, 0.5) / max(1, n_docs),
+                       n90_frac=_cover(doc_mass, 0.9) / max(1, n_docs),
+                       hdr_share_of_doc=float(hdr_mass.sum()) / max(1e-9, body_tot + hdr_mass.sum()),
+                       auc_gold=_auc(npt, goldv),
+                       rho_ambig=_spearman(npt, -cos),   # LOW cosine = outlier-like
+                       npt_gold=float(npt[lab == 0].mean()) if (lab == 0).any() else float("nan"),
+                       npt_hard=float(npt[lab == 1].mean()) if (lab == 1).any() else float("nan"),
+                       npt_easy=float(npt[lab == 2].mean()) if (lab == 2).any() else float("nan"))
+            # within-document: position and token type, normalised per document (1.0 = average)
+            fs, rest, quart = [], [], [[], [], [], []]
+            dig, cap, stp, idfq = [], [], [], [[], [], [], []]
+            for d in range(n_docs):
+                n = len(bpos[d])
+                if n < 8:
+                    continue
+                v = sal[bpos[d]]
+                mu = v.mean() or 1e-12
+                z = v / mu
+                se = ctx0["sent_end"][bids[d]]
+                end = int(np.argmax(se)) if se.any() else n - 1
+                fs.append(float(z[: end + 1].mean()))
+                if end + 1 < n:
+                    rest.append(float(z[end + 1:].mean()))
+                for qi in range(4):
+                    seg = z[qi * n // 4: (qi + 1) * n // 4]
+                    if len(seg):
+                        quart[qi].append(float(seg.mean()))
+                for arr, m in ((dig, ctx0["is_dig"][bids[d]]), (cap, ctx0["is_cap"][bids[d]]),
+                               (stp, stop_mask_np[bids[d]])):
+                    if m.any():
+                        arr.append(float(z[m].mean()))
+                di = ctx0["idf"][bids[d]]
+                cuts = np.quantile(di, [0.25, 0.5, 0.75])
+                b = np.digitize(di, cuts)
+                for qi in range(4):
+                    if (b == qi).any():
+                        idfq[qi].append(float(z[b == qi].mean()))
+            mm = lambda v: (float(np.mean(v)) if v else float("nan"))  # noqa: E731
+            rec.update(z_first_sent=mm(fs), z_rest=mm(rest),
+                       **{f"z_q{i}": mm(quart[i]) for i in range(4)},
+                       z_digit=mm(dig), z_capital=mm(cap), z_stopword=mm(stp),
+                       **{f"z_idfq{i}": mm(idfq[i]) for i in range(4)})
+            REC.append(rec)
+
+        if ri < a.dump_rows and "grad" in sals:
+            sal = sals["grad"]
+            top = np.argsort(-sal)[:20]
+            items = []
+            for p in sorted(top.tolist()):
+                d = int(ch[p]) if ch[p] >= 0 else (int(c0[p]) if c0[p] >= 0 else -1)
+                role = ("ANS" if p >= ans_start else
+                        ("HDR" if (c0[p] >= 0 and ch[p] < 0) else
+                         ("Q" if c0[p] < 0 else ("gold" if d >= 0 and goldv[d] else "doc"))))
+                ctxs = tok.decode([int(v) for v in xr[max(0, p - 4):p]])
+                items.append(f"{role}{'' if d < 0 else f'[{d}]'}:...{ctxs}>>{tok.decode([int(xr[p])])}<<")
+            snippets.append({"row": ri, "true_ids": true_ids, "gold_docs": gold_docs,
+                             "f1_full": f1_full, "top20": items})
+
+        if ri + 1 in (1, 2, 5, 10) or (ri + 1) % 20 == 0:
+            el = time.time() - t_start
+            log(f"diag row {ri + 1}/{len(rows)}  elapsed {el / 60:.1f} min  "
+                f"ETA {el / (ri + 1) * (len(rows) - ri - 1) / 60:.0f} min")
+            diag_tables(REC)
+
+    diag_tables(REC)
+    print("\n=== top-20 gradient-salient tokens, with their role ===", flush=True)
+    for sn in snippets:
+        print(f"  row {sn['row']} gold={sn['gold_docs']} FULL f1={sn['f1_full']:.2f}", flush=True)
+        for it in sn["top20"]:
+            print(f"      {it}", flush=True)
+
+    out = {"task": "outlier", "mode": "diag", "rung": rung, "eval_size": len({r['row'] for r in REC}),
+           "ckpt": a.resolved_ckpt, "ckpt_name": a.ckpt_name, "per_row": REC, "snippets": snippets,
+           "summary": diag_summary(REC)}
+    local = a.out if a.out.endswith(".json") else f"{a.out}/diag_{rung}.json"
+    if len(a.rungs.split(",")) > 1 and f"_{rung}" not in local:
+        local = local[:-5] + f"_{rung}.json"
+    sfx = f"_{a.tag}" if a.tag else ""
+    weka = None if a.weka_out in ("", "none") else \
+        f"{a.weka_out}/saliency_preview_diag_{a.ckpt_name}_{rung}{sfx}.json"
+    for path in [local] + ([weka] if weka else []):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            json.dump(out, open(path, "w"), indent=1)
+            log(f"wrote {path}")
+        except Exception as e:
+            log(f"could not write {path}: {e}")
+    return out["summary"]
+
+
+DIAG_COLS = [
+    ("share_gold", "gold"), ("share_nongold", "nongold"), ("share_header", "header"),
+    ("share_marker", "marker"), ("share_question", "quest"), ("share_answer", "answ"),
+    ("n50", "n50"), ("n90", "n90"), ("n50_frac", "n50/n"), ("n90_frac", "n90/n"),
+    ("hdr_share_of_doc", "hdr/doc"), ("auc_gold", "AUCgold"), ("rho_ambig", "rho_amb"),
+    ("npt_gold", "s/tok-G"), ("npt_hard", "s/tok-H"), ("npt_easy", "s/tok-E"),
+    ("z_first_sent", "z_sent1"), ("z_rest", "z_rest"),
+    ("z_q0", "z_q0"), ("z_q1", "z_q1"), ("z_q2", "z_q2"), ("z_q3", "z_q3"),
+    ("z_digit", "z_dig"), ("z_capital", "z_cap"), ("z_stopword", "z_stop"),
+    ("z_idfq0", "idfq0"), ("z_idfq1", "idfq1"), ("z_idfq2", "idfq2"), ("z_idfq3", "idfq3"),
+]
+
+
+def _grp(REC, kind, only=None):
+    v = [r for r in REC if r["kind"] == kind and (only is None or only(r))]
+    return v
+
+
+def diag_summary(REC):
+    out = {}
+    for kind in sorted({r["kind"] for r in REC}):
+        for tag, filt in (("all", None), ("full_right", lambda r: r["f1_full"] >= 0.999),
+                          ("full_wrong", lambda r: r["f1_full"] < 0.999)):
+            g = _grp(REC, kind, filt)
+            if not g:
+                continue
+            d = {"eval_size": len(g), "mean_n_docs": float(np.mean([r["n_docs"] for r in g]))}
+            for key, _ in DIAG_COLS:
+                vals = [r[key] for r in g if r[key] == r[key]]
+                m, se = mean_se(vals)
+                d[key], d[f"{key}_se"] = m, se
+            out[f"{kind}/{tag}"] = d
+    return out
+
+
+def diag_tables(REC):
+    summ = diag_summary(REC)
+    for block in (["share_gold", "share_nongold", "share_header", "share_marker",
+                   "share_question", "share_answer"],
+                  ["n50", "n90", "n50_frac", "n90_frac", "hdr_share_of_doc",
+                   "auc_gold", "rho_ambig", "npt_gold", "npt_hard", "npt_easy"],
+                  ["z_first_sent", "z_rest", "z_q0", "z_q1", "z_q2", "z_q3",
+                   "z_digit", "z_capital", "z_stopword",
+                   "z_idfq0", "z_idfq1", "z_idfq2", "z_idfq3"]):
+        names = {k: lbl for k, lbl in DIAG_COLS}
+        print("\n" + f"{'kind/rows':22} {'N':>4} " +
+              " ".join(f"{names[k]:>8}" for k in block), flush=True)
+        for key, d in summ.items():
+            print(f"{key:22} {d['eval_size']:4d} " +
+                  " ".join(f"{d.get(k, float('nan')):8.3f}" for k in block), flush=True)
 
 DUMP_CONDS = ("cc00", "grad8", "grad16", "rule8", "prev4", "prev4_k8")
 
@@ -831,6 +1199,7 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
     gold_table = {fp: sorted({int(i) for v in val for i in (v if isinstance(v, (list, tuple)) else [v])})
                   for fp, val in gold_table.items()}
     log(f"gold sidecar: {len(gold_table)} fingerprints")
+    stop_mask_np = ctx0["stop_mask"]
 
     need_grad = any(c["kind"] in ("grad", "rule") for c in conds)
     need_attn = any(c["kind"] in ("attn", "attnlast") for c in conds)
@@ -873,7 +1242,7 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
             f"{rule_info['pearson_r_in_sample']:.3f}  weights={rule_info['weights']}")
 
     KEYS = ("ce", "ce_digit", "gen_f1", "gen_em", "compaction", "flop_frac", "tok_per_doc",
-            "body_per_doc", "n_docs", "sec")
+            "body_per_doc", "n_docs", "sec", "tok_gold", "tok_hard", "tok_easy", "frac_zero")
     acc = {c["name"]: {k: [] for k in KEYS} for c in conds}
     for c in conds:
         acc[c["name"]].update(hit_gold_pooled=[], hit_gold_real=[])
@@ -939,6 +1308,15 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
                                            rule_fit).astype(np.float32)
             ctx["sal_rule"] = sal
 
+        _labcache = {}
+
+        def doc_labels(_bp=bpos, _bi=bids, _g=gold_row, _x=x):
+            if "v" not in _labcache:
+                cos = doc_content_vectors(model, _x, _bp, _bi, stop_mask_np)
+                _labcache["cos"] = cos
+                _labcache["v"] = label_docs(cos, _g, len(true_ids) or 3)
+            return _labcache["v"]
+
         do_gen = ri < a.gen_rows
         prev_cache = {}  # L -> (h_cut,) for the preview conditions, one per row
 
@@ -998,12 +1376,15 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
 
                 # ---------------- build the real-token subset ---------------------------
                 base = cid_h.clone()
-                sel_by_doc = []
-                for d in range(n_docs):
-                    s = select_positions(cond["kind"], cond["k"], bpos[d], bids[d], ctx, rng=rng)
-                    sel_by_doc.append([int(p) for p in s])
-                    if s:
-                        base[0, torch.tensor(list(s), dtype=torch.long)] = -1
+                if cond["row"]:
+                    sel_by_doc = select_row_budget(cond["kind"], cond["k"], bpos, bids, ctx)
+                else:
+                    sel_by_doc = [[int(p) for p in select_positions(
+                        cond["kind"], cond["k"], bpos[d], bids[d], ctx, rng=rng)]
+                        for d in range(n_docs)]
+                for sd in sel_by_doc:
+                    if sd:
+                        base[0, torch.tensor(sd, dtype=torch.long)] = -1
                 _OV["cid"] = base.cuda()
                 x_use = swap_kept(x_cpu, sel_by_doc, gold_row, n_docs, a.seed).cuda() \
                     if cond["swap"] else x
@@ -1065,6 +1446,14 @@ def run_rung(a, rung, conds, model, pst, tok, ctx0, capture, lin, quad, attn_lay
             r["tok_per_doc"].append(tok_doc)
             r["body_per_doc"].append(body_doc)
             r["n_docs"].append(float(n_docs))
+            if sel_by_doc is not None and cond["k"] > 0:
+                lab = doc_labels()
+                cnt = np.asarray([len(sd) for sd in sel_by_doc], dtype=np.float64)
+                for cls, key in ((0, "tok_gold"), (1, "tok_hard"), (2, "tok_easy")):
+                    m = lab == cls
+                    if m.any():
+                        r[key].append(float(cnt[m].mean()))
+                r["frac_zero"].append(float((cnt == 0).mean()))
 
             # ---- what kind of token did the selector pick? -----------------------------
             if sel_by_doc and cond["k"] > 0 and ri < 32:
@@ -1202,8 +1591,9 @@ def summarize(r, full):
 
 def table(acc, conds):
     print(f"{'condition':14} {'CE':>7} {'dCE':>8} {'CEdig':>7} {'dCEdig':>8} {'genF1':>6} "
-          f"{'dF1':>7} {'R@gp':>11} {'tok/doc':>8} {'real':>6} {'compact':>8} {'FLOPfrac':>8} "
-          f"{'s/row':>6}", flush=True)
+          f"{'dF1':>7} {'R@gp':>11} {'tok/doc':>8} {'real':>6} "
+          f"{'gold':>5} {'hard':>5} {'easy':>5} {'0tok':>5} "
+          f"{'compact':>8} {'FLOPfrac':>8} {'s/row':>6}", flush=True)
     fu = acc.get("full")
     for c in conds:
         r = acc[c["name"]]
@@ -1216,7 +1606,9 @@ def table(acc, conds):
         print(f"{c['name']:14} {m('ce'):7.3f} {dce:+8.3f} {m('ce_digit'):7.3f} {dcd:+8.3f} "
               f"{m('gen_f1'):6.3f} {df1:+7.3f} "
               f"{m('hit_gold_pooled'):6.3f}[{len(r['hit_gold_pooled']):3d}] "
-              f"{m('tok_per_doc'):8.1f} {m('body_per_doc'):6.1f} {m('compaction'):8.3f} "
+              f"{m('tok_per_doc'):8.1f} {m('body_per_doc'):6.1f} "
+              f"{m('tok_gold'):5.1f} {m('tok_hard'):5.1f} {m('tok_easy'):5.1f} "
+              f"{m('frac_zero'):5.2f} {m('compaction'):8.3f} "
               f"{m('flop_frac'):8.3f} {m('sec'):6.2f}", flush=True)
 
 
