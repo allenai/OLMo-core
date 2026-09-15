@@ -617,6 +617,80 @@ def aggregate(paired, length_field, edges, include_fixed, models):
     return table
 
 
+def diagnose_gold_disagreement(by_model, models):
+    """Same examples in a different ORDER, or genuinely different examples?
+
+    When two models disagree on the gold at a shared (task, rung, idx) there are two very
+    different causes, and they have opposite consequences:
+
+      * the rung holds the SAME set of examples in a different order -- an indexing/gather
+        artifact. The eval numbers are fine; only a positional join like this one is wrong.
+      * the rung holds DIFFERENT examples -- the two runs scored different eval sets, so no
+        cross-model delta at that rung means anything, here or in results-hub.
+
+    Comparing the multiset of golds per (task, rung, eval_tag) separates them: identical
+    multisets = reordering, differing multisets = different data.
+    """
+    per = {m: defaultdict(Counter) for m in models}
+    for m in models:
+        for r in by_model[m]:
+            try:
+                key = json.dumps(_normalize_gold(r["task"], r["stored_gold"]), sort_keys=True)
+            except Exception:  # noqa: BLE001
+                key = repr(r["stored_gold"])
+            per[m][(r["task"], r["rung"], r["eval_tag"])][key] += 1
+
+    a, b = models[0], models[1]
+    rows = []
+    for group in sorted(set(per[a]) & set(per[b]), key=lambda g: (g[0], g[2], str(g[1]))):
+        ca, cb = per[a][group], per[b][group]
+        if ca == cb:
+            continue
+        shared = sum((ca & cb).values())
+        rows.append(
+            {
+                "task": group[0],
+                "rung": group[1],
+                "eval_tag": group[2],
+                "n_a": sum(ca.values()),
+                "n_b": sum(cb.values()),
+                "shared_multiset": shared,
+                "only_a": sum((ca - cb).values()),
+                "only_b": sum((cb - ca).values()),
+            }
+        )
+    return rows
+
+
+def render_gold_disagreement(rows, models):
+    if not rows:
+        return (
+            "\n### Gold-set agreement between models\n\n"
+            "Every shared (task, rung, eval_tag) holds the SAME multiset of golds in both "
+            "models. Any positional disagreement would be ordering only."
+        )
+    a, b = models[0], models[1]
+    lines = [
+        "",
+        "### Gold-set agreement between models",
+        "",
+        f"Rungs where `{a}` and `{b}` do NOT hold the same multiset of golds. `only_*` counts "
+        f"examples present for one model and not the other -- those rungs were scored on "
+        f"**different eval sets**, so no cross-model delta there is meaningful (this analysis or "
+        f"any other, results-hub included). A rung absent from this table differs at most by "
+        f"ordering.",
+        "",
+        f"| task | rung | eval_tag | n({a}) | n({b}) | shared | only {a} | only {b} |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| {r['task']} | {r['rung']} | {r['eval_tag']} | {r['n_a']} | {r['n_b']} | "
+            f"{r['shared_multiset']} | {r['only_a']} | {r['only_b']} |"
+        )
+    return "\n".join(lines)
+
+
 def pair_records(by_model: dict[str, list[dict]], models: list[str]):
     """Intersect the models on (task, rung, idx, eval_tag).
 
@@ -1085,6 +1159,15 @@ def main():
         for (t, rung, tag), n in where.most_common(30):
             print(f"[pair]     {t}@{rung} [{tag}]: {n}", flush=True)
 
+    disagreement = diagnose_gold_disagreement(by_model, models) if len(models) == 2 else []
+    for d in disagreement:
+        print(
+            f"[golddiff] {d['task']}@{d['rung']} [{d['eval_tag']}]: multisets differ -- "
+            f"shared={d['shared_multiset']} only_{models[0]}={d['only_a']} "
+            f"only_{models[1]}={d['only_b']} => DIFFERENT EVAL SETS, not a reordering",
+            flush=True,
+        )
+
     item_edges = [int(x) for x in args.item_edges.split(",")]
     token_edges = [int(x) for x in args.token_edges.split(",")]
     output_edges = [int(x) for x in args.output_edges.split(",")]
@@ -1115,6 +1198,8 @@ def main():
             "",
             "Per-example metric: contradiction/contra_fever/nq/fiqa/scifact/outlier/outlier_review = f1, "
             "oolong = score, rerank = ndcg@10 (fallback mrr@10).",
+            "",
+            render_gold_disagreement(disagreement, models),
             "",
             render_length_distribution(paired, models),
             "",
