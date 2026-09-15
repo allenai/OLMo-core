@@ -349,7 +349,8 @@ def main():
     ap.add_argument("--gen-max-new", type=int, default=48)
     ap.add_argument("--ckpt-name", default="ds64-outlier-dense-u64M")
     ap.add_argument("--ckpt", default=None)
-    ap.add_argument("--jsonl", default=None)
+    ap.add_argument("--jsonl", default=None, help="override eval JSONL (local runs)")
+    ap.add_argument("--shard", default=None, help="already-tokenized shard dir (skips conversion)")
     ap.add_argument("--conditions", default="core",
                     help="a preset (all|core|lean) or a comma list of condition names")
     ap.add_argument("--seed", type=int, default=42)
@@ -449,8 +450,9 @@ def main():
 
 @torch.no_grad()
 def run_rung(a, rung, conds, model, pst, tok, idf, sent_end):  # noqa: C901
-    shard = f"{a.work}/outlier_{rung}"
-    P.convert("outlier", a.jsonl or RUNGS[rung], a.rows, shard)
+    shard = a.shard or f"{a.work}/outlier_{rung}"
+    if a.shard is None:
+        P.convert("outlier", a.jsonl or RUNGS[rung], a.rows, shard)
     rows, masks = P.load_rows(shard, a.rows)
     log(f"=== rung {rung}: {len(rows)} rows; lengths {[len(r) for r in rows[:6]]}")
     if idf is None:
