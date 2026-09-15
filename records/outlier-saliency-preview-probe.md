@@ -181,32 +181,32 @@ selects **within a document's body**, so the prompt never competes — but it me
 raw gradient norm would be useless, and it is why the within-document normalised profile in (c) is
 the number to read.
 
-### 5b. The saliency diagnostic — 8k rung (eval_size 80 of 160; generation on 48, ⚠ < 500)
+### 5b. The saliency diagnostic — 8k rung, COMPLETE (eval_size 160; generation on 48, ⚠ < 500)
 
 56.3 documents per row, k = 3 gold (5.4 % of documents). **FULL answers 41 of 48 generation rows
 exactly** (0.85), so at this rung the right/wrong split is readable (41 vs 7; ⚠ 7 is tiny).
 
 | saliency | gold | non-gold | header | marker | quest | answ | n50/n | n90/n | hdr/doc | **AUCgold** | ρ(ambig) | s/tok G / H / E |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `grad` | 0.090 | 0.727 | 0.068 | 0.015 | 0.093 | 0.007 | 0.272 | 0.793 | 0.077 | 0.871 | 0.084 | 0.042 / 0.019 / 0.018 |
-| `attn` | 0.047 | 0.206 | 0.190 | 0.035 | 0.414 | 0.107 | 0.282 | 0.794 | 0.429 | **0.962** | 0.083 | 0.453 / 0.117 / 0.113 |
-| `attnlast` | 0.062 | 0.200 | 0.180 | 0.047 | 0.397 | 0.113 | 0.204 | 0.714 | 0.407 | **0.966** | 0.123 | 0.297 / 0.062 / 0.054 |
+| `grad` | 0.087 | 0.728 | 0.067 | 0.015 | 0.096 | 0.007 | 0.273 | 0.794 | 0.077 | 0.875 | 0.083 | 0.037 / 0.014 / 0.014 |
+| `attn` | 0.047 | 0.206 | 0.190 | 0.035 | 0.414 | 0.107 | 0.282 | 0.793 | 0.428 | **0.964** | 0.073 | 0.457 / 0.114 / 0.113 |
+| `attnlast` | 0.064 | 0.199 | 0.180 | 0.046 | 0.397 | 0.113 | 0.203 | 0.713 | 0.406 | **0.970** | 0.113 | 0.304 / 0.058 / 0.054 |
 
 Within-document, normalised (1.0 = the document's average token):
 
 | saliency | 1st sent | rest | q0 | q1 | q2 | q3 | digit | capital | stopword | idfq0 | q1 | q2 | q3 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `grad` | 1.40 | 0.96 | 1.20 | 1.00 | 0.94 | 0.87 | 0.77 | 1.26 | 0.90 | 0.91 | 0.88 | 1.00 | **1.21** |
-| `attn` | 1.40 | 0.96 | 1.23 | 0.97 | 0.92 | 0.89 | **1.68** | 1.17 | **1.46** | **1.64** | 1.17 | 0.59 | 0.62 |
-| `attnlast` | 1.40 | 0.98 | 1.12 | 0.98 | 0.97 | 0.94 | **1.99** | 1.27 | 1.46 | **1.75** | 1.08 | 0.54 | 0.65 |
+| `grad` | 1.38 | 0.96 | 1.19 | 0.99 | 0.94 | 0.88 | 0.77 | 1.26 | 0.90 | 0.92 | 0.89 | 0.99 | **1.20** |
+| `attn` | 1.38 | 0.96 | 1.23 | 0.97 | 0.92 | 0.89 | **1.68** | 1.15 | **1.45** | **1.63** | 1.18 | 0.59 | 0.62 |
+| `attnlast` | 1.37 | 0.98 | 1.12 | 0.97 | 0.97 | 0.94 | **1.97** | 1.26 | 1.46 | **1.73** | 1.09 | 0.54 | 0.66 |
 
 Same shape as 2k and **sharper where it matters**. Gold takes 19 % of the doc-body attention mass
 while being 5.4 % of documents (**3.5×**, up from 1.9× at 2k), and AUC(gold) *rises* with n to
-**0.962 / 0.966**. The ambiguity correlation collapses from 0.31 to 0.08 — at 8k the topical-distance
+**0.964 / 0.970**. The ambiguity correlation collapses from 0.31 to 0.07 — at 8k the topical-distance
 readout and the model's attention have nothing to do with each other, and hard negatives again get
-no more attention than easy documents (0.117 vs 0.113). Meanwhile the **gradient concentrates on
-documents rather than the prompt as n grows**: the question's share falls 0.326 → 0.093 and the
-non-gold documents' rises 0.383 → 0.727. `n90/n` stays at **0.79**: with 56 documents the model still
+no more attention than easy documents (0.114 vs 0.113). Meanwhile the **gradient concentrates on
+documents rather than the prompt as n grows**: the question's share falls 0.326 → 0.096 and the
+non-gold documents' rises 0.383 → 0.728. `n90/n` stays at **0.79**: with 56 documents the model still
 spreads 90 % of its doc-side mass over ~45 of them.
 
 **Right vs wrong (41 vs 7 rows, ⚠ tiny).** On rows FULL gets wrong, AUC(gold) drops for attention
@@ -270,9 +270,65 @@ Three things are already visible and are the reason the full runs are worth wait
   this reverses at 8k/32k, where the per-document budget is the binding constraint, is exactly what
   the running jobs answer.
 
+### 5e. The one-layer preview — 2k rung (INTERIM, eval_size 5; ⚠ shape check ONLY, do not quote)
+
+FULL CE 0.003 / genF1 1.000; `cc00` (no preview, plain `cent_cmean` slot) CE 0.469 at FLOP 0.101.
+
+| condition | CE | ΔCE | genF1 | real tok/doc | compaction | **FLOPfrac** |
+|---|---|---|---|---|---|---|
+| `cc00` | 0.469 | +0.466 | 0.067 | 0 | 0.103 | 0.101 |
+| `prev0` (slot = layer-0 input mean) | 0.456 | +0.453 | 0.067 | 0 | 0.103 | 0.101 |
+| `prev1` | 0.514 | +0.511 | 0.067 | 0 | 0.103 | **0.129** |
+| `prev2` | 0.560 | +0.557 | 0.067 | 0 | 0.103 | **0.156** |
+| `prev4` | 0.471 | +0.468 | 0.133 | 0 | 0.103 | **0.213** |
+| `prev4_k4` | 0.446 | +0.443 | 0.133 | 4 | 0.128 | 0.235 |
+| `prev4_k8` | 0.444 | +0.441 | 0.333 | 8 | 0.154 | 0.257 |
+| `prev4_k16` | 0.078 | +0.075 | 0.800 | 16 | 0.205 | 0.301 |
+| `prev4_row8` | 0.433 | +0.431 | 0.333 | 8 (10.7 / 7.5 / 7.6) | 0.154 | 0.257 |
+| `prev4_row16` | 0.279 | +0.276 | 0.533 | 16 (20.5 / 13.9 / 15.7) | 0.205 | 0.301 |
+| `prev4_first8` | **0.227** | +0.224 | 0.467 | 8 | 0.154 | 0.257 |
+| `prev4_k8_swap` (control) | 0.624 | +0.621 | 0.200 | 8 | 0.154 | 0.257 |
+
+**The dense preview buys nothing on outlier, and it is not free.** `prev0` / `prev1` / `prev2` /
+`prev4` are all sitting on the `cc00` floor (0.456 / 0.514 / 0.560 / 0.471 against 0.469), with no
+monotone improvement in L, while the FLOP fraction climbs 0.101 → 0.129 → 0.156 → **0.213**. So
+contextualising a document's slot across the whole real row — the construction that reached CE
+parity on contradiction (`records/layer-soft-probe.md` §2, `fromL` + `layer_input_mean` with headers
+real) — **does not transfer to outlier**. That is consistent with the diagnostic: outlier's problem
+is not that each document's summary lacks context, it is that the answer needs per-document detail
+from ~80 % of the documents at once (`n90/n` 0.79–0.85).
+
+**Layer-3 attention is a worse token selector than "the first k".** `prev4_k8` 0.444 vs
+`prev4_first8` **0.227** at identical cost. This is the diagnostic's §5c point 1 landing exactly:
+attention mass identifies *which document* matters (AUC 0.96) but its top tokens *inside* a document
+are sinks — digits 1.7×, stopwords 1.5×, most-frequent IDF quartile 1.6× — so selecting by it picks
+uninformative tokens.
+
+**Whatever `prev4_k16` achieves, the real-token route achieves more cheaply.** `prev4_k16` reaches
+CE 0.078 / genF1 0.800 at FLOP **0.301**; `grad16` (§5d) reaches 0.037 / 0.800 and `rule16` 0.046 /
+0.800 at FLOP **0.202**, with no preview at all. The preview's four dense layers are pure overhead
+here.
+
+The swap control fires on the preview path too (`prev4_k8` 0.444 → `prev4_k8_swap` 0.624), so the
+model is reading the kept tokens rather than reacting to their presence.
+
 ## 6. Verdict
 
-_(pending the full rungs — the interim above is 5 rows)_
+_(pending the full rungs — the interim tables above are 5 rows each)_
+
+Direction of travel at 2k, to be confirmed at 8k/32k:
+
+* **Idea 2 (one-layer preview) looks dead on outlier** — no L improves on `cc00`, and every L costs
+  more. Unlike contradiction, there is no fidelity for a dense prefix to recover.
+* **Idea 1 is alive, and its deployable form is the winner so far** — `rule{k}`, a ridge over six
+  free token features fit on disjoint rows, matches the gradient ORACLE (`rule8` 0.071 vs `grad8`
+  0.072; `rule16` 0.046 vs `grad16` 0.037) and beats `first`, `idf`, `attn` and `rand` at equal cost.
+* **Uniform per-document top-k beats the row-level budget** at 2k on every saliency, despite the
+  row-level one correctly concentrating on the gold documents — stranding ~22 % of documents with no
+  real token costs more than the concentration gains, which is what `n90/n ≈ 0.85` predicts.
+* **Neither has yet reached parity**: the best 2k cell is ΔCE +0.034 against a FULL CE of 0.003, and
+  genF1 0.80–0.87 against 1.00. The question the full runs answer is whether that gap closes with k,
+  and what it costs at 8k and 32k.
 
 ## 7. Runs
 
