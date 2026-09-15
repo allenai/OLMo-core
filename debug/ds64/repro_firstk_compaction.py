@@ -13,6 +13,7 @@ decoded.
 
     python debug/ds64/repro_firstk_compaction.py --tokenizer <dir> --input <unified jsonl>
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,9 +43,17 @@ IGN = -100
 
 def render(tok, ex, ids_set, use_titles=False):
     segs, _ids, _m = segment_prompt_to_chunks(
-        tok, ex, "outlier", query_position="after", cot_mode="none", chunk_by="document",
-        item_regex=None, include_answer=True, use_titles=use_titles,
-        doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end,
+        tok,
+        ex,
+        "outlier",
+        query_position="after",
+        cot_mode="none",
+        chunk_by="document",
+        item_regex=None,
+        include_answer=True,
+        use_titles=use_titles,
+        doc_start_id=ids_set.doc_start,
+        doc_end_id=ids_set.doc_end,
     )
     out_ids, out_mask = emit_document_chunk_dense(segs)
     out_ids.append(ids_set.eos)
@@ -57,8 +66,18 @@ def main():
     ap.add_argument("--tokenizer", required=True)
     ap.add_argument("--input", required=True)
     ap.add_argument("--row", type=int, default=0)
-    ap.add_argument("--keep-prob", type=float, default=0.0, help="--st-keep-prob (0.0 = xhdr00/cc00's gold-blind, every doc pooled)")
-    ap.add_argument("--stop-id", type=int, default=5491, help="outlier's 'Document [N]:' fused ']:' token; 25 for contradiction/oolong ':'")
+    ap.add_argument(
+        "--keep-prob",
+        type=float,
+        default=0.0,
+        help="--st-keep-prob (0.0 = xhdr00/cc00's gold-blind, every doc pooled)",
+    )
+    ap.add_argument(
+        "--stop-id",
+        type=int,
+        default=5491,
+        help="outlier's 'Document [N]:' fused ']:' token; 25 for contradiction/oolong ':'",
+    )
     ap.add_argument("--extra-tokens", default="0,8,16,32", help="comma list of K values to compare")
     args = ap.parse_args()
 
@@ -86,7 +105,10 @@ def main():
     print(f"content len {t.shape[1]}, label tokens {(labels != IGN).sum().item()}")
 
     base_chunk = build_chunk_ids_from_tokens(
-        t, doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end, eos_id=ids_set.eos,
+        t,
+        doc_start_id=ids_set.doc_start,
+        doc_end_id=ids_set.doc_end,
+        eos_id=ids_set.eos,
         mode="chunked",
     )
     n_docs = int(base_chunk.max().item()) + 1
@@ -94,14 +116,25 @@ def main():
 
     for K in [int(x) for x in args.extra_tokens.split(",")]:
         chunk = mark_doc_headers_free(
-            base_chunk, t, doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end,
-            stop_id=args.stop_id, stop_count=1, extra_tokens=K, cap=32,
+            base_chunk,
+            t,
+            doc_start_id=ids_set.doc_start,
+            doc_end_id=ids_set.doc_end,
+            stop_id=args.stop_id,
+            stop_count=1,
+            extra_tokens=K,
+            cap=32,
         )
         freed = int(((chunk < 0) & (base_chunk >= 0)).sum())
         keep = resolve_keep_docs(chunk, n_docs, holder=None, keep_prob=args.keep_prob, keep_seed=0)
         cb = compact_pooled_rows(
-            t, labels, chunk, keep, placeholder_id=ids_set.landmark,
-            pad_token_id=ids_set.eos, ignore_index=IGN,
+            t,
+            labels,
+            chunk,
+            keep,
+            placeholder_id=ids_set.landmark,
+            pad_token_id=ids_set.eos,
+            ignore_index=IGN,
         )
         T2 = int(cb.row_lens[0].item())
         new_ids = cb.input_ids[0, :T2]
@@ -115,14 +148,21 @@ def main():
         for k in range(T2):
             tid = int(new_ids[k])
             show.append(
-                "<SLOT>" if tid == ids_set.landmark
-                else ("<BS>" if tid == ids_set.doc_start
-                      else ("<BE>" if tid == ids_set.doc_end else tok.decode([tid])))
+                "<SLOT>"
+                if tid == ids_set.landmark
+                else (
+                    "<BS>"
+                    if tid == ids_set.doc_start
+                    else ("<BE>" if tid == ids_set.doc_end else tok.decode([tid]))
+                )
             )
         decoded = "".join(show)
         # One real, framed "Document [N]: <K real body tokens><SLOT>" span, for eyeballing.
         m = re.search(r"Document \[\d+\]:[^<]{0,200}?<SLOT>", decoded)
-        print("    one framed pooled doc:", repr(m.group(0)) if m else "(none found -- try a later row/K)")
+        print(
+            "    one framed pooled doc:",
+            repr(m.group(0)) if m else "(none found -- try a later row/K)",
+        )
         print("    head:", repr(decoded[:500]))
 
 

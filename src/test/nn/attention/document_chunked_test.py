@@ -362,7 +362,18 @@ def test_mark_doc_headers_free_keeps_header_real():
     )
 
     DS, DE, EOS, STOP = 900, 901, 902, 25
-    doc = [DS, 10, 11, STOP, 12, STOP, 20, 21, 22, DE]  # header (K=1) = 10 11 STOP; K=2 -> ... 12 STOP
+    doc = [
+        DS,
+        10,
+        11,
+        STOP,
+        12,
+        STOP,
+        20,
+        21,
+        22,
+        DE,
+    ]  # header (K=1) = 10 11 STOP; K=2 -> ... 12 STOP
     x = torch.tensor([[1, 2] + doc + doc + [3, EOS]])
     base = build_chunk_ids_from_tokens(x, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
     one = mark_doc_headers_free(base, x, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1)
@@ -376,7 +387,9 @@ def test_mark_doc_headers_free_keeps_header_real():
     # cap: a doc without a stop id frees at most `cap` tokens and never the end marker
     y = torch.tensor([[DS, 5, 6, 7, 8, DE, EOS]])
     b = build_chunk_ids_from_tokens(y, doc_start_id=DS, doc_end_id=DE, eos_id=EOS)
-    capped = mark_doc_headers_free(b, y, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, cap=2)
+    capped = mark_doc_headers_free(
+        b, y, doc_start_id=DS, doc_end_id=DE, stop_id=STOP, stop_count=1, cap=2
+    )
     assert capped[0].tolist()[:6] == [0, -1, -1, 0, 0, 0]
     # free tokens outside documents are untouched
     assert one[0, :2].tolist() == [-1, -1] and one[0, 22].item() == -1
@@ -438,9 +451,7 @@ def test_mark_doc_headers_free_extra_tokens_frees_exact_span_and_excludes_from_s
 
     n_docs = int(base.max().item()) + 1
     keep_none = torch.zeros(1, n_docs, dtype=torch.bool)  # pool every document
-    cb = compact_pooled_rows(
-        x, None, chunk, keep_none, placeholder_id=999, pad_token_id=EOS
-    )
+    cb = compact_pooled_rows(x, None, chunk, keep_none, placeholder_id=999, pad_token_id=EOS)
     # Both docs: 5 surviving is_ctx tokens (the marker + 20 21 22 DE) -> log(5).
     assert torch.allclose(cb.soft_log_len, torch.full_like(cb.soft_log_len, math.log(5)))
     assert cb.soft_rows.numel() == 2  # one slot per pooled doc, extra-tokens did not add any
@@ -471,7 +482,15 @@ def test_mark_doc_headers_free_extra_tokens_short_doc_fallback():
         y, None, whole, torch.zeros(1, 1, dtype=torch.bool), placeholder_id=999, pad_token_id=EOS
     )
     assert cb.soft_rows.numel() == 0  # no slot at all
-    assert cb.input_ids[0, : cb.row_lens[0]].tolist() == [DS, 5, 6, 7, 8, DE, EOS]  # every token real
+    assert cb.input_ids[0, : cb.row_lens[0]].tolist() == [
+        DS,
+        5,
+        6,
+        7,
+        8,
+        DE,
+        EOS,
+    ]  # every token real
 
     # Exactly at the boundary (extra_tokens == body length) the doc is still fully freed.
     boundary = mark_doc_headers_free(base, y, doc_start_id=DS, doc_end_id=DE, extra_tokens=5)
@@ -481,7 +500,11 @@ def test_mark_doc_headers_free_extra_tokens_short_doc_fallback():
     one_short = mark_doc_headers_free(base, y, doc_start_id=DS, doc_end_id=DE, extra_tokens=4)
     assert one_short[0].tolist() == [0, -1, -1, -1, -1, 0, -1]
     cb2 = compact_pooled_rows(
-        y, None, one_short, torch.zeros(1, 1, dtype=torch.bool), placeholder_id=999,
+        y,
+        None,
+        one_short,
+        torch.zeros(1, 1, dtype=torch.bool),
+        placeholder_id=999,
         pad_token_id=EOS,
     )
     assert cb2.soft_rows.numel() == 1
@@ -527,7 +550,7 @@ def test_mark_doc_headers_free_extra_tokens_composes_with_cent_cmean_slot():
     surviving_positions = (chunk[0] == 0).nonzero(as_tuple=True)[0]
     assert x[0, surviving_positions].tolist() == [DS, 20, 21, 22, DE]  # header+extra excluded
     ref_cmean = emb[0, surviving_positions].mean(dim=0)
-    row_mask = (chunk[0] >= 0)
+    row_mask = chunk[0] >= 0
     row_centre = emb[0, row_mask].mean(dim=0)
     row_norm = emb[0, row_mask].norm(dim=-1).mean()
     expected = ref_cmean - row_centre
