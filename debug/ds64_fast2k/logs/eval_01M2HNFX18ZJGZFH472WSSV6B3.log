@@ -1,0 +1,408 @@
+Logs for job 01M2HNFX5588A3YXGDFBD71MM7 of task eval:
+2026-09-15T04:35:03.881Z [36m[1m
+2026-09-15T04:35:03.881Z ##########################################
+2026-09-15T04:35:03.881Z ### [GANTRY] Validating environment... ###  
+2026-09-15T04:35:03.881Z ##########################################
+2026-09-15T04:35:03.881Z [0m
+2026-09-15T04:35:03.883Z [36m[1m❯ [GANTRY INFO][0m Shell is GNU bash, version 5.1.16(1)-release (x86_64-pc-linux-gnu).
+2026-09-15T04:35:03.884Z [36m[1m❯ [GANTRY INFO][0m Running on Beaker node 'saturn-cs-aus-253.reviz.ai2.in' (01KNH48N9A03A3ZEYH8Z8HTSSE)
+2026-09-15T04:35:03.884Z [36m[1m❯ [GANTRY INFO][0m Results dataset [94m[4mhttps://beaker.org/ds/01M2HNFX1GFT2T1ZQHFRP7YP63[0m mounted to '/results'.
+2026-09-15T04:35:03.884Z [36m[1m❯ [GANTRY INFO][0m Checking for required tools...
+2026-09-15T04:35:03.886Z [36m[1m❯ [GANTRY INFO][0m Using git version 2.34.1.
+2026-09-15T04:35:03.894Z [36m[1m❯ [GANTRY INFO][0m Using curl 7.81.0 (x86_64-pc-linux-gnu) libcurl/7.81.0 OpenSSL/3.0.2 zlib/1.2.11 brotli/1.0.9 zstd/1.4.8 libidn2/2.3.2 libpsl/0.21.0 (+libidn2/2.3.2) libssh/0.9.6/openssl/zlib nghttp2/1.43.0 librtmp/2.3 OpenLDAP/2.5.19.
+2026-09-15T04:35:03.894Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:03.894Z [36m[1m❯ [GANTRY INFO][0m Installing AWS config...
+2026-09-15T04:35:03.896Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:03.896Z [36m[1m❯ [GANTRY INFO][0m Installing AWS credentials...
+2026-09-15T04:35:03.899Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:03.899Z [36m[1m❯ [GANTRY INFO][0m Installing Google Cloud credentials...
+2026-09-15T04:35:03.901Z [33m[1m❯ [GANTRY WARN][0m 'gcloud' CLI not found so credentials can't be activated globally. As a result some tools like 'gsutil' may not be able to authenticate.
+2026-09-15T04:35:03.901Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:03.901Z [36m[1m❯ [GANTRY INFO][0m Creating PyTorch kernel cache directory...
+2026-09-15T04:35:03.903Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:03.903Z [36m[1m
+2026-09-15T04:35:03.903Z #######################################
+2026-09-15T04:35:03.903Z ### [GANTRY] Cloning source code... ###  
+2026-09-15T04:35:03.903Z #######################################
+2026-09-15T04:35:03.903Z [0m
+2026-09-15T04:35:03.913Z [36m[1m❯ [GANTRY INFO][0m Cloning source from 'allenai/OLMo-core' @ '1a9117244a7b84a0d20130a2436429d8e4caf6a1'...
+2026-09-15T04:35:08.247Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:08.247Z [36m[1m❯ [GANTRY INFO][0m Initializing git submodules...
+2026-09-15T04:35:08.282Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:08.282Z [36m[1m
+2026-09-15T04:35:08.282Z #######################################
+2026-09-15T04:35:08.282Z ### [GANTRY] Building Python env... ###  
+2026-09-15T04:35:08.282Z #######################################
+2026-09-15T04:35:08.282Z [0m
+2026-09-15T04:35:08.282Z [36m[1m❯ [GANTRY INFO][0m Installing uv...
+2026-09-15T04:35:09.384Z [36m[1m❯ [GANTRY INFO][0m Done. Installed uv 0.12.14 (x86_64-unknown-linux-gnu).
+2026-09-15T04:35:09.389Z [36m[1m❯ [GANTRY INFO][0m Using existing Python 3.12.12 installation at '/opt/conda/bin/python'.
+2026-09-15T04:35:09.391Z [36m[1m❯ [GANTRY INFO][0m Acquiring lock for uv install at '/results/lockfile'...
+2026-09-15T04:35:09.393Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:09.393Z [36m[1m❯ [GANTRY INFO][0m Installing local project...
+2026-09-15T04:35:13.788Z [36m[1m❯ [GANTRY INFO][0m Done.
+2026-09-15T04:35:13.812Z [36m[1m
+2026-09-15T04:35:13.812Z ########################################
+2026-09-15T04:35:13.812Z ### [GANTRY] Python environment info ###  
+2026-09-15T04:35:13.812Z ########################################
+2026-09-15T04:35:13.812Z [0m
+2026-09-15T04:35:13.817Z [36m[1m❯ [GANTRY INFO][0m Using Python 3.12.12 from '/opt/conda/bin/python'.
+2026-09-15T04:35:13.817Z [36m[1m❯ [GANTRY INFO][0m Packages:
+2026-09-15T04:35:13.818Z [1mai2-olmo-core[0m @ file:///gantry-runtime
+2026-09-15T04:35:13.818Z [1mai2-olmo-eval[0m==0.9.0
+2026-09-15T04:35:13.818Z [1maiohappyeyeballs[0m==2.6.1
+2026-09-15T04:35:13.818Z [1maiohttp[0m==3.13.2
+2026-09-15T04:35:13.818Z [1maiosignal[0m==1.4.0
+2026-09-15T04:35:13.818Z [1malabaster[0m==0.7.16
+2026-09-15T04:35:13.818Z [1mannotated-types[0m==0.7.0
+2026-09-15T04:35:13.818Z [1mantlr4-python3-runtime[0m==4.9.3
+2026-09-15T04:35:13.818Z [1manyio[0m==4.11.0
+2026-09-15T04:35:13.818Z [1mapache-tvm-ffi[0m==0.1.13.post3
+2026-09-15T04:35:13.818Z [1marchspec[0m @ file:///home/conda/feedstock_root/build_artifacts/archspec_1737352602016/work
+2026-09-15T04:35:13.818Z [1masttokens[0m @ file:///home/conda/feedstock_root/build_artifacts/asttokens_1763409923949/work
+2026-09-15T04:35:13.818Z [1mattrs[0m @ file:///home/conda/feedstock_root/build_artifacts/attrs_1759762205280/work
+2026-09-15T04:35:13.818Z [1mbabel[0m==2.17.0
+2026-09-15T04:35:13.818Z [1mbeaker-gantry[0m==3.7.0
+2026-09-15T04:35:13.818Z [1mbeaker-py[0m==2.8.0
+2026-09-15T04:35:13.818Z [1mbeautifulsoup4[0m @ file:///home/conda/feedstock_root/build_artifacts/beautifulsoup4_1759146011391/work
+2026-09-15T04:35:13.818Z [1mbettermap[0m==1.3.1
+2026-09-15T04:35:13.818Z [1mblack[0m==23.12.1
+2026-09-15T04:35:13.818Z [1mboltons[0m @ file:///home/conda/feedstock_root/build_artifacts/boltons_1749686179973/work
+2026-09-15T04:35:13.818Z [1mboto3[0m==1.41.3
+2026-09-15T04:35:13.818Z [1mbotocore[0m==1.41.3
+2026-09-15T04:35:13.818Z [1mbrotli[0m @ file:///home/conda/feedstock_root/build_artifacts/brotli-split_1756599151967/work
+2026-09-15T04:35:13.818Z [1mbuild[0m==1.3.0
+2026-09-15T04:35:13.818Z [1mcached-path[0m==1.8.0
+2026-09-15T04:35:13.818Z [1mcachetools[0m==6.2.2
+2026-09-15T04:35:13.818Z [1mcertifi[0m @ file:///home/conda/feedstock_root/build_artifacts/certifi_1762976168352/work/certifi
+2026-09-15T04:35:13.818Z [1mcffi[0m @ file:///home/conda/feedstock_root/build_artifacts/cffi_1761202850602/work
+2026-09-15T04:35:13.818Z [1mchardet[0m @ file:///home/conda/feedstock_root/build_artifacts/chardet_1741797914774/work
+2026-09-15T04:35:13.818Z [1mcharset-normalizer[0m @ file:///home/conda/feedstock_root/build_artifacts/charset-normalizer_1760437218288/work
+2026-09-15T04:35:13.818Z [1mclick[0m @ file:///home/conda/feedstock_root/build_artifacts/click_1763248546991/work
+2026-09-15T04:35:13.818Z [1mclick-help-colors[0m==0.9.4
+2026-09-15T04:35:13.818Z [1mclick-option-group[0m==0.5.9
+2026-09-15T04:35:13.818Z [1mcolorama[0m @ file:///home/conda/feedstock_root/build_artifacts/colorama_1733218098505/work
+2026-09-15T04:35:13.818Z [1mcomet-ml[0m==3.54.2
+2026-09-15T04:35:13.818Z [1mconda[0m @ file:///home/conda/feedstock_root/build_artifacts/conda_1760108593422/work/conda-src
+2026-09-15T04:35:13.818Z [1mconda-build[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-build_1763816195874/work
+2026-09-15T04:35:13.818Z [1mconda-index[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-index_1760661811794/work
+2026-09-15T04:35:13.818Z [1mconda-libmamba-solver[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-libmamba-solver_1745834476052/work/src
+2026-09-15T04:35:13.818Z [1mconda-package-handling[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-package-handling_1736345463896/work
+2026-09-15T04:35:13.818Z [1mconda-package-streaming[0m @ file:///home/conda/feedstock_root/build_artifacts/conda-package-streaming_1751548120229/work
+2026-09-15T04:35:13.818Z [1mconfigobj[0m==5.0.9
+2026-09-15T04:35:13.818Z [1mcontourpy[0m==1.4.0
+2026-09-15T04:35:13.818Z [1mcryptography[0m==46.0.3
+2026-09-15T04:35:13.818Z [1mcuda-bindings[0m==13.4.1
+2026-09-15T04:35:13.818Z [1mcuda-core[0m==1.2.0
+2026-09-15T04:35:13.818Z [1mcuda-pathfinder[0m==1.8.1
+2026-09-15T04:35:13.818Z [1mcuda-python[0m==13.4.1
+2026-09-15T04:35:13.818Z [1mcycler[0m==0.12.1
+2026-09-15T04:35:13.818Z [1mdataclass-extensions[0m==0.5.0
+2026-09-15T04:35:13.818Z [1mdatasets[0m==3.6.0
+2026-09-15T04:35:13.818Z [1mdecorator[0m @ file:///home/conda/feedstock_root/build_artifacts/decorator_1740384970518/work
+2026-09-15T04:35:13.818Z [1mdill[0m==0.3.8
+2026-09-15T04:35:13.818Z [1mdion[0m @ git+https://github.com/microsoft/dion.git@7452a5823cf9655b93c3f1d8020b4ebb2535239b
+2026-09-15T04:35:13.818Z [1mdistro[0m @ file:///home/conda/feedstock_root/build_artifacts/distro_1734729835256/work
+2026-09-15T04:35:13.818Z [1mdocker[0m==7.1.0
+2026-09-15T04:35:13.818Z [1mdocutils[0m==0.20.1
+2026-09-15T04:35:13.818Z [1mdulwich[0m==0.24.10
+2026-09-15T04:35:13.818Z [1meinops[0m==0.8.1
+2026-09-15T04:35:13.818Z [1mevalidate[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_evalidate_1746793833/work
+2026-09-15T04:35:13.818Z [1meverett[0m==3.1.0
+2026-09-15T04:35:13.818Z [1mexecnet[0m==2.1.2
+2026-09-15T04:35:13.818Z [1mexecuting[0m @ file:///home/conda/feedstock_root/build_artifacts/executing_1756729339227/work
+2026-09-15T04:35:13.818Z [1mfilelock[0m @ file:///home/conda/feedstock_root/build_artifacts/filelock_1759948064277/work
+2026-09-15T04:35:13.818Z [1mfla-core[0m==0.4.1
+2026-09-15T04:35:13.818Z [1mflash-attn[0m==2.8.2
+2026-09-15T04:35:13.818Z [1mflash-attn-4[0m==4.0.0b30
+2026-09-15T04:35:13.818Z [1mflash-linear-attention[0m==0.4.1
+2026-09-15T04:35:13.818Z [1mfonttools[0m==4.65.0
+2026-09-15T04:35:13.818Z [1mfrozendict[0m @ file:///home/conda/feedstock_root/build_artifacts/frozendict_1756047928019/work
+2026-09-15T04:35:13.818Z [1mfrozenlist[0m==1.8.0
+2026-09-15T04:35:13.818Z [1mfsspec[0m==2025.3.0
+2026-09-15T04:35:13.818Z [1mfuro[0m==2024.8.6
+2026-09-15T04:35:13.818Z [1mgitdb[0m==4.0.12
+2026-09-15T04:35:13.818Z [1mgitpython[0m==3.1.45
+2026-09-15T04:35:13.818Z [1mgoogle-api-core[0m==2.28.1
+2026-09-15T04:35:13.818Z [1mgoogle-auth[0m==2.43.0
+2026-09-15T04:35:13.818Z [1mgoogle-cloud-compute[0m==1.40.0
+2026-09-15T04:35:13.818Z [1mgoogle-cloud-core[0m==2.5.0
+2026-09-15T04:35:13.818Z [1mgoogle-cloud-storage[0m==2.19.0
+2026-09-15T04:35:13.818Z [1mgoogle-crc32c[0m==1.7.1
+2026-09-15T04:35:13.818Z [1mgoogle-resumable-media[0m==2.8.0
+2026-09-15T04:35:13.818Z [1mgoogleapis-common-protos[0m==1.72.0
+2026-09-15T04:35:13.818Z [1mgrouped-gemm[0m @ git+https://git@github.com/tgale96/grouped_gemm.git@f1429a3c44c98f7912aa4b00125144cdf4e7fdb2
+2026-09-15T04:35:13.818Z [1mgrpcio[0m==1.76.0
+2026-09-15T04:35:13.818Z [1mgrpcio-status[0m==1.76.0
+2026-09-15T04:35:13.818Z [1mh11[0m==0.16.0
+2026-09-15T04:35:13.818Z [1mh2[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_h2_1756364871/work
+2026-09-15T04:35:13.818Z [1mhf-xet[0m==1.2.0
+2026-09-15T04:35:13.818Z [1mhpack[0m @ file:///home/conda/feedstock_root/build_artifacts/hpack_1737618293087/work
+2026-09-15T04:35:13.818Z [1mhttpcore[0m==1.0.9
+2026-09-15T04:35:13.818Z [1mhttpx[0m==0.28.1
+2026-09-15T04:35:13.818Z [1mhuggingface-hub[0m==0.36.0
+2026-09-15T04:35:13.818Z [1mhyperframe[0m @ file:///home/conda/feedstock_root/build_artifacts/hyperframe_1737618333194/work
+2026-09-15T04:35:13.818Z [1mid[0m==1.5.0
+2026-09-15T04:35:13.818Z [1midna[0m @ file:///home/conda/feedstock_root/build_artifacts/idna_1760286409563/work
+2026-09-15T04:35:13.818Z [1mimagesize[0m==1.4.1
+2026-09-15T04:35:13.818Z [1mimportlib-metadata[0m==8.7.0
+2026-09-15T04:35:13.818Z [1mimportlib-resources[0m==6.5.2
+2026-09-15T04:35:13.818Z [1miniconfig[0m==2.3.0
+2026-09-15T04:35:13.818Z [1mipython[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_ipython_1762350942/work
+2026-09-15T04:35:13.818Z [1mipython-pygments-lexers[0m @ file:///home/conda/feedstock_root/build_artifacts/ipython_pygments_lexers_1737123620466/work
+2026-09-15T04:35:13.818Z [1misort[0m==5.13.2
+2026-09-15T04:35:13.818Z [1mjaraco-classes[0m==3.4.0
+2026-09-15T04:35:13.818Z [1mjaraco-context[0m==6.0.1
+2026-09-15T04:35:13.818Z [1mjaraco-functools[0m==4.3.0
+2026-09-15T04:35:13.818Z [1mjedi[0m @ file:///home/conda/feedstock_root/build_artifacts/jedi_1733300866624/work
+2026-09-15T04:35:13.818Z [1mjeepney[0m==0.9.0
+2026-09-15T04:35:13.818Z [1mjinja2[0m @ file:///home/conda/feedstock_root/build_artifacts/jinja2_1741263328855/work
+2026-09-15T04:35:13.818Z [1mjmespath[0m==1.0.1
+2026-09-15T04:35:13.818Z [1mjsonpatch[0m @ file:///home/conda/feedstock_root/build_artifacts/jsonpatch_1733814567314/work
+2026-09-15T04:35:13.818Z [1mjsonpointer[0m @ file:///home/conda/feedstock_root/build_artifacts/jsonpointer_1756754132407/work
+2026-09-15T04:35:13.818Z [1mjsonschema[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_jsonschema_1755595646/work
+2026-09-15T04:35:13.818Z [1mjsonschema-specifications[0m @ file:///tmp/tmptzik3dqa/src
+2026-09-15T04:35:13.818Z [1mkeyring[0m==25.7.0
+2026-09-15T04:35:13.818Z [1mkiwisolver[0m==1.5.1
+2026-09-15T04:35:13.818Z [1mlibarchive-c[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-libarchive-c_1754663558/work
+2026-09-15T04:35:13.818Z [1mlibmambapy[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_libmambapy_1760729597/work/libmambapy
+2026-09-15T04:35:13.818Z [1mlief[0m @ file:///home/conda/feedstock_root/build_artifacts/lief_1760811648956/work/api/python
+2026-09-15T04:35:13.818Z [1mliger-kernel[0m==0.6.4
+2026-09-15T04:35:13.818Z [1mlightning-utilities[0m==0.15.2
+2026-09-15T04:35:13.818Z [1mlinkify-it-py[0m==2.0.3
+2026-09-15T04:35:13.818Z [1mmarkdown-it-py[0m==3.0.0
+2026-09-15T04:35:13.818Z [1mmarkupsafe[0m @ file:///home/conda/feedstock_root/build_artifacts/markupsafe_1759055168201/work
+2026-09-15T04:35:13.818Z [1mmatplotlib[0m==3.11.2
+2026-09-15T04:35:13.818Z [1mmatplotlib-inline[0m @ file:///home/conda/feedstock_root/build_artifacts/matplotlib-inline_1761214490209/work
+2026-09-15T04:35:13.818Z [1mmdit-py-plugins[0m==0.5.0
+2026-09-15T04:35:13.818Z [1mmdurl[0m==0.1.2
+2026-09-15T04:35:13.818Z [1mmemray[0m==1.19.1
+2026-09-15T04:35:13.818Z [1mmenuinst[0m @ file:///home/conda/feedstock_root/build_artifacts/menuinst_1761299738838/work
+2026-09-15T04:35:13.818Z [1mml-dtypes[0m==0.5.4
+2026-09-15T04:35:13.818Z [1mmore-itertools[0m==10.8.0
+2026-09-15T04:35:13.818Z [1mmpmath[0m==1.3.0
+2026-09-15T04:35:13.818Z [1mmsgpack[0m @ file:///home/conda/feedstock_root/build_artifacts/msgpack-python_1762503974934/work
+2026-09-15T04:35:13.818Z [1mmultidict[0m==6.7.0
+2026-09-15T04:35:13.818Z [1mmultiprocess[0m==0.70.16
+2026-09-15T04:35:13.818Z [1mmypy[0m==1.3.0
+2026-09-15T04:35:13.818Z [1mmypy-extensions[0m==1.1.0
+2026-09-15T04:35:13.818Z [1mmyst-parser[0m==2.0.0
+2026-09-15T04:35:13.818Z [1mnetworkx[0m==3.5
+2026-09-15T04:35:13.818Z [1mnh3[0m==0.3.2
+2026-09-15T04:35:13.818Z [1mninja[0m==1.13.0
+2026-09-15T04:35:13.818Z [1mnumpy[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpy_1763351074/work/dist/numpy-2.3.5-cp312-cp312-linux_x86_64.whl#sha256=585a706a3c889590365479b2cdbe308c23addd9fae26c7937f4b74887269b6e3
+2026-09-15T04:35:13.818Z [1mnvidia-cublas-cu12[0m==12.8.4.1
+2026-09-15T04:35:13.818Z [1mnvidia-cuda-cupti-cu12[0m==12.8.90
+2026-09-15T04:35:13.818Z [1mnvidia-cuda-nvdisasm[0m==13.4.49
+2026-09-15T04:35:13.818Z [1mnvidia-cuda-nvrtc-cu12[0m==12.8.93
+2026-09-15T04:35:13.818Z [1mnvidia-cuda-runtime-cu12[0m==12.8.90
+2026-09-15T04:35:13.818Z [1mnvidia-cudnn-cu12[0m==9.10.2.21
+2026-09-15T04:35:13.818Z [1mnvidia-cufft-cu12[0m==11.3.3.83
+2026-09-15T04:35:13.818Z [1mnvidia-cufile-cu12[0m==1.13.1.3
+2026-09-15T04:35:13.818Z [1mnvidia-curand-cu12[0m==10.3.9.90
+2026-09-15T04:35:13.818Z [1mnvidia-cusolver-cu12[0m==11.7.3.90
+2026-09-15T04:35:13.818Z [1mnvidia-cusparse-cu12[0m==12.5.8.93
+2026-09-15T04:35:13.818Z [1mnvidia-cusparselt-cu12[0m==0.7.1
+2026-09-15T04:35:13.818Z [1mnvidia-cutlass-dsl[0m==4.7.1
+2026-09-15T04:35:13.818Z [1mnvidia-cutlass-dsl-libs-base[0m==4.7.1
+2026-09-15T04:35:13.818Z [1mnvidia-cutlass-dsl-libs-core[0m==4.7.1
+2026-09-15T04:35:13.818Z [1mnvidia-cutlass-dsl-libs-cu12[0m==4.7.1
+2026-09-15T04:35:13.818Z [1mnvidia-nccl-cu12[0m==2.27.5
+2026-09-15T04:35:13.818Z [1mnvidia-nvjitlink-cu12[0m==12.8.93
+2026-09-15T04:35:13.818Z [1mnvidia-nvshmem-cu12[0m==3.3.20
+2026-09-15T04:35:13.818Z [1mnvidia-nvtx-cu12[0m==12.8.90
+2026-09-15T04:35:13.818Z [1momegaconf[0m==2.3.0
+2026-09-15T04:35:13.818Z [1monnx[0m==1.19.1
+2026-09-15T04:35:13.818Z [1monnx-ir[0m==0.1.12
+2026-09-15T04:35:13.818Z [1monnxscript[0m==0.5.6
+2026-09-15T04:35:13.818Z [1mpackaging[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1745345660/work
+2026-09-15T04:35:13.818Z [1mpandas[0m==2.3.3
+2026-09-15T04:35:13.818Z [1mparso[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_parso_1755974222/work
+2026-09-15T04:35:13.818Z [1mpathspec[0m==0.12.1
+2026-09-15T04:35:13.818Z [1mpetname[0m==2.9
+2026-09-15T04:35:13.818Z [1mpexpect[0m @ file:///home/conda/feedstock_root/build_artifacts/pexpect_1733301927746/work
+2026-09-15T04:35:13.818Z [1mpillow[0m==11.3.0
+2026-09-15T04:35:13.818Z [1mpip[0m==25.3
+2026-09-15T04:35:13.818Z [1mpkginfo[0m @ file:///home/conda/feedstock_root/build_artifacts/pkginfo_1739984581450/work
+2026-09-15T04:35:13.818Z [1mplatformdirs[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_platformdirs_1759953252/work
+2026-09-15T04:35:13.818Z [1mpluggy[0m @ file:///home/conda/feedstock_root/build_artifacts/pluggy_1747339660894/work
+2026-09-15T04:35:13.818Z [1mprompt-toolkit[0m @ file:///home/conda/feedstock_root/build_artifacts/prompt-toolkit_1756321756983/work
+2026-09-15T04:35:13.818Z [1mpropcache[0m==0.4.1
+2026-09-15T04:35:13.818Z [1mproto-plus[0m==1.26.1
+2026-09-15T04:35:13.818Z [1mprotobuf[0m==6.33.1
+2026-09-15T04:35:13.818Z [1mpsutil[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_psutil_1762092914/work
+2026-09-15T04:35:13.818Z [1mptyprocess[0m @ file:///home/conda/feedstock_root/build_artifacts/ptyprocess_1733302279685/work/dist/ptyprocess-0.7.0-py2.py3-none-any.whl#sha256=92c32ff62b5fd8cf325bec5ab90d7be3d2a8ca8c8a3813ff487a8d2002630d1f
+2026-09-15T04:35:13.818Z [1mpure-eval[0m @ file:///home/conda/feedstock_root/build_artifacts/pure_eval_1733569405015/work
+2026-09-15T04:35:13.818Z [1mpyarrow[0m==19.0.1
+2026-09-15T04:35:13.818Z [1mpyasn1[0m==0.6.1
+2026-09-15T04:35:13.818Z [1mpyasn1-modules[0m==0.4.2
+2026-09-15T04:35:13.818Z [1mpycosat[0m @ file:///home/conda/feedstock_root/build_artifacts/pycosat_1757744639790/work
+2026-09-15T04:35:13.818Z [1mpycparser[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pycparser_1733195786/work
+2026-09-15T04:35:13.818Z [1mpydantic[0m==2.12.4
+2026-09-15T04:35:13.818Z [1mpydantic-core[0m==2.41.5
+2026-09-15T04:35:13.818Z [1mpygments[0m @ file:///home/conda/feedstock_root/build_artifacts/pygments_1750615794071/work
+2026-09-15T04:35:13.818Z [1mpyparsing[0m==3.3.2
+2026-09-15T04:35:13.819Z [1mpyproject-hooks[0m==1.2.0
+2026-09-15T04:35:13.819Z [1mpysocks[0m @ file:///home/conda/feedstock_root/build_artifacts/pysocks_1733217236728/work
+2026-09-15T04:35:13.819Z [1mpytest[0m==9.0.1
+2026-09-15T04:35:13.819Z [1mpytest-memray[0m==1.8.0
+2026-09-15T04:35:13.819Z [1mpytest-sphinx[0m==0.6.3
+2026-09-15T04:35:13.819Z [1mpytest-xdist[0m==3.8.0
+2026-09-15T04:35:13.819Z [1mpython-box[0m==6.1.0
+2026-09-15T04:35:13.819Z [1mpython-dateutil[0m==2.9.0.post0
+2026-09-15T04:35:13.819Z [1mpytz[0m @ file:///home/conda/feedstock_root/build_artifacts/pytz_1742920838005/work
+2026-09-15T04:35:13.819Z [1mpyyaml[0m @ file:///home/conda/feedstock_root/build_artifacts/pyyaml_1758891829620/work
+2026-09-15T04:35:13.819Z [1mquack-kernels[0m==0.6.5
+2026-09-15T04:35:13.819Z [1mreadme-renderer[0m==43.0
+2026-09-15T04:35:13.819Z [1mreferencing[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_referencing_1760379115/work
+2026-09-15T04:35:13.819Z [1mregex[0m==2025.11.3
+2026-09-15T04:35:13.819Z [1mrequests[0m @ file:///home/conda/feedstock_root/build_artifacts/requests_1755614211359/work
+2026-09-15T04:35:13.819Z [1mrequests-toolbelt[0m==1.0.0
+2026-09-15T04:35:13.819Z [1mrfc3986[0m==2.0.0
+2026-09-15T04:35:13.819Z [1mrich[0m==13.9.4
+2026-09-15T04:35:13.819Z [1mring-flash-attn[0m==0.1.8
+2026-09-15T04:35:13.819Z [1mrpds-py[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_rpds-py_1763327046/work
+2026-09-15T04:35:13.819Z [1mrsa[0m==4.9.1
+2026-09-15T04:35:13.819Z [1mruamel-yaml[0m @ file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml_1761160588389/work
+2026-09-15T04:35:13.819Z [1mruamel-yaml-clib[0m @ file:///home/conda/feedstock_root/build_artifacts/ruamel.yaml.clib_1760564169582/work
+2026-09-15T04:35:13.819Z [1mruff[0m==0.14.6
+2026-09-15T04:35:13.819Z [1ms3transfer[0m==0.15.0
+2026-09-15T04:35:13.819Z [1msafetensors[0m==0.7.0
+2026-09-15T04:35:13.819Z [1msecretstorage[0m==3.5.0
+2026-09-15T04:35:13.819Z [1msemantic-version[0m==2.10.0
+2026-09-15T04:35:13.819Z [1msentry-sdk[0m==2.46.0
+2026-09-15T04:35:13.819Z [1msetuptools[0m==69.5.1
+2026-09-15T04:35:13.819Z [1msimplejson[0m==3.20.2
+2026-09-15T04:35:13.819Z [1msix[0m==1.17.0
+2026-09-15T04:35:13.819Z [1msmmap[0m==5.0.2
+2026-09-15T04:35:13.819Z [1msniffio[0m==1.3.1
+2026-09-15T04:35:13.819Z [1msnowballstemmer[0m==3.0.1
+2026-09-15T04:35:13.819Z [1msoupsieve[0m @ file:///home/conda/feedstock_root/build_artifacts/soupsieve_1756330469801/work
+2026-09-15T04:35:13.819Z [1msphinx[0m==7.4.7
+2026-09-15T04:35:13.819Z [1msphinx-autobuild[0m==2025.8.25
+2026-09-15T04:35:13.819Z [1msphinx-autodoc-typehints[0m==1.23.3
+2026-09-15T04:35:13.819Z [1msphinx-basic-ng[0m==1.0.0b2
+2026-09-15T04:35:13.819Z [1msphinx-copybutton[0m==0.5.2
+2026-09-15T04:35:13.819Z [1msphinx-inline-tabs[0m==2023.4.21
+2026-09-15T04:35:13.819Z [1msphinxcontrib-applehelp[0m==2.0.0
+2026-09-15T04:35:13.819Z [1msphinxcontrib-devhelp[0m==2.0.0
+2026-09-15T04:35:13.819Z [1msphinxcontrib-htmlhelp[0m==2.1.0
+2026-09-15T04:35:13.819Z [1msphinxcontrib-jsmath[0m==1.0.1
+2026-09-15T04:35:13.819Z [1msphinxcontrib-qthelp[0m==2.0.0
+2026-09-15T04:35:13.819Z [1msphinxcontrib-serializinghtml[0m==2.0.0
+2026-09-15T04:35:13.819Z [1mstack-data[0m @ file:///home/conda/feedstock_root/build_artifacts/stack_data_1733569443808/work
+2026-09-15T04:35:13.819Z [1mstarlette[0m==0.50.0
+2026-09-15T04:35:13.819Z [1msympy[0m==1.14.0
+2026-09-15T04:35:13.819Z [1mtextual[0m==6.2.1
+2026-09-15T04:35:13.819Z [1mtokenizers[0m==0.22.1
+2026-09-15T04:35:13.819Z [1mtomli[0m==2.4.1
+2026-09-15T04:35:13.819Z [1mtorch[0m==2.9.1+cu128
+2026-09-15T04:35:13.819Z [1mtorch-c-dlpack-ext[0m==0.1.5
+2026-09-15T04:35:13.819Z [1mtorchao[0m==0.15.0
+2026-09-15T04:35:13.819Z [1mtorchaudio[0m==2.9.1+cu128
+2026-09-15T04:35:13.819Z [1mtorchmetrics[0m==1.8.2
+2026-09-15T04:35:13.819Z [1mtorchvision[0m==0.24.1+cu128
+2026-09-15T04:35:13.819Z [1mtqdm[0m @ file:///home/conda/feedstock_root/build_artifacts/tqdm_1735661334605/work
+2026-09-15T04:35:13.819Z [1mtraitlets[0m @ file:///home/conda/feedstock_root/build_artifacts/traitlets_1733367359838/work
+2026-09-15T04:35:13.819Z [1mtransformer-engine[0m==2.9.0
+2026-09-15T04:35:13.819Z [1mtransformer-engine-cu12[0m==2.9.0
+2026-09-15T04:35:13.819Z [1mtransformer-engine-torch[0m==2.9.0
+2026-09-15T04:35:13.819Z [1mtransformers[0m==4.57.3
+2026-09-15T04:35:13.819Z [1mtriton[0m==3.5.1
+2026-09-15T04:35:13.819Z [1mtruststore[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_truststore_1753886790/work
+2026-09-15T04:35:13.819Z [1mtwine[0m==6.2.0
+2026-09-15T04:35:13.819Z [1mtyping-extensions[0m @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_extensions_1756220668/work
+2026-09-15T04:35:13.819Z [1mtyping-inspection[0m==0.4.2
+2026-09-15T04:35:13.819Z [1mtzdata[0m==2025.2
+2026-09-15T04:35:13.819Z [1muc-micro-py[0m==1.0.3
+2026-09-15T04:35:13.819Z [1murllib3[0m @ file:///home/conda/feedstock_root/build_artifacts/urllib3_1750271362675/work
+2026-09-15T04:35:13.819Z [1muvicorn[0m==0.38.0
+2026-09-15T04:35:13.819Z [1mwandb[0m==0.23.0
+2026-09-15T04:35:13.819Z [1mwatchfiles[0m==1.1.1
+2026-09-15T04:35:13.819Z [1mwcwidth[0m @ file:///home/conda/feedstock_root/build_artifacts/wcwidth_1758622279606/work
+2026-09-15T04:35:13.819Z [1mwebsockets[0m==15.0.1
+2026-09-15T04:35:13.819Z [1mwheel[0m==0.45.1
+2026-09-15T04:35:13.819Z [1mwrapt[0m==2.0.1
+2026-09-15T04:35:13.819Z [1mwurlitzer[0m==3.1.1
+2026-09-15T04:35:13.819Z [1mxxhash[0m==3.6.0
+2026-09-15T04:35:13.819Z [1myarl[0m==1.22.0
+2026-09-15T04:35:13.819Z [1mzipp[0m==3.23.0
+2026-09-15T04:35:13.819Z [1mzstandard[0m==0.25.0
+2026-09-15T04:35:13.819Z [36m[1m
+2026-09-15T04:35:13.819Z #####################################
+2026-09-15T04:35:13.819Z ### [GANTRY] NVIDIA system status ###  
+2026-09-15T04:35:13.819Z #####################################
+2026-09-15T04:35:13.819Z [0m
+2026-09-15T04:35:13.903Z Tue Sep 15 04:35:13 2026       
+2026-09-15T04:35:13.903Z +-----------------------------------------------------------------------------------------+
+2026-09-15T04:35:13.903Z | NVIDIA-SMI 570.124.06             Driver Version: 570.124.06     CUDA Version: 12.8     |
+2026-09-15T04:35:13.903Z |-----------------------------------------+------------------------+----------------------+
+2026-09-15T04:35:13.903Z | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+2026-09-15T04:35:13.903Z | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+2026-09-15T04:35:13.903Z |                                         |                        |               MIG M. |
+2026-09-15T04:35:13.903Z |=========================================+========================+======================|
+2026-09-15T04:35:13.952Z |   0  NVIDIA A100-SXM4-80GB          On  |   00000000:4C:00.0 Off |                    0 |
+2026-09-15T04:35:13.952Z | N/A   34C    P0             62W /  400W |       1MiB /  81920MiB |      0%      Default |
+2026-09-15T04:35:13.952Z |                                         |                        |             Disabled |
+2026-09-15T04:35:13.952Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T04:35:13.960Z |   1  NVIDIA A100-SXM4-80GB          On  |   00000000:C3:00.0 Off |                    0 |
+2026-09-15T04:35:13.960Z | N/A   31C    P0             61W /  400W |       1MiB /  81920MiB |      0%      Default |
+2026-09-15T04:35:13.960Z |                                         |                        |             Disabled |
+2026-09-15T04:35:13.960Z +-----------------------------------------+------------------------+----------------------+
+2026-09-15T04:35:13.961Z                                                                                          
+2026-09-15T04:35:13.961Z +-----------------------------------------------------------------------------------------+
+2026-09-15T04:35:13.961Z | Processes:                                                                              |
+2026-09-15T04:35:13.961Z |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+2026-09-15T04:35:13.961Z |        ID   ID                                                               Usage      |
+2026-09-15T04:35:13.961Z |=========================================================================================|
+2026-09-15T04:35:13.962Z |  No running processes found                                                             |
+2026-09-15T04:35:13.962Z +-----------------------------------------------------------------------------------------+
+2026-09-15T04:35:14.751Z [36m[1m
+2026-09-15T04:35:14.751Z ###############################
+2026-09-15T04:35:14.751Z ### [GANTRY] Setup complete ###  (finished in 11 seconds)
+2026-09-15T04:35:14.751Z ###############################
+2026-09-15T04:35:14.751Z [0m
+2026-09-15T04:35:14.782Z === BEAKER multirung eval | host=eec27f28192c RUN=f2k-outlier-kvgb50-4M TASK=outlier VARIANT=docchunk NGPU=2 START=2026-09-15 04:35:14Z ===
+2026-09-15T04:35:14.782Z     BUNDLE=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle
+2026-09-15T04:35:14.782Z     EVAL500=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle_eval500_v2_clean
+2026-09-15T04:35:14.861Z GPU 0: NVIDIA A100-SXM4-80GB (UUID: GPU-52941e8b-93e6-9c50-31db-11cce0b06b83)
+2026-09-15T04:35:14.861Z GPU 1: NVIDIA A100-SXM4-80GB (UUID: GPU-edd7b3ab-1df5-c5d4-8db3-10349a4befa2)
+2026-09-15T04:35:14.863Z     CKPT=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-kvgb50-4M
+2026-09-15T04:35:14.863Z     TOKENIZER=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/hf_tokenizers/Qwen3.5-0.8B-Base (explicit, overrides inference)
+2026-09-15T04:35:22.795Z [33mWARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.[0m[33m
+2026-09-15T04:35:22.901Z [0m
+2026-09-15T04:35:22.901Z [1m[[0m[34;49mnotice[0m[1;39;49m][0m[39;49m A new release of pip is available: [0m[31;49m25.3[0m[39;49m -> [0m[32;49m26.2.1[0m
+2026-09-15T04:35:22.901Z [1m[[0m[34;49mnotice[0m[1;39;49m][0m[39;49m To update, run: [0m[32;49mpip install --upgrade pip[0m
+2026-09-15T04:35:22.997Z === EVAL outlier rungs=2k ladder=v2 variant=docchunk -> /weka/oe-training-default/ai2-llm/checkpoints/prasanns/f2k-outlier-kvgb50-4M/eval/outlier_multirung.json (04:35:22Z) ===
+2026-09-15T04:35:22.997Z [docchunk] emitter variant = dense (run=f2k-outlier-kvgb50-4M)
+2026-09-15T04:35:33.521Z /opt/conda/lib/python3.12/site-packages/torchao/quantization/quant_api.py:2525: SyntaxWarning: invalid escape sequence '\.'
+2026-09-15T04:35:33.521Z   * regex for parameter names, must start with `re:`, e.g. `re:language\.layers\..+\.q_proj.weight`.
+2026-09-15T04:35:33.521Z /opt/conda/lib/python3.12/site-packages/torchao/quantization/quant_api.py:2525: SyntaxWarning: invalid escape sequence '\.'
+2026-09-15T04:35:33.521Z   * regex for parameter names, must start with `re:`, e.g. `re:language\.layers\..+\.q_proj.weight`.
+2026-09-15T04:35:34.089Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T04:35:34.097Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T04:35:34.110Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T04:35:34.118Z Supported flash-attn versions are >= 2.1.1, <= 2.8.1. Found flash-attn 2.8.2.
+2026-09-15T04:35:35.982Z [ids] family=qwen3_5 eos=248044 im_end=248046 doc_start=248049 doc_end=248050 landmark=248200 pad=248203
+2026-09-15T04:35:36.333Z TransformerGenerationModuleConfig: {'generation_config': GenerationConfig(pad_token_id=248046, eos_token_id=248044, max_length=8192, max_new_tokens=None, do_sample=True, temperature=0.0, top_k=-1, top_p=1.0, use_cache=True, stop_token_ids=None, stop_strings=None, stop_string_check_interval=1, landmark_mem_id=None, landmark_decode_mode='extend_last_block', landmark_pad_id=None, landmark_top_k_blocks=None, landmark_top_k_fraction=0.1, landmark_nonselected_mass=None, landmark_sparse_decode=False), 'compile_model': False}
+2026-09-15T04:35:36.348Z NCCL version 2.27.5+cuda12.9
+2026-09-15T04:35:36.912Z TransformerConfig(d_model=2560, vocab_size=248320, n_layers=32, block={'gdn': TransformerBlockConfig(sequence_mixer=GatedDeltaNetConfig(fuse_qkv=False, n_heads=16, n_v_heads=32, head_dim=128, expand_v=1.0, allow_neg_eigval=False, conv_size=4, conv_bias=False, norm_eps=1e-06, dtype='bfloat16'), layer_norm=LayerNormConfig(name='qwen_rms', eps=1e-06, elementwise_affine=None, bias=False, full_precision=None, dtype='bfloat16'), feed_forward=FeedForwardConfig(hidden_size=9216, name='default', bias=False, dtype='bfloat16', activation='silu'), feed_forward_moe=None, name='default', dropout=None, attention_residual_alpha=None, feed_forward_residual_alpha=None), 'attn': TransformerBlockConfig(sequence_mixer=AttentionConfig(name='default', n_heads=16, n_kv_heads=4, head_dim=256, bias=False, gate=GateConfig(granularity='elementwise', full_precision=True), rope=RoPEConfig(name='default', theta=10000000, full_precision=False, no_global_rope=False, scaling=None, partial_rotary_factor=0.25), clip_qkv=None, qk_norm=LayerNormConfig(name='qwen_rms', eps=1e-06, elementwise_affine=None, bias=False, full_precision=None, dtype='bfloat16'), dropout=None, use_flash=None, backend='flash_2', dtype='bfloat16', sliding_window=None, layer_types=None, use_head_qk_norm=True, mem_freq=None, landmark_use_kernel=None, num_landmarks=None, landmark_pool=None, nonselected_landmark_mass=None, cross_doc_mode=None, dilation_n=None, dilation_m=None, dilation_cycle=None, dilation_max_docs=None, doc_keep_prob=None, random_doc_seed=None, random_doc_per_example=None, summary_every_k=None, summary_bandwidth=None, summary_relay=None, gold_decoys=None, gold_hops=None, flex_block_size=None, full_attention_layers=None, pooled_keep_prob=None, pooled_keep_seed=None, pooled_len_bias=None, dilated_window_k=None, dilated_window_num_configs=None, dilated_window_base=None), layer_norm=LayerNormConfig(name='qwen_rms', eps=1e-06, elementwise_affine=None, bias=False, full_precision=None, dtype='bfloat16'), feed_forward=FeedForwardConfig(hidden_size=9216, name='default', bias=False, dtype='bfloat16', activation='silu'), feed_forward_moe=None, name='default', dropout=None, attention_residual_alpha=None, feed_forward_residual_alpha=None)}, lm_head=LMHeadConfig(name='default', layer_norm=LayerNormConfig(name='qwen_rms', eps=1e-06, elementwise_affine=None, bias=False, full_precision=None, dtype='bfloat16'), bias=False, dtype='bfloat16', loss_implementation='fused_linear'), embedding_norm=None, name='default', dtype='bfloat16', init_method='normal', init_seed=0, init_std=0.02, embedding_init_std=None, freeze_params=None, block_pattern=['gdn', 'gdn', 'gdn', 'attn'], document_chunk_attention=None, block_overrides=None, embed_scale=None)
+2026-09-15T04:35:36.912Z GenerationConfig(pad_token_id=248046, eos_token_id=248044, max_length=8192, max_new_tokens=None, do_sample=True, temperature=0.0, top_k=-1, top_p=1.0, use_cache=True, stop_token_ids=None, stop_strings=None, stop_string_check_interval=1, landmark_mem_id=None, landmark_decode_mode='extend_last_block', landmark_pad_id=None, landmark_top_k_blocks=None, landmark_top_k_fraction=0.1, landmark_nonselected_mass=None, landmark_sparse_decode=False)
+2026-09-15T04:36:37.643Z [docchunk-ladder-dense] built from /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-kvgb50-4M in 61.3s
+2026-09-15T04:36:37.643Z [ladder] DC_RUNG_FILES override for ['outlier']: {'outlier': ['/weka/oe-training-default/ai2-llm/checkpoints/prasanns/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl']}
+2026-09-15T04:43:08.504Z [ladder:outlier@2k] f1=0.882 (n=500, skipped_too_long=0)
+2026-09-15T04:43:08.507Z /opt/conda/lib/python3.12/site-packages/torch/distributed/distributed_c10d.py:4876: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+2026-09-15T04:43:08.507Z   warnings.warn(  # warn only once
+2026-09-15T04:43:08.508Z 
+2026-09-15T04:43:08.508Z [docchunk-ladder] WROTE /weka/oe-training-default/ai2-llm/checkpoints/prasanns/f2k-outlier-kvgb50-4M/eval/outlier_multirung.json in 452.2s
+2026-09-15T04:43:08.508Z [docchunk-ladder] ladder keys present: ['outlier_2k']
+2026-09-15T04:43:10.437Z [W915 04:43:10.513875219 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T04:43:10.527Z [W915 04:43:10.603074723 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T04:43:11.344Z [W915 04:43:11.420790260 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+2026-09-15T04:43:11.569Z --- /weka/oe-training-default/ai2-llm/checkpoints/prasanns/f2k-outlier-kvgb50-4M/eval/outlier_multirung.json ---
+2026-09-15T04:43:11.571Z {
+2026-09-15T04:43:11.571Z   "model_path": "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/f2k-outlier-kvgb50-4M",
+2026-09-15T04:43:11.571Z   "variant": "dense",
+2026-09-15T04:43:11.571Z   "ladder_version": "v2",
+2026-09-15T04:43:11.571Z   "outlier_2k": 0.8821333333333333
+2026-09-15T04:43:11.573Z }=== DONE TASK=outlier rc=0 result=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_results/f2k-outlier-kvgb50-4M_outlier_multirung.json 2026-09-15 04:43:11Z ===
