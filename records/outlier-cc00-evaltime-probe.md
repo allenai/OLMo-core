@@ -140,6 +140,22 @@ generations say the same thing directly — on 16k pooled-gold rows the model em
 unrelated ids (`true=[6,29,64] pred=[11,17,107]`, `true=[17,31,97] pred=[11,12,14]`,
 `true=[22,38,108] pred=[10,24,81]`), under BOTH inputs.
 
+**32k rung — COMPLETE.** `rung_32768.jsonl`, **eval_size = 120** (⚠ < 500; SE ±0.046). Generation on
+the first 16 rows = **48 gold documents** (⚠ per-document SE ≈ 0.04; genF1 is a 16-row mean,
+SE ≈ 0.09 — treat the 32k generation column as a shape check, not a number to quote). ~225
+documents/row, k = 3, so the guess floor is `k/n` ≈ **0.013**.
+
+| | condition | CE | **CE(digits)** | top1=full | KL | **genF1** | **R@gold_pooled** | **R@gold_real** | compaction |
+|---|---|---|---|---|---|---|---|---|---|
+| **A** | `full` (real text = the ladder) | 0.458 | **1.074** | 1.000 | 0.000 | **0.000** | — | 0.000 (48) | 1.000 |
+| **B** | `arm` = the cc00 TRAINING construction | 0.578 | **1.366** | 0.877 | 0.173 | **0.042** | 0.042 (48) | — | **0.055** |
+| **C** | `gb00h` = same, PLAIN mean slot | 0.774 | 1.867 | 0.809 | 0.250 | 0.000 | 0.000 (48) | — | 0.055 |
+| **D** | `ccgold` = gold bodies REAL (oracle) | 0.823 | 1.980 | 0.818 | 0.307 | 0.000 | — | 0.000 (48) | 0.068 |
+
+Everything is dead at 32k. ΔCE(digits) is still **+0.292 against the soft side**; the +0.042 ΔgenF1
+is one generated id set out of 48 on a rung where full text scores **0.000**, i.e. exactly the
+"two ways of being wrong" case the harness warns about — it is not a soft-side win.
+
 **The parity table, `cc00-u128M`** (printed by `--trained-parity`; eval_size 240/rung):
 
 ```
@@ -147,13 +163,98 @@ unrelated ids (`true=[6,29,64] pred=[11,17,107]`, `true=[17,31,97] pred=[11,12,1
    2k       240 |    0.071    0.112   +0.042 |      0.264      0.421   +0.157 |    0.750    0.778  +0.028 |   0.105
    8k       240 |    0.225    0.346   +0.121 |      0.623      0.988   +0.365 |    0.229    0.125  -0.104 |   0.062
   16k       240 |    0.332    0.480   +0.149 |      0.877      1.297   +0.421 |    0.083    0.062  -0.021 |   0.056
+  32k       120 |    0.458    0.578   +0.120 |      1.074      1.366   +0.292 |    0.000    0.042  +0.042 |   0.055
 ```
 
-**32k — running** (job C); `cc00-u32M` (D/E) queued.
+### 4.2 `ds64-outlier-cc00-b128f3-u32M` (the lower-budget twin)
+
+_(running — jobs D/E)_
 
 ## 5. Interpretation
 
-_(pending)_
+**Verdict: NOT eval-time distribution shift. The slot readout does not scale with document count —
+and neither does this checkpoint's full-text reading.** The exposure fixes are the wrong lever.
+
+The question was posed as a fork: if (B) is strong at 8k/16k while (A) is weak, the ladder is
+measuring distribution shift; if (B) is also weak, the readout does not scale. **(B) is weak — and
+worse than (A).** At every rung from 8k up, the checkpoint's own training construction costs it
+CE relative to full real text:
+
+| rung | docs/row | ΔCE | **ΔCE(digits)** | ΔgenF1 | `full` genF1 | `arm` genF1 | `k/n` floor |
+|---|---|---|---|---|---|---|---|
+| 2k | 14 | +0.042 | **+0.157** | +0.028 | 0.750 | 0.778 | 0.22 |
+| 8k | 56 | +0.121 | **+0.365** | **−0.104** | 0.229 | 0.125 | 0.053 |
+| 16k | 111 | +0.149 | **+0.421** | −0.021 | 0.083 | 0.062 | 0.027 |
+| 32k | 225 | +0.120 | **+0.292** | +0.042 ⚠ | 0.000 | 0.042 | 0.013 |
+
+If the ladder loss were distribution shift, the soft side would be *strong where full text is
+weak*. It is the opposite: the ΔCE(digits) gap **widens** from +0.157 to +0.421 as document count
+grows, and at 8k — the one rung where the model still has real signal on full text (0.229, 4× its
+floor) — feeding it its own training construction **halves** the generation score to 0.125. Four
+consequences, in order of how much they should change what we do next:
+
+**1. The `cent_cmean` win is real, and it is a 2k win only.** Condition C is the clean control:
+the identical keep-0, header-real construction with the PLAIN mean slot, same checkpoint, same
+rows. `cent_cmean` is worth **+0.535** genF1 at 2k (0.778 vs 0.243), **+0.056** at 8k, **+0.020**
+at 16k, **+0.042** at 32k. So the fast2k screen's finding (cc00 0.482 vs xhdr00 0.239) reproduces
+on the trained 128M checkpoint and is *larger* — the content-only, row-centred slot genuinely IS
+readable, and a trained reader genuinely does read it. It just stops mattering past ~50 documents,
+where C sits on the `k/n` floor and B sits at 2× it.
+
+**2. The degradation is driven by DOCUMENT COUNT, and it hits the full-text path too.** `full`
+genF1 falls 0.750 → 0.229 → 0.083 → 0.000 across 14 → 56 → 111 → 225 documents on a model that
+never saw a real body. There *is* an exposure component — a keep-0-trained model is bad at real
+text — but it is not the binding constraint, because the soft path, which has no exposure problem
+by construction, degrades **faster** in CE and lands at the same floor.
+
+**3. The oracle is the sharpest negative result, and it closes the cheapest exposure fix.**
+Condition D gives the model the gold documents' real bodies while the other ~n−3 stay slots. It is
+**worse than the pure-slot construction at every rung**: 0.326 vs 0.778 (2k), **0.007 vs 0.125**
+(8k), 0.010 vs 0.062 (16k), 0.000 vs 0.042 (32k) — at 8k and 16k it is *below the guess floor*
+while `base_pooled` says 95–97% of documents were pooled. A keep-0-trained reader cannot integrate
+a real body sitting next to slots; the mixed format is out of distribution in its own right. So
+"just show it some real bodies at eval / late in training" is not a drop-in — and training-side
+exposure is already known to backfire here: `cc03` (keep 1/36) and `cc08` (keep 1/12) both fell to
+0.23–0.26 at 2k at 16M *and* 32M while `cc00`-32M reached 0.53, because any real body restores the
+id-guessing shortcut (`records/ds64-overnight-2026-09-14.md`, 09-15 08:25).
+
+**4. The generations show the mechanism.** At 8k the dumped pooled-gold rows are a mix of the
+position prior (`true=[1,5,55] pred=[1,2,3]`, `true=[3,18,34] pred=[1,2,3]`) and scattered guesses;
+by 16k they are uniformly scattered (`true=[6,29,64] pred=[11,17,107]`, `true=[17,31,97]
+pred=[11,12,14]`, `true=[22,38,108] pred=[10,24,81]`) — under BOTH inputs. The model is not
+failing to *decode* a representation it has; it has no per-document evidence left to decode.
+
+### What this says to do
+
+* **Do not pursue eval-time exposure fixes for cc00** (real bodies at eval, a mixed-format
+  eval prompt, a keep anneal at the end of training). Condition D says mixed format is itself
+  out of distribution for this reader, and the ΔCE direction says slot input is not the thing
+  holding it back.
+* **Do not spend more budget on the cc00 ladder.** It is 233 PF for a 5-rung mean of 0.207
+  against dense ≈ 0.26 at matched FLOPs — on the dense curve at best, and this probe explains
+  why: it bought 2k and nothing else. The campaign's standing outlier verdict is unchanged.
+* **If outlier comparative judgement is reopened, the axis is per-document slot CAPACITY, not the
+  keep policy, not the header, and not exposure.** One vector per document is enough to name an
+  odd document out of 14 and not enough out of 56. Note the frozen-dense richer-slot probe already
+  rejected the cheap capacity increases eval-side (G = 2/4 segment means, enc2/enc4:
+  `records/outlier-richer-slot-probe.md`), so this is a genuinely hard axis, not an untried one.
+* **Run `--trained-parity` on every new soft arm before quoting its ladder number.** On `occ00`
+  (oolong, keep 0, the same slot, currently a 3.6× Pareto win) it costs ~20 GPU-minutes and
+  tells you whether that win is a slot-reading result or an eval-format artefact. The same
+  applies to any arm whose ladder curve falls off a cliff between two rungs.
+
+### Caveats
+
+* Every rung is under 500 examples (240 at 2k/8k/16k, 120 at 32k) and every *generation* metric
+  averages over the first 16–48 rows only. The CE columns are the well-powered ones (240 rows);
+  the genF1 deltas at 16k (−0.021) and 32k (+0.042) are inside their SE and should not be read
+  individually. The −0.104 at 8k is ~1.7 SE and is the one generation delta the argument leans on;
+  it agrees in sign with the much better-powered ΔCE(digits) of +0.365.
+* This probe's `full` genF1 is free greedy generation with an early stop, not the ladder's grader.
+  It tracks the ladder closely (0.750 vs 0.801 at 2k, 0.229 vs 0.168 at 8k, 0.083 vs 0.046 at 16k,
+  0.000 vs 0.011 at 32k) but is systematically a little more generous at 8k/16k.
+* Not tested: whether the collapse is document COUNT or context LENGTH. Both grow together on
+  these rungs. A fixed-`n`, longer-document rung would separate them, and nothing here does.
 
 ## 6. Runs
 
