@@ -9,6 +9,7 @@ from collections import OrderedDict, defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
+from numbers import Real
 from pathlib import Path
 from typing import (
     Any,
@@ -50,6 +51,7 @@ from ..io import (
     copy_file,
     dir_is_empty,
     file_exists,
+    glob_directory,
     is_url,
     join_path,
     normalize_path,
@@ -82,6 +84,17 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+def _metric_value_to_tensor(value: Union[float, torch.Tensor]) -> torch.Tensor:
+    if not isinstance(value, torch.Tensor):
+        # Coerce Python scalars to float64 so large integer metrics (e.g. token counts) don't
+        # overflow or lose precision when torch would otherwise pick int64/float32.
+        if isinstance(value, Real):
+            return torch.tensor(value, dtype=torch.float64)
+        return torch.tensor(value)
+
+    return get_local_tensor(value.detach()).float()
 
 
 class TrainerStateDict(TypedDict):
@@ -287,6 +300,11 @@ class Trainer:
     steps_to_skip: Optional[List[StepSkipRange]] = None
     """
     Ranges of steps to completely skip training on.
+    """
+
+    checkpoints_to_eval: Optional[List[str]] = None
+    """
+    Checkpoint paths (or globs) to evaluate with :meth:`eval_checkpoints`. No effect during training.
     """
 
     # Internal bookkeeping
@@ -763,6 +781,187 @@ class Trainer:
         self._shutdown()
         log.info("Training complete")
 
+    def eval_checkpoints(self):
+        """
+        Evaluate each checkpoint in :data:`checkpoints_to_eval` with the configured
+        :class:`~olmo_core.train.callbacks.EvaluatorCallback`\\ s, without training.
+
+        Loads each checkpoint in turn, runs every evaluator, and logs the results. Checkpointer and
+        evaluator callbacks' ``pre_train``/``post_train`` hooks are skipped (only the evaluators'
+        ``perform_eval()`` runs).
+
+        :raises OLMoConfigurationError: If ``no_evals=True``, no ``EvaluatorCallback`` is configured,
+            or ``checkpoints_to_eval`` is unset.
+        """
+        if self.no_evals:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires 'no_evals=False'"
+            )
+
+        checkpoint_paths = self._get_checkpoints_to_eval()
+        evaluator_callbacks = [
+            cb for cb in self._iter_callbacks() if isinstance(cb, EvaluatorCallback)
+        ]
+        if not evaluator_callbacks:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires at least one "
+                f"'{EvaluatorCallback.__name__}'"
+            )
+
+        self._canceled = False
+        self._cancel_reason = None
+        self._canceling_rank = None
+
+        log.info("Callback order:")
+        for i, callback_name in enumerate(self.callbacks.keys()):
+            log.info(f"  - Callback {i + 1}: {callback_name}")
+
+        log.info(f"Evaluating {len(checkpoint_paths):,d} checkpoints")
+
+        callback_blacklist = (CheckpointerCallback, EvaluatorCallback)
+
+        # Install SIGTERM + SIGINT handlers.
+        og_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_os_signal)
+        og_sigint_handler = signal.signal(signal.SIGINT, self._handle_os_signal)
+
+        try:
+            for callback in self._iter_callbacks():
+                if not isinstance(callback, callback_blacklist):
+                    callback.pre_train()
+            self.train_module.pre_train()
+
+            if self.is_canceled:
+                for callback in self._iter_callbacks():
+                    if not isinstance(callback, callback_blacklist):
+                        callback.post_train()
+                self._shutdown()
+                return
+
+            for checkpoint_num, checkpoint_path in enumerate(checkpoint_paths, start=1):
+                if self.is_canceled:
+                    break
+
+                log.info(
+                    f"Evaluating checkpoint {checkpoint_num:,d}/{len(checkpoint_paths):,d} "
+                    f"from '{checkpoint_path}'..."
+                )
+                # Offline eval only needs model weights: skip optimizer state (never needed, and
+                # eval-only/weights-only checkpoints have none), and leave trainer state at the
+                # trainer's default (load-if-present) so it isn't required either.
+                self.load_checkpoint(checkpoint_path, load_optim_state=False)
+
+                self.record_metric("throughput/total tokens", self.global_train_tokens_seen)
+                # Duck-typed so this stays train-module-agnostic (transformer train modules expose
+                # these; the base TrainModule doesn't).
+                num_flops_fn = getattr(self.train_module, "num_flops_per_token", None)
+                max_seq_len = getattr(self.train_module, "max_sequence_length", None)
+                if callable(num_flops_fn) and max_seq_len is not None:
+                    num_flops_per_token = num_flops_fn(max_seq_len)
+                    if num_flops_per_token is not None:
+                        self.record_metric(
+                            "throughput/total petaflops",
+                            self.global_train_tokens_seen * num_flops_per_token / 1e15,
+                        )
+
+                for callback in evaluator_callbacks:
+                    callback.perform_eval()
+
+                self._log_metrics()
+        except BaseException as exc:
+            log.error(f"Checkpoint evaluation failed due to:\n{exc}")
+            for callback in self._iter_callbacks():
+                if not isinstance(callback, callback_blacklist):
+                    callback.on_error(exc)
+            for callback in self._iter_callbacks():
+                callback.close()
+            raise
+        finally:
+            # Restore original signal handlers.
+            signal.signal(signal.SIGTERM, og_sigterm_handler)
+            signal.signal(signal.SIGINT, og_sigint_handler)
+
+        # Flush metrics + await queued bookkeeping ops before the post-train hooks run.
+        self._log_metrics()
+        self._join_bookkeeping_ops()
+        for callback in self._iter_callbacks():
+            if not isinstance(callback, callback_blacklist):
+                callback.post_train()
+
+        self._shutdown()
+        log.info("Checkpoint evaluation complete")
+
+    def _get_checkpoints_to_eval(self) -> List[str]:
+        if not self.checkpoints_to_eval:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}.eval_checkpoints()' requires "
+                "'checkpoints_to_eval' to be set"
+            )
+
+        checkpoint_paths: List[str] = []
+        error_type: Optional[str] = None
+        error_msg: Optional[str] = None
+
+        if get_rank() == 0:
+            seen = set()
+            try:
+                for raw_path in self.checkpoints_to_eval:
+                    path = normalize_path(raw_path)
+                    candidate_paths = sorted(glob_directory(path)) if "*" in path else [path]
+                    if not candidate_paths:
+                        raise FileNotFoundError(f"No checkpoints found in '{path}'")
+
+                    expanded_paths: List[str] = []
+                    for candidate_path in candidate_paths:
+                        if self.checkpointer.dir_is_checkpoint(candidate_path):
+                            expanded_paths.append(candidate_path)
+                        else:
+                            expanded_paths.extend(
+                                checkpoint_path
+                                for _, checkpoint_path in sorted(
+                                    self.checkpointer.find_checkpoints(candidate_path),
+                                    key=lambda item: item[0],
+                                )
+                            )
+
+                    if not expanded_paths:
+                        raise FileNotFoundError(f"No checkpoints found in '{path}'")
+
+                    for checkpoint_path in expanded_paths:
+                        if checkpoint_path not in seen:
+                            checkpoint_paths.append(checkpoint_path)
+                            seen.add(checkpoint_path)
+            except FileNotFoundError as exc:
+                error_type = "FileNotFoundError"
+                error_msg = str(exc)
+            except OLMoConfigurationError as exc:
+                error_type = "OLMoConfigurationError"
+                error_msg = str(exc)
+            except Exception as exc:
+                error_type = exc.__class__.__name__
+                error_msg = str(exc)
+
+        checkpoint_paths, error_type, error_msg = broadcast_object(
+            (checkpoint_paths, error_type, error_msg)
+        )
+
+        if error_type == "FileNotFoundError":
+            assert error_msg is not None
+            raise FileNotFoundError(error_msg)
+        elif error_type == "OLMoConfigurationError":
+            assert error_msg is not None
+            raise OLMoConfigurationError(error_msg)
+        elif error_type is not None:
+            assert error_msg is not None
+            raise RuntimeError(error_msg)
+
+        if checkpoint_paths and all(
+            (name := Path(path).name).startswith("step") and name[4:].isdigit()
+            for path in checkpoint_paths
+        ):
+            checkpoint_paths = sorted(checkpoint_paths, key=lambda path: int(Path(path).name[4:]))
+
+        return checkpoint_paths
+
     def _shutdown(self, gracefully: bool = True):
         if gracefully:
             self._log_metrics()
@@ -853,6 +1052,7 @@ class Trainer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ):
         """
         Load a checkpoint.
@@ -863,6 +1063,10 @@ class Trainer:
         :param dir: The path/URL to a checkpoint or a folder of checkpoints.
         :param load_trainer_state: Load trainer state (data loader state, RNG states, and other bookkeeping).
         :param load_optim_state: Load optimizer state in the train module.
+        :param reset_optimizer_states_on_load: Override whether optimizer state should be reset for
+            this checkpoint load. When left ``None``, :meth:`Checkpointer.load` defaults it to the
+            train module's ``reset_optimizer_states_on_resume`` setting on an actual resume (i.e.
+            only when trainer state is found in the checkpoint).
         """
         load_trainer_state = (
             self.load_trainer_state if load_trainer_state is None else load_trainer_state
@@ -906,6 +1110,7 @@ class Trainer:
             self.train_module,
             load_trainer_state=load_trainer_state,
             load_optim_state=load_optim_state,
+            reset_optimizer_states_on_load=reset_optimizer_states_on_load,
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
@@ -928,6 +1133,7 @@ class Trainer:
         *,
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
+        reset_optimizer_states_on_load: Optional[bool] = None,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -948,6 +1154,7 @@ class Trainer:
                 dir,
                 load_trainer_state=load_trainer_state,
                 load_optim_state=load_optim_state,
+                reset_optimizer_states_on_load=reset_optimizer_states_on_load,
             )
             assert self.checkpoint_loaded
             return True
@@ -1058,10 +1265,7 @@ class Trainer:
         if namespace is not None:
             name = f"{namespace.rstrip('/')}/{name.lstrip('/')}"
 
-        if not isinstance(value, torch.Tensor):
-            value = torch.tensor(value)
-        else:
-            value = get_local_tensor(value.detach()).float()
+        value = _metric_value_to_tensor(value)
 
         if self.global_step not in self._metrics:
             self._metrics[self.global_step] = OrderedDict()
@@ -1462,6 +1666,16 @@ class Trainer:
         log.info("Starting forward/backward dry-run batch...")
         self.train_module.train_batch(batch, dry_run=True)
         log.info("Dry-run complete")
+        self._log_ep_no_sync_symm_buffer_summary(context="after dry-run")
+
+    def _log_ep_no_sync_symm_buffer_summary(self, *, context: str) -> None:
+        log_summary = getattr(
+            self.train_module,
+            "log_ep_no_sync_symm_buffer_summary",
+            None,
+        )
+        if callable(log_summary):
+            log_summary(context=context)
 
     def _fit_epoch(self):
         self.data_loader.reshuffle(self.epoch)
@@ -1498,12 +1712,20 @@ class Trainer:
                 log.warning(f"Skipping training on step {self.global_step:,d} intentionally...")
             else:
                 self.train_module.train_batch(batch)
+                if self.global_step == 1:
+                    self._log_ep_no_sync_symm_buffer_summary(
+                        context="after train step 1 backward before optim"
+                    )
 
                 for callback in self._iter_callbacks():
                     callback.pre_optim_step()
 
                 self.train_module.optim_step()
                 self.train_module.zero_grads()
+                if self.global_step == 1:
+                    self._log_ep_no_sync_symm_buffer_summary(
+                        context="after train step 1 optim+zero_grad before callbacks"
+                    )
 
             for callback in self._iter_callbacks():
                 callback.post_train_batch()

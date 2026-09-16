@@ -3,7 +3,12 @@ from dataclasses import dataclass
 import pytest
 import torch
 
-from olmo_core.utils import apply_to_tensors, flatten_dict, format_float
+from olmo_core.utils import (
+    apply_to_tensors,
+    flatten_dict,
+    format_float,
+    patch_torch_stream_custom_ops,
+)
 
 
 @dataclass
@@ -68,3 +73,19 @@ def test_flatten_dict():
 )
 def test_format_float(value, expected):
     assert format_float(value) == expected
+
+
+@pytest.mark.skipif(not torch.accelerator.is_available(), reason="requires accelerator streams")
+def test_patch_torch_stream_custom_ops_installs_lookup_fallback():
+    from torch._dynamo.variables import streams
+
+    patch_torch_stream_custom_ops()
+
+    event = streams._get_event_by_index(123456)
+    stream = streams._get_stream_by_index(123456)
+
+    assert isinstance(event, torch.Event)
+    assert streams._get_event_by_index(123456) is event
+    assert isinstance(stream, torch.Stream)
+    assert streams._get_stream_by_index(123456) is stream
+    assert streams.sync_dealloc._abstract_fn is not None

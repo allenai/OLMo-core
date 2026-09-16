@@ -907,17 +907,19 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         # dense operations while we wait on expert parallel all-to-all comms.
         B, _, D = x.shape
 
-        x_moe = get_local_tensor(self.feed_forward_moe_norm(x))
+        model_moe_input = get_local_tensor(self.feed_forward_moe_norm(x))
+        x_moe = self.feed_forward_moe.prepare_routed_input(model_moe_input)
+        routed_dim = x_moe.shape[-1]
 
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+            model_moe_input, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:
             x_moe = attach_auxiliary_loss(x_moe, router_aux_loss)
 
         # shape: (batch_size * seq_len, d_model)
-        x_moe = x_moe.view(-1, D)
+        x_moe = x_moe.view(-1, routed_dim)
         # shape: (batch_size * top_k,)
         expert_weights = expert_weights.flatten()
         # shape: (batch_size * top_k,)
@@ -953,7 +955,7 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             # NOTE: -1 on seq dim in case of TP
-            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
+            moe_shared_out = self.shared_mlp(model_moe_input.view(B, -1, D))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -980,7 +982,8 @@ class MoEHybridTransformerBlock(MoEHybridTransformerBlockBase):
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
-        ).view(B, -1, D)
+        ).view(B, -1, routed_dim)
+        x_moe = self.feed_forward_moe.restore_routed_output(x_moe)
 
         if moe_shared_out is not None:
             moe_shared_out = moe_shared_out / (self.top_k + 1)
@@ -1013,17 +1016,19 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         # dense operations while we wait on expert parallel all-to-all comms.
         B, _, D = x.shape
 
-        x_moe = get_local_tensor(x)
+        model_moe_input = get_local_tensor(x)
+        x_moe = self.feed_forward_moe.prepare_routed_input(model_moe_input)
+        routed_dim = x_moe.shape[-1]
 
         expert_weights, expert_indices, batch_size_per_expert, router_aux_loss = self.router(
-            x_moe, loss_div_factor=loss_div_factor
+            model_moe_input, loss_div_factor=loss_div_factor
         )
 
         if router_aux_loss is not None:
             x_moe = attach_auxiliary_loss(x_moe, router_aux_loss)
 
         # shape: (batch_size * seq_len, d_model)
-        x_moe = x_moe.view(-1, D)
+        x_moe = x_moe.view(-1, routed_dim)
         # shape: (batch_size * seq_len * top_k,)
         expert_weights = get_local_tensor(expert_weights).flatten()
         # shape: (batch_size * seq_len * top_k,)
@@ -1059,7 +1064,7 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
         moe_shared_out: Optional[torch.Tensor] = None
         if self.shared_mlp is not None:
             # NOTE: -1 on seq dim in case of TP
-            moe_shared_out = self.shared_mlp(x_moe.view(B, -1, D))
+            moe_shared_out = self.shared_mlp(model_moe_input.view(B, -1, D))
 
         handle.wait()
         parallel_x = self.experts.compute_local_experts(
@@ -1086,7 +1091,8 @@ class MoEHybridReorderedNormTransformerBlock(MoEHybridTransformerBlockBase):
             indices=indices,
             bin_ids=bin_ids,
             bins=bins,
-        ).view(B, -1, D)
+        ).view(B, -1, routed_dim)
+        x_moe = self.feed_forward_moe.restore_routed_output(x_moe)
 
         if moe_shared_out is not None:
             moe_shared_out = moe_shared_out / (self.top_k + 1)

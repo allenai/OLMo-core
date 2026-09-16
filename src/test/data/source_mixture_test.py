@@ -11,6 +11,8 @@ from olmo_core.data.source_mixture import (
     SourceMixtureDataset,
     SourceMixtureDatasetConfig,
     SourceMixtureList,
+    SourceMixtureOutcome,
+    SourcePathTokens,
 )
 from olmo_core.exceptions import OLMoConfigurationError
 
@@ -382,3 +384,34 @@ def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
         sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])
         == requested_instances
     ), f"Expected {requested_instances} instances, but got {sum([tokens // sequence_length for _, tokens in mixture.to_index().items()])}"
+
+
+def _mixture_with_zero_token_path() -> SourceMixtureDataset:
+    return SourceMixtureDataset(
+        sources=[
+            SourceMixtureOutcome(
+                name="s1",
+                path_tokens=[
+                    SourcePathTokens(path="a.npy", tokens=100, max_tokens=100),
+                    SourcePathTokens(path="b.npy", tokens=0, max_tokens=50),
+                    SourcePathTokens(path="c.npy", tokens=200, max_tokens=200),
+                ],
+            )
+        ]
+    )
+
+
+def test_source_mixture_keeps_zero_token_paths_by_default():
+    # Default container representation is stable: zero-token paths stay in the index/paths with
+    # their original (path, idx) numbering.
+    mixture = _mixture_with_zero_token_path()
+    assert mixture.to_paths() == ["a.npy", "b.npy", "c.npy"]
+    assert mixture.to_index() == {("a.npy", 0): 100, ("b.npy", 1): 0, ("c.npy", 2): 200}
+
+
+def test_source_mixture_optionally_filters_zero_token_paths():
+    # Opt-in filtering drops zero-token paths; to_paths()/to_index() renumber together and stay aligned.
+    mixture = _mixture_with_zero_token_path()
+    mixture.filter_zero_token_paths = True
+    assert mixture.to_paths() == ["a.npy", "c.npy"]
+    assert mixture.to_index() == {("a.npy", 0): 100, ("c.npy", 1): 200}
