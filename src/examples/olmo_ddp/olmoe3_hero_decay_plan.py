@@ -12,15 +12,15 @@ from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 from olmoe3_small_hero_plan import BATCH, BUCKET, CONTROL, MOUNT, Run
 
-CAMPAIGN = "olmo35-small-decay2t-20260911"
-BRANCH = "codex/small-hero-2t-decays-20260911"
-BASE_COMMIT = "89bf37a87d955b8ff8a76ac11df6dd3bec976d30"
-START, END, LR = 108_000, 120_000, 1.1e-3
+CAMPAIGN = "olmo35-small-decay4t-20260916"
+BRANCH = "codex/hero-4t-pipeline-20260916"
+BASE_COMMIT = "b34d2972fcdc19a4bc0425cde43b88b5c9310cf5"
+START, END, LR = 216_000, 240_000, 1.1e-3
 SMOKE_END = START + 2
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 ROOT = MOUNT / "production-hero-small-decays" / CAMPAIGN
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
-PARENTS = {"emo": "01M20YQDPJD82K0Y05RH67NNYK", "non-emo": "01M20YQHDJNMWG7B6V6382RDBN"}
+PARENTS = {"emo": "01M2F3Y2BMDGEA1J2TNPD4JN7J", "non-emo": "01M2GYSWPB51QESDMNXF81S618"}
 UPLOADER_REF = "50069318bd7b6bcfed655a8a01d2892e56b7abff"
 CORE_REF = "b1fd2c9746e88baeb20e372bdca340d788d0f7e5"
 HELPER_REF = "3542d99ebeb6d156887ed1eaf2871cff5f07666d"
@@ -55,7 +55,7 @@ class DecayRun:
 
     @property
     def prefix(self):
-        return f"decay10-2t/{self.arm}"
+        return f"decay10-4t/{self.arm}"
 
     @property
     def parent(self):
@@ -63,7 +63,7 @@ class DecayRun:
 
     @property
     def source(self):
-        return AUTOMATION / "sources" / self.arm / f"step{START}"
+        return AUTOMATION / "sources" / self.arm / f"step{START}" / "olmo-core"
 
     def as_dict(self):
         return dict(

@@ -125,10 +125,10 @@ def trainer_config(common):
     config.callbacks["checkpointer"].fixed_steps = [SMOKE_END]
     config.callbacks["checkpointer"].save_interval = 500
     config.callbacks["hero_audit"] = DecayAudit(output_dir=str(r.root / "audit"), run_id=r.run_id)
-    config.callbacks["wandb"].group = "olmo35-small-2t-decays"
+    config.callbacks["wandb"].group = "olmo35-small-4t-decays"
     config.callbacks["wandb"].tags = [
         r.arm,
-        "decay10-2t",
+        "decay10-4t",
         "64g",
         "16mi",
         "mb4",
@@ -180,7 +180,7 @@ def validate():
         assert not tr.callbacks["checkpointer"].save_async
         assert tr.callbacks["checkpointer"].max_checkpoints is None
         assert tm.scheduler.get_lr(LR, START, END) == LR
-        assert math.isclose(tm.scheduler.get_lr(LR, START + 1, END), LR * 11999 / 12000)
+        assert math.isclose(tm.scheduler.get_lr(LR, START + 1, END), LR * (END - START - 1) / (END - START))
         assert tm.scheduler.get_lr(LR, END, END) == 0
         print("HERO_DECAY_CONFIG_VALIDATED", json.dumps(run.as_dict()), flush=True)
 
