@@ -97,10 +97,10 @@ def prepare(stage, arm):
     else:
         with (AUTOMATION / "sft-prepare.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-        subprocess.run(
-            [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"],
-            check=True,
-            env=dict(os.environ, OLMO35_HERO_STOP="4"),
+            subprocess.run(
+                [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"],
+                check=True,
+                env=dict(os.environ, OLMO35_HERO_STOP="4"),
             )
     atomic_json(
         AUTOMATION / f"prepared-{stage}-{arm}.json",
@@ -151,7 +151,9 @@ def main():
                 check=True,
             )
         subprocess.run(
-            [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"], check=True
+            [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"],
+            check=True,
+            env=dict(os.environ, OLMO35_HERO_STOP="4"),
         )
         atomic_json(
             AUTOMATION / "config-success.json",
