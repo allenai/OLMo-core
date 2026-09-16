@@ -20,8 +20,16 @@ fi
 
 launch() {
   local name="$1" ckpt="$2"
+  # NOTE: must run under /opt/conda/bin/python, and PATH must resolve `python` there too for the
+  # driver's own subprocess shard-conversion call -- gantry's --install populates the baked image's
+  # SYSTEM python (/opt/conda), but the job executes under a separate, empty /gantry-runtime/.venv,
+  # so a bare `python -u ...` silently runs against an env with nothing installed (looks like
+  # success in Beaker's exitCode unless the WORK script itself also propagates $RC -- see below).
+  # `.[all]` (not the bare package) because Qwen3.5's GatedDeltaNet needs `fla`.  Both bugs cost a
+  # full round of false-"succeeded" jobs on 2026-09-15/16 -- see records/trained-parity-winning-arms.md §3.
   local work='
 set -uo pipefail
+export PATH=/opt/conda/bin:$PATH
 export PYTHONPATH=$PWD/src
 export TOKENIZERS_PARALLELISM=false PYTHONWARNINGS=ignore PYTHONUNBUFFERED=1
 python -u debug/pooled_kv/trained_parity_check.py \
@@ -29,7 +37,9 @@ python -u debug/pooled_kv/trained_parity_check.py \
   --rungs '"$RUNGS"' --rows '"$ROWS"' --gen-rows '"$GEN"' \
   --work /results/tp_work_'"$ckpt"' --out /results/tp_'"$ckpt"'.json \
   --tag '"$TAG"'
-echo "TRAINED_PARITY_DONE ckpt='"$ckpt"' rc=$?"
+RC=$?
+echo "TRAINED_PARITY_DONE ckpt='"$ckpt"' rc=$RC"
+exit $RC
 '
   gantry run --name "$name" -w ai2/flex2 -b ai2/oe-other \
     --cluster ai2/ceres-cirrascale --cluster ai2/saturn-cirrascale --cluster ai2/jupiter-cirrascale-2 \
@@ -37,7 +47,7 @@ echo "TRAINED_PARITY_DONE ckpt='"$ckpt"' rc=$?"
     --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
     --weka oe-training-default:/weka/oe-training-default \
     --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
-    --install 'pip install -e . && python -c "import transformers" 2>/dev/null || pip install transformers' \
+    --install "pip install -e '.[all]' 2>&1 | tail -8" \
     --allow-dirty --timeout 0 --yes -- bash -c "$work"
 }
 
