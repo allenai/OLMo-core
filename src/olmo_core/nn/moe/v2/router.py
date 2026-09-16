@@ -13,7 +13,7 @@ from torch.distributed.tensor.parallel import PrepareModuleInput, parallelize_mo
 
 import olmo_core.ops.moe as ops
 from olmo_core._nvtx import nvtx
-from olmo_core.config import Config, DType
+from olmo_core.config import Config, DType, StrEnum
 from olmo_core.distributed.utils import (
     _HiddenTensor,
     distribute_like,
