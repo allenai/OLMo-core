@@ -14,6 +14,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_cp2hp_qkvpacked,
     all_to_all_single_hp2cp,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
 
@@ -289,6 +290,8 @@ class AttentionBackend(nn.Module):
 class TorchAttentionBackend(AttentionBackend):
     """
     PyTorch's built-in scaled dot-product attention (SDPA) backend.
+
+    Attention sinks are not supported with context parallelism.
     """
 
     SUPPORTS_OR_MASK = True
@@ -347,6 +350,9 @@ class TorchAttentionBackend(AttentionBackend):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         q, k, v = qkv
+
+        if sinks is not None and self.cp_enabled:
+            raise OLMoConfigurationError("attention_sinks do not support context parallelism")
 
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")

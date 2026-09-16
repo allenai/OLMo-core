@@ -1,4 +1,6 @@
+from functools import partial
 from typing import Any, Dict, Optional, Tuple
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -1422,6 +1424,75 @@ def test_attention_sinks_rejected_for_non_torch_backend_at_construction():
     )
     with pytest.raises(OLMoConfigurationError, match="torch attention backend"):
         config.build(32, layer_idx=0, n_layers=2)
+
+
+@pytest.mark.parametrize("parallelism", ["tp", "ring", "ulysses"])
+@pytest.mark.parametrize("attention_sinks", [False, True])
+def test_attention_sinks_parallelism_guard(monkeypatch, parallelism, attention_sinks):
+    attention = Attention(d_model=32, n_heads=4, attention_sinks=attention_sinks)
+    parameters = {name: id(param) for name, param in attention.named_parameters()}
+    mesh = Mock()
+    if parallelism == "tp":
+        wrappers = Mock(return_value=(Mock(), Mock(), Mock()))
+        delegate = Mock()
+        monkeypatch.setattr("olmo_core.nn.attention.get_tp_wrappers", wrappers)
+        monkeypatch.setattr("olmo_core.nn.attention.parallelize_module", delegate)
+        apply_parallelism = partial(attention.apply_tp, mesh)
+    else:
+        delegate = Mock()
+        monkeypatch.setattr(attention.backend, "apply_cp", delegate)
+        style = (
+            {"ring": RingContextParallelStyle()}
+            if parallelism == "ring"
+            else {"uly": UlyssesContextParallelStyle()}
+        )
+        apply_parallelism = partial(attention.apply_cp, mesh, **style)
+
+    if attention_sinks:
+        with pytest.raises(OLMoConfigurationError, match="attention_sinks"):
+            apply_parallelism()
+        delegate.assert_not_called()
+        if parallelism == "tp":
+            wrappers.assert_not_called()
+        assert parameters == {name: id(param) for name, param in attention.named_parameters()}
+        assert not attention.backend.cp_enabled
+    else:
+        apply_parallelism()
+        if parallelism == "tp":
+            wrappers.assert_called_once_with(float8_enabled=False)
+            assert delegate.call_count == 2
+        else:
+            delegate.assert_called_once_with(mesh, ring=style.get("ring"), uly=style.get("uly"))
+
+
+def test_attention_sinks_backend_cp_rejected_before_collectives(monkeypatch):
+    backend = AttentionBackendName.torch.build(head_dim=8, n_heads=4)
+    backend.apply_cp(Mock(), uly=UlyssesContextParallelStyle())
+    collective = Mock(side_effect=AssertionError("Unexpected context-parallel collective"))
+    monkeypatch.setattr("olmo_core.nn.attention.backend.all_to_all_single_cp2hp", collective)
+    monkeypatch.setattr("olmo_core.nn.attention.backend.all_to_all_cp2hp", collective)
+    qkv = tuple(torch.randn(1, 4, 4, 8) for _ in range(3))
+    with pytest.raises(OLMoConfigurationError, match="attention_sinks"):
+        backend(qkv, sinks=torch.zeros(4))
+    collective.assert_not_called()
+
+
+@pytest.mark.parametrize("n_kv_heads", [2, 4])
+def test_attention_sinks_active_backward(n_kv_heads):
+    from olmo_core.nn.transformer.init import InitMethod
+
+    seed_all(0)
+    attention = Attention(d_model=32, n_heads=4, n_kv_heads=n_kv_heads, attention_sinks=True)
+    attention.init_weights(init_method=InitMethod.normal, d_model=32, block_idx=0, num_blocks=2)
+    inputs = torch.randn(2, 8, 32, requires_grad=True)
+    outputs = attention(inputs)
+    outputs.square().sum().backward()
+
+    assert torch.isfinite(outputs).all()
+    assert inputs.grad is not None and torch.isfinite(inputs.grad).all()
+    assert attention.sinks is not None and attention.sinks.grad is not None
+    assert torch.isfinite(attention.sinks.grad).all()
+    assert (attention.sinks.grad != 0).all()
 
 
 def test_attention_sinks_softmax_matches_sdpa_when_inactive():
