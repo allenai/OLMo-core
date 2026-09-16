@@ -27,6 +27,8 @@ differ only in their sequence mixers:
 - ``transformer-nope``: full attention on every layer, no positional embeddings.
 - ``hybrid``: GDN on every layer except each 5th, which is global NoPE attention
   (exactly the hybrid-small-suite 275M model).
+- ``hybrid-sdp``: as ``hybrid``, but the GDN layers use ``allow_neg_eigval=False``
+  (the GDN-sdp mixer).
 - ``gdn-sdp``: GDN on every layer with ``allow_neg_eigval=False``.
 - ``gdn-full``: GDN on every layer with ``allow_neg_eigval=True``.
 
@@ -131,7 +133,7 @@ STATE_BENCH_SENSITIVITY_CONDITIONS = {
 # torch.compile risk) applies only on Hopper clusters. (FLA's alternate tilelang backend
 # is not an option here: it JIT-compiles with nvcc, which the release image does not
 # ship.)
-GDN_MODEL_TYPES = {"hybrid", "gdn-sdp", "gdn-full"}
+GDN_MODEL_TYPES = {"hybrid", "hybrid-sdp", "gdn-sdp", "gdn-full"}
 GDN_HOPPER_POST_SETUP = "pip install 'triton>=3.7.1'"
 
 MAX_WANDB_TAG_LENGTH = 64
@@ -145,6 +147,7 @@ class StateBenchModelType(StrEnum):
     transformer_rope = "transformer-rope"
     transformer_nope = "transformer-nope"
     hybrid = "hybrid"
+    hybrid_sdp = "hybrid-sdp"
     gdn_sdp = "gdn-sdp"
     gdn_full = "gdn-full"
 
@@ -255,8 +258,8 @@ class StateBenchModelConfigurator(TransformerModelConfigurator):
             block = attention_block(RoPEConfig())
         elif model_type == StateBenchModelType.transformer_nope:
             block = attention_block(None)
-        elif model_type == StateBenchModelType.hybrid:
-            block = gdn_block(allow_neg_eigval=True)
+        elif model_type in (StateBenchModelType.hybrid, StateBenchModelType.hybrid_sdp):
+            block = gdn_block(allow_neg_eigval=(model_type == StateBenchModelType.hybrid))
             block_overrides = {
                 layer_idx: attention_block(None)
                 for layer_idx in range(n_layers)
