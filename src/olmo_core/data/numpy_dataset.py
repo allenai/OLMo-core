@@ -759,45 +759,48 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         )
 
     def _write_document_indices(self):
-        paths_needed: List[Tuple[PathOrStr, int]] = []
+        # Repeated paths share an indices file but may have different token allocations.
+        max_instances_by_path: Dict[str, int] = {}
+        ordered_paths: List[PathOrStr] = []
         for idx, path in enumerate(self.paths):
+            key = str(path)
+            instances = self._path_offset_index[(key, idx)] // self.sequence_length
+            if key not in max_instances_by_path:
+                ordered_paths.append(path)
+            max_instances_by_path[key] = max(max_instances_by_path.get(key, 0), instances)
+
+        paths_needed: List[PathOrStr] = []
+        for path in ordered_paths:
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
                 log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
-            elif path not in paths_needed:
-                paths_needed.append((path, idx))
+            elif max_instances_by_path[str(path)] > 0:
+                paths_needed.append(path)
 
         if paths_needed:
             with concurrent.futures.ProcessPoolExecutor() as executor:
                 futures = []
-                for path, idx in paths_needed:
+                for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
-                    # NOTE: We limit the number of instances by total target token count // sequence length
-                    max_instances = (
-                        self._path_offset_index[(str(path), idx)] // self.sequence_length
+                    max_instances = max_instances_by_path[str(path)]
+                    future = executor.submit(
+                        run_worker_func,
+                        segment_documents_into_instances,
+                        path,
+                        indices_path,
+                        max_sequence_length=self.sequence_length,
+                        eos_token_id=self.eos_token_id,
+                        dtype=self.dtype,
+                        indices_dtype=self.indices_dtype,
+                        sample=(max_instances, self._seed),
                     )
-
-                    # Sampling from small npy files can result in 0 instance indices.
-                    # We skip processing these to avoid writing empty mmapped files.
-                    if max_instances > 0:
-                        future = executor.submit(
-                            run_worker_func,
-                            segment_documents_into_instances,
-                            path,
-                            indices_path,
-                            max_sequence_length=self.sequence_length,
-                            eos_token_id=self.eos_token_id,
-                            dtype=self.dtype,
-                            indices_dtype=self.indices_dtype,
-                            sample=(max_instances, self._seed),
-                        )
-                        futures.append(future)
+                    futures.append(future)
 
                 concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
 
                 # Log results.
-                for path, future in zip([item[0] for item in paths_needed], futures):
+                for path, future in zip(paths_needed, futures):
                     _, total_instances = future.result()
                     log.info(
                         f"Created {total_instances:,d} instances of sequence length up to "
@@ -2580,6 +2583,8 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             mixture = self.source_mixture_config.build(
                 npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
+            # Keep path and allocation indices aligned after dropping empty sources.
+            mixture.filter_zero_token_paths = True
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
                 seed=self.source_mixture_config.seed,

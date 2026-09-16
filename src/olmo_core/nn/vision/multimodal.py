@@ -1,6 +1,8 @@
+"""Vision-language models with pooled image features in the language-model embedding stream."""
+
 import os
 from dataclasses import dataclass, replace
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -28,6 +30,7 @@ __all__ = [
     "MOLMO2_VOCAB_SIZE",
     "MultimodalLMConfig",
     "MultimodalLM",
+    "MultimodalOLMoDDPModel",
 ]
 
 MOLMO2_BASE_VOCAB_SIZE = 151_936
@@ -54,6 +57,13 @@ def _molmo2_attn_backend():
         if os.environ.get("OLMO2_FLEX_ATTN") == "1"
         else AttentionBackendName.torch
     )
+
+
+_INPUT_DIAGNOSTIC_NAMES = (
+    "text embedding RMS",
+    "connector output RMS",
+    "spliced image embedding RMS",
+)
 
 
 @dataclass
@@ -106,15 +116,9 @@ class MultimodalLMConfig(Config):
 
     output_vocab_size: Optional[int] = None
     """
-    Number of token IDs the model may *predict*. Molmo2 extends the base text vocab
-    with extra image-special tokens (``<im_patch>``, ``<im_start>``, …) that are
-    **inputs-only**: HF Molmo2's ``lm_head`` covers just the base vocab, so the extra
-    IDs can never be sampled and never enter the softmax. Our LM head spans the full
-    ``lm.vocab_size``, so when this is set (to the base vocab size), the forward pass
-    masks logit columns ``>= output_vocab_size`` to the dtype minimum — they contribute
-    exactly ``0`` to the softmax and receive exactly ``0`` gradient, reproducing a
-    base-vocab-only head for loss, sampling, and (tied-embedding) training dynamics.
-    ``None`` (default) disables masking.
+    Optional output-vocabulary limit. Logit columns at or above this limit are masked to the
+    dtype minimum, excluding input-only special tokens from prediction. ``None`` uses the full
+    LM vocabulary. When set, loss must be computed externally from the masked logits.
     """
 
     @classmethod
@@ -251,6 +255,10 @@ class MultimodalLMConfig(Config):
         :param init_device: Device string (e.g. ``"cpu"``, ``"meta"``).
         :returns: A :class:`MultimodalLM`.
         """
+        from olmo_core.nn.transformer import OLMoDDPModelConfig
+
+        if isinstance(self.lm, OLMoDDPModelConfig):
+            return MultimodalOLMoDDPModel(self, init_device=init_device)
         return MultimodalLM(self, init_device=init_device)
 
 
@@ -265,9 +273,10 @@ class MultimodalLM(nn.Module):
        configured ViT layers, optionally strip the CLS / register prefix, and
        gather/pool/project via the connector to produce one feature per
        ``<im_patch>`` placeholder token.
-    3. Add the projected image features back into the LM embedding sequence
+    3. Add the projected image features to the raw LM token embeddings
        at every position where ``input_ids == image_patch_token_id``.
-    4. Run the LM with the modified embeddings.
+    4. Apply the LM's native embedding scale and embedding norm to the combined
+       stream, then run the LM with the preconditioned embeddings.
 
     :param cfg: Multimodal model configuration.
     :param init_device: Device on which to initialise parameters.
@@ -284,12 +293,82 @@ class MultimodalLM(nn.Module):
             )
         self.cfg = cfg
         self.lm = cfg.lm.build(init_device=init_device)
-        # Cached so `forward` only builds a drop mask when some block will consume it.
         self._masked_residual_dropout = float(getattr(cfg.lm.block, "masked_dropout", 0.0) or 0.0)
         self.vision = cfg.vision.build(init_device=init_device)
         self.connector = cfg.connector.build(init_device=init_device)
+        self._use_compact_flex_masks, self._flex_window_size = self._resolve_flex_mask_backend()
+        self._collect_input_diagnostics = False
+        self._input_diagnostic_sums: Dict[str, torch.Tensor] = {}
+        self._input_diagnostic_counts: Dict[str, int] = {}
 
-    # -- model introspection (mirrors the Transformer API used by the trainer / callbacks) --
+    def set_input_diagnostics(self, enabled: bool) -> None:
+        """Enable or disable detached embedding-scale diagnostics for the next forwards."""
+        self._collect_input_diagnostics = enabled
+        self._input_diagnostic_sums.clear()
+        self._input_diagnostic_counts.clear()
+
+    @torch.no_grad()
+    def _record_input_diagnostic(self, name: str, values: torch.Tensor) -> None:
+        if not self._collect_input_diagnostics or values.numel() == 0:
+            return
+        sum_squares = values.detach().float().square().sum()
+        if name in self._input_diagnostic_sums:
+            self._input_diagnostic_sums[name] += sum_squares
+            self._input_diagnostic_counts[name] += values.numel()
+        else:
+            self._input_diagnostic_sums[name] = sum_squares
+            self._input_diagnostic_counts[name] = values.numel()
+
+    @torch.no_grad()
+    def pop_input_diagnostics(
+        self,
+        *,
+        reduce_across_process_group: bool = False,
+        process_group: Optional[dist.ProcessGroup] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Return accumulated RMS values and disable collection.
+
+        :param reduce_across_process_group: Reduce sums and counts before computing each RMS.
+        :param process_group: The process group to reduce across. ``None`` uses the default group.
+        """
+        if reduce_across_process_group:
+            if not is_distributed():
+                raise RuntimeError("cannot reduce input diagnostics outside distributed training")
+            device = next(self.parameters()).device
+            n_metrics = len(_INPUT_DIAGNOSTIC_NAMES)
+            stats = torch.zeros(2 * n_metrics, dtype=torch.float64, device=device)
+            for idx, name in enumerate(_INPUT_DIAGNOSTIC_NAMES):
+                if name in self._input_diagnostic_sums:
+                    stats[idx] = self._input_diagnostic_sums[name].double()
+                    stats[n_metrics + idx] = self._input_diagnostic_counts[name]
+            self.set_input_diagnostics(False)
+            dist.all_reduce(stats, group=process_group)
+            return {
+                name: torch.sqrt(stats[idx] / stats[n_metrics + idx])
+                for idx, name in enumerate(_INPUT_DIAGNOSTIC_NAMES)
+                if stats[n_metrics + idx] > 0
+            }
+
+        diagnostics = {
+            name: torch.sqrt(sum_squares / self._input_diagnostic_counts[name])
+            for name, sum_squares in self._input_diagnostic_sums.items()
+        }
+        self.set_input_diagnostics(False)
+        return diagnostics
+
+    def _resolve_flex_mask_backend(self) -> Tuple[bool, Optional[Tuple[int, int]]]:
+        """Return whether every LM attention layer uses FlexAttention and its common window."""
+        from olmo_core.nn.attention import Attention
+        from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+        attention = [module for module in self.lm.modules() if isinstance(module, Attention)]
+        if not attention or not all(
+            isinstance(module.backend, FlexAttentionBackend) for module in attention
+        ):
+            return False, None
+        window_sizes = {module.backend.window_size for module in attention}
+        return True, next(iter(window_sizes)) if len(window_sizes) == 1 else None
 
     @property
     def num_params(self) -> int:
@@ -298,6 +377,7 @@ class MultimodalLM(nn.Module):
 
     @property
     def num_trainable_params(self) -> int:
+        """Number of parameters with gradient computation enabled."""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     @property
@@ -311,6 +391,7 @@ class MultimodalLM(nn.Module):
 
     @property
     def is_moe(self) -> bool:
+        """Whether the language model uses mixture-of-experts layers."""
         return self.lm.is_moe
 
     def num_flops_per_token(self, seq_len: int) -> int:
@@ -337,10 +418,10 @@ class MultimodalLM(nn.Module):
         """Idealized FLOPs for the vision half of one batch, for MFU accounting.
 
         The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
-        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
-        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
-        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
-        (fwd+bwd) per pooled output token.
+        full ``B * n_crops`` of the images tensor. Trainable parameters use the standard
+        forward-plus-backward multiplier of 6; a frozen encoder uses the forward-only
+        multiplier of 2. Attention score/context FLOPs are scaled by the same ratio. The
+        connector is trained and uses 6 FLOPs/parameter per pooled output token.
 
         :param n_crops: total number of image crops processed by the ViT this batch.
         :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
@@ -349,12 +430,19 @@ class MultimodalLM(nn.Module):
         d = self.cfg.vision.image_emb_dim
         n_layers = self.cfg.vision.image_num_layers
         n_raw = n_crops * n_patches_per_crop
-        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vision_multiplier = (
+            6 if any(param.requires_grad for param in self.vision.parameters()) else 2
+        )
+        attention_multiplier = 12 if vision_multiplier == 6 else 4
+        vit = n_raw * (
+            vision_multiplier * self._n_vision_params
+            + attention_multiplier * n_layers * n_patches_per_crop * d
+        )
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 
     def _vit_crop_microbatch(self) -> int:
-        """Max crops per ViT forward (0 = no chunking). Env: ``VIT_CROP_MICROBATCH``."""
+        """Crops per example in each ViT call; ``VIT_CROP_MICROBATCH <= 0`` disables chunking."""
         raw = os.environ.get("VIT_CROP_MICROBATCH", "16")
         return int(raw)
 
@@ -415,71 +503,91 @@ class MultimodalLM(nn.Module):
 
         return self.connector(features, pooled_patches_idx)
 
+    def encode_images(
+        self,
+        images: torch.Tensor,
+        pooled_patches_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encode and compact image features for reuse across autoregressive forwards."""
+        device = self.lm.device
+        vision_dtype = next(self.vision.parameters()).dtype
+        images = images.to(device=device, dtype=vision_dtype)
+        pooled_patches_idx = pooled_patches_idx.to(device)
+        image_features = self._encode_images(images, pooled_patches_idx)
+
+        # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
+        # sync before the LM forward so all ranks enter its collectives together.
+        if is_distributed():
+            barrier()
+
+        # A row is padding iff all its patch indices are -1. Selecting in row-major
+        # order preserves alignment with the <im_patch> tokens in each sequence.
+        valid_rows = (pooled_patches_idx >= 0).any(dim=-1)
+        return image_features[valid_rows]
+
     def forward(
         self,
         input_ids: torch.Tensor,
         images: Optional[torch.Tensor] = None,
         pooled_patches_idx: Optional[torch.Tensor] = None,
+        encoded_image_features: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
+        loss_masks: Optional[torch.Tensor] = None,
         token_type_ids: Optional[torch.Tensor] = None,
         subsegment_ids: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.Tensor] = None,
         example_ids: Optional[torch.Tensor] = None,
+        response_logits_only: bool = False,
         **kwargs,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         """
         Run the vision-language forward pass.
 
-        :param input_ids: Token IDs, shape ``(B, seq_len)``. Positions equal to
-            :attr:`cfg.image_patch_token_id` will be overwritten (via ``+=``)
-            with projected image features.
+        :param input_ids: Token IDs, shape ``(B, seq_len)``. Projected image features are added
+            to embeddings at positions equal to :attr:`cfg.image_patch_token_id`.
         :param images: Pre-patchified image patches, shape
             ``(B, n_crops, n_patches, patch_dim)``. Pass ``None`` for
             text-only batches.
         :param pooled_patches_idx: Per-group patch indices,
             shape ``(B, n_pooled, pool_size)``. Required when *images* is not
-            ``None``. ``n_pooled`` must equal the number of
+            ``None``. The number of non-padding pooled rows must equal the number of
             ``<im_patch>`` tokens per sequence.
+        :param encoded_image_features: Optional output of :meth:`encode_images`. This
+            reuses image features across autoregressive forwards and is mutually exclusive
+            with ``images``.
         :param labels: Target token IDs, shape ``(B, seq_len)``.
+        :param loss_masks: Optional per-token supervised-loss weights, shape ``(B, seq_len)``.
         :param token_type_ids: Optional ``(B, seq_len)`` tensor marking image tokens
             (non-zero) vs. text tokens (zero). When provided, image tokens attend to
             each other **bidirectionally** (causal order is ignored among image
             tokens) while text stays causal, matching HF Molmo2's attention mask.
-            Requires the dense (``"torch"``) attention backend.
+            Supported by the dense (``"torch"``) and FlexAttention backends.
         :param subsegment_ids: Optional ``(B, seq_len)`` int tensor marking subsegments
             for packed multi-annotation data: a shared prefix (``ATTEND_ALL`` id) that
             branches into several mutually-isolated response branches (one id each). A
             query may only attend to keys with a ``>=`` subsegment id (matching mm_olmo's
             ``attention_mask & (subseg_q <= subseg_k)``). Requires ``position_ids`` and
-            the dense (``"torch"``) attention backend.
+            a dense (``"torch"``) or FlexAttention backend.
         :param position_ids: Optional ``(B, seq_len)`` int tensor of explicit RoPE
             positions. Required with ``subsegment_ids`` (parallel branches share an
             overlapping position range and cannot use sequential positions).
+        :param example_ids: Optional packed-example IDs, shape ``(B, seq_len)``. Attention
+            cannot cross example boundaries.
+        :param response_logits_only: Materialize logits only where ``loss_masks > 0``.
         :returns: Logits or loss (same as
             :meth:`~olmo_core.nn.transformer.Transformer.forward`).
         """
         if subsegment_ids is not None and position_ids is None:
             raise ValueError("`position_ids` is required when `subsegment_ids` is provided")
 
-        response_logits_only = kwargs.pop("response_logits_only", False)
-        loss_masks = kwargs.pop("loss_masks", None)
-        response_mask: Optional[torch.Tensor] = None
-        if response_logits_only:
-            if loss_masks is None:
-                raise ValueError("`loss_masks` is required when `response_logits_only=True`")
-            response_mask = loss_masks > 0
+        if response_logits_only and loss_masks is None:
+            raise ValueError("`loss_masks` is required when `response_logits_only=True`")
 
-        # Per-token residual dropout (mm_olmo `response_residual_dropout`): the mask selects
-        # *response* tokens, so prompt and image tokens keep the plain `dropout` rate. Only
-        # built when a block actually asks for it, and only while training.
-        drop_mask: Optional[torch.Tensor] = None
+        drop_mask = None
         if self.training and self._masked_residual_dropout > 0.0:
             if loss_masks is None:
-                raise ValueError(
-                    "`loss_masks` is required when the LM uses `masked_dropout` "
-                    "(response_residual_dropout)"
-                )
-            drop_mask = (loss_masks > 0).to(dtype=torch.bool)
+                raise ValueError("`loss_masks` is required when the LM uses `masked_dropout`")
+            drop_mask = (loss_masks > 0).to(device=self.lm.device, dtype=torch.bool)
 
         if labels is not None and self.cfg.output_vocab_size is not None:
             # The LM head would compute the loss internally over the full (padded) vocab,
@@ -501,56 +609,32 @@ class MultimodalLM(nn.Module):
         if labels is not None:
             labels = labels.to(device)
 
-        use_flex_attn = os.environ.get("OLMO2_FLEX_ATTN") == "1"
-        or_mask: Optional[torch.Tensor] = None
-        and_mask: Optional[torch.Tensor] = None
-        flex_attn_block_mask = None
-        flex_mask_kwargs: Optional[dict] = None
-        if use_flex_attn:
-            B, S = input_ids.shape
-            flex_is_image = token_type_ids.to(device) != 0 if token_type_ids is not None else None
-            flex_subseg = subsegment_ids.to(device) if subsegment_ids is not None else None
-            flex_eid = example_ids.to(device) if example_ids is not None else None
-            flex_mask_kwargs = dict(
-                B=B,
-                S=S,
-                device=device,
-                is_image=flex_is_image,
-                subsegment_ids=flex_subseg,
-                example_id=flex_eid,
-            )
-
-        # Compute LM token embeddings with any configured scale / norm. We embed here
-        # (rather than inside ``self.lm``) so image features can be spliced in below.
+        # Compute raw LM token embeddings. We embed here (rather than inside ``self.lm``)
+        # so image features can be spliced in before the LM's native input preconditioning.
         # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
         # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
         # DDP / single-GPU where the weight is already a plain tensor).
         emb = self.lm.embeddings
 
-        def _full(weight: torch.Tensor) -> torch.Tensor:
+        def full_weight(weight: torch.Tensor) -> torch.Tensor:
             return weight.full_tensor() if isinstance(weight, DTensor) else weight
 
         if isinstance(emb, SplitVocabEmbedding):
-            # The image-special token IDs live in the *extra* block, so the lookup must span
-            # both parameters — `emb.weight` alone covers only the base vocab. Gradients still
-            # reach both blocks through the concatenation.
-            emb_weight = torch.cat([_full(emb.weight), _full(emb.extra_weight)], dim=0)
+            emb_weight = torch.cat([full_weight(emb.weight), full_weight(emb.extra_weight)], dim=0)
         else:
-            emb_weight = _full(emb.weight)
+            emb_weight = full_weight(emb.weight)
         h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
-        if self.lm.embed_scale is not None:
-            h = h * self.lm.embed_scale
-        if self.lm.embedding_norm is not None:
-            h = self.lm.embedding_norm(h)
 
+        if images is not None and encoded_image_features is not None:
+            raise ValueError("Pass either `images` or `encoded_image_features`, not both")
+
+        image_features = encoded_image_features
         if images is not None:
             if pooled_patches_idx is None:
                 raise ValueError("`pooled_patches_idx` is required when `images` is provided")
 
-            images = images.to(device)
-            pooled_patches_idx = pooled_patches_idx.to(device)
-
-            image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
+            image_features = self.encode_images(images, pooled_patches_idx)
+            self._record_input_diagnostic("connector output RMS", image_features)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -560,21 +644,11 @@ class MultimodalLM(nn.Module):
             # across ranks regardless of how text-only vs image examples are distributed.
             h = h + 0.0 * image_features.sum().to(h.dtype)
 
-            # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
-            # sync before the LM FSDP forward so all-gather collectives stay aligned.
-            if is_distributed():
-                barrier()
-
-            # Keep only valid pooled rows (a row is padding iff *all* its patch
-            # indices are -1, e.g. added by a batch collator to equalize ``n_pooled``
-            # across examples). Selecting in row-major order keeps each example's
-            # features aligned with its ``<im_patch>`` positions, so batches with a
-            # variable number of image tokens per example work. For unpadded / B=1
-            # inputs every row is valid and this is a no-op.
-            valid_rows = (pooled_patches_idx >= 0).any(dim=-1)  # (B, n_pooled)
-            image_features = image_features[valid_rows]  # (total_valid, d)
-
-            # Splice into LM embeddings at every <im_patch> position.
+        is_image_patch: Optional[torch.Tensor] = None
+        if image_features is not None:
+            # Splice into raw LM embeddings at every <im_patch> position. The combined stream
+            # is scaled and normalized below exactly as it would be in the native LM forward.
+            image_features = image_features.to(device)
             is_image_patch = input_ids.view(-1) == self.cfg.image_patch_token_id
             n_patches_in_seq = int(is_image_patch.sum())
             n_features = image_features.shape[0]
@@ -590,20 +664,71 @@ class MultimodalLM(nn.Module):
             # the contiguous ``h``, so the in-place add below propagates back into ``h``.
             h = h.contiguous()
             flat = h.view(-1, d)
+            image_features = image_features.to(flat.dtype)
             flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)
 
-        # Build flex BlockMask after vision so the mask is not resident during ViT.
-        if flex_mask_kwargs is not None:
-            from olmo_core.nn.attention.backend import FlexAttentionBackend
+        if self.lm.embed_scale is not None:
+            h = h * self.lm.embed_scale
+        if self.lm.embedding_norm is not None:
+            h = self.lm.embedding_norm(h)
 
-            flex_attn_block_mask = FlexAttentionBackend.build_block_mask_from_vectors(
-                **flex_mask_kwargs
-            )
-
-        if not use_flex_attn:
-            # Dense (B, S, S) masks for the torch SDPA backend only.
+        if self._collect_input_diagnostics:
+            valid_tokens = kwargs.get("router_token_mask")
+            if valid_tokens is None:
+                valid_tokens = torch.ones_like(input_ids, dtype=torch.bool)
+            else:
+                valid_tokens = valid_tokens.to(device=device, dtype=torch.bool)
             if token_type_ids is not None:
-                is_image = token_type_ids.to(device) != 0  # (B, S)
+                valid_tokens = valid_tokens & (token_type_ids.to(device) == 0)
+            elif is_image_patch is not None:
+                valid_tokens = valid_tokens.view(-1) & ~is_image_patch
+                valid_tokens = valid_tokens.view_as(input_ids)
+            self._record_input_diagnostic("text embedding RMS", h[valid_tokens])
+            if is_image_patch is not None:
+                self._record_input_diagnostic(
+                    "spliced image embedding RMS", h.reshape(-1, h.shape[-1])[is_image_patch]
+                )
+
+        # FlexAttention consumes the O(S) metadata directly. For a common attention
+        # window, build its block mask once and reuse it across every LM layer. Other
+        # backends retain the equivalent dense ``(causal | or_mask) & and_mask`` path.
+        flex_attn_is_image: Optional[torch.Tensor] = None
+        flex_attn_subsegment_ids: Optional[torch.Tensor] = None
+        flex_attn_example_ids: Optional[torch.Tensor] = None
+        flex_attn_block_mask: Optional[Any] = None
+        or_mask: Optional[torch.Tensor] = None
+        and_mask: Optional[torch.Tensor] = None
+        if self._use_compact_flex_masks:
+            flex_attn_is_image = (
+                token_type_ids.to(device) != 0 if token_type_ids is not None else None
+            )
+            flex_attn_subsegment_ids = (
+                subsegment_ids.to(device) if subsegment_ids is not None else None
+            )
+            flex_attn_example_ids = example_ids.to(device) if example_ids is not None else None
+            if self._flex_window_size is not None and any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                )
+            ):
+                from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+                B, S = input_ids.shape
+                flex_attn_block_mask = FlexAttentionBackend.build_block_mask_from_vectors(
+                    B,
+                    S,
+                    device,
+                    is_image=flex_attn_is_image,
+                    subsegment_ids=flex_attn_subsegment_ids,
+                    example_id=flex_attn_example_ids,
+                    window_size=self._flex_window_size,
+                )
+        else:
+            if token_type_ids is not None:
+                is_image = token_type_ids.to(device) != 0
                 or_mask = (is_image[:, :, None] & is_image[:, None, :]).unsqueeze(1)
 
             seg_rule: Optional[torch.Tensor] = None
@@ -624,23 +749,24 @@ class MultimodalLM(nn.Module):
         out = self.lm(
             input_ids,
             input_embeddings=h,
+            drop_mask=drop_mask,
             labels=labels,
+            loss_weights=loss_masks,
+            response_logits_only=response_logits_only,
+            response_mask=(
+                loss_masks > 0 if response_logits_only and loss_masks is not None else None
+            ),
             or_mask=or_mask,
             and_mask=and_mask,
+            flex_attn_is_image=flex_attn_is_image,
+            flex_attn_subsegment_ids=flex_attn_subsegment_ids,
+            flex_attn_example_ids=flex_attn_example_ids,
             flex_attn_block_mask=flex_attn_block_mask,
             position_ids=position_ids,
-            response_logits_only=response_logits_only,
-            response_mask=response_mask,
-            drop_mask=drop_mask,
             **kwargs,
         )
 
-        # Mask the logit columns of the inputs-only image-special tokens (see
-        # :attr:`MultimodalLMConfig.output_vocab_size`). ``finfo.min`` underflows to
-        # exactly 0 in the softmax, so loss / sampling / gradients match a
-        # base-vocab-only head bit-for-bit (mm_olmo computes logits against the base
-        # embedding table only, even under weight tying). Applies to both the full
-        # ``(B, S, V)`` logits and the ``(N_response, V)`` response-only logits.
+        # An explicit output-vocabulary limit excludes input-only image-special tokens.
         output_vocab_size = self.cfg.output_vocab_size
         if (
             output_vocab_size is not None
@@ -649,3 +775,158 @@ class MultimodalLM(nn.Module):
         ):
             out[..., output_vocab_size:] = torch.finfo(out.dtype).min
         return out
+
+
+class MultimodalOLMoDDPModel(MultimodalLM):
+    """A :class:`MultimodalLM` backed by the fused OLMoDDP MoE model.
+
+    The OLMoDDP train module owns expert/data parallelism and its fused optimizer.
+    This adapter keeps the multimodal model compositional while forwarding the small
+    runtime surface that trainer needs to the language model. Pipeline, tensor, and
+    context parallelism are deliberately not exposed: multimodal masks and image
+    embeddings currently require the full sequence on each rank.
+    """
+
+    _olmo_ddp_compatible = True
+
+    def __init__(self, cfg: MultimodalLMConfig, init_device: str = "cpu"):
+        super().__init__(cfg, init_device=init_device)
+        from olmo_core.nn.ddp import OLMoDDPModel
+
+        if not isinstance(self.lm, OLMoDDPModel):
+            raise TypeError(
+                f"{type(self).__name__} requires an OLMoDDPModel language model, "
+                f"got {type(self.lm).__name__}"
+            )
+
+    @property
+    def _olmo_lm(self):
+        from olmo_core.nn.ddp import OLMoDDPModel
+
+        return cast(OLMoDDPModel, self.lm)
+
+    @property
+    def tbo(self) -> bool:
+        """Whether the language model uses two-batch overlap."""
+        return self._olmo_lm.tbo
+
+    @property
+    def recompute_all_blocks_by_chunk(self) -> bool:
+        """Whether activation recomputation groups LM blocks into chunks."""
+        return self._olmo_lm.recompute_all_blocks_by_chunk
+
+    @property
+    def recompute_each_block(self) -> bool:
+        """Whether each LM block is independently recomputed during backward."""
+        return self._olmo_lm.recompute_each_block
+
+    @property
+    def has_grad_accum_fp32_buffer(self) -> bool:
+        """Whether the language model accumulates gradients in FP32 buffers."""
+        return self._olmo_lm.has_grad_accum_fp32_buffer
+
+    def train(self, mode: bool = True):
+        """Set training mode while keeping a fully frozen vision encoder in evaluation mode."""
+        super().train(mode)
+        if mode and not any(p.requires_grad for p in self.vision.parameters()):
+            self.vision.eval()
+        return self
+
+    def purge_cuda_events(self) -> None:
+        """Release language-model CUDA event handles before copying or partitioning it."""
+        self._olmo_lm.purge_cuda_events()
+
+    def install_cuda_events(self) -> None:
+        """Install language-model CUDA event handles for distributed execution."""
+        self._olmo_lm.install_cuda_events()
+
+    def count_non_rowwise_ep_no_sync_blocks(self) -> int:
+        """Count no-sync expert-parallel blocks that do not use rowwise dispatch."""
+        return self._olmo_lm.count_non_rowwise_ep_no_sync_blocks()
+
+    def count_ep_no_sync_blocks(self) -> int:
+        """Count language-model blocks using no-sync expert parallelism."""
+        return self._olmo_lm.count_ep_no_sync_blocks()
+
+    def iter_ep_no_sync_symm_tensor_infos(self) -> Iterator[Any]:
+        """Yield symmetric-buffer metadata from no-sync expert-parallel blocks."""
+        yield from self._olmo_lm.iter_ep_no_sync_symm_tensor_infos()
+
+    def apply_fp8(self, *args, **kwargs) -> None:
+        """Configure FP8 computation in the language model."""
+        self._olmo_lm.apply_fp8(*args, **kwargs)
+
+    def apply_cp(self, *args, **kwargs) -> None:
+        """Reject context parallelism, which is unsupported for multimodal batches."""
+        raise NotImplementedError("Context parallelism is not supported for multimodal OLMoDDP")
+
+    def apply_pp(self, *args, **kwargs) -> None:
+        """Reject pipeline parallelism, which is unsupported for multimodal batches."""
+        raise NotImplementedError("Pipeline parallelism is not supported for multimodal OLMoDDP")
+
+    def apply_ep(self, *args, **kwargs):
+        """Apply expert parallelism to the language model."""
+        return self._olmo_lm.apply_ep(*args, **kwargs)
+
+    def apply_activation_checkpointing(self, *args, **kwargs) -> None:
+        """Configure activation checkpointing in the language model."""
+        self._olmo_lm.apply_activation_checkpointing(*args, **kwargs)
+
+    def apply_compile(self) -> None:
+        """Compile the language-model blocks."""
+        self._olmo_lm.apply_compile()
+
+    def apply_dp(self, *args, **kwargs):
+        """Wrap the complete multimodal model in data parallelism."""
+        return self._olmo_lm.apply_dp(*args, root_module=self, **kwargs)
+
+    @torch.no_grad()
+    def init_weights(self, *args, device: Optional[torch.device] = None, **kwargs):
+        """Initialize LM parameters and materialize the vision encoder and connector."""
+        device = device or self._olmo_lm.device
+        generator = self._olmo_lm.init_weights(*args, device=device, **kwargs)
+        for module in (self.vision, self.connector):
+            module.to_empty(device=device)
+            module.reset_parameters()
+        return generator
+
+    def prewarm_deepep_v2_runtimes(self, *args, **kwargs) -> None:
+        """Initialize DeepEP runtimes used by the language model."""
+        self._olmo_lm.prewarm_deepep_v2_runtimes(*args, **kwargs)
+
+    def prewarm_ep_no_sync_symm_buffers(self, *args, **kwargs) -> None:
+        """Prewarm LM expert-parallel buffers, including forward-only evaluation scratch."""
+        # Multimodal evaluation keeps grad mode enabled for B300 attention correctness but does
+        # not run backward. Prewarm the rowwise scratch path so eval never consumes the
+        # training-only lifetime leases that backward normally releases.
+        kwargs["prewarm_rowwise_scratch_buffers"] = True
+        self._olmo_lm.prewarm_ep_no_sync_symm_buffers(*args, **kwargs)
+
+    def refresh_rowwise_fp8_cache(self) -> None:
+        """Rebuild language-model FP8 caches from current parameter values."""
+        self._olmo_lm.refresh_rowwise_fp8_cache()
+
+    def named_fp8_weight_stores(self) -> Iterator[tuple[str, object]]:
+        """Yield FP8 weight stores with multimodal-model parameter names."""
+        for name, weight in self._olmo_lm.named_fp8_weight_stores():
+            yield f"lm.{name}", weight
+
+    def named_mxfp8_expert_weights(self) -> Iterator[tuple[str, object]]:
+        """Yield FP8 weight stores using the expert-weight compatibility interface."""
+        yield from self.named_fp8_weight_stores()
+
+    def post_batch(self, dry_run: bool = False) -> None:
+        """Run language-model cleanup after an optimizer batch."""
+        self._olmo_lm.post_batch(dry_run=dry_run)
+
+    def post_optim_step(self) -> None:
+        """Update language-model state after the optimizer step."""
+        self._olmo_lm.post_optim_step()
+
+    def compute_auxiliary_metrics(self, reset: bool = True) -> Dict[str, Tuple[torch.Tensor, Any]]:
+        """Return accumulated language-model auxiliary metrics and their reduction types."""
+        return self._olmo_lm.compute_auxiliary_metrics(reset=reset)
+
+    def reset_auxiliary_metrics(self) -> None:
+        """Clear accumulated language-model auxiliary metrics."""
+        self._olmo_lm.reset_auxiliary_metrics()

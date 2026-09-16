@@ -13,7 +13,11 @@ import numpy as np
 from PIL import Image
 
 from olmo_core.data.multimodal.dataset_compat import load_from_disk_compat
-from olmo_core.data.multimodal.paths import ACADEMIC_DATASETS, PIXMO_DATASETS, TORCH_DATASETS
+from olmo_core.data.multimodal.paths import (
+    ACADEMIC_DATASETS,
+    PIXMO_DATASETS,
+    TORCH_DATASETS,
+)
 
 from ..pixmo_clocks import format_pixmo_clocks_row
 from .formatters import (
@@ -59,12 +63,14 @@ def _load_vqa2_multi(split: str) -> List[Dict[str, Any]]:
 
 def _load_text_vqa(split: str) -> List[Dict[str, Any]]:
     split = "val" if split == "validation" else split
+    # TextVQA distributes train and validation images together under ``train_images``.
+    image_split = "train" if split == "val" else split
     data = _load_json(join(TEXT_VQA_SOURCE, f"TextVQA_0.5.1_{split}.json"))
     out = []
     for ex in data["data"]:
         out.append(
             {
-                "image": join(TEXT_VQA_SOURCE, f"{split}_images", ex["image_id"] + ".jpg"),
+                "image": join(TEXT_VQA_SOURCE, f"{image_split}_images", ex["image_id"] + ".jpg"),
                 "question": ex["question"],
                 "answers": ex["answers"],
                 "metadata": {
@@ -119,7 +125,9 @@ def _load_chart_qa(split: str) -> List[Dict[str, Any]]:
                 {
                     "image": join(CHARTQA_SOURCE, split, "png", ex["imgname"]),
                     "question": ex["query"],
-                    "answers": ex["label"],  # bare string (mm_olmo parity: select_vqa_answer short-circuits on str)
+                    "answers": ex[
+                        "label"
+                    ],  # bare string (mm_olmo parity: select_vqa_answer short-circuits on str)
                     "metadata": {"is_human": kind == "human", "example_id": ex.get("id")},
                 }
             )
@@ -374,17 +382,25 @@ def _format_multi_qa(ex, _rng, _split, *, style: str):
         for q, a in zip(qas["question"], qas["answer"])
     ]
     return format_message_list(
-        {"image": ex["image"], "message_list": messages, "metadata": {"image_id": ex.get("image_id")}},
+        {
+            "image": ex["image"],
+            "message_list": messages,
+            "metadata": {"image_id": ex.get("image_id")},
+        },
         style=style,
     )
 
 
 ACADEMIC_REGISTRY: Dict[str, AcademicSpec] = {
-    "coco_2014_vqa_multi": AcademicSpec("coco_2014_vqa_multi", _load_vqa2_multi, lambda e, r, s: format_vqa2_multi(e)),
+    "coco_2014_vqa_multi": AcademicSpec(
+        "coco_2014_vqa_multi", _load_vqa2_multi, lambda e, r, s: format_vqa2_multi(e)
+    ),
     "text_vqa": AcademicSpec(
         "text_vqa",
         _load_text_vqa,
-        lambda e, r, s: format_vqa_short({**e, "example_id": e["metadata"]["example_id"]}, style="text_vqa"),
+        lambda e, r, s: format_vqa_short(
+            {**e, "example_id": e["metadata"]["example_id"]}, style="text_vqa"
+        ),
     ),
     "okvqa": AcademicSpec("okvqa", lambda s: _load_hf_academic("okvqa", s), _format_okvqa),
     "chart_qa_weighted": AcademicSpec(
@@ -395,12 +411,16 @@ ACADEMIC_REGISTRY: Dict[str, AcademicSpec] = {
     "doc_qa": AcademicSpec(
         "doc_qa",
         _load_doc_qa,
-        lambda e, r, s: format_vqa_short({**e, "example_id": e["metadata"]["example_id"]}, style="doc_qa"),
+        lambda e, r, s: format_vqa_short(
+            {**e, "example_id": e["metadata"]["example_id"]}, style="doc_qa"
+        ),
     ),
     "info_qa": AcademicSpec(
         "info_qa",
         _load_info_qa,
-        lambda e, r, s: format_vqa_short({**e, "example_id": e["metadata"]["example_id"]}, style="info_qa"),
+        lambda e, r, s: format_vqa_short(
+            {**e, "example_id": e["metadata"]["example_id"]}, style="info_qa"
+        ),
     ),
     "ai2_diagram_v2_mix_transparent": AcademicSpec(
         "ai2_diagram_v2_mix_transparent", lambda s: _load_hf_academic("ai2d", s), _format_ai2d
@@ -413,18 +433,24 @@ ACADEMIC_REGISTRY: Dict[str, AcademicSpec] = {
     "a_okvqa_da": AcademicSpec(
         "a_okvqa_da",
         lambda s: _load_a_okvqa(s, direct_answer=True),
-        lambda e, r, s: format_vqa_short({**e, "example_id": e["metadata"]["example_id"]}, style="a_okvqa_da"),
+        lambda e, r, s: format_vqa_short(
+            {**e, "example_id": e["metadata"]["example_id"]}, style="a_okvqa_da"
+        ),
     ),
     "science_qa_img": AcademicSpec(
         "science_qa_img",
         _load_science_qa,
         lambda e, r, s: format_mc({**e, "metadata": e["metadata"]}, style="science_qa"),
     ),
-    "tabwmp_da": AcademicSpec("tabwmp_da", lambda s: _load_hf_academic("tabwmp", s), _format_tabwmp),
+    "tabwmp_da": AcademicSpec(
+        "tabwmp_da", lambda s: _load_hf_academic("tabwmp", s), _format_tabwmp
+    ),
     "st_qa": AcademicSpec(
         "st_qa",
         _load_st_qa,
-        lambda e, r, s: format_vqa_short({**e, "example_id": e["metadata"]["example_id"]}, style="st_qa"),
+        lambda e, r, s: format_vqa_short(
+            {**e, "example_id": e["metadata"]["example_id"]}, style="st_qa"
+        ),
     ),
     "tally_qa": AcademicSpec("tally_qa", _load_tally_qa, _format_tally_qa),
     "pixmo_clocks": AcademicSpec(
@@ -475,9 +501,7 @@ def build_academic_data(name: str, split: str = "train"):
     return ACADEMIC_REGISTRY[name].loader(split)
 
 
-def format_academic_example(
-    name: str, example: Any, rng, split: str = "train"
-) -> Dict[str, Any]:
+def format_academic_example(name: str, example: Any, rng, split: str = "train") -> Dict[str, Any]:
     """Format one raw row. ``rng`` is a RandomState (or an int seed for one-off use)."""
     spec = ACADEMIC_REGISTRY[name]
     if not isinstance(rng, np.random.RandomState):

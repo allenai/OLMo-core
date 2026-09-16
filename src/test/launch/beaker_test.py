@@ -1,8 +1,30 @@
 import os
 
 import pytest
+from gantry.api import GitRepoState
 
-from olmo_core.launch.beaker import OLMoCoreBeakerImage, get_beaker_client
+from olmo_core.launch.beaker import (
+    BeakerLaunchConfig,
+    OLMoCoreBeakerImage,
+    get_beaker_client,
+)
+
+
+@pytest.mark.parametrize("min_runtime", [None, "8h"])
+def test_min_runtime_preserves_preemptible_default(monkeypatch, min_runtime):
+    config = BeakerLaunchConfig(
+        name="test",
+        cmd=["echo", "ok"],
+        allow_dirty=True,
+        min_runtime=min_runtime,
+        git=GitRepoState("allenai/OLMo-core", "https://github.com/allenai/OLMo-core", "main"),
+    )
+    monkeypatch.setattr(config, "_resolve_beaker_image", lambda: "image")
+
+    recipe, _ = config._build_recipe(object(), follow=False, slack_notifications=False)
+
+    assert recipe.min_runtime == min_runtime
+    assert recipe.preemptible == (config.preemptible if min_runtime is None else None)
 
 
 def test_get_beaker_client_caching():

@@ -24,10 +24,11 @@ from olmo_core.data.composable import (
     InstanceSourceConfig,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
-from olmo_core.distributed.utils import get_local_rank
+from olmo_core.distributed.utils import barrier, get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (
+    Trainer,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -44,7 +45,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -88,19 +89,19 @@ class CommonComponents(Config):
 
 @dataclass
 class DataComponents(Config):
-    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    dataset: Config | List[InstanceSourceConfig]
     data_loader: DataLoaderConfig
 
 
 @dataclass
 class ExperimentConfig(Config):
     run_name: str
-    launch: Optional[BeakerLaunchConfig]
-    model: TransformerConfig
-    dataset: NumpyDatasetConfig | List[InstanceSourceConfig]
+    model: Config
+    dataset: Config | List[InstanceSourceConfig]
     data_loader: DataLoaderConfig
     train_module: TrainModuleConfig
     trainer: TrainerConfig
+    launch: Optional[BeakerLaunchConfig] = None
     init_seed: int = 12536
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
@@ -112,6 +113,7 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    eval_checkpoints = "eval_checkpoints"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
@@ -126,17 +128,20 @@ class SubCmd(StrEnum):
             prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
+        elif self == SubCmd.eval_checkpoints:
+            prepare_training_environment(backend=config.backend)
         else:
             raise NotImplementedError(self)
 
     def run(self, config: ExperimentConfig):
         if get_local_rank() == 0:
             print(config)
-            print(
-                "\n"
-                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
-                f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
-            )
+            if isinstance(config.model, TransformerConfig):
+                print(
+                    "\n"
+                    f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
+                    f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
+                )
 
         if self == SubCmd.launch:
             launch(config)
@@ -164,6 +169,9 @@ class SubCmd(StrEnum):
             prep(config)
         elif self == SubCmd.launch_prep:
             launch_prep(config)
+        elif self == SubCmd.eval_checkpoints:
+            eval_checkpoints(config)
+            teardown_training_environment()
         else:
             raise NotImplementedError(self)
 
@@ -327,8 +335,8 @@ def build_config(
     *,
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
     data_config_builder: Callable[..., DataComponents] = build_default_data_components,
-    model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
+    model_config_builder: Callable[[CommonComponents], Config],
+    train_module_config_builder: Callable[[CommonComponents], TrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
@@ -352,10 +360,10 @@ def build_config(
         ``CliContext`` instance and return a ``CommonComponents`` instance.
     :param data_config_builder: Function to build data components. This should accept a
         ``CommonComponents`` instance and return a ``DataComponents`` instance.
-    :param model_config_builder: Function to build the transformer model configuration. This should accept a
-        ``CommonComponents`` instance and return a ``TransformerConfig`` instance.
+    :param model_config_builder: Function to build the model configuration. This should accept a
+        ``CommonComponents`` instance and return a config with a ``build(init_device)`` method.
     :param train_module_config_builder: Function to build the training module configuration. This should accept a
-        ``CommonComponents`` instance and return a ``TransformerTrainModuleConfig`` instance.
+        ``CommonComponents`` instance and return a ``TrainModuleConfig`` instance.
     :param trainer_config_builder: Function to build the trainer configuration. This should accept a
         ``CommonComponents`` instance and return a ``TrainerConfig`` instance.
     :param finalize_config: Optional function to finalize the configuration. This should accept an
@@ -441,6 +449,15 @@ def _build_data_loader(
             assert isinstance(source, InstanceSourceConfig)
             sources.append(source.build(work_dir))
         return config.data_loader.build(*sources, dp_process_group=dp_process_group)
+    elif isinstance(config.dataset, Config):
+        build = getattr(config.dataset, "build", None)
+        if not callable(build):
+            raise TypeError(f"Dataset config {type(config.dataset).__name__} must define build()")
+        dataset = build()
+        loader = config.data_loader.build(dataset, dp_process_group=dp_process_group)
+        # Finish source preparation on all ranks before Trainer creates bookkeeping groups.
+        barrier()
+        return loader
     else:
         raise NotImplementedError(type(config.data_loader))
 
@@ -457,12 +474,13 @@ def prep(config: ExperimentConfig):
     data_loader.reshuffle(epoch=1)
 
 
-def train(config: ExperimentConfig):
+def train(config: ExperimentConfig) -> Trainer:
+    """Build and fit an experiment, returning the trainer when training finishes."""
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
     # Build components.
-    model = config.model.build(init_device="meta")
+    model = config.model.build(init_device="meta")  # type: ignore[attr-defined]
     train_module = config.train_module.build(model)
     data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
@@ -473,6 +491,26 @@ def train(config: ExperimentConfig):
 
     # Train (also handles checkpoint loading)
     trainer.fit()
+    return trainer
+
+
+def eval_checkpoints(config: ExperimentConfig) -> None:
+    """Evaluate checkpoints with the experiment's configured validation callbacks."""
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components in eval-only mode (no optimizer, no DP wrapping).
+    model = config.model.build(init_device="meta")  # type: ignore[attr-defined]
+    train_module = config.train_module.build(model, eval_only=True)
+    data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader, eval_only=True)
+
+    # Record the config to W&B/Comet and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Eval (also handles checkpoint loading)
+    trainer.eval_checkpoints()
 
 
 def main(*, config_builder: ConfigBuilder) -> None:
@@ -504,6 +542,14 @@ def main(*, config_builder: ConfigBuilder) -> None:
 
     """
 
+    cli_context = parse_cli_args()
+    config = config_builder(cli_context)
+    cli_context.cmd.prepare_environment(config)
+    cli_context.cmd.run(config)
+
+
+def parse_cli_args() -> CliContext:
+    """Parse the standard internal experiment command line."""
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
 
@@ -528,8 +574,4 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
 
     script, cmd, run_name, cluster, *overrides = sys.argv
     cmd = SubCmd(cmd)
-    cli_context = CliContext(script, cmd, run_name, cluster, overrides)
-
-    config: ExperimentConfig = config_builder(cli_context)
-    cmd.prepare_environment(config)
-    cmd.run(config)
+    return CliContext(script, cmd, run_name, cluster, overrides)
