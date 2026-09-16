@@ -2583,8 +2583,6 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             mixture = self.source_mixture_config.build(
                 npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
-            # Keep path and allocation indices aligned after dropping empty sources.
-            mixture.filter_zero_token_paths = True
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
                 seed=self.source_mixture_config.seed,

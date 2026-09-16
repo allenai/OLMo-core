@@ -2,10 +2,10 @@
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import ClassVar
 
 from olmo_core.distributed.utils import get_rank
+from olmo_core.io import file_exists, resource_path
 
 from .callback import Callback
 
@@ -28,6 +28,7 @@ class RestoreMetricsCallback(Callback):
         if get_rank() != 0 or not self.trainer.checkpoint_loaded:
             return
         callback = self.trainer.callbacks[self.metrics_callback]
-        path = Path(self.trainer.save_folder) / callback.step_metrics_fname.format(step=self.step)
-        if path.is_file():
+        filename = callback.step_metrics_fname.format(step=self.step)
+        if file_exists(f"{self.trainer.save_folder}/{filename}"):
+            path = resource_path(self.trainer.save_folder, filename)
             callback.log_metrics(self.step, json.loads(path.read_text()))

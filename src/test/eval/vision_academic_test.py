@@ -1,9 +1,11 @@
 """Scientific contracts and task-level restart behavior for academic vision evaluation."""
 
+import contextlib
 import copy
 import io
 import json
 import os
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +14,9 @@ import torch
 from PIL import Image
 
 from olmo_core.eval import vision_academic
+from olmo_core.train.train_module.transformer.multimodal_train_module import (
+    MultimodalOLMoDDPTrainModule,
+)
 
 
 @pytest.fixture(scope="module")
@@ -189,28 +194,87 @@ def test_generation_stop_counts_distinguish_eos_and_cap(academic):
     assert counts == {control: {"eos": 1, "max_tokens": 1} for control in academic.CONTROLS}
 
 
-def test_image_encoding_runs_under_inference_mode(academic, monkeypatch):
+@pytest.mark.parametrize("multiple_choice", [True, False], ids=["mc", "free"])
+@pytest.mark.parametrize(
+    "outer_context",
+    [contextlib.nullcontext, torch.no_grad, torch.inference_mode],
+    ids=["grad", "no_grad", "inference"],
+)
+def test_prediction_uses_eager_grad_context_and_detaches_graphs(
+    academic, monkeypatch, multiple_choice, outer_context
+):
+    context_events = []
+    context_active = False
+    feature_graphs = []
+    logits_graphs = []
+    forwarded_features = []
+    forwarded_inputs = []
+
+    @contextlib.contextmanager
+    def set_stance(stance):
+        nonlocal context_active
+        assert stance == "force_eager"
+        context_events.append("enter")
+        context_active = True
+        try:
+            yield
+        finally:
+            context_active = False
+            context_events.append("exit")
+
+    monkeypatch.setattr(torch.compiler, "set_stance", set_stance)
+
+    def assert_safe_context():
+        assert context_active
+        assert torch.is_grad_enabled()
+        assert not torch.is_inference_mode_enabled()
+
     class FakeModel:
         def encode_images(self, images, pooling):
-            assert torch.is_inference_mode_enabled()
-            assert not torch.is_grad_enabled()
-            return torch.zeros(1)
+            assert_safe_context()
+            assert not images.is_inference()
+            assert not pooling.is_inference()
+            features = torch.ones(1, requires_grad=True) * 2
+            feature_graphs.append(weakref.ref(features))
+            return features
 
     class FakeTrainModule:
         device = torch.device("cpu")
+        _eval_batch_context = MultimodalOLMoDDPTrainModule._eval_batch_context
 
         def __init__(self):
             self.model_parts = [FakeModel()]
 
-        def model_forward_no_pipeline(self, *args, **kwargs):
+        def model_forward_no_pipeline(self, input_ids, **kwargs):
+            assert_safe_context()
+            assert all(graph() is None for graph in feature_graphs + logits_graphs)
+            assert not input_ids.is_inference()
+            for key in ("token_type_ids", "position_ids", "logits_to_keep"):
+                assert not kwargs[key].is_inference()
+            features = kwargs["encoded_image_features"]
+            assert not features.is_inference()
+            assert not features.requires_grad
+            assert features.grad_fn is None
+            forwarded_features.append(features)
+            forwarded_inputs.append(input_ids.clone())
             logits = torch.zeros((1, 1, 100))
-            logits[0, 0, 10] = 2.0
-            logits[0, 0, 11] = 1.0
+            if multiple_choice or len(forwarded_inputs) == 1:
+                logits[0, 0, 10] = 2.0
+                logits[0, 0, 11] = 1.0
+            else:
+                logits[0, 0, 2] = 2.0
+            logits = logits * torch.ones((), requires_grad=True)
+            logits_graphs.append(weakref.ref(logits))
             return logits
 
     class FakeTokenizer:
         pad_token_id = 0
         eos_token_id = 2
+
+        def decode(self, tokens, *, skip_special_tokens):
+            assert skip_special_tokens
+            assert tokens == [10, 2]
+            return "first"
 
     inference = academic._NativeAcademicInference(
         FakeTrainModule(),
@@ -218,7 +282,7 @@ def test_image_encoding_runs_under_inference_mode(academic, monkeypatch):
         SimpleNamespace(image_token_ids=frozenset({90})),
         max_sequence_length=8192,
         max_crops=academic.DEFAULT_MAX_CROPS,
-        max_new_tokens=24,
+        max_new_tokens=2,
         sequence_bucket_size=128,
     )
     inference._prepare_visual = lambda image: (
@@ -227,6 +291,14 @@ def test_image_encoding_runs_under_inference_mode(academic, monkeypatch):
         [90],
         (14, 14, 14, 14),
     )
+
+    def consensus_token(token):
+        # The forward's output tensor is released before prediction processing, not
+        # held together with its autograd graph until the following forward returns.
+        assert all(graph() is None for graph in logits_graphs)
+        return token
+
+    inference._consensus_token = consensus_token
     monkeypatch.setattr(
         academic, "document_prompt_ids", lambda tokenizer, prompt, image_ids: [1, 90, 2]
     )
@@ -236,17 +308,33 @@ def test_image_encoding_runs_under_inference_mode(academic, monkeypatch):
         lambda tokenizer, letter: [10 + "ABCDEFGHIJKLMNOPQRSTUVWXYZ".index(letter)],
     )
     example = academic.AcademicExample(
-        task="ai2d",
+        task="ai2d" if multiple_choice else "docvqa",
         example_id="ai2d-0",
         source_position="0",
         visual=None,
         image_reference=None,
         question="Choose.",
-        options=("first", "second"),
-        answer_index=0,
+        options=("first", "second") if multiple_choice else (),
+        answer_index=0 if multiple_choice else None,
     )
-    output = inference.predict(example, Image.new("RGB", (2, 2)))
-    assert output["predicted_index"] == 0
+    with outer_context():
+        previous_modes = (torch.is_grad_enabled(), torch.is_inference_mode_enabled())
+        output = inference.predict(example, Image.new("RGB", (2, 2)))
+        assert previous_modes == (torch.is_grad_enabled(), torch.is_inference_mode_enabled())
+    if multiple_choice:
+        assert output["predicted_index"] == 0
+        assert output["prediction"] == "A"
+        assert len(forwarded_inputs) == 1
+    else:
+        assert output["prediction"] == "first"
+        assert output["generated_token_ids"] == [10, 2]
+        assert output["stop_reason"] == "eos"
+        assert len(forwarded_inputs) == 2
+        assert forwarded_inputs[1][0, :4].tolist() == [1, 90, 2, 10]
+        assert forwarded_features[0] is forwarded_features[1]
+    assert len(feature_graphs) == 1
+    assert all(graph() is None for graph in feature_graphs + logits_graphs)
+    assert context_events == ["enter", "exit", "enter", "exit"]
     assert output["image_grid_signature"] == [14, 14, 14, 14]
 
 
@@ -413,10 +501,21 @@ def _panel_result(academic, manifest, examples):
 def test_atomic_task_resume_and_cpu_merge(academic, selected_panel, tmp_path, monkeypatch):
     manifest, examples = selected_panel
     result = _panel_result(academic, manifest, examples)
-    definition = {
-        "benchmark": academic.benchmark_definition(manifest),
-        "execution": {"checkpoint": "step500"},
+    checkpoint = tmp_path / "step500"
+    (checkpoint / "model_and_optim").mkdir(parents=True)
+    (checkpoint / "model_and_optim" / ".metadata").write_bytes(b"state metadata")
+    (checkpoint / ".metadata.json").write_text("{}")
+    saved = {
+        "dataset": {
+            "tokenizer": {"identifier": academic.TOKENIZER_ID, "pad_token_id": 100277},
+            "tokenizer_revision": academic.TOKENIZER_REVISION,
+        },
+        "model": {"vision": {}, "lm": {"vocab_size": 100352}, "image_patch_token_id": 100280},
     }
+    (checkpoint / "config.json").write_text(json.dumps(saved))
+    definition = academic._definition(checkpoint, manifest)
+    assert definition["benchmark"] == academic.benchmark_definition(manifest)
+    assert definition["execution"]["forward_context"] == "eager_grad_enabled"
     output = tmp_path / "academic.json"
     task_path = academic._task_path(output, "docvqa")
     with pytest.raises(FileNotFoundError):
@@ -447,6 +546,18 @@ def test_atomic_task_resume_and_cpu_merge(academic, selected_panel, tmp_path, mo
     other["execution"]["checkpoint"] = "step1000"
     with pytest.raises(ValueError, match="mismatched"):
         academic.merge_results(output, manifest, other)
+
+    # Results without an explicit forward context cannot be resumed or mixed with
+    # predictions from eager, grad-enabled execution.
+    previous = academic._read_json(task_path)
+    previous["definition"]["execution"].pop("forward_context")
+    task_path.write_text(json.dumps(previous))
+    with pytest.raises(ValueError, match="mismatched"):
+        academic._load_task_result(task_path, "docvqa", manifest, definition)
+    with pytest.raises(ValueError, match="mismatched"):
+        academic.merge_results(output, manifest, definition)
+    with pytest.raises(ValueError, match="another evaluation"):
+        academic._write_result(task_path, {**previous, "definition": definition})
 
 
 @pytest.mark.parametrize("change", ["score", "aggregate", "token", "order", "missing"])

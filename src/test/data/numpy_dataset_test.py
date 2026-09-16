@@ -950,7 +950,10 @@ def test_guess_dtype():
     assert config.get_dtype() == np.uint32
 
 
-def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Path):
+@pytest.mark.parametrize("small_instances", [0, 10])
+def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(
+    tmp_path: Path, small_instances
+):
     # A path duplicated in a mixture shares one indices file, but each occurrence keeps its own
     # token allocation in `path_offset_index`. If a later occurrence has a larger allocation than
     # the first, the shared file must be sized for the larger one, or reads for that occurrence's
@@ -959,7 +962,7 @@ def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Pa
     seq_len = 4
     ((path, _),) = mk_mmaps(tmp_path, "dup", 1, 20 * 1000, npdtype, eos=0, seq_length=seq_len)
 
-    small_tokens = 10 * seq_len  # occurrence idx=0
+    small_tokens = small_instances * seq_len  # occurrence idx=0
     large_tokens = 40 * seq_len  # occurrence idx=1 (the larger, later duplicate)
 
     ds = NumpyFSLDatasetMixture(

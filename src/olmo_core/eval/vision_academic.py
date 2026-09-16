@@ -917,6 +917,7 @@ class _NativeAcademicInference:
             )
         return int(extrema[0])
 
+    @torch.inference_mode(False)
     def predict(
         self,
         example: AcademicExample,
@@ -931,8 +932,11 @@ class _NativeAcademicInference:
             else _free_answer_prompt(example.question)
         )
         prompt_ids = document_prompt_ids(self.tokenizer, prompt, image_ids=image_ids)
-        with torch.inference_mode():
-            encoded_features = self.model.encode_images(images, pooling)
+        # Reuse the eager, grad-enabled attention regime from native evaluation. The
+        # decorator also keeps inputs ordinary tensors under an enclosing inference mode.
+        # Detach projected features so autoregressive forwards do not retain the vision graph.
+        with self.train_module._eval_batch_context():
+            encoded_features = self.model.encode_images(images, pooling).detach()
         if is_multiple_choice:
             candidate_encodings = [
                 response_ids(self.tokenizer, letter)
@@ -947,7 +951,7 @@ class _NativeAcademicInference:
             logits_position = torch.tensor(
                 [[len(prompt_ids) - 1]], dtype=torch.long, device=self.device
             )
-            with torch.inference_mode():
+            with self.train_module._eval_batch_context():
                 logits = self.train_module.model_forward_no_pipeline(
                     input_ids,
                     encoded_image_features=encoded_features,
@@ -957,6 +961,7 @@ class _NativeAcademicInference:
                 )
             if not isinstance(logits, torch.Tensor):
                 raise TypeError(f"Expected academic logits tensor, got {type(logits).__name__}")
+            logits = logits.detach()
             candidate_ids = torch.tensor(
                 [ids[0] for ids in candidate_encodings],
                 dtype=torch.long,
@@ -986,7 +991,7 @@ class _NativeAcademicInference:
         input_ids, token_type_ids, position_ids = self._inputs(prompt_ids, required=required)
         generated: list[int] = []
         stop_reason = "max_tokens"
-        with torch.inference_mode():
+        with self.train_module._eval_batch_context():
             for _ in range(self.max_new_tokens):
                 current_length = len(prompt_ids) + len(generated)
                 logits_position = torch.tensor(
@@ -1001,6 +1006,7 @@ class _NativeAcademicInference:
                 )
                 if not isinstance(logits, torch.Tensor):
                     raise TypeError(f"Expected academic logits tensor, got {type(logits).__name__}")
+                logits = logits.detach()
                 next_token = int(logits[0, 0, : self.text_vocab_size].argmax().item())
                 next_token = self._consensus_token(next_token)
                 generated.append(next_token)
@@ -1299,6 +1305,7 @@ def _definition(checkpoint: Path, manifest: Mapping[str, Any]) -> dict[str, Any]
             "world_size": 8,
             "expert_parallel_path": "sync_1d",
             "attention_backend": "flex",
+            "forward_context": "eager_grad_enabled",
             "sequence_bucket_size": 128,
             "torch_version": torch.__version__,
         },

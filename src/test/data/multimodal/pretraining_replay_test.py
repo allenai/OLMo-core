@@ -239,6 +239,80 @@ def test_source_mixture_preserves_sampling_allocation(tmp_path, monkeypatch):
         replay_config.build()
 
 
+def _zero_allocation_mixture_config(tmp_path):
+    unused, a, b = (tmp_path / name for name in ("unused.npy", "a.npy", "b.npy"))
+    np.array([1, 2, 3, 126], dtype=np.uint16).tofile(unused)
+    np.tile(np.array([5, 5, 5, 5, 5, 5, 5, 126], dtype=np.uint16), 8).tofile(a)
+    np.tile(np.array([11, 12, 13, 126], dtype=np.uint16), 16).tofile(b)
+    config = _config(
+        unused,
+        work_dir=str(tmp_path / "cache"),
+        instance_filter_config=InstanceFilterConfig(
+            repetition_min_period=1, repetition_max_period=2, repetition_max_count=3
+        ),
+    )
+    config.paths = None
+    config.source_mixture_config = SourceMixtureDatasetConfig(
+        source_list=SourceMixtureList(
+            sources=[
+                SourceMixtureConfig("zero", 0.0, [str(unused), str(a)]),
+                SourceMixtureConfig("positive", 1.0, [str(a), str(b), str(a)]),
+            ]
+        ),
+        requested_tokens=48,
+        global_batch_size=4,
+        render_tables=False,
+    )
+    paths = list(map(str, [unused, a, a, b, a]))
+    config.metadata = [{"occurrence": i} for i in range(len(paths))]
+    return config, paths
+
+
+@pytest.mark.parametrize("filtered_saved_paths", [False, True])
+def test_source_mixture_replays_legacy_and_filtered_zero_allocations(
+    tmp_path, monkeypatch, filtered_saved_paths
+):
+    import concurrent.futures
+    from functools import partial
+
+    monkeypatch.setattr(
+        concurrent.futures,
+        "ProcessPoolExecutor",
+        partial(concurrent.futures.ProcessPoolExecutor, max_workers=1),
+    )
+    config, paths = _zero_allocation_mixture_config(tmp_path)
+    checkpoint = tmp_path / "checkpoint"
+    _save_checkpoint(checkpoint, config, paths[2:] if filtered_saved_paths else paths)
+    replay = PretrainingReplayConfig(checkpoint=str(checkpoint)).build()
+    standard = config.build()
+    standard.prepare()
+
+    assert list(replay.dataset.paths) == list(standard.paths) == paths
+    assert replay.dataset.file_sizes == (0, 0, 32, 32, 32)
+    assert len(replay) == len(standard) == 12
+    # A zero-only path needs no index file; an earlier zero occurrence of a positive path
+    # must not prevent its shared index from being prepared.
+    assert not standard._get_instance_indices_path(paths[0]).exists()
+    assert standard._get_instance_indices_path(paths[1]).exists()
+    for i in range(len(replay)):
+        np.testing.assert_array_equal(replay[i]["input_ids"], standard[i]["input_ids"])
+        assert replay[i]["metadata"]["occurrence"] == 2 + i // 4
+    np.testing.assert_array_equal(replay[0]["labels"], [-100] * 4)
+    np.testing.assert_array_equal(replay[0]["loss_masks"], [1, 1, 1, 0])
+    np.testing.assert_array_equal(replay[4]["labels"], [12, 13, 126, -100])
+
+
+@pytest.mark.parametrize(
+    "saved_indices", [[3, 2, 4], [2, 3], [2, 3, 4, 4], [2, 0, 4], [0, 1, 3, 2, 4]]
+)
+def test_source_mixture_rejects_changed_positive_occurrences(tmp_path, saved_indices):
+    config, paths = _zero_allocation_mixture_config(tmp_path)
+    checkpoint = tmp_path / "checkpoint"
+    _save_checkpoint(checkpoint, config, [paths[i] for i in saved_indices])
+    with pytest.raises(OLMoConfigurationError, match="Rebuilt source mixture differs"):
+        PretrainingReplayConfig(checkpoint=str(checkpoint)).build()
+
+
 def test_alignment_ancestry_and_cycle_detection(tmp_path):
     parent = tmp_path / "pretraining"
     config = _config(tmp_path / "tokens.npy")

@@ -179,17 +179,18 @@ class PretrainingReplayConfig(Config):
                         f"Replay tokenizer {name} differs from pretraining"
                     )
         dataset = config.build()
-        # A path list cannot represent weighted allocations or unselected source files.
-        # Rebuild with the original mixture and check its selected path order instead.
-        if (
-            config.source_mixture_config is not None
-            and saved_paths is not None
-            and list(map(str, dataset.paths)) != saved_paths
-        ):
-            raise OLMoConfigurationError(
-                "Rebuilt source mixture differs from checkpoint data_paths.txt. "
-                "Set an explicit replay dataset if changing the corpus is intended."
-            )
+        # A path list cannot represent weighted allocations. Accept full or positive-allocation
+        # checkpoint path lists, retaining allocation order, duplicates, and per-path metadata.
+        if config.source_mixture_config is not None and saved_paths is not None:
+            paths = list(map(str, dataset.paths))
+            if paths != saved_paths:
+                # Mixture file sizes are allocated token counts in bytes, not physical sizes.
+                positive_paths = [path for path, size in zip(paths, dataset.file_sizes) if size > 0]
+                if positive_paths != saved_paths:
+                    raise OLMoConfigurationError(
+                        "Rebuilt source mixture differs from checkpoint data_paths.txt. "
+                        "Set an explicit replay dataset if changing the corpus is intended."
+                    )
         dataset.prepare()
         validation_indices = []
         if self.split != "all":
