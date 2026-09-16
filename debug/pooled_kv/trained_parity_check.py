@@ -78,23 +78,30 @@ IDS = P.IDS
 DS64_SHARDS = f"{W}/ds64/shards"
 CKPT_ROOT = f"{W}/ctc_suite/ckpts"
 
-# arm -> (task, keep_mode, keep_value, header_stop_id, header_stop_count, slot_mode)
+# arm -> (task, keep_mode, keep_value, header_stop_id, header_stop_count, slot_mode, header_extra_tokens)
 #   keep_mode "gold_blind"      -> resolve_keep_docs(holder=None, keep_prob=keep_value)   (--st-keep-prob)
 #   keep_mode "gold_plus_random" -> make_fingerprint_keep_docs_fn(..., n_random_frac=keep_value, mode="gold_plus_random")  (--st-keep-frac)
 # Keep in sync with debug/ds64/launch_ds64.py:ARM_EXTRA. header_stop_id 25 = ':' (oolong/contradiction
-# headers); None = no header freeing (nq's kv33).
+# headers), 5491 = "]:" (outlier's `Document [N]:`); None = no header freeing (nq's kv33).
+# header_extra_tokens = --st-header-extra-tokens (first-K real BODY tokens kept after the header,
+# 2026-09-15 first-k recipe: cc00/ck32/ck64 (outlier), chk32/chk64 (contradiction)). 0 for every
+# arm registered before that recipe existed.
 ARMS = {
-    "occ00":  ("oolong", "gold_blind", 0.0, 25, 3, "cent_cmean"),
-    "occ08":  ("oolong", "gold_blind", 0.0833, 25, 3, "cent_cmean"),
-    "ohdr08": ("oolong", "gold_blind", 0.0833, 25, 3, "mean"),
-    "ohdr17": ("oolong", "gold_blind", 0.1667, 25, 3, "mean"),
-    "ohdr33": ("oolong", "gold_blind", 0.3333, 25, 3, "mean"),
-    "hdr03":  ("contradiction", "gold_plus_random", 0.0278, 25, 1, "mean"),
-    "hdr08":  ("contradiction", "gold_plus_random", 0.0833, 25, 1, "mean"),
-    "hdr17":  ("contradiction", "gold_plus_random", 0.1667, 25, 1, "mean"),
-    "hdr33":  ("contradiction", "gold_plus_random", 0.3333, 25, 1, "mean"),
-    "kv17":   ("nq", "gold_plus_random", 0.1667, None, 1, "mean"),
-    "kv33":   ("nq", "gold_plus_random", 0.3333, None, 1, "mean"),
+    "occ00":  ("oolong", "gold_blind", 0.0, 25, 3, "cent_cmean", 0),
+    "occ08":  ("oolong", "gold_blind", 0.0833, 25, 3, "cent_cmean", 0),
+    "ohdr08": ("oolong", "gold_blind", 0.0833, 25, 3, "mean", 0),
+    "ohdr17": ("oolong", "gold_blind", 0.1667, 25, 3, "mean", 0),
+    "ohdr33": ("oolong", "gold_blind", 0.3333, 25, 3, "mean", 0),
+    "hdr03":  ("contradiction", "gold_plus_random", 0.0278, 25, 1, "mean", 0),
+    "hdr08":  ("contradiction", "gold_plus_random", 0.0833, 25, 1, "mean", 0),
+    "hdr17":  ("contradiction", "gold_plus_random", 0.1667, 25, 1, "mean", 0),
+    "hdr33":  ("contradiction", "gold_plus_random", 0.3333, 25, 1, "mean", 0),
+    "kv17":   ("nq", "gold_plus_random", 0.1667, None, 1, "mean", 0),
+    "kv33":   ("nq", "gold_plus_random", 0.3333, None, 1, "mean", 0),
+    # first-k recipe (records/ds64-overnight-2026-09-14.md 09-15 16:40/21:30): gold-blind, keep 0.0,
+    # cent_cmean slot, header real + K real body tokens/doc kept.
+    "ck64":   ("outlier", "gold_blind", 0.0, 5491, 1, "cent_cmean", 64),
+    "chk32":  ("contradiction", "gold_blind", 0.0, 25, 1, "cent_cmean", 32),
 }
 
 
@@ -205,14 +212,21 @@ def grade(task, gold_text, pred_text):
         return retrieval_f1(pred_ids, gold_ids), float(retrieval_exact_match(pred_ids, gold_ids))
     if task == "oolong":
         return grade_oolong(gold_text, pred_text)
+    if task == "outlier":
+        # Same set-F1 formula as ctc_eval's _eval_outlier, applied to bracket ids parsed straight
+        # from the row's own decoded gold/pred text (already in the answer's 1-indexed display
+        # convention -- see module docstring, same trick as the nq branch above).
+        gold_ids, pred_ids = parse_ids(gold_text), parse_ids(pred_text)
+        return set_f1(pred_ids, gold_ids), float(set(pred_ids) == set(gold_ids))
     raise ValueError(task)
 
 
-def chunk_ids_for(x_cpu, header, header_stop_id, header_stop_count):
+def chunk_ids_for(x_cpu, header, header_stop_id, header_stop_count, header_extra_tokens=0):
     cid = build_chunk_ids_from_tokens(x_cpu, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end, eos_id=IDS.eos, mode="chunked")
-    if header and header_stop_id is not None:
+    if (header and header_stop_id is not None) or header_extra_tokens > 0:
         cid = mark_doc_headers_free(cid, x_cpu, doc_start_id=IDS.doc_start, doc_end_id=IDS.doc_end,
-                                     stop_id=header_stop_id, stop_count=header_stop_count, cap=32)
+                                     stop_id=header_stop_id if header else None, stop_count=header_stop_count,
+                                     extra_tokens=header_extra_tokens, cap=32)
     return cid
 
 
@@ -273,7 +287,7 @@ def table(acc):
 
 @torch.no_grad()
 def run_rung(a, task, arm_name, rung, rows_n, gen_rows_n, model, pst, tok, keep_mode, keep_val,
-             header_stop_id, header_stop_count, slot_mode):
+             header_stop_id, header_stop_count, slot_mode, header_extra_tokens=0):
     shard = f"{a.work}/{task}_{rung}"
     if a.jsonl:
         jsonl = a.jsonl
@@ -333,8 +347,9 @@ def run_rung(a, task, arm_name, rung, rows_n, gen_rows_n, model, pst, tok, keep_
                 pst["header_stop_id"] = header_stop_id if header else None
                 pst["header_stop_count"] = header_stop_count
                 pst["header_cap"] = 32
+                pst["header_extra_tokens"] = header_extra_tokens
                 pst["slot_mode"] = slot_mode
-                cid = chunk_ids_for(x.cpu(), header, header_stop_id, header_stop_count)
+                cid = chunk_ids_for(x.cpu(), header, header_stop_id, header_stop_count, header_extra_tokens)
                 n_docs = int(cid.max()) + 1
                 if keep_mode == "gold_blind":
                     keep_mask = resolve_keep_docs(cid, n_docs, holder=None, keep_prob=float(keep_val),
@@ -438,11 +453,12 @@ def main():
     if arm_name is None or arm_name not in ARMS:
         raise SystemExit(f"could not resolve an arm from --ckpt-name {a.ckpt_name!r} / --arm {a.arm!r}; "
                           f"known arms: {sorted(ARMS)}")
-    task, keep_mode, keep_val, header_stop_id, header_stop_count, slot_mode = ARMS[arm_name]
+    task, keep_mode, keep_val, header_stop_id, header_stop_count, slot_mode, header_extra_tokens = ARMS[arm_name]
     if a.task != "auto" and a.task != task:
         raise SystemExit(f"--task {a.task} disagrees with arm {arm_name}'s task {task}")
     log(f"ckpt {a.ckpt_name}  arm {arm_name}  task {task}  keep_mode={keep_mode} keep={keep_val} "
-        f"header_stop_id={header_stop_id} (count {header_stop_count}) slot_mode={slot_mode}")
+        f"header_stop_id={header_stop_id} (count {header_stop_count}) slot_mode={slot_mode} "
+        f"header_extra_tokens={header_extra_tokens}")
 
     rungs = [r for r in a.rungs.split(",") if r]
     rows_l = [int(x) for x in a.rows.split(",")]
@@ -481,7 +497,8 @@ def main():
     summaries = {}
     for rung, rows_n, gen_rows_n in zip(rungs, rows_l, gen_l):
         summaries[rung] = run_rung(a, task, arm_name, rung, rows_n, gen_rows_n, model, pst, tok,
-                                    keep_mode, keep_val, header_stop_id, header_stop_count, slot_mode)
+                                    keep_mode, keep_val, header_stop_id, header_stop_count, slot_mode,
+                                    header_extra_tokens)
     parity_report(a.ckpt_name, arm_name, dict(zip(rungs, rows_l)), summaries)
 
 
