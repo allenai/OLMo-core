@@ -445,9 +445,15 @@ class TransformerTrainModuleConfig(TrainModuleConfig):
         :param model: The :class:`~olmo_core.nn.transformer.Transformer` model to train.
         :param device: The device to train on.
         :param eval_only: If ``True``, build the train module without an optimizer (eval-only).
+            Not supported with pipeline parallelism.
         """
         from .pipeline_train_module import TransformerPipelineTrainModule
         from .train_module import TransformerTrainModule
+
+        if eval_only and self.pp_config is not None:
+            raise OLMoConfigurationError(
+                "eval_only=True is not supported with pipeline parallelism"
+            )
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         if (autocast_precision := kwargs.pop("autocast_precision", None)) is not None:

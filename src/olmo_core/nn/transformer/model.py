@@ -518,6 +518,10 @@ class Transformer(nn.Module):
         if response_mask is not None:
             lm_head_kwargs["response_mask"] = move_to_device(response_mask, self.device)
         if loss_weights is not None:
+            if self.tp_enabled:
+                raise OLMoConfigurationError(
+                    "Per-token loss weights are not supported with tensor parallelism"
+                )
             if self._cp_load_balancer is not None:
                 raise OLMoConfigurationError(
                     "Per-token loss weights are not supported with context parallelism"

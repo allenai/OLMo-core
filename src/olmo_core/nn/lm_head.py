@@ -272,6 +272,8 @@ class LMHead(nn.Module):
 
         :param x: The input hidden states of shape ``(batch_size, seq_len, d_model)``.
         :param labels: (Optional) Target token IDs of shape ``(batch_size, seq_len)``. If provided, the method computes and returns the loss.
+        :param loss_weights: Optional per-token weights of shape ``(batch_size, seq_len)``.
+            Not supported with tensor parallelism.
         :param ignore_index: Specifies a target value that is ignored and does not contribute to the loss.
         :param loss_reduction: Specifies the reduction to apply to the output loss: "mean", "sum", or "none".
         :param z_loss_multiplier: (Optional) Multiplier for the z-loss regularization term.
@@ -286,6 +288,11 @@ class LMHead(nn.Module):
                   or ``(N_response, vocab_size)`` when ``response_logits_only`` is True.
                   If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
+        if loss_weights is not None and self.tp_enabled:
+            raise OLMoConfigurationError(
+                "Per-token loss weights are not supported with tensor parallelism"
+            )
+
         B = x.shape[0]
 
         h = self.norm(x) if self.norm is not None else x

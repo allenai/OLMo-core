@@ -105,6 +105,40 @@ def test_lm_head_response_logits_only_with_float_weights(head_type):
         head(narrow_inputs.detach(), response_logits_only=True, logits_to_keep=1)
 
 
+def _run_lm_head_loss_weights_tp_guard():
+    torch.set_num_threads(1)
+    torch.manual_seed(21)
+    mesh = dist.init_device_mesh("cpu", (get_world_size(),))
+    for layer_norm in (None, LayerNormConfig(bias=False)):
+        head = LMHeadConfig(bias=False, layer_norm=layer_norm).build(d_model=16, vocab_size=32)
+        head.apply_tp(mesh, input_layouts=(Shard(1), Replicate()))
+        inputs = distribute_tensor(
+            torch.randn(2, 6, 16, requires_grad=True),
+            device_mesh=mesh,
+            placements=(Shard(1),),
+        )
+        labels = torch.randint(0, 32, (2, 6))
+
+        # Existing unweighted TP remains usable for both forward and backward.
+        output = head(inputs, labels=labels, loss_reduction="sum")
+        assert torch.isfinite(output.loss)
+        output.loss.backward()
+        assert inputs.grad is not None
+        assert torch.isfinite(get_local_tensor(inputs.grad)).all()
+
+        with pytest.raises(OLMoConfigurationError, match="loss weights.*tensor parallelism"):
+            head(inputs, labels=labels, loss_weights=torch.ones((2, 6)), loss_reduction="sum")
+
+
+def test_lm_head_loss_weights_tp_guard():
+    run_distributed_test(
+        _run_lm_head_loss_weights_tp_guard,
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
+    )
+
+
 @requires_gpu
 def test_lm_head_fused_linear_loss(
     d_model: int = 256,

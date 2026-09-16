@@ -15,7 +15,11 @@ from olmo_core.train.train_module.transformer import (
     OLMoDDPTrainModuleConfig,
     TransformerDataParallelConfig,
     TransformerPipelineParallelConfig,
+    TransformerPipelineTrainModuleConfig,
     TransformerTrainModuleConfig,
+)
+from olmo_core.train.train_module.transformer.pipeline_train_module import (
+    TransformerPipelineTrainModule,
 )
 
 
@@ -157,3 +161,41 @@ def test_dense_train_module_builds_optimizer_by_default():
     assert tm.eval_only is False
     assert tm.optim is not None
     assert "optim" in tm.state_dict()
+
+
+@pytest.mark.parametrize(
+    "config_type", [TransformerTrainModuleConfig, TransformerPipelineTrainModuleConfig]
+)
+def test_pipeline_eval_only_rejected_before_building_module(monkeypatch, config_type):
+    def unexpected_init(*args, **kwargs):
+        raise AssertionError("Eval-only PP must be rejected before building the module")
+
+    monkeypatch.setattr(TransformerPipelineTrainModule, "__init__", unexpected_init)
+    config = config_type(
+        rank_microbatch_size=128,
+        max_sequence_length=128,
+        optim=AdamWConfig(),
+        pp_config=TransformerPipelineParallelConfig(degree=2),
+    )
+    with pytest.raises(OLMoConfigurationError, match="eval_only=True.*pipeline parallelism"):
+        config.build(_tiny_dense_model(), device=torch.device("cpu"), eval_only=True)
+
+
+def test_pipeline_eval_only_constructor_rejected_before_building_mesh(monkeypatch):
+    def unexpected_build(*args, **kwargs):
+        raise AssertionError("Eval-only PP must be rejected before building the mesh")
+
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.pipeline_train_module.build_world_mesh",
+        unexpected_build,
+    )
+    with pytest.raises(OLMoConfigurationError, match="eval_only=True.*pipeline parallelism"):
+        TransformerPipelineTrainModule(
+            model=_tiny_dense_model(),
+            rank_microbatch_size=128,
+            max_sequence_length=128,
+            optim=AdamWConfig(),
+            pp_config=TransformerPipelineParallelConfig(degree=2),
+            device=torch.device("cpu"),
+            eval_only=True,
+        )

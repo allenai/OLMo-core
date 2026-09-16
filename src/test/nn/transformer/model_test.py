@@ -65,6 +65,20 @@ from olmo_core.utils import get_default_device, seed_all
 log = logging.getLogger(__name__)
 
 
+def test_transformer_rejects_loss_weights_with_tp(monkeypatch):
+    model = TransformerConfig.llama_like(
+        d_model=32,
+        vocab_size=64,
+        n_layers=2,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=64, bias=False),
+    ).build(init_device="meta")
+    monkeypatch.setattr(model, "_tp_enabled", True)
+    inputs = torch.zeros((2, 6), dtype=torch.long)
+    with pytest.raises(OLMoConfigurationError, match="loss weights.*tensor parallelism"):
+        model._prepare_inputs(inputs, labels=inputs, loss_weights=torch.ones_like(inputs))
+
+
 @pytest.mark.parametrize(
     "init_device, device",
     [

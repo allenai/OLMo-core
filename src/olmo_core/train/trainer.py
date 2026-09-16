@@ -304,7 +304,8 @@ class Trainer:
 
     checkpoints_to_eval: Optional[List[str]] = None
     """
-    Checkpoint paths (or globs) to evaluate with :meth:`eval_checkpoints`. No effect during training.
+    Checkpoint paths (or globs using only ``*`` and ``**`` wildcards) to evaluate with
+    :meth:`eval_checkpoints`. No effect during training.
     """
 
     # Internal bookkeeping
