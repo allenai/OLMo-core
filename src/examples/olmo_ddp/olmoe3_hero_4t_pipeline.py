@@ -218,7 +218,7 @@ def main():
                 log("FOUR_T_PIPELINE_WAIT_STORAGE_OR_UPLOADER")
                 time.sleep(60)
                 continue
-            config_name = "olmo35-small-4t-config-check-20260916"
+            config_name = "olmo35-small-4t-config-check-cpu-20260916"
             entry = DECAY_AUTOMATION / "launched-emo.json"
             if entry.is_file():
                 config_spec = prep_spec(
@@ -228,6 +228,12 @@ def main():
 
                 mount_lc(config_spec["tasks"][0])
                 t = config_spec["tasks"][0]
+                # Config construction / packing validation needs no GPU. Avoid
+                # consuming even one GPU from the gang-scheduled training pool.
+                t.pop("resources", None)
+                t.pop("hostNetworking", None)
+                t["constraints"] = {"cluster": ["ai2/phobos"]}
+                t["context"].update(minRuntime="0s", autoResume=True)
                 if not any(d["mountPath"] == "/weka/oe-adapt-default" for d in t["datasets"]):
                     t["datasets"].append(
                         {

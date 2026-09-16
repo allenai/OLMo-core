@@ -22,7 +22,7 @@ All posttraining stages reset optimizer/data while preserving transferred weight
 
 - Native controller: src/examples/olmo_ddp/olmoe3_hero_4t_pipeline.py.
   Runs CPU-only on Phobos with no resource requests. Checks all configurations in
-  the real pinned runtime on an independent1GPU worker. Each lineage progresses
+  the real pinned runtime on an independent CPU-only worker. Each lineage progresses
   independently. MT has a2-step save/reload gate; LC and SFT retain4-step gates.
 - Eval controller: src/examples/olmo_ddp/olmoe3_hero_4t_evals.py.
   Separate CPU-only Phobos job; stage subprocesses isolate legacy adapter globals.
