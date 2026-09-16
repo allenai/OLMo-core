@@ -14,7 +14,11 @@ from triton.language.extra.cuda import libdevice
 
 @triton.jit
 def _swiglu_backward_pair(x, dy, dx, pairs, HIDDEN: tl.constexpr, BLOCK: tl.constexpr):
-    index = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+    # Offsets must be 64-bit: ``base`` reaches ``2 * pairs``, and a single rank's
+    # [tokens * top_k, 2 * hidden] activation exceeds 2**31 elements at large
+    # microbatches (e.g. 275M at MB16: 2,097,152 x 1088 = 2.28e9). With int32 the
+    # index wrapped negative and the first backward produced non-finite gradients.
+    index = tl.program_id(0).to(tl.int64) * BLOCK + tl.arange(0, BLOCK).to(tl.int64)
     mask = index < pairs
     base = index // HIDDEN * (2 * HIDDEN) + index % HIDDEN
     up = tl.load(x + base, mask=mask, other=0).to(tl.float32)
