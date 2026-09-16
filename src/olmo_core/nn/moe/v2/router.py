@@ -1,3 +1,5 @@
+import logging
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
@@ -36,6 +38,29 @@ def _cast_to_fp32(x: torch.Tensor) -> torch.Tensor:
     return x.float()
 
 
+log = logging.getLogger(__name__)
+
+_ROUTER_MATMUL_PRECISIONS = ("fp32", "tf32", "bf16")
+
+
+def _router_matmul_precision() -> str:
+    """
+    Precision of the router's expert-logit GEMM, from ``OLMO_PROFILE_ROUTER_MATMUL_PRECISION``.
+
+    ``fp32`` (default) keeps the exact fp32 SGEMM, which runs on CUDA cores because tensor
+    cores have no IEEE fp32 mode. ``tf32`` keeps fp32 inputs but lets the GEMM use TF32
+    tensor cores (10-bit mantissa, fp32 range and accumulation). ``bf16`` casts the GEMM
+    inputs to bf16 and accumulates in fp32.
+    """
+    value = os.environ.get("OLMO_PROFILE_ROUTER_MATMUL_PRECISION", "fp32").lower()
+    if value not in _ROUTER_MATMUL_PRECISIONS:
+        raise OLMoConfigurationError(
+            f"OLMO_PROFILE_ROUTER_MATMUL_PRECISION must be one of {_ROUTER_MATMUL_PRECISIONS}, "
+            f"got {value!r}"
+        )
+    return value
+
+
 @dataclass
 class MoERouterConfigV2(Config):
     """
@@ -62,12 +87,16 @@ class MoERouterConfigV2(Config):
     )
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
-    restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    restore_weight_scale: bool = (
+        False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    )
     expert_weight_scale: Optional[float] = None
-    original_top_k: Optional[
-        int
-    ] = None  # for restoring weight scales to match a model trained with a different top_k
-    use_recompute_fp32_cast: bool = False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    original_top_k: Optional[int] = (
+        None  # for restoring weight scales to match a model trained with a different top_k
+    )
+    use_recompute_fp32_cast: bool = (
+        False  # whether to use an OutputDiscardCheckpoint to save the fp32 cast of the router input for recomputation in backward, which can save memory at the cost of extra compute in backward.
+    )
     score_correction_bias: bool = False
     n_group: Optional[int] = None
     topk_group: Optional[int] = None
@@ -163,6 +192,17 @@ class MoERouterV2(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.num_experts = num_experts
+        if (
+            _router_matmul_precision() == "tf32"
+            and torch.get_float32_matmul_precision() == "highest"
+        ):
+            # Compile-safe way to move the fp32 router GEMM onto TF32 tensor cores: Inductor
+            # and cuBLAS both read this global flag. The router is the only fp32 matmul in the
+            # training step, so the effect is confined to it in practice.
+            torch.set_float32_matmul_precision("high")
+            log.info(
+                "OLMO_PROFILE_ROUTER_MATMUL_PRECISION=tf32: set float32 matmul precision to 'high'"
+            )
 
         self.top_k = top_k
         self.use_bias = bias
@@ -488,11 +528,16 @@ class MoERouterV2(nn.Module):
         return expert_weights, expert_indices
 
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
-        return F.linear(
-            x.float(),
-            get_local_tensor(self.weight).view(self.num_experts, self.d_model).float(),
-            None if self.bias is None else get_local_tensor(self.bias).float(),
-        )
+        weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model)
+        bias = None if self.bias is None else get_local_tensor(self.bias).float()
+        if _router_matmul_precision() == "bf16":
+            # Tensor-core GEMM with fp32 accumulation; logits are returned in fp32 and the
+            # bias is added in fp32 so only the product inputs lose mantissa bits.
+            logits = F.linear(x.to(torch.bfloat16), weight.to(torch.bfloat16)).float()
+            return logits if bias is None else logits + bias
+        # "fp32" (default) and "tf32": a true fp32 matmul. With "tf32" the global matmul
+        # precision was set to "high" at construction, so this dispatches to tensor cores.
+        return F.linear(x.float(), weight.float(), bias)
 
     @torch.no_grad()
     def compute_metrics(
