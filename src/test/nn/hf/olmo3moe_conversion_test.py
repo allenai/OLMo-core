@@ -185,9 +185,15 @@ def test_conversion_validation_disables_only_optimized_kda_kernel():
 
     KimiDeltaAttention.__module__ = "olmo_core.nn.attention.kda"
     kda = KimiDeltaAttention()
-    kda.use_cute_kernel = True
+    kda.use_experimental_kernels = True
+    for name in ("q_conv1d", "k_conv1d", "v_conv1d"):
+        conv = torch.nn.Identity()
+        conv.use_experimental_kernels = True
+        setattr(kda, name, conv)
     model = torch.nn.Sequential(torch.nn.Linear(2, 2), kda)
 
     assert _use_reference_kda_kernels(model) == 1
-    assert kda.use_cute_kernel is False
+    assert kda.use_experimental_kernels is False
+    for conv in (kda.q_conv1d, kda.k_conv1d, kda.v_conv1d):
+        assert conv.use_experimental_kernels is False
     assert _use_reference_kda_kernels(model) == 0
