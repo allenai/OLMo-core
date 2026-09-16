@@ -518,6 +518,11 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         "MOLMO_EXPERIMENT_DATA_DIR",
         "MOLMO_CACHE_DIR",
         "FINEVISION_ROOT",
+        # The raw-YAML launch path set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+        # but the Gantry path never did. At higher crop budgets the allocator fragments
+        # badly enough to OOM ~1,300 steps in -- after surviving 100-step smokes three
+        # times -- while still reporting tens of GiB reserved-but-unallocated.
+        "PYTORCH_CUDA_ALLOC_CONF",
     ):
         _value = os.environ.get(_var)
         if _value:
