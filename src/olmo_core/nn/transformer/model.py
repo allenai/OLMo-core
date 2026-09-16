@@ -132,9 +132,7 @@ class Transformer(nn.Module):
         self.dtype = dtype
         self.embed_scale = embed_scale
 
-        # With extra tokens the table is split into two parameters (see
-        # :class:`SplitVocabEmbedding`): ``vocab_size`` is then the *base* vocab, and the
-        # tied LM head spans only that base — the extra tokens are inputs, never targets.
+        # Extra input tokens use a separate parameter; the tied output head spans the base vocab.
         self.n_extra_vocab = n_extra_vocab
         self.embeddings: nn.Module
         if n_extra_vocab > 0:
@@ -274,6 +272,54 @@ class Transformer(nn.Module):
                 rope_buffers[int(key)] = None
         return rope_buffers
 
+    def prepare_cp_sequence_inputs(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int]:
+        """
+        Shard sequence inputs for context parallelism before entering a pipeline schedule.
+
+        Pipeline-parallel stages exchange hidden activations with already-local CP sequence
+        lengths. The model still needs the original full sequence length later so each stage can
+        build and shard its own RoPE buffers consistently.
+
+        :returns: The CP-sharded ``input_ids``, the CP-sharded ``labels`` (or ``None``), and the
+            original (pre-shard) sequence length.
+        """
+        cp_load_balancer = self._cp_load_balancer
+        if cp_load_balancer is None:
+            raise OLMoConfigurationError(
+                "prepare_cp_sequence_inputs() requires context parallelism to be applied first"
+            )
+        if input_ids.dim() < 2:
+            raise ValueError("'input_ids' must have a batch and sequence dimension")
+        if labels is not None and labels.shape[:2] != input_ids.shape[:2]:
+            raise ValueError(
+                f"'labels' shape {tuple(labels.shape)} does not match input batch/sequence "
+                f"shape {tuple(input_ids.shape[:2])}"
+            )
+
+        original_seq_len = input_ids.shape[1]
+        inputs = [input_ids]
+        seq_dims = [1]
+        pad_values: List[Union[int, float]] = [0]
+
+        if labels is not None:
+            inputs.append(labels)
+            seq_dims.append(1)
+            pad_values.append(ignore_index)
+
+        sharded_inputs = cp_load_balancer.batch_shard(
+            inputs=inputs,
+            seq_dims=seq_dims,
+            pad_values=pad_values,
+        )
+        sharded_labels = sharded_inputs[1] if labels is not None else None
+        return sharded_inputs[0], sharded_labels, original_seq_len
+
     @torch.no_grad()
     def init_weights(
         self,
@@ -323,9 +369,8 @@ class Transformer(nn.Module):
                 ),
                 generator=generator,
             )
+
             if isinstance(self.embeddings, SplitVocabEmbedding):
-                # mm_olmo initialises the added rows from `new_embedding_init_range`, which
-                # matches our `init_std` default of 0.02.
                 _apply_init(
                     nn.init.normal_,
                     self.embeddings.extra_weight,
@@ -382,6 +427,19 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
+            # Fused MoE-v2 weights.
+            from ..moe.v2.block import MoEFusedV2TransformerBlock
+
+            if isinstance(block, MoEFusedV2TransformerBlock):
+                self.init_method.init_moe_v2(
+                    block,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+
             if isinstance(att, (Attention, FusedAttention)):
                 # Warm up attention backend cache.
                 if max_seq_len is not None and att.backend is not None:
@@ -406,6 +464,7 @@ class Transformer(nn.Module):
         input_ids: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         *,
+        loss_weights: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -426,8 +485,25 @@ class Transformer(nn.Module):
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
-        if response_mask is not None:
-            response_mask = move_to_device(response_mask, self.device)
+        # Context-parallel inputs may already be sequence-sharded by the caller (e.g. the pipeline
+        # train module shards the batch before the pipeline schedule). In that case we must not
+        # shard input_ids/labels again, but we still shard the RoPE buffers, which are built from the
+        # original (pre-shard) sequence length carried in 'cp_original_seq_len'.
+        cp_already_sharded = kwargs.pop("cp_already_sharded", False)
+        cp_original_seq_len = kwargs.pop("cp_original_seq_len", None)
+        if cp_original_seq_len is not None:
+            cp_original_seq_len = int(cp_original_seq_len)
+            if cp_original_seq_len <= 0:
+                raise ValueError("'cp_original_seq_len' must be positive")
+            if not cp_already_sharded:
+                raise OLMoConfigurationError(
+                    "'cp_original_seq_len' is only valid when 'cp_already_sharded=True'"
+                )
+        if cp_already_sharded and cp_original_seq_len is None:
+            raise OLMoConfigurationError(
+                "'cp_already_sharded=True' requires 'cp_original_seq_len' so RoPE buffers can "
+                "be sharded from the full sequence length"
+            )
 
         all_block_kwargs: Dict[str, Any] = {}
         per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
@@ -438,8 +514,15 @@ class Transformer(nn.Module):
             return_logits=return_logits,
             logits_to_keep=logits_to_keep,
             response_logits_only=response_logits_only,
-            response_mask=response_mask,
         )
+        if response_mask is not None:
+            lm_head_kwargs["response_mask"] = move_to_device(response_mask, self.device)
+        if loss_weights is not None:
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "Per-token loss weights are not supported with context parallelism"
+                )
+            lm_head_kwargs["loss_weights"] = move_to_device(loss_weights, self.device)
 
         if loss_div_factor is not None:
             loss_div_factor = move_to_device(loss_div_factor, self.device)
@@ -460,13 +543,32 @@ class Transformer(nn.Module):
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
-            inputs = [input_ids]
-            seq_dims = [1]
-            pad_values: List[Union[int, float]] = [0]
-            keys = ["input_ids"]
+            inputs: List[torch.Tensor] = []
+            seq_dims: List[int] = []
+            pad_values: List[Union[int, float]] = []
+            keys: List[str] = []
+
+            if cp_already_sharded:
+                input_ids = move_to_device(input_ids, self.device)
+                labels = move_to_device(labels, self.device)
+                if cu_doc_lens is not None or max_doc_len is not None:
+                    raise OLMoConfigurationError(
+                        "context parallel inputs that are already sharded cannot also pass "
+                        "'doc_lens'/'max_doc_lens'; pre-sharded intra-document masking metadata "
+                        "is not implemented yet"
+                    )
+            else:
+                inputs.append(input_ids)
+                seq_dims.append(1)
+                pad_values.append(0)
+                keys.append("input_ids")
+
+            rope_seq_len = cp_original_seq_len if cp_already_sharded else S
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
+            for block_idx, rope_buffers in self.get_rope_buffers(
+                rope_seq_len, torch.device("cpu")
+            ).items():
                 if rope_buffers is not None:
                     # Also shard RoPE buffers based on the context parallelism load balancer.
                     if rope_buffers.pos_sin is not None:
@@ -485,7 +587,7 @@ class Transformer(nn.Module):
                         pad_values.append(0.0)
                         keys.append(f"block_{block_idx}.freqs_cis")
 
-            if labels is not None:
+            if labels is not None and not cp_already_sharded:
                 inputs.append(labels)
                 seq_dims.append(1)
                 pad_values.append(ignore_index)
@@ -516,11 +618,12 @@ class Transformer(nn.Module):
                     all_block_kwargs[key] = move_to_device(value, self.device)
 
             else:
-                inputs = cp_load_balancer.batch_shard(
-                    inputs=inputs,
-                    seq_dims=seq_dims,
-                    pad_values=pad_values,
-                )
+                if inputs:
+                    inputs = cp_load_balancer.batch_shard(
+                        inputs=inputs,
+                        seq_dims=seq_dims,
+                        pad_values=pad_values,
+                    )
 
             for key, value in zip(keys, inputs):
                 if key.startswith("block_"):
@@ -530,9 +633,14 @@ class Transformer(nn.Module):
                 else:
                     all_block_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = all_block_kwargs.pop("input_ids")
-            labels = all_block_kwargs.pop("labels", None)
+            if not cp_already_sharded:
+                input_ids = all_block_kwargs.pop("input_ids")
+                labels = all_block_kwargs.pop("labels", None)
         else:
+            if cp_already_sharded:
+                raise OLMoConfigurationError(
+                    "'cp_already_sharded=True' requires context parallelism to be applied first"
+                )
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
@@ -572,11 +680,11 @@ class Transformer(nn.Module):
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
         drop_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
         flex_attn_is_image: Optional[torch.Tensor] = None,
         flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
         flex_attn_example_ids: Optional[torch.Tensor] = None,
-        flex_attn_block_mask: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[Any] = None,
+        position_ids: Optional[torch.Tensor] = None,
         pos_sin: Optional[torch.Tensor] = None,
         pos_cos: Optional[torch.Tensor] = None,
         **kwargs,
@@ -620,6 +728,19 @@ class Transformer(nn.Module):
                 "`and_mask` is not supported with context parallelism: the full-size "
                 "(seq, seq) mask would misalign with the sequence-sharded hidden states."
             )
+        if (
+            any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                    flex_attn_block_mask,
+                )
+            )
+            and self._cp_load_balancer is not None
+        ):
+            raise RuntimeError("Compact FlexAttention masks are not supported with CP")
         if position_ids is not None and self._cp_load_balancer is not None:
             raise RuntimeError(
                 "Explicit `position_ids` are not supported with context parallelism, "
@@ -703,8 +824,6 @@ class Transformer(nn.Module):
             if self.embedding_norm is not None:
                 h = self.embedding_norm(h)
 
-        # Per-token residual dropout mask (Molmo2's `response_residual_dropout`). Only
-        # forwarded when supplied, so blocks that do not accept it are unaffected.
         if drop_mask is not None:
             all_block_kwargs["drop_mask"] = drop_mask
 
@@ -841,13 +960,7 @@ class Transformer(nn.Module):
             self.lm_head.apply_cp(cp_mesh)
 
     def _dropout_is_active(self) -> bool:
-        """
-        Whether any submodule applies dropout, and therefore whether activation checkpointing has
-        to preserve the RNG state across recomputation.
-
-        Covers both :class:`~olmo_core.nn.residual_stream.ResidualStream` (whose ``masked_dropout``
-        drives Molmo2's ``response_residual_dropout``) and plain :class:`torch.nn.Dropout`.
-        """
+        """Whether checkpoint recomputation needs to preserve the dropout RNG state."""
         for module in self.modules():
             if isinstance(module, ResidualStream):
                 if module.p > 0.0 or module.masked_dropout > 0.0:
@@ -901,11 +1014,6 @@ class Transformer(nn.Module):
         if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
-        # Recomputation must replay the *same* dropout masks the forward pass used, otherwise the
-        # gradients are taken with respect to a different sample than the loss was. Saving and
-        # restoring the RNG state costs a little per checkpointed block, so only pay it when some
-        # dropout is actually active — which mirrors mm_olmo's
-        # `llm_activation_checkpoint_function`.
         preserve_rng_state = self._dropout_is_active()
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:

@@ -14,7 +14,12 @@ from olmo_core.distributed.utils import get_local_tensor, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.lm_head import LMHeadConfig, LMHeadType, LMLossImplementation
-from olmo_core.testing import requires_gpu, requires_multi_gpu, run_distributed_test
+from olmo_core.testing import (
+    GPU_MARKS,
+    requires_gpu,
+    requires_multi_gpu,
+    run_distributed_test,
+)
 from olmo_core.utils import get_default_device, record_flops, seed_all
 
 
@@ -27,6 +32,77 @@ def test_lm_head_builder_config():
 
     with pytest.raises(OLMoConfigurationError):
         LMHeadConfig(name=LMHeadType.normalized, bias=True).build(d_model=64, vocab_size=128)
+
+
+@pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
+def test_lm_head_float_loss_weights(head_type):
+    torch.manual_seed(7)
+    head = LMHeadConfig(
+        name=head_type, bias=False if head_type == LMHeadType.default else None
+    ).build(d_model=16, vocab_size=32)
+    inputs = torch.randn(2, 5, 16, requires_grad=True)
+    labels = torch.randint(0, 32, (2, 5))
+    weights = torch.tensor([[0.0, 0.25, 1.0, 0.5, 0.0], [1.0, 0.0, 0.75, 0.0, 0.5]])
+
+    logits = head(inputs).detach()
+    expected = (
+        torch.dot(
+            torch.nn.functional.cross_entropy(
+                logits.float().reshape(-1, 32), labels.reshape(-1), reduction="none"
+            ),
+            weights.reshape(-1),
+        )
+        / weights.sum()
+    )
+    output = head(
+        inputs,
+        labels=labels,
+        loss_weights=weights,
+        loss_reduction="sum",
+        loss_div_factor=weights.sum(),
+    )
+
+    torch.testing.assert_close(output.loss, expected)
+    torch.testing.assert_close(output.ce_loss, expected)
+    output.loss.backward()
+    assert inputs.grad is not None
+
+    with pytest.raises(ValueError, match="loss_reduction='sum'"):
+        head(inputs.detach(), labels=labels, loss_weights=weights)
+
+
+@pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
+def test_lm_head_response_logits_only_with_float_weights(head_type):
+    torch.manual_seed(11)
+    head = LMHeadConfig(
+        name=head_type, bias=False if head_type == LMHeadType.default else None
+    ).build(d_model=16, vocab_size=32)
+    full_inputs = torch.randn(2, 6, 16, requires_grad=True)
+    narrow_inputs = full_inputs.detach().clone().requires_grad_(True)
+    labels = torch.randint(0, 32, (2, 6))
+    weights = torch.tensor([[0.0, 0.25, 1.0, 0.0, 0.5, 0.0], [1.0, 0.0, 0.75, 0.0, 0.0, 0.5]])
+    common = dict(
+        labels=labels,
+        loss_weights=weights,
+        loss_reduction="sum",
+        loss_div_factor=weights.sum(),
+        z_loss_multiplier=1e-4,
+        return_logits=True,
+    )
+
+    full = head(full_inputs, **common)
+    narrow = head(narrow_inputs, response_logits_only=True, **common)
+    assert full.logits is not None and narrow.logits is not None
+    expected_logits = full.logits.reshape(-1, 32)[weights.reshape(-1) > 0]
+    torch.testing.assert_close(narrow.logits, expected_logits)
+    torch.testing.assert_close(narrow.loss, full.loss)
+
+    full.loss.backward()
+    narrow.loss.backward()
+    torch.testing.assert_close(narrow_inputs.grad, full_inputs.grad)
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        head(narrow_inputs.detach(), response_logits_only=True, logits_to_keep=1)
 
 
 @requires_gpu
@@ -244,22 +320,29 @@ def test_lm_head_logits_to_keep(head_type):
     assert logits.shape == (B, logits_to_keep, vocab_size)
 
 
-@requires_gpu
 @pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
 @pytest.mark.parametrize(
-    "loss_implementation", [LMLossImplementation.default, LMLossImplementation.fused_linear]
+    "device,loss_implementation",
+    [
+        ("cpu", LMLossImplementation.default),
+        pytest.param("cuda", LMLossImplementation.default, marks=GPU_MARKS),
+        pytest.param("cuda", LMLossImplementation.fused_linear, marks=GPU_MARKS),
+    ],
 )
-def test_lm_head_response_logits_only(head_type, loss_implementation):
+def test_lm_head_response_logits_only(head_type, device, loss_implementation):
     seed_all(42)
-    device = torch.device("cuda")
+    device = torch.device(device)
     d_model, vocab_size = 256, 1024
     B, S = 2, 32
 
-    if head_type == LMHeadType.normalized and loss_implementation == LMLossImplementation.fused_linear:
+    if (
+        head_type == LMHeadType.normalized
+        and loss_implementation == LMLossImplementation.fused_linear
+    ):
         pytest.skip("NormalizedLMHead does not support fused_linear")
 
     config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation)
-    lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
+    lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device=device.type)
 
     inputs = torch.randn(B, S, d_model, device=device)
     labels = torch.randint(0, vocab_size, (B, S), device=device)
@@ -268,8 +351,10 @@ def test_lm_head_response_logits_only(head_type, loss_implementation):
     response_mask[0, [3, 7, 15, 22]] = True
     response_mask[1, [1, 9, 18]] = True
 
-    output_full = lm_head(inputs, labels=labels, return_logits=True)
-    full_logits = output_full.logits
+    masked_labels = labels.masked_fill(~response_mask, -100)
+    return_logits = True if loss_implementation == LMLossImplementation.default else None
+    output_full = lm_head(inputs, labels=masked_labels, return_logits=return_logits)
+    full_logits = lm_head(inputs) if output_full.logits is None else output_full.logits
     ref_logits = full_logits.view(-1, vocab_size)[response_mask.view(-1)]
 
     narrow_logits = lm_head(
@@ -285,8 +370,10 @@ def test_lm_head_response_logits_only(head_type, loss_implementation):
         labels=labels,
         response_logits_only=True,
         response_mask=response_mask,
-        return_logits=True,
+        return_logits=return_logits,
     )
+    if return_logits:
+        assert output_narrow.logits is not None
     if output_narrow.logits is not None:
         torch.testing.assert_close(output_narrow.logits, ref_logits)
     torch.testing.assert_close(output_narrow.loss, output_full.loss)

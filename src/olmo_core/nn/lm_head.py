@@ -25,6 +25,7 @@ from .functional import (
     cross_entropy_loss,
     fused_linear_cross_entropy_loss,
     l2_normalize,
+    weighted_cross_entropy_loss,
 )
 from .layer_norm import LayerNormConfig
 
@@ -44,40 +45,54 @@ log = logging.getLogger(__name__)
 def _select_hidden_for_logits(
     h: torch.Tensor,
     labels: Optional[torch.Tensor],
+    loss_weights: Optional[torch.Tensor],
     *,
     logits_to_keep: Union[int, torch.Tensor],
     response_logits_only: bool,
     response_mask: Optional[torch.Tensor],
     ignore_index: int,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-    """Narrow hidden states (and optional labels) before the LM output projection."""
-    if response_logits_only:
-        if isinstance(logits_to_keep, int) and logits_to_keep != 0:
-            raise ValueError("response_logits_only and logits_to_keep are mutually exclusive")
-        if not isinstance(logits_to_keep, int):
-            raise ValueError("response_logits_only and logits_to_keep are mutually exclusive")
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Select sequence positions before applying the vocabulary projection."""
+    if response_logits_only and not (isinstance(logits_to_keep, int) and logits_to_keep == 0):
+        raise ValueError("response_logits_only and logits_to_keep are mutually exclusive")
 
     if isinstance(logits_to_keep, int):
         if logits_to_keep != 0:
             h = h[:, -logits_to_keep:, :]
             if labels is not None:
                 labels = labels[:, -logits_to_keep:]
+            if loss_weights is not None:
+                loss_weights = loss_weights[:, -logits_to_keep:]
     else:
         h = h.gather(1, logits_to_keep.unsqueeze(-1).expand(-1, -1, h.size(-1)))
         if labels is not None:
             labels = labels.gather(1, logits_to_keep)
+        if loss_weights is not None:
+            loss_weights = loss_weights.gather(1, logits_to_keep)
 
     if response_logits_only:
         if response_mask is None:
-            if labels is None:
-                raise ValueError("response_logits_only requires response_mask or labels")
-            response_mask = labels != ignore_index
-        flat_mask = response_mask.view(-1)
-        h = h.view(-1, h.shape[-1])[flat_mask]
+            if loss_weights is not None:
+                response_mask = loss_weights > 0
+            elif labels is not None:
+                response_mask = labels != ignore_index
+            else:
+                raise ValueError(
+                    "response_logits_only requires response_mask, loss_weights, or labels"
+                )
+        if response_mask.shape != h.shape[:2]:
+            raise ValueError(
+                f"response_mask shape {tuple(response_mask.shape)} does not match "
+                f"hidden states {tuple(h.shape[:2])}"
+            )
+        flat_mask = response_mask.to(device=h.device, dtype=torch.bool).reshape(-1)
+        h = h.reshape(-1, h.shape[-1])[flat_mask]
         if labels is not None:
-            labels = labels.view(-1)[flat_mask]
+            labels = labels.reshape(-1)[flat_mask]
+        if loss_weights is not None:
+            loss_weights = loss_weights.reshape(-1)[flat_mask]
 
-    return h, labels
+    return h, labels, loss_weights
 
 
 class LMHeadType(StrEnum):
@@ -242,6 +257,7 @@ class LMHead(nn.Module):
         x: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
+        loss_weights: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -273,9 +289,11 @@ class LMHead(nn.Module):
         B = x.shape[0]
 
         h = self.norm(x) if self.norm is not None else x
-        h, labels = _select_hidden_for_logits(
+
+        h, labels, loss_weights = _select_hidden_for_logits(
             h,
             labels,
+            loss_weights,
             logits_to_keep=logits_to_keep,
             response_logits_only=response_logits_only,
             response_mask=response_mask,
@@ -294,19 +312,35 @@ class LMHead(nn.Module):
         if self.loss_implementation == LMLossImplementation.default:
             logits = self.w_out(h)
             assert logits is not None
-            ce_loss, z_loss = cross_entropy_loss(
-                get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).contiguous().view(-1),
-                ignore_index=ignore_index,
-                reduction=loss_reduction,
-                compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
-            )
+            if loss_weights is None:
+                ce_loss, z_loss = cross_entropy_loss(
+                    get_local_tensor(logits).view(-1, self.vocab_size),
+                    get_local_tensor(labels).contiguous().view(-1),
+                    ignore_index=ignore_index,
+                    reduction=loss_reduction,
+                    compute_z_loss=z_loss_multiplier is not None,
+                    z_loss_multiplier=z_loss_multiplier or 1e-4,
+                )
+            else:
+                if loss_reduction != "sum":
+                    raise ValueError("Per-token loss weights require loss_reduction='sum'")
+                ce_loss, z_loss = weighted_cross_entropy_loss(
+                    get_local_tensor(logits).view(-1, self.vocab_size),
+                    get_local_tensor(labels).contiguous().view(-1),
+                    get_local_tensor(loss_weights).contiguous().view(-1),
+                    ignore_index=ignore_index,
+                    compute_z_loss=z_loss_multiplier is not None,
+                    z_loss_multiplier=z_loss_multiplier or 1e-4,
+                )
             if z_loss is not None:
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
         elif self.loss_implementation == LMLossImplementation.fused_linear:
+            if loss_weights is not None:
+                raise NotImplementedError(
+                    "Per-token loss weights are not supported by fused-linear loss"
+                )
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
@@ -509,6 +543,7 @@ class NormalizedLMHead(LMHead):
         x: torch.Tensor,
         *,
         labels: Optional[torch.Tensor] = None,
+        loss_weights: Optional[torch.Tensor] = None,
         ignore_index: int = -100,
         loss_reduction: Literal["mean", "sum", "none"] = "mean",
         z_loss_multiplier: Optional[float] = None,
@@ -520,9 +555,10 @@ class NormalizedLMHead(LMHead):
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]
 
-        x, labels = _select_hidden_for_logits(
+        x, labels, loss_weights = _select_hidden_for_logits(
             x,
             labels,
+            loss_weights,
             logits_to_keep=logits_to_keep,
             response_logits_only=response_logits_only,
             response_mask=response_mask,
@@ -540,14 +576,26 @@ class NormalizedLMHead(LMHead):
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
         if self.loss_implementation == LMLossImplementation.default:
-            ce_loss, z_loss = cross_entropy_loss(
-                get_local_tensor(logits).view(-1, self.vocab_size),
-                get_local_tensor(labels).contiguous().view(-1),
-                ignore_index=ignore_index,
-                reduction=loss_reduction,
-                compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
-            )
+            if loss_weights is None:
+                ce_loss, z_loss = cross_entropy_loss(
+                    get_local_tensor(logits).view(-1, self.vocab_size),
+                    get_local_tensor(labels).contiguous().view(-1),
+                    ignore_index=ignore_index,
+                    reduction=loss_reduction,
+                    compute_z_loss=z_loss_multiplier is not None,
+                    z_loss_multiplier=z_loss_multiplier or 1e-4,
+                )
+            else:
+                if loss_reduction != "sum":
+                    raise ValueError("Per-token loss weights require loss_reduction='sum'")
+                ce_loss, z_loss = weighted_cross_entropy_loss(
+                    get_local_tensor(logits).view(-1, self.vocab_size),
+                    get_local_tensor(labels).contiguous().view(-1),
+                    get_local_tensor(loss_weights).contiguous().view(-1),
+                    ignore_index=ignore_index,
+                    compute_z_loss=z_loss_multiplier is not None,
+                    z_loss_multiplier=z_loss_multiplier or 1e-4,
+                )
             if z_loss is not None:
                 loss = ce_loss + z_loss
             else:

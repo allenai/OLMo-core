@@ -9,11 +9,13 @@
 
    attention
    conversion
+   ddp
    feed_forward
    functional
    hf
    layer_norm
    lm_head
    moe
+   parallel
    rope
    transformer

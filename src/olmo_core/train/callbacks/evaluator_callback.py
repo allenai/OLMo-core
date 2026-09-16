@@ -1,6 +1,6 @@
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
@@ -8,6 +8,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 
+from olmo_core.aliases import PathOrStr
 from olmo_core.data import (
     NumpyDatasetConfig,
     NumpyPaddedFSLDataset,
@@ -30,7 +31,12 @@ from olmo_core.utils import (
 )
 
 from ..common import Duration, MetricMergeStrategy
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TransformerTrainModule
+from ..train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    OLMoDDPTrainModule,
+    TransformerTrainModule,
+)
 from .callback import Callback, CallbackConfig
 
 if TYPE_CHECKING:
@@ -70,7 +76,7 @@ class EvaluatorCallback(Callback):
 
     eval_on_finish: bool = False
     """
-    Whether to run an evaluation when training finishes.
+    Whether to evaluate when training finishes, unless this step was already evaluated.
     """
 
     cancel_after_first_eval: bool = False
@@ -90,18 +96,26 @@ class EvaluatorCallback(Callback):
     How often to log eval progress to the console during an eval loop.
     """
 
+    _last_eval_step: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+
     def post_attach(self):
-        if not isinstance(self.trainer.train_module, TransformerTrainModule):
+        if not isinstance(self.trainer.train_module, (TransformerTrainModule, OLMoDDPTrainModule)):
             raise OLMoConfigurationError(
-                f"'{self.__class__.__name__}' only supports the '{TransformerTrainModule.__name__}' train module"
+                f"'{self.__class__.__name__}' only supports transformer train modules "
+                f"('{TransformerTrainModule.__name__}', '{OLMoDDPTrainModule.__name__}')"
             )
 
     def pre_train(self):
+        self._last_eval_step = None
         if self.eval_on_startup:
             self.perform_eval()
 
+    def post_checkpoint_loaded(self, path: PathOrStr):
+        """Invalidate evaluation completion after loading model weights."""
+        self._last_eval_step = None
+
     def post_train(self):
-        if self.eval_on_finish:
+        if self.eval_on_finish and self._last_eval_step != self.step:
             self.perform_eval()
 
     def post_step(self):
@@ -120,10 +134,6 @@ class EvaluatorCallback(Callback):
         :param prefix: Prefix for metric names (e.g., "eval" or "eval/merged").
             Metrics will be recorded as "{prefix}/{evaluator.name}/{metric_name}".
         """
-        # Put model in eval train mode.
-        # TODO: make sure grads will be zeroed at this point
-        #  self.trainer.optim.zero_grad(set_to_none=True)
-        #  self.trainer.model.eval()
         dp_world_size = get_world_size(self.trainer.dp_process_group)
 
         evaluator_times = []
@@ -203,6 +213,9 @@ class EvaluatorCallback(Callback):
         self.trainer.record_metric(
             "throughput/in-loop eval batches", total_bs, merge_strategy=MetricMergeStrategy.sum
         )
+
+        if prefix == "eval":
+            self._last_eval_step = self.step
 
         if self.cancel_after_first_eval:
             self.trainer.cancel_run(
@@ -478,6 +491,11 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     cancel_after_first_eval: bool = False
     log_interval: int = 5
     lazy: bool = False
+    rank_batch_size_instances: Optional[int] = None
+    """
+    Optional per-rank batch size in instances. When set, this overrides the train module's
+    evaluation batch size for this downstream evaluator only.
+    """
     enabled: bool = True
 
     def build(self, trainer: "Trainer") -> Optional[Callback]:
@@ -498,13 +516,23 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
             bos_token_id=self.tokenizer.bos_token_id,
         )
 
+        batch_spec = trainer.train_module.eval_batch_spec
+        if self.rank_batch_size_instances is not None:
+            if self.rank_batch_size_instances < 1:
+                raise OLMoConfigurationError("'rank_batch_size_instances' must be at least 1")
+            batch_spec = replace(
+                batch_spec,
+                rank_batch_size=self.rank_batch_size_instances,
+                batch_size_unit=EvalBatchSizeUnit.instances,
+            )
+
         evaluators: List[Evaluator] = []
         for task in sorted(self.tasks):
             evaluators.append(
                 DownstreamEvaluator(
                     name="downstream",
                     task=task,
-                    batch_spec=trainer.train_module.eval_batch_spec,
+                    batch_spec=batch_spec,
                     tokenizer=tokenizer,
                     device=trainer.device,
                     dp_process_group=trainer.dp_process_group,
