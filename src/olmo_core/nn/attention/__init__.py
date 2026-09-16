@@ -345,7 +345,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     attention_sinks: bool = False
     """
     Add a per-head learnable "attention sink" logit (as in GPT-OSS). Only supported by the default
-    attention with the torch backend.
+    attention with the torch backend, without tensor or context parallelism.
     """
     mxfp8_projections: Optional[bool] = None
     """
@@ -1065,6 +1065,9 @@ class Attention(SequenceMixer):
         use_local_output: bool = True,
         float8_enabled: bool = False,
     ):
+        if self.sinks is not None:
+            raise OLMoConfigurationError("attention_sinks do not support tensor parallelism")
+
         rowwise_parallel, colwise_parallel, prepare_module_input = get_tp_wrappers(
             float8_enabled=float8_enabled
         )
@@ -1126,6 +1129,9 @@ class Attention(SequenceMixer):
         :param ring: The ring context parallel style.
         :param uly: The ulysses context parallel style.
         """
+        if self.sinks is not None:
+            raise OLMoConfigurationError("attention_sinks do not support context parallelism")
+
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def init_weights(
