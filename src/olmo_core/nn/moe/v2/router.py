@@ -1,5 +1,4 @@
 import logging
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
 
@@ -40,25 +39,26 @@ def _cast_to_fp32(x: torch.Tensor) -> torch.Tensor:
 
 log = logging.getLogger(__name__)
 
-_ROUTER_MATMUL_PRECISIONS = ("fp32", "tf32", "bf16")
 
-
-def _router_matmul_precision() -> str:
+class MoERouterMatmulPrecision(StrEnum):
     """
-    Precision of the router's expert-logit GEMM, from ``OLMO_PROFILE_ROUTER_MATMUL_PRECISION``.
+    Precision of the router's expert-logit GEMM.
 
-    ``fp32`` (default) keeps the exact fp32 SGEMM, which runs on CUDA cores because tensor
-    cores have no IEEE fp32 mode. ``tf32`` keeps fp32 inputs but lets the GEMM use TF32
-    tensor cores (10-bit mantissa, fp32 range and accumulation). ``bf16`` casts the GEMM
-    inputs to bf16 and accumulates in fp32.
+    Tensor cores have no IEEE fp32 mode, so ``fp32`` runs the GEMM on CUDA cores (SIMT
+    SGEMM). On a 275M OLMoE3 profile that GEMM was 10% of the training step.
     """
-    value = os.environ.get("OLMO_PROFILE_ROUTER_MATMUL_PRECISION", "fp32").lower()
-    if value not in _ROUTER_MATMUL_PRECISIONS:
-        raise OLMoConfigurationError(
-            f"OLMO_PROFILE_ROUTER_MATMUL_PRECISION must be one of {_ROUTER_MATMUL_PRECISIONS}, "
-            f"got {value!r}"
-        )
-    return value
+
+    fp32 = "fp32"
+    """Exact fp32 SGEMM on CUDA cores (PyTorch default)."""
+
+    tf32 = "tf32"
+    """
+    fp32 inputs, TF32 tensor-core math (10-bit mantissa, fp32 range and accumulation). Sets
+    the global float32 matmul precision to ``"high"`` when the router is built.
+    """
+
+    bf16 = "bf16"
+    """Cast the GEMM inputs to bf16, accumulate in fp32, return fp32 logits."""
 
 
 @dataclass
@@ -104,6 +104,11 @@ class MoERouterConfigV2(Config):
     global_load_balancing: bool = False
     """Compute load-balancing loss from assignment counts averaged across the DP group."""
     emo: Optional[EmoRouterConfig] = None
+    matmul_precision: MoERouterMatmulPrecision = MoERouterMatmulPrecision.fp32
+    """
+    Precision of the expert-logit GEMM. ``tf32`` recovers ~7% TPS at 275M and ~4% at 810M
+    with loss and load-balancing curves matching fp32 over 2000 steps.
+    """
     """Optional EMO document-pool routing policy."""
 
     def num_params(self) -> int:
@@ -188,21 +193,21 @@ class MoERouterV2(nn.Module):
         sigmoid_stability_epsilon: float = 1e-7,
         global_load_balancing: bool = False,
         dtype: torch.dtype = torch.float32,
+        matmul_precision: MoERouterMatmulPrecision = MoERouterMatmulPrecision.fp32,
     ):
         super().__init__()
         self.d_model = d_model
         self.num_experts = num_experts
+        self.matmul_precision = MoERouterMatmulPrecision(matmul_precision)
         if (
-            _router_matmul_precision() == "tf32"
+            self.matmul_precision == MoERouterMatmulPrecision.tf32
             and torch.get_float32_matmul_precision() == "highest"
         ):
             # Compile-safe way to move the fp32 router GEMM onto TF32 tensor cores: Inductor
             # and cuBLAS both read this global flag. The router is the only fp32 matmul in the
             # training step, so the effect is confined to it in practice.
             torch.set_float32_matmul_precision("high")
-            log.info(
-                "OLMO_PROFILE_ROUTER_MATMUL_PRECISION=tf32: set float32 matmul precision to 'high'"
-            )
+            log.info("Router matmul_precision=tf32: set float32 matmul precision to 'high'")
 
         self.top_k = top_k
         self.use_bias = bias
@@ -530,7 +535,7 @@ class MoERouterV2(nn.Module):
     def get_expert_logits(self, x: torch.Tensor) -> torch.Tensor:
         weight = get_local_tensor(self.weight).view(self.num_experts, self.d_model)
         bias = None if self.bias is None else get_local_tensor(self.bias).float()
-        if _router_matmul_precision() == "bf16":
+        if self.matmul_precision == MoERouterMatmulPrecision.bf16:
             # Tensor-core GEMM with fp32 accumulation; logits are returned in fp32 and the
             # bias is added in fp32 so only the product inputs lose mantissa bits.
             logits = F.linear(x.to(torch.bfloat16), weight.to(torch.bfloat16)).float()
