@@ -99,10 +99,16 @@ class EvaluatorCallback(Callback):
     _last_eval_step: Optional[int] = field(default=None, init=False, repr=False, compare=False)
 
     def post_attach(self):
-        if not isinstance(self.trainer.train_module, (TransformerTrainModule, OLMoDDPTrainModule)):
+        train_module = self.trainer.train_module
+        if not isinstance(train_module, (TransformerTrainModule, OLMoDDPTrainModule)):
             raise OLMoConfigurationError(
                 f"'{self.__class__.__name__}' only supports transformer train modules "
                 f"('{TransformerTrainModule.__name__}', '{OLMoDDPTrainModule.__name__}')"
+            )
+        if isinstance(train_module, OLMoDDPTrainModule) and train_module.pp_enabled:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' does not support OLMoDDP pipeline parallelism; "
+                "disable in-loop evaluation callbacks when using PP"
             )
 
     def pre_train(self):

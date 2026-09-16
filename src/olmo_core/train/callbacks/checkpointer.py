@@ -81,7 +81,8 @@ class CheckpointerCallback(Callback):
     save_async: Optional[bool] = None
     """
     Save checkpoints asynchronously. Requires a separate CPU-only backend.
-    Defaults to ``True`` if there is one.
+    Defaults to ``True`` if the backend and train module support it. Modules using
+    direct checkpoint saves require ``False``.
     """
 
     remove: CheckpointRemovalStrategy = CheckpointRemovalStrategy.ephemeral_only
@@ -218,8 +219,15 @@ class CheckpointerCallback(Callback):
         if not self.enabled:
             return
 
+        train_module = self.trainer.train_module
+        supports_async = not hasattr(train_module, "save_state_dict_direct")
         if self.save_async is None:
-            self.save_async = backend_supports_cpu()
+            self.save_async = supports_async and backend_supports_cpu()
+        elif self.save_async and not supports_async:
+            raise OLMoConfigurationError(
+                f"{type(train_module).__name__} does not support async checkpointing. "
+                "Set save_async=False for this train module."
+            )
 
         # Maybe create a new process group for async checkpointing.
         if is_distributed() and self.save_async and self.checkpointer.process_group is None:

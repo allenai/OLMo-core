@@ -1,10 +1,14 @@
 from typing import cast
 from unittest.mock import Mock, call, patch
 
+import pytest
+
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.callbacks.checkpointer import (
     CheckpointerCallback,
     CheckpointRemovalStrategy,
 )
+from olmo_core.train.train_module import OLMoDDPTrainModule, TrainModule
 
 
 def _build_callback(
@@ -54,6 +58,54 @@ def _pre_train(callback: CheckpointerCallback) -> None:
         ),
     ):
         callback.pre_train()
+
+
+@pytest.mark.parametrize("module_type", [TrainModule, OLMoDDPTrainModule])
+@pytest.mark.parametrize("cpu_backend", [False, True])
+@pytest.mark.parametrize("save_async", [None, False, True])
+@pytest.mark.parametrize("resumed", [False, True])
+def test_async_mode_respects_module_and_backend(
+    monkeypatch, module_type, cpu_backend, save_async, resumed
+):
+    trainer = Mock()
+    trainer.train_module = Mock(spec=module_type)
+    trainer.global_step = 250 if resumed else 0
+    trainer.checkpoint_loaded = resumed
+    trainer.checkpointer.process_group = None
+    path = f"/checkpoints/step{trainer.global_step}"
+    trainer.save_checkpoint.return_value = path
+    trainer.save_checkpoint_async.return_value = (path, Mock())
+    callback = CheckpointerCallback(save_async=save_async, remove=CheckpointRemovalStrategy.never)
+    callback.trainer = trainer
+    new_group = Mock()
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.is_distributed", lambda: True)
+    monkeypatch.setattr(
+        "olmo_core.train.callbacks.checkpointer.backend_supports_cpu", lambda: cpu_backend
+    )
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.dist.new_group", new_group)
+
+    direct = module_type is OLMoDDPTrainModule
+    if save_async and (direct or not cpu_backend):
+        error = OLMoConfigurationError if direct else RuntimeError
+        message = "does not support async checkpointing" if direct else "CPU-capable backend"
+        with pytest.raises(error, match=message):
+            callback.pre_train()
+        new_group.assert_not_called()
+        trainer.save_checkpoint.assert_not_called()
+        trainer.save_checkpoint_async.assert_not_called()
+        return
+
+    callback.pre_train()
+    if resumed:
+        trainer.save_checkpoint.assert_not_called()
+        trainer.save_checkpoint_async.assert_not_called()
+        callback.post_train_batch()
+    expected_async = cpu_backend and not direct if save_async is None else save_async
+    assert callback.save_async is expected_async
+    assert new_group.call_count == int(expected_async)
+    assert trainer.save_checkpoint.call_count == int(not expected_async)
+    assert trainer.save_checkpoint_async.call_count == int(expected_async)
+    assert callback._checkpoints == [path]
 
 
 def test_pre_train_discovers_and_trims_permanent_checkpoints_deterministically():
