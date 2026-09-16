@@ -375,6 +375,24 @@ class TransformerGenerationModule(GenerationModule):
         if metadata is None:
             metadata = get_checkpoint_metadata(train_module_dir)
 
+        # OLMoDDPTrainModule stores the authoritative model weights in its
+        # optimizer-backed ``<parameter>.main`` entries instead of a nested
+        # ``model`` state dict.  Reuse the same qualified loader as offline HF
+        # conversion so generation can consume those raw training checkpoints
+        # directly without first materializing an HF or model-only copy.
+        from olmo_core.nn.hf.convert_checkpoint import _load_ddp_optimizer_model_state
+
+        if (
+            _load_ddp_optimizer_model_state(
+                train_module_dir,
+                self.model,
+                work_dir=work_dir,
+                return_state_dict=False,
+            )
+            is not None
+        ):
+            return
+
         state_dict = self.state_dict_to_load(metadata)
         load_state_dict(
             train_module_dir,

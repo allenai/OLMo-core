@@ -13,10 +13,22 @@ from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 def test_rowwise_tbo_fails_closed_for_fp8():
     block = SimpleNamespace(
         ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
+        routed_experts_router=None,
         rowwise_fp8=SimpleNamespace(enabled=True),
     )
 
     with pytest.raises(NotImplementedError, match="Rowwise FP8"):
+        rowwise_tbo._check_rowwise_tbo_supported(block)  # type: ignore[arg-type]
+
+
+def test_rowwise_tbo_fails_closed_for_emo():
+    block = SimpleNamespace(
+        ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
+        routed_experts_router=SimpleNamespace(requires_segment_ids=True),
+        rowwise_fp8=None,
+    )
+
+    with pytest.raises(NotImplementedError, match="segment IDs are not split"):
         rowwise_tbo._check_rowwise_tbo_supported(block)  # type: ignore[arg-type]
 
 
