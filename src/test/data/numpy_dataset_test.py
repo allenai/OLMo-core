@@ -1,3 +1,4 @@
+import gzip
 import math
 from pathlib import Path
 from typing import List
@@ -948,6 +949,126 @@ def test_guess_dtype():
         paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
     )
     assert config.get_dtype() == np.uint32
+
+
+def test_numpy_packed_fsl_dataset_use_array_if_local_not_served_from_stale_cache(tmp_path: Path):
+    """Preparing with the inferred boundaries and then again with the metadata boundaries, in the
+    same work_dir, must not serve the second run from the first run's packing caches."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 0].
+    data = [1, 2, 3, 4, 5, 6, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,7\n")
+
+    work_dir = tmp_path / "work"
+
+    def prepare(use_array_if_local):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=4,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = work_dir
+        ds.prepare()
+        return sum(int((ds[i]["label_mask"]).sum()) for i in range(len(ds)))
+
+    # Inferred boundaries merge the two documents and truncate to 4, dropping the second.
+    assert prepare(None) == 4
+    # Same work_dir, so the caches from the run above are present. The metadata boundaries must
+    # still be honored rather than the stale packing cache being reused.
+    assert prepare(False) == len(data)
+
+
+def test_numpy_packed_fsl_dataset_doc_lens_follow_metadata_boundaries(tmp_path: Path):
+    """`doc_lens` drives the block-diagonal attention mask, so with the metadata boundaries it
+    must not be re-derived by scanning for EOS: the document that lost its terminator would merge
+    with the next one and attention would cross a real boundary."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 7, 0].
+    data = [1, 2, 3, 4, 5, 6, 7, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,8\n")
+
+    def doc_lens(use_array_if_local, sequence_length):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=sequence_length,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            generate_doc_lengths=True,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = tmp_path / f"work-{use_array_if_local}-{sequence_length}"
+        ds.prepare()
+        return [ds[i]["doc_lens"].tolist() for i in range(len(ds))]
+
+    # Both documents fill one instance exactly. The metadata boundaries keep them apart; the EOS
+    # scan sees one 8-token span, so attention would cross the boundary.
+    assert doc_lens(False, 8) == [[4, 4]]
+    assert doc_lens(None, 8) == [[8]]
+    # Trailing padding stays a final segment, matching `get_document_lengths`.
+    assert doc_lens(False, 16) == [[4, 4, 8]]
+
+    # A remote source reads the metadata boundaries whatever `use_array_if_local` says, so the
+    # strategy has to follow the effective boundary source rather than the raw option.
+    def packed_from_metadata(use_array_if_local, paths):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=8,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            use_array_if_local=use_array_if_local,
+        )
+        return ds._packed_from_metadata_boundaries(paths)
+
+    assert packed_from_metadata(True, ["s3://bucket/mmap1.npy"]) is True
+    assert packed_from_metadata(None, ["s3://bucket/mmap1.npy"]) is True
+    assert packed_from_metadata(True, [data_path, "s3://bucket/other.npy"]) is True
+    assert packed_from_metadata(True, [data_path]) is False
+    assert packed_from_metadata(None, [data_path]) is False
+    assert packed_from_metadata(False, [data_path]) is True
+
+
+def test_numpy_packed_fsl_dataset_doc_lens_padding_matches_get_document_lengths(tmp_path: Path):
+    """The exact-length path must report trailing padding the way `get_document_lengths` does:
+    its own segment normally, folded into the final document when `bos_token_id` is set."""
+    # [9, 1, 2, 0] then [9, 3, 4, 0]; document one keeps its EOS here, only padding is at issue.
+    data = [9, 1, 2, 0, 9, 3, 4, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,8\n")
+
+    def doc_lens(bos_token_id):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=16,
+            pad_token_id=-1,
+            eos_token_id=0,
+            bos_token_id=bos_token_id,
+            vocab_size=32_000,
+            generate_doc_lengths=True,
+            use_array_if_local=False,
+        )
+        ds.work_dir = tmp_path / f"work-{bos_token_id}"
+        ds.prepare()
+        return ds[0]["doc_lens"].tolist()
+
+    assert doc_lens(None) == [4, 4, 8]
+    assert doc_lens(9) == [4, 12]
 
 
 def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Path):
