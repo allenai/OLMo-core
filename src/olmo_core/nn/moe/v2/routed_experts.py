@@ -24,6 +24,7 @@ Implication:
   grouped_mm falls back even if offs is on GPU.
 """
 
+import logging
 import os
 
 try:
@@ -62,6 +63,8 @@ from olmo_core.kernels.swiglu import swiglu_valid_prefix
 from olmo_core.nn.fp8_weight import FP8WeightCacheSpec, FP8WeightStore
 
 from .fp8 import MoERowwiseFP8Config, normalize_rowwise_fp8_config
+
+log = logging.getLogger(__name__)
 
 
 class ExpertActivation(StrEnum):
@@ -492,10 +495,23 @@ class RoutedExperts(nn.Module):
         self.num_experts = num_experts
         self.activation = ExpertActivation(activation)
         self._profile_pairwise_swiglu = os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE", "0") == "1"
-        self._profile_rounded_wgrad = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD", "0") == "1"
         self.activation_alpha = float(activation_alpha)
         self.activation_limit = None if activation_limit is None else float(activation_limit)
         self.backend = RoutedExpertsBackend(backend)
+        # The rounded-wgrad probe writes expert weight gradients straight into the DDP fp32
+        # buffers from inside the grouped-MM backward, and DDP then rejects any native
+        # gradient for those parameters. The Sonic backend produces native gradients through
+        # its own custom op, so the probe must stay off there or the first backward raises.
+        rounded_wgrad_requested = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD", "0") == "1"
+        self._profile_rounded_wgrad = (
+            rounded_wgrad_requested and self.backend == RoutedExpertsBackend.grouped_mm
+        )
+        if rounded_wgrad_requested and not self._profile_rounded_wgrad:
+            log.warning(
+                "OLMO_PROFILE_ROUNDED_WGRAD=1 is ignored for the %s routed-experts backend; "
+                "it only applies to grouped_mm.",
+                self.backend,
+            )
         self.bias = bias
         up_factor = (
             2
