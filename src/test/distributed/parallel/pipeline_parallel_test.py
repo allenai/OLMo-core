@@ -17,6 +17,7 @@ def test_pipeline_step_preserves_stage_inputs_and_restores_microbatches(
     first, last, forward_only, override
 ):
     schedule = PipelineSchedule.__new__(PipelineSchedule)
+    schedule._is_custom_schedule = True
     schedule.stages = [SimpleNamespace(is_first=first, is_last=last)]
     expected_output = object()
     implementation = SimpleNamespace(

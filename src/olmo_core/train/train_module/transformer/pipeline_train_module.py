@@ -335,6 +335,7 @@ class TransformerPipelineTrainModule(TrainModule):
             stages=self._pp_stages,
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
+            loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
             forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
             save_plot=self._pp_config.save_schedule_plot,
@@ -636,7 +637,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
         def capture_losses(
             model: Transformer, args: Tuple[torch.Tensor, ...], output: Any
-        ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        ) -> Union[torch.Tensor, LMOutputWithLoss]:
             del args
             nonlocal ce_batch_loss
             nonlocal z_batch_loss
@@ -656,6 +657,8 @@ class TransformerPipelineTrainModule(TrainModule):
                     else:
                         z_batch_loss += get_local_tensor(z_loss.detach())
 
+                if self._pp_config.use_custom_stage_implementation:
+                    return output
                 return loss.unsqueeze(0)
             else:
                 assert isinstance(output, torch.Tensor)

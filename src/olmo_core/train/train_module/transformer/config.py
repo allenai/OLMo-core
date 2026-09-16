@@ -140,6 +140,10 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
             raise OLMoConfigurationError(
                 f"pipeline schedule {self.schedule.value!r} requires use_custom_stage_implementation=True"
             )
+        if self.schedule not in custom_schedules and self.use_custom_stage_implementation:
+            raise OLMoConfigurationError(
+                f"pipeline schedule {self.schedule.value!r} requires the PyTorch stage implementation"
+            )
 
         split_points = self.get_split_points(model.n_layers)
         num_stages = len(split_points) + 1

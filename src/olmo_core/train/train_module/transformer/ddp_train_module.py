@@ -60,6 +60,7 @@ from olmo_core.distributed.parallel.expert_parallel import ExpertParallelConfig
 from olmo_core.distributed.parallel.pipeline_parallel import (
     PipelineParallelConfig,
     PipelineSchedule,
+    PipelineScheduleType,
 )
 from olmo_core.distributed.parallel.tensor_parallel import TensorParallelConfig
 from olmo_core.distributed.utils import (
@@ -148,6 +149,16 @@ class OLMoDDPTrainModule(TrainModule):
             raise TypeError(
                 "OLMoDDPTrainModule requires an OLMoDDPModel or a compatible adapter, "
                 f"got {type(model).__name__}"
+            )
+
+        if pp_config is not None and pp_config.schedule not in (
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        ):
+            raise OLMoConfigurationError(
+                "OLMoDDPTrainModule pipeline execution requires CustomInterleaved1F1B or "
+                "Custom1F1BV with use_custom_stage_implementation=True. "
+                "Use TransformerPipelineTrainModule for standard PyTorch schedules."
             )
 
         if rank_microbatch_size % max_sequence_length != 0:

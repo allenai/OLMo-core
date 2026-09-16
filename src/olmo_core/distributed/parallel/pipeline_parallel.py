@@ -13,6 +13,11 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.pipelining import PipelineStage
+from torch.distributed.pipelining.schedules import (
+    PipelineScheduleMulti,
+    PipelineScheduleSingle,
+    get_schedule_class,
+)
 
 from olmo_core.config import Config, StrEnum
 from olmo_core.exceptions import OLMoConfigurationError
@@ -694,13 +699,9 @@ def debug_save_pp_schedule(
 
 class PipelineSchedule:
     """
-    Driver for the custom pipeline schedules
+    Driver for PyTorch pipeline schedules and the opt-in custom implementations
     (:class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomScheduleInterleaved1F1B`
     and :class:`~olmo_core.train.train_module.transformer.pipeline.pipeline_schedule.CustomSchedule1F1BV`).
-
-    .. note::
-        The standard PyTorch pipeline schedules (``1F1B``, ``Interleaved1F1B``, ``GPipe``, ...) are
-        not currently wired up for this train module — only the ``custom_*`` schedules are supported.
 
     :param num_microbatches: How many microbatches to split the global training batch into. The
         global training batch size must be evenly divisible by this. If not specified, the default
@@ -725,6 +726,40 @@ class PipelineSchedule:
         self.pp_mesh = pp_mesh
         self.loss_fn = loss_fn
 
+        if num_microbatches is None:
+            num_microbatches = pp_mesh.size()
+        self.num_microbatches = num_microbatches
+        self._is_custom_schedule = schedule_name in (
+            PipelineScheduleType.custom_1F1B,
+            PipelineScheduleType.custom_interleaved_1F1B,
+            PipelineScheduleType.custom_1F1B_V,
+        )
+
+        if not self._is_custom_schedule:
+            try:
+                schedule_class = get_schedule_class(schedule_name)
+            except ValueError as e:
+                raise OLMoConfigurationError(
+                    f"Invalid pipeline schedule name '{schedule_name}'"
+                ) from e
+            if issubclass(schedule_class, PipelineScheduleSingle):
+                if len(model_parts) != 1 or len(stages) != 1:
+                    raise OLMoConfigurationError(
+                        f"Expected a single stage for '{schedule_name}' pipeline schedule"
+                    )
+                schedule_impl = schedule_class(
+                    stages[0], n_microbatches=num_microbatches, loss_fn=self.loss_fn
+                )
+            elif issubclass(schedule_class, PipelineScheduleMulti):
+                schedule_impl = schedule_class(
+                    stages, n_microbatches=num_microbatches, loss_fn=self.loss_fn
+                )
+            else:
+                raise NotImplementedError(schedule_class)
+            self.base_schedule = schedule_impl
+            self.schedule_impl = schedule_impl
+            return
+
         if schedule_name == PipelineScheduleType.custom_1F1B:
             raise NotImplementedError("Custom 1F1B schedule is not implemented yet.")
         elif schedule_name == PipelineScheduleType.custom_interleaved_1F1B:
@@ -739,17 +774,6 @@ class PipelineSchedule:
             )
 
             schedule_class = CustomSchedule1F1BV
-        else:
-            raise OLMoConfigurationError(
-                f"pipeline schedule {schedule_name.value!r} is not supported by this train module. "
-                f"Only the custom schedules are wired up: "
-                f"{PipelineScheduleType.custom_interleaved_1F1B.value!r} and "
-                f"{PipelineScheduleType.custom_1F1B_V.value!r}. Standard PyTorch schedules "
-                "(1F1B, Interleaved1F1B, GPipe, ...) are not currently supported here."
-            )
-
-        if num_microbatches is None:
-            num_microbatches = pp_mesh.size()
 
         schedule_impl = schedule_class(
             stages,  # type: ignore[arg-type]
@@ -788,7 +812,6 @@ class PipelineSchedule:
             logger.info("Using %s with %d microbatches", schedule_name, num_microbatches)
 
         self.schedule_impl = schedule_impl
-        self.num_microbatches = num_microbatches
 
     @cached_property
     def has_first_stage(self) -> bool:
@@ -806,23 +829,41 @@ class PipelineSchedule:
 
     def step(
         self,
-        input_ids: torch.Tensor,
+        *args,
         target: Optional[torch.Tensor] = None,
         forward_only: bool = False,
         num_microbatches: Optional[int] = None,
         **kwargs,
-    ) -> List[List[Optional["LMOutputWithLoss"]]]:
+    ) -> List[List[Optional["LMOutputWithLoss"]]] | Tuple[Any, Optional[torch.Tensor]]:
         """
         Run one pipeline step with an optional temporary microbatch count.
 
-        :param input_ids: Token IDs, passed only to the first stage.
+        :param args: Model inputs. Custom schedules require one token-ID tensor, passed only
+            to the first stage.
         :param target: Targets, passed only to the last stage.
-        :param forward_only: Skip backward and use one sequence per microbatch.
+        :param forward_only: Custom schedules only: skip backward and use one sequence per microbatch.
         :param kwargs: Passed to all stages.
-        :param num_microbatches: Override the number of microbatches for this step only.
+        :param num_microbatches: Custom schedules only: override the microbatch count for this step.
 
-        :returns: Outputs indexed by local stage and microbatch; non-final stages return ``None``.
+        :returns: PyTorch schedules return ``(output, losses)``. Custom schedules return outputs
+            indexed by local stage and microbatch; non-final stages return ``None``.
         """
+        if not self._is_custom_schedule:
+            if forward_only or (
+                num_microbatches is not None and num_microbatches != self.num_microbatches
+            ):
+                raise OLMoConfigurationError(
+                    "Forward-only execution and temporary microbatch counts require a custom schedule"
+                )
+            losses: Optional[List[torch.Tensor]] = None
+            if self.has_last_stage and self.loss_fn is not None:
+                losses = []
+            else:
+                target = None
+            output = self.base_schedule.step(*args, target=target, losses=losses, **kwargs)
+            return output, None if losses is None else torch.stack(losses)
+
+        (input_ids,) = args
         if not self.has_last_stage:
             target = None
 
