@@ -102,6 +102,7 @@ class TransformerPipelineTrainModule(TrainModule):
         when loading a checkpoint.
     :param load_key_mapping: Can be used to load a checkpoint where certain parameter have different names.
         This dictionary should map current keys to keys in the checkpoint to be loaded.
+    :param eval_only: Must be ``False``; pipeline-parallel evaluation is not supported.
     """
 
     def __init__(
@@ -132,6 +133,10 @@ class TransformerPipelineTrainModule(TrainModule):
         super().__init__()
 
         # Validate some options.
+        if eval_only:
+            raise OLMoConfigurationError(
+                "eval_only=True is not supported with pipeline parallelism"
+            )
         if rank_microbatch_size % max_sequence_length != 0:
             raise OLMoConfigurationError(
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "

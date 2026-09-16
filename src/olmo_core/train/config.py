@@ -54,8 +54,8 @@ class TrainerConfig(Config):
     steps_to_skip: Optional[List[StepSkipRange]] = None
     checkpoints_to_eval: Optional[List[str]] = None
     """
-    Checkpoint paths (or globs) to evaluate with :meth:`Trainer.eval_checkpoints`. No effect during
-    training.
+    Checkpoint paths (or globs using only ``*`` and ``**`` wildcards) to evaluate with
+    :meth:`Trainer.eval_checkpoints`. No effect during training.
     """
 
     def add_callback(self, name: str, callback: Callback):
