@@ -6,8 +6,49 @@ from unittest.mock import Mock
 import pytest
 
 from olmo_core.data import TokenizerConfig
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.train.callbacks import evaluator_callback
-from olmo_core.train.train_module import EvalBatchSizeUnit, EvalBatchSpec
+from olmo_core.train.train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    OLMoDDPTrainModule,
+    TransformerPipelineTrainModule,
+    TransformerTrainModule,
+)
+
+
+@pytest.mark.parametrize("module_type", [TransformerTrainModule, OLMoDDPTrainModule])
+def test_post_attach_accepts_non_pipeline_transformer_modules(module_type):
+    module = object.__new__(module_type)
+    module._pp_config = None
+    callback = evaluator_callback.EvaluatorCallback()
+    callback.trainer = SimpleNamespace(train_module=module)
+
+    callback.post_attach()
+
+
+@pytest.mark.parametrize("pp_group_rank", [0, 1])
+def test_post_attach_rejects_olmo_ddp_pipeline_parallelism_on_every_stage(pp_group_rank):
+    module = object.__new__(OLMoDDPTrainModule)
+    module._pp_config = SimpleNamespace(degree=2)
+    module.pp_group_rank = pp_group_rank
+    module.pp_final_stage_rank = 1
+    callback = evaluator_callback.EvaluatorCallback()
+    callback.trainer = SimpleNamespace(train_module=module)
+
+    with pytest.raises(
+        OLMoConfigurationError, match="does not support OLMoDDP pipeline parallelism"
+    ):
+        callback.post_attach()
+
+
+@pytest.mark.parametrize("module_type", [object, TransformerPipelineTrainModule])
+def test_post_attach_rejects_unsupported_modules(module_type):
+    callback = evaluator_callback.EvaluatorCallback()
+    callback.trainer = SimpleNamespace(train_module=object.__new__(module_type))
+
+    with pytest.raises(OLMoConfigurationError, match="only supports transformer train modules"):
+        callback.post_attach()
 
 
 @pytest.mark.parametrize("interval,fixed_steps", [(500, None), (None, [500])])
