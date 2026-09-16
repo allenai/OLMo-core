@@ -75,10 +75,8 @@ def main():
         )
     target = 4 if r.smoke else data_plan()["total_steps"]
     if not r.smoke:
-        for smoke in runs(True):
-            gate = json.loads(
-                (smoke.root / "audit/sft-gate-success.json").read_text()
-            )
+        for smoke in (s for s in runs(True) if s.arm == r.arm):
+            gate = json.loads((smoke.root / "audit/sft-gate-success.json").read_text())
             assert gate["all_8_ranks_verified"] and gate["source_commit"] == os.environ["GIT_REF"]
     choices = [(0, r.source)] + [
         (int(p.name[4:]), p)

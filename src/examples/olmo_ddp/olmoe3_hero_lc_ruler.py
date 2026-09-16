@@ -14,7 +14,7 @@ from pathlib import Path
 from olmoe3_hero_decay_plan import EVAL_ROOT, HELPER_REF, MOUNT
 from olmoe3_lr_sweep_watch import atomic_json, log
 
-CAMPAIGN = "olmo35-small-lc100b-ruler-20260913"
+CAMPAIGN = "olmo35-small-4t-lc100b-ruler-20260916"
 LENGTHS = (4096, 8192, 16384, 32768, 65536, 131072)
 SELECTORS = tuple(f"ruler_all__{length}" for length in LENGTHS)
 RECIPE = Path(__file__).with_name("hero_ruler_baseline_recipe.json")
@@ -143,6 +143,9 @@ def main():
     ).strip()
     sys.path.insert(0, str(args.helper / "ladders/olmoe3/workloads"))
     import hero_full_eval as runtime
+    from olmoe3_hero_4t_eval_policy import install_runtime
+
+    install_runtime(runtime)
 
     model = model_path(args.milestone, args.arm)
     assert model.resolve() == model and model.is_dir()

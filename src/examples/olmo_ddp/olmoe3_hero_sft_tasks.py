@@ -74,8 +74,15 @@ class ThinkAnswers:
                         key = hashlib.sha256(str(record["native_id"]).encode()).hexdigest()
                         path = Path(audit) / self.config.name / f"{key}-{index}.json"
                         path.parent.mkdir(parents=True, exist_ok=True)
-                        assert not path.exists(), "Duplicate response; refuse ambiguous scoring"
-                        path.write_text(json.dumps(record) + "\n")
+                        if path.exists():
+                            assert os.environ.get("HERO_SFT_RESUME") == "1"
+                            assert json.loads(path.read_text()) == record, (
+                                "Conflicting saved response"
+                            )
+                        else:
+                            from olmoe3_lr_sweep_watch import atomic_json
+
+                            atomic_json(path, record)
         super()._extract_answers(responses)
 
 

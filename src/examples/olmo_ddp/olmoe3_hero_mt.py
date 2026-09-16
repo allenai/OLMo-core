@@ -17,6 +17,7 @@ from olmoe3_hero_mt_plan import (
     END,
     LR,
     MIX_SHA256,
+    PT_STEP,
     REQUESTED_TOKENS,
     SEED,
     SMOKE_END,
@@ -27,10 +28,20 @@ from olmoe3_hero_mt_plan import (
 from olmoe3_lr_sweep_watch import atomic_json
 
 import olmo_core
-from olmo_core.data import InstanceFilterConfig, NumpyDataLoaderConfig, NumpyFSLDatasetConfig
+from olmo_core.data import (
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.utils import get_rank
-from olmo_core.internal.experiment import CliContext, DataComponents, SubCmd, build_config, main
+from olmo_core.internal.experiment import (
+    CliContext,
+    DataComponents,
+    SubCmd,
+    build_config,
+    main,
+)
 from olmo_core.optim.scheduler import CosWithWarmup
 from olmo_core.train import Duration
 from olmo_core.train.common import LoadStrategy
@@ -110,7 +121,7 @@ class MTAudit(hero.HeroAudit):
                 weights_and_buffers_sampled_exact=True,
                 optimizer_reset=True,
                 data_reset=True,
-                source_step=120000,
+                source_step=PT_STEP,
             )
             atomic_json(Path(self.output_dir) / f"initial-mt-transfer-rank{get_rank()}.json", proof)
         else:
@@ -197,7 +208,7 @@ def trainer_config(common):
     wb.tags = [
         r.arm,
         "midtraining",
-        "decayed-2t-source",
+        "decayed-4t-source",
         "mt20",
         "cosine",
         "64g",
@@ -211,6 +222,15 @@ def trainer_config(common):
     return config
 
 
+def model_config(common):
+    """Use the unchanged hero model with all EMO routing disabled."""
+    from olmoe3_hero_mt_plan import assert_no_emo
+
+    config = hero.model_config(common)
+    assert_no_emo(config)
+    return config
+
+
 def config_builder():
     return partial(
         build_config,
@@ -219,7 +239,7 @@ def config_builder():
         num_nodes=8,
         common_config_builder=common_components,
         data_config_builder=data_components,
-        model_config_builder=hero.model_config,
+        model_config_builder=model_config,
         train_module_config_builder=train_module_config,
         trainer_config_builder=trainer_config,
         beaker_image=hero.qualified.base.BEAKER_IMAGE,

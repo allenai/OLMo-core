@@ -25,7 +25,6 @@ from olmoe3_lr_sweep_watch import atomic_json, replace_env
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 TEMPLATES = dict(
     convert="01M2663ZFTZ5AARQZBG95Q3H5D",
-    qualify="01M26G35SKW26HPG7VJDJYCMXQ",
     gen_mc="01M22C3WYS48MXH1V46X7EHFYA",
     math="01M22C3X69YMKA6YSR5M0ACSK6",
     code="01M22D1V352S52XWTM8GPHTVXM",
@@ -87,8 +86,8 @@ def build_spec(template, stage, run, commit):
                 and "google-cloud-cli-583.0.0" in command
             )
     task["arguments"] = [command]
-    task["context"].update(priority="urgent", minRuntime="1h")
-    task["timeout"] = "6h"
+    task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
+    task["timeout"] = "24h"
     replace_env(task, {"GIT_REF": commit})
     assert not task.get("result", {}).get("path")
     assert "hero_hf_cleanup.py" not in command
@@ -117,16 +116,9 @@ def eval_specs(beaker, run, commit):
 
 
 def qualify_source(run):
-    root = EVAL_ROOT / run.arm / f"step{END}"
-    conversion = root / "hf/_HERO_CONVERSION_SUCCESS.json"
-    for name in ("conversion-success.json", "vllm-parity-success.json", "eval-smoke-success.json"):
-        row = json.loads((root / name).read_text())
-        assert row.get("passed") is True and not row.get("diagnostic_only")
-        if name == "vllm-parity-success.json":
-            assert (
-                row["precise"]
-                and row["conversion_sha256"] == hashlib.sha256(conversion.read_bytes()).hexdigest()
-            )
+    from olmoe3_hero_4t_eval_policy import validate_export
+
+    validate_export(EVAL_ROOT / run.arm / f"step{END}/hf")
 
 
 def advance_evals(beaker, control, run, specs):
@@ -170,7 +162,7 @@ def prepare_scratch():
     assert EVAL_ROOT.resolve() == EVAL_ROOT
     EVAL_ROOT.mkdir(parents=True, exist_ok=True)
     path = EVAL_ROOT / "_OWNER.json"
-    owner = dict(campaign="olmo35-small-decay2t-20260911", scratch=str(EVAL_ROOT))
+    owner = dict(campaign="olmo35-small-decay4t-20260916", scratch=str(EVAL_ROOT))
     if path.exists():
         assert json.loads(path.read_text()) == owner
     else:
@@ -231,11 +223,17 @@ def main():
             "--portable-reference",
             "--precise",
         ]
+        from olmoe3_hero_4t_eval_policy import install_conversion
+
+        install_conversion(convert)
         convert.main()
     else:
         qualify_source(run)
         sys.path.insert(0, str(args.source / "ladders/olmoe3/workloads"))
         import hero_full_eval as runtime
+        from olmoe3_hero_4t_eval_policy import install_runtime
+
+        install_runtime(runtime)
 
         runtime.FAST_MODELS = {EVAL_ROOT / arm / f"step{END}/hf" for arm in ("emo", "non-emo")}
         sys.argv = [

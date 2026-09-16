@@ -68,13 +68,14 @@ def spec_for(template, stage, run, commit):
             "sharedMemory": "16 GiB",
         }
     task["arguments"] = [command]
-    task["context"].update(priority="urgent", minRuntime=3600000000000, autoResume=False)
-    task["timeout"] = "12h"
+    task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
+    task["timeout"] = "24h"
     if not any(d["mountPath"] == "/weka/oe-adapt-default" for d in task["datasets"]):
         task["datasets"].append(
             {"mountPath": "/weka/oe-adapt-default", "source": {"weka": "oe-adapt-default"}}
         )
     replace_env(task, {"GIT_REF": commit, "HF_TOKEN": None})
+    replace_env(task, {"HERO_SFT_RESUME": "1"})
     task["envVars"].append({"name": "HF_TOKEN", "secret": "jacobm_HF_TOKEN"})
     if stage in ("smoke", "humaneval"):
         task["envVars"] += [

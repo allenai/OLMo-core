@@ -1,4 +1,4 @@
-"""100B ladder LC, from the two hero MT endpoints; independent immutable lineages."""
+"""EMO PT -> no-EMO MT -> no-EMO LC, in a separate immutable lineage."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,14 +14,14 @@ from olmoe3_small_hero_plan import (
     WORKSPACE,
 )
 
-CAMPAIGN = "olmo35-small-2t-lc100b-20260913"
-BRANCH = "codex/small-hero-lc-20260913"
+CAMPAIGN = "olmo35-small-4t-lc100b-noemo-20260916"
+BRANCH = "codex/hero-4t-pipeline-20260916"
 ROOT = MOUNT / "production-hero-small-lc" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 # Retain the failed deployment's immutable plans and submissions for audit.
-DEPLOYMENT = "recompute-owner-r2"
+DEPLOYMENT = "posttrain-noemo-4t-v1"
 DEPLOYMENT_AUTOMATION = AUTOMATION / "deployments" / DEPLOYMENT
-REPLACED_SMOKES = ("01M2C7DE8GXXXQZYJJSNZNPWF1", "01M2CD1FRFN2JG1HJC4P3N7DMK")
+REPLACED_SMOKES = ()
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
 DATA_WORK = ROOT / "data-work"
 METADATA_CACHE = DATA_WORK / "cached-path-metadata"
@@ -40,7 +40,9 @@ END = (REQUESTED_TOKENS + BATCH - 1) // BATCH
 SMOKE_END = 2
 GATE_END = 4
 SEED = 119_105_108_108 % (2**31 - 1)
-MT_JOBS = {"emo": "01M2BASTQ94J6CKAA0EG4R7J90", "non-emo": "01M2B7GXHRSW8J2T5K0637HGJM"}
+# An owner-qualified immutable submission name avoids a second commit just to bind an ID.
+MT_JOBS = {arm: "jacobm/" + MTRun(arm).run_id + "-train" for arm in ("emo", "non-emo")}
+MT_TEMPLATE = "01M2BASTQ94J6CKAA0EG4R7J90"
 
 
 @dataclass(frozen=True)
@@ -55,7 +57,7 @@ class LCRun:
 
     @property
     def emo(self):
-        return self.arm == "emo"
+        return False
 
     @property
     def run_id(self):
@@ -79,12 +81,14 @@ class LCRun:
 
     @property
     def prefix(self):
-        return f"lc100b-after-mt20-decay2t/{self.arm}"
+        return f"posttrain-noemo-4t-20260916/lc100b/{self.arm}"
 
     def as_dict(self):
         return dict(
             run_id=self.run_id,
             arm=self.arm,
+            pretrain_emo=self.arm == "emo",
+            posttrain_emo=False,
             checkpoint_root=str(self.root),
             parent=self.parent.run_id,
             parent_experiment=MT_JOBS[self.arm],
@@ -109,7 +113,7 @@ class LCRun:
             requested_lc_tokens=REQUESTED_TOKENS,
             lc_steps=END,
             lc_tokens=END * BATCH,
-            total_seen_tokens=(120000 + SOURCE_STEP + END) * BATCH,
+            total_seen_tokens=(240000 + SOURCE_STEP + END) * BATCH,
             optimizer_reset_at_lc_start=True,
             data_seed=SEED,
             data_glob=DATA_GLOB,

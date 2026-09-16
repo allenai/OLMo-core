@@ -32,7 +32,7 @@ def training_spec(original, run, commit):
     assert len(spec["tasks"]) == 8
     task = spec["tasks"][0]
     env = {v["name"]: v.get("value") for v in task["envVars"]}
-    assert env["GIT_REF"] == "36170c2d14272f62670235d176d7424ac85bebf8"
+    assert env["GIT_REF"] in ("9f1b3a2e54f89dec7a7d2df9a43d7dddcc4d3293", commit)
     assert env["GANTRY_INSTALL_CMD"] == "true"
     assert env["GANTRY_POST_SETUP_CMD"] == "bash src/examples/olmo_ddp/olmoe3_hero_decay_setup.sh"
     task.update(name="train", replicas=8, leaderSelection=True, timeout="720h")
@@ -40,6 +40,9 @@ def training_spec(original, run, commit):
     task["context"].update(priority="urgent", minRuntime="1h", autoResume=True)
     assert task["resources"]["gpuCount"] == 8
     assert task.get("result", {}).get("path") in (None, "/noop-results")
+    task["constraints"]["hostname"] = [
+        h for h in task["constraints"]["hostname"] if h != "holmes-cs-aus-520.reviz.ai2.in"
+    ]
     replace_env(
         task,
         {
@@ -91,6 +94,11 @@ def main():
     with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert status(b.workload.get(os.environ["OLMO35_MT_GATE"])) == "STATUS_SUCCEEDED"
+        gate_spec = b.experiment.get_spec(b.workload.get(os.environ["OLMO35_MT_GATE"])).to_json()
+        assert all(
+            any(v["name"] == "GIT_REF" and v.get("value") == commit for v in t["envVars"])
+            for t in gate_spec["tasks"]
+        )
         control = MTController(b, commit)
         planned = {
             r.arm: training_spec(
@@ -100,6 +108,7 @@ def main():
         }
         names = {r.arm: r.run_id + "-train" for r in runs()}
         repair = os.environ.get("OLMO35_MT_REPAIR_EMO_CACHE") == "1"
+        assert not repair, "Legacy repair mode is not part of this independent campaign"
         if repair:
             # Explicit user-authorized replacement of the failed writer only. Preserve the
             # exact durable spec of the non-EMO job already running on its original commit.
@@ -204,7 +213,7 @@ def main():
                 row.get("evals", {}).get("complete") and row.get("endpoint_upload_verified")
                 for row in snapshot.values()
             ):
-                log("BOTH_MT_RUNS_UPLOADED_AND_EVALUATED")
+                log("NOEMO_MT_UPLOADED_AND_EVALUATED")
                 return
             time.sleep(30)
 

@@ -64,7 +64,11 @@ def training_spec(original, run, commit, phase):
     assert env["GIT_REF"] in (
         "f9ffa9b636fa51654892eb94c11f919d89dd7753",
         "05d8adba0e543b6e06d7592eb0b70171a2dd89bf",
+        commit,
     )
+    if env["GIT_REF"] == commit:
+        parent = json.loads(spec["description"])
+        assert parent["run_id"] == run.parent.run_id and parent["posttrain_emo"] is False
     task.update(
         name="lc-" + phase,
         replicas=8,
@@ -76,6 +80,9 @@ def training_spec(original, run, commit, phase):
     assert task["resources"]["gpuCount"] == 8
     assert task.get("result", {}).get("path") in (None, "/noop-results")
     mount_lc(task)
+    task["constraints"]["hostname"] = [
+        h for h in task["constraints"]["hostname"] if h != "holmes-cs-aus-520.reviz.ai2.in"
+    ]
     replace_env(
         task,
         {

@@ -156,6 +156,9 @@ def main():
             "--portable-reference",
             "--precise",
         ]
+        from olmoe3_hero_4t_eval_policy import install_conversion
+
+        install_conversion(convert)
         convert.main()
         config = json.loads((root / "hf/config.json").read_text())
         assert config["max_position_embeddings"] == 65536
@@ -163,6 +166,9 @@ def main():
         worker.qualify_source(run)
         sys.path.insert(0, str(args.source / "ladders/olmoe3/workloads"))
         import hero_full_eval as runtime
+        from olmoe3_hero_4t_eval_policy import install_runtime
+
+        install_runtime(runtime)
 
         runtime.FAST_MODELS = {EVAL_ROOT / arm / f"step{END}/hf" for arm in ("emo", "non-emo")}
         sys.argv = [

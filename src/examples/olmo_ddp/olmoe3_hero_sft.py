@@ -352,7 +352,7 @@ def trainer_config(common):
     wb.group = CAMPAIGN + ("-smoke" if r.smoke else "")
     wb.tags = [
         r.arm,
-        "pretrain-emo",
+        "pretrain-emo" if r.arm == "emo" else "pretrain-non-emo",
         "midtrain-emo-disabled",
         "long-context-emo-disabled",
         "source-emo-disabled",
@@ -461,7 +461,7 @@ def prepare():
                     disable_emo(child)
 
         disable_emo(old_model)
-        assert old_emo and all(value is not None for value in old_emo)
+        assert old_emo and all((value is not None) == (r.arm == "emo") for value in old_emo)
         assert current["model"] == old_model, "Model differs beyond disabling EMO"
         for section in ("train_module", "dataset", "data_loader"):
             normalized = json.loads(

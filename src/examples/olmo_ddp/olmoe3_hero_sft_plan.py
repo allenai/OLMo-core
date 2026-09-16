@@ -15,8 +15,8 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 )
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-CAMPAIGN = "olmo35-small-gptoss-sft-posttrain-noemo-20260914"
-BRANCH = "codex/hero-sft-posttrain-noemo-20260914"
+CAMPAIGN = "olmo35-small-4t-gptoss-sft-noemo-20260916"
+BRANCH = "codex/hero-4t-pipeline-20260916"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
@@ -30,8 +30,8 @@ SEQUENCE = 65536
 GPUS = 8
 SEED = 1729
 LRS = {"1em5": 1e-5, "5em5": 5e-5, "1em4": 1e-4}
-LC_CAMPAIGN = "olmo35-small-2t-lc100b-noemo-20260914"
-LC_JOBS = {"emo": "01M2FV97BETNXMM08QS0WYE02G"}
+LC_CAMPAIGN = "olmo35-small-4t-lc100b-noemo-20260916"
+LC_JOBS = {arm: "jacobm/" + LC_CAMPAIGN + "-" + arm + "-train" for arm in ("emo", "non-emo")}
 
 
 @dataclass(frozen=True)
@@ -85,7 +85,7 @@ class SFTRun:
         return {
             "run_id": self.run_id,
             "arm": self.arm,
-            "pretrain_emo": True,
+            "pretrain_emo": self.arm == "emo",
             "midtrain_emo": False,
             "long_context_emo": False,
             "source_emo": False,

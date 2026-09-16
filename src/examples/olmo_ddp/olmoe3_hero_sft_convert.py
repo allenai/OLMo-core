@@ -211,6 +211,9 @@ def main():
     ]
     if args.qualify_only:
         sys.argv.append("--qualify-only")
+    from olmoe3_hero_4t_eval_policy import install_conversion
+
+    install_conversion(convert)
     convert.main()
     config = json.loads((root / "hf/config.json").read_text())
     assert config["max_position_embeddings"] == 65536
