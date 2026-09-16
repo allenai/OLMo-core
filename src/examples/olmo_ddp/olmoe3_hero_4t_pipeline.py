@@ -97,9 +97,10 @@ def prepare(stage, arm):
     else:
         with (AUTOMATION / "sft-prepare.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            subprocess.run(
-                [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"],
-                check=True,
+        subprocess.run(
+            [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"],
+            check=True,
+            env=dict(os.environ, OLMO35_HERO_STOP="4"),
             )
     atomic_json(
         AUTOMATION / f"prepared-{stage}-{arm}.json",
@@ -218,7 +219,7 @@ def main():
                 log("FOUR_T_PIPELINE_WAIT_STORAGE_OR_UPLOADER")
                 time.sleep(60)
                 continue
-            config_name = "olmo35-small-4t-config-check-cpu-20260916"
+            config_name = "olmo35-small-4t-config-check-cpu-20260916-" + commit[:8]
             entry = DECAY_AUTOMATION / "launched-emo.json"
             if entry.is_file():
                 config_spec = prep_spec(
