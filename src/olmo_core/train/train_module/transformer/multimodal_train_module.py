@@ -260,6 +260,11 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         loss_masks = batch.pop("loss_masks")
         batch.pop("pack_source_names", None)
+        # Diagnostic only (crop occupancy in SpeedMonitorCallback); the model has no use
+        # for it. Dropped here rather than relied on being harmless: both
+        # MultimodalLM.forward and Transformer.forward accept **kwargs and would silently
+        # swallow it, so nothing downstream would complain if it leaked.
+        batch.pop("n_real_crops", None)
         return input_ids, labels, loss_masks, batch
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
