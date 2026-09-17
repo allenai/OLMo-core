@@ -143,9 +143,9 @@ def prepare_molmo2_tokenizer(
     ]
     if len(set(resolved_ids)) != len(resolved_ids):
         raise ValueError(f"Molmo2 special tokens did not resolve to unique IDs: {resolved_ids}")
-    if model_vocab_size is not None and max(resolved_ids) >= model_vocab_size:
+    if model_vocab_size is not None and (max_token_id := max(vocab.values())) >= model_vocab_size:
         raise ValueError(
-            f"Adapted tokenizer requires token ID {max(resolved_ids):,d}, but the model "
+            f"Adapted tokenizer requires token ID {max_token_id:,d}, but the model "
             f"vocabulary has only {model_vocab_size:,d} rows"
         )
     return token_ids

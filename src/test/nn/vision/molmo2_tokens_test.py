@@ -51,6 +51,34 @@ def test_prepare_molmo2_tokenizer_rejects_embedding_resize():
         prepare_molmo2_tokenizer(_AppendOnlyTokenizer(), model_vocab_size=100283)
 
 
+@pytest.mark.parametrize("image_tokens_present", [False, True])
+@pytest.mark.parametrize("extra_id", [100351, 100352, 100400])
+def test_prepare_molmo2_tokenizer_checks_unrelated_token_ids(image_tokens_present, extra_id):
+    tokenizer = _AppendOnlyTokenizer()
+    if image_tokens_present:
+        prepare_molmo2_tokenizer(tokenizer)
+    tokenizer.vocab["unrelated"] = extra_id
+    # A vocabulary-size check would incorrectly accept this sparse vocabulary.
+    assert len(tokenizer.get_vocab()) < 100352
+
+    if extra_id >= 100352:
+        with pytest.raises(ValueError, match=f"requires token ID {extra_id:,d}"):
+            prepare_molmo2_tokenizer(tokenizer, model_vocab_size=100352)
+    else:
+        ids = prepare_molmo2_tokenizer(tokenizer, model_vocab_size=100352)
+        assert ids.image_placeholder_id == 100283
+        assert tokenizer.vocab["unrelated"] == extra_id
+
+
+def test_prepare_molmo2_tokenizer_preserves_special_id_uniqueness_check():
+    tokenizer = _AppendOnlyTokenizer()
+    prepare_molmo2_tokenizer(tokenizer)
+    tokenizer.vocab[IMAGE_SPECIAL_TOKENS[0]] = tokenizer.vocab[IMAGE_SPECIAL_TOKENS[1]]
+
+    with pytest.raises(ValueError, match="unique IDs"):
+        prepare_molmo2_tokenizer(tokenizer, model_vocab_size=100352)
+
+
 def test_build_image_tokens_honors_custom_ids():
     ids = Molmo2TokenIds(
         im_start_id=10,
