@@ -60,7 +60,8 @@ allocated in `ai2/olmo3p5-training`.
    workspace. Math/IFBench/Alpaca replay immutable completed generations after
    preemption; HumanEval starts a fresh isolated attempt/sandbox.
 
-Only the four requested final models are exported/evaluated. Epoch-one native
-checkpoints are recovery checkpoints. Existing campaigns and source checkpoints
+Only the four requested final models are exported/evaluated. Native checkpoints
+are saved every epoch for recovery; the uploader protects the latest two locally.
+Existing campaigns and source checkpoints
 are untouched. This comparison does not isolate data quality alone: reasoning
 effort, response length, filtering outcomes and dataset contents also differ.

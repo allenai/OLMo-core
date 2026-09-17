@@ -92,8 +92,8 @@ class SFTRun:
 
     @property
     def checkpoint_steps(self):
-        # Intermediate recovery checkpoint plus final, protected from deletion until export.
-        return [data_plan()["steps_per_epoch"], self.total_steps]
+        # Keep per-epoch recovery points; the uploader protects the latest two.
+        return [data_plan()["steps_per_epoch"] * epoch for epoch in range(1, self.epochs + 1)]
 
     def as_dict(self):
         return {
