@@ -145,6 +145,12 @@ class OLMoDDPTrainModule(TrainModule):
         eval_only: bool = False,
     ):
         super().__init__()
+        if eval_only and (pp_config is not None or cp_config is not None):
+            raise OLMoConfigurationError(
+                "eval_only=True is not supported with pipeline or context parallelism "
+                "in OLMoDDPTrainModule"
+            )
+
         if not _is_olmo_ddp_compatible(model):
             raise TypeError(
                 "OLMoDDPTrainModule requires an OLMoDDPModel or a compatible adapter, "
