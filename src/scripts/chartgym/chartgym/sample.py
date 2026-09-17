@@ -206,7 +206,10 @@ def sample_figure(figure_id: str, seed: int, difficulty: str, *, eval_split: boo
             x=AxisSpec("x", x_axis_label, x_lim, x_ticks, numeric_ticks=numeric_x),
             y=AxisSpec("y", y_axis_label, (ylo, yhi), TickSpec(tuple(yv), tuple(yl))),
             series=tuple(series), has_legend=show_legend,
-            legend_loc=str(rng.choice(["upper right", "upper left", "lower right", "lower left"])),
+            legend_loc=str(rng.choice(
+                ["upper right", "upper left", "lower right", "lower left", "outside right"],
+                p=[0.2125, 0.2125, 0.2125, 0.2125, 0.15],
+            )),
             grid=bool(rng.random() < 0.4),
         ))
 

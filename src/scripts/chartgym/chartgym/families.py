@@ -62,13 +62,36 @@ def _panel_ref(spec, panel):
 
 @family("cnt.ticks_total", CAP_COUNT, "int")
 def _ticks_total(spec, audit, rng):
-    n = spec.total_labeled_ticks()
-    q = rng.choice([
-        "Add up every tick mark that carries a written label on all axes of this figure. How many are there?",
-        "Counting all axes together, how many tick marks have text written next to them?",
-        "How many of the tick marks in this figure are annotated with a value or name? Count across all axes.",
-    ])
-    return [_qa("cnt.ticks_total", q, n)]
+    """Total labelled ticks -- PANEL-scoped on multi-panel figures.
+
+    The first release of this family asked about the whole figure. Trained at 25% mixture
+    share, that flipped the checkpoint's CharXiv template-17 error from under-counting
+    (median -6) to over-counting (median +13, 207 of 224 wrong answers high) and cost
+    -28.57 on the template: CharXiv's question carries a subplot locator and is scoped to
+    the referenced subplot, so the model had learned the right skill at the wrong scope.
+    Scope is part of the answer. Figure-scope phrasing is now emitted only where the two
+    scopes coincide -- single-panel figures.
+    """
+    out = []
+    if spec.n_panels == 1:
+        q = rng.choice([
+            "Add up every tick mark that carries a written label on all axes of this figure. How many are there?",
+            "Counting all axes together, how many tick marks have text written next to them?",
+            "How many of the tick marks in this figure are annotated with a value or name? Count across all axes.",
+        ])
+        out.append(_qa("cnt.ticks_total", q, spec.total_labeled_ticks()))
+        return out
+    for panel in spec.panels:
+        ref = _panel_ref(spec, panel)
+        if ref is None:
+            continue
+        n = panel.x.ticks.n_labeled + panel.y.ticks.n_labeled
+        q = rng.choice([
+            f"{ref}add up the tick marks carrying a written label on both of its axes. How many are there?",
+            f"{ref}counting its two axes together, how many tick marks have text written next to them?",
+        ])
+        out.append(_qa("cnt.ticks_total", q, n))
+    return out
 
 
 @family("cnt.ticks_axis", CAP_COUNT, "int")

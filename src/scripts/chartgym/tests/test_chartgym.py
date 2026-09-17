@@ -212,3 +212,30 @@ def test_na_rates_are_the_measured_ones():
     assert NA_RATES["not_line_plot"] == pytest.approx(0.446)
     assert NA_RATES["no_title"] == pytest.approx(0.59)
     assert NA_RATES["x_spacing_na"] == pytest.approx(0.179)
+
+
+def test_tick_total_is_panel_scoped_on_multipanel_figures():
+    """Scope is part of the answer.
+
+    The figure-scoped version of this family flipped the trained checkpoint's CharXiv
+    template-17 error from median -6 (under-count) to median +13 (over-count) and cost
+    -28.57 on the template, because CharXiv's question is scoped to a referenced subplot.
+    Figure-scope phrasing may only appear where it is unambiguous: single-panel figures.
+    """
+    seen_multi = seen_single = 0
+    for spec, audit in _figures(n=30):
+        qs = [q for q in emit_all(spec, audit, np.random.default_rng(7), include_held_out=False)
+              if q["family"] == "cnt.ticks_total"]
+        for q in qs:
+            if spec.n_panels == 1:
+                seen_single += 1
+                assert int(q["answer"]) == spec.total_labeled_ticks()
+            else:
+                seen_multi += 1
+                assert "figure" not in q["question"].lower(), q["question"]
+                assert "panel titled" in q["question"], q["question"]
+                per_panel = {p.x.ticks.n_labeled + p.y.ticks.n_labeled
+                             for p in spec.panels if p.title}
+                assert int(q["answer"]) in per_panel
+                assert int(q["answer"]) < spec.total_labeled_ticks() or spec.n_panels == 1
+    assert seen_single and seen_multi, "need both scopes exercised"

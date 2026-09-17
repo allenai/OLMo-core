@@ -127,7 +127,15 @@ def render(spec: FigureSpec) -> tuple[bytes, RenderAudit]:
             if panel.grid:
                 ax.grid(True, alpha=0.3)
             if panel.has_legend and panel.legend_entries:
-                ax.legend(loc=panel.legend_loc, fontsize=spec.style.font_size * 0.85)
+                if panel.legend_loc == "outside right":
+                    # CharXiv's legend templates explicitly include legends drawn outside
+                    # the axes; a corpus whose legends are always inside teaches "nothing
+                    # inside the panel -> no legend", which shows up as NA over-declaration
+                    # (t12 precision 74.5% after the first training run).
+                    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
+                              fontsize=spec.style.font_size * 0.85)
+                else:
+                    ax.legend(loc=panel.legend_loc, fontsize=spec.style.font_size * 0.85)
         if spec.suptitle:
             fig.suptitle(spec.suptitle)
 
