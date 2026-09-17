@@ -280,6 +280,8 @@ class AttentionType(StrEnum):
     stack of layers grows geometrically)
     """
 
+    document_end_compressive_landmark = "document_end_compressive_landmark"
+
     summary_token = "summary_token"
     """
     ➡️ :class:`SummaryTokenAttention` (per-document **summary-token** masking: each context document
@@ -1138,6 +1140,8 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 kwargs["layer_idx"] = layer_idx
                 kwargs["n_layers"] = n_layers
                 return DilatedSlidingWindowAttention(**kwargs)
+            elif effective_name == "document_end_compressive_landmark":
+                return DocumentEndCompressiveLandmarkAttention(**kwargs)
             elif effective_name == "summary_token":
                 # Per-document summary-token masking. The levers are named for what they control;
                 # every default is the treatment, so no arm is silently the floor control.
@@ -2569,3 +2573,5 @@ from .landmark_multi_compressive import MultiCompressiveLandmarkAttention  # noq
 from .landmark_shared_vector import SharedVectorLandmarkAttention  # noqa: E402
 from .landmark_sparse import SparseLandmarkAttention  # noqa: E402
 from .summary_token import SummaryTokenAttention  # noqa: E402
+
+from .landmark_document_end import DocumentEndCompressiveLandmarkAttention  # noqa: E402

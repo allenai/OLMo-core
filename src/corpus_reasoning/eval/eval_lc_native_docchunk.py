@@ -55,7 +55,6 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
     EOS_TOKEN_ID,
     LANDMARK_TOKEN_ID,
     PAD_TOKEN_ID,
-    REAL_VOCAB_SIZE,
 )
 
 # Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
@@ -140,6 +139,7 @@ def build_eval_prefill(
     mem_freq=63,
     summary_token_id=None,
     n_summary_tokens=5,
+    landmark_token_id=None,
 ):
     """
     Render one eval example's **prompt-only prefill** token ids for any ``TASK_CFG`` task.
@@ -170,6 +170,8 @@ def build_eval_prefill(
         emit_document_chunk_dense,
         emit_document_chunk_landmark,
         emit_document_chunk_summary,
+        emit_document_end_landmark,
+        validate_document_end_landmark_layout,
         segment_prompt_to_chunks,
     )
 
@@ -199,16 +201,32 @@ def build_eval_prefill(
         out, _ = emit_document_chunk_summary(
             segs, summary_token_id=summary_token_id, n_summary_tokens=n_summary_tokens
         )
-    else:
+    elif variant == "document_end_landmark":
+        if landmark_token_id is None:
+            raise ValueError("document_end_landmark requires explicit landmark_token_id")
+        out, _ = emit_document_end_landmark(segs, mem_id=landmark_token_id)
+        # Prompt-only validation: EOS is not present; use a distinct sentinel.
+        validate_document_end_landmark_layout(
+            out,
+            doc_start_id=doc_start_id,
+            doc_end_id=doc_end_id,
+            landmark_token_id=landmark_token_id,
+            eos_id=-1,
+        )
+    elif variant == "landmark":
         out, _ = emit_document_chunk_landmark(
             segs, mem_freq=mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
         )
+    else:
+        raise ValueError(f"Unknown prefill variant: {variant}")
     return out
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--variant", required=True, choices=["dense", "landmark", "full"])
+    ap.add_argument(
+        "--variant", required=True, choices=["dense", "landmark", "full", "document_end_landmark"]
+    )
     ap.add_argument("--model-path", required=True, help="step dir: config.json + model_and_optim/")
     ap.add_argument("--out", required=True)
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
@@ -256,6 +274,12 @@ def main():
     ap.add_argument("--max-length", type=int, default=8192)
     ap.add_argument("--mem-freq", type=int, default=63)
     ap.add_argument(
+        "--landmark-token-id",
+        type=int,
+        default=None,
+        help="Required for document_end_landmark; must match checkpoint and shards.",
+    )
+    ap.add_argument(
         "--cot-mode", default=None, help="override the per-task default prompt CoT mode."
     )
     ap.add_argument(
@@ -282,6 +306,13 @@ def main():
     )
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if args.variant == "document_end_landmark":
+        if args.landmark_token_id is None:
+            ap.error("document_end_landmark requires --landmark-token-id")
+        if args.landmark_top_k_blocks is not None or args.landmark_top_k_fraction is not None:
+            ap.error("document_end_landmark currently supports exact retrieval only")
+        if args.batch_size != 1:
+            ap.error("document_end_landmark currently requires --batch-size 1")
     if args.batch_size > 1 and args.variant == "landmark":
         raise SystemExit(
             "--batch-size > 1 is not supported for --variant landmark (periodic landmark-token "
@@ -388,7 +419,17 @@ def main():
     # left-pads the prompt with this id, and chunk_ids reconstruction must mark it PAD (non-
     # attendable) rather than FREE. At --batch-size 1 no such token ever appears in the dense
     # prefill, so this is bit-identical to the old ``pad_id=None`` behavior there.
-    if args.variant != "full":
+    if args.variant == "document_end_landmark":
+        saved = gm.model._document_end_landmark
+        expected = {
+            "doc_start_id": ds_id,
+            "doc_end_id": de_id,
+            "summary_token_id": args.landmark_token_id,
+            "eos_id": eos_id,
+        }
+        if saved is None or any(saved.get(key) != value for key, value in expected.items()):
+            raise ValueError("Document-end checkpoint boundary IDs do not match eval arguments")
+    elif args.variant != "full":
         gm.model.enable_document_chunk_attention(
             doc_start_id=ds_id,
             doc_end_id=de_id,
@@ -454,23 +495,34 @@ def main():
             doc_start_id=ds_id,
             doc_end_id=de_id,
             mem_freq=args.mem_freq,
+            landmark_token_id=args.landmark_token_id,
         )
 
     block_size = (
         args.mem_freq + 1
     )  # landmark window (64); the eager landmark forward needs T % 64 == 0
 
+    def next_token(logits):
+        scores = logits[0, -1]
+        if args.variant == "document_end_landmark":
+            # The cache continuation is an answer region, never a new document.
+            # Structural tokens are inserted by the emitter, not generated.
+            scores = scores.clone()
+            blocked = [ds_id, de_id, args.landmark_token_id, pad_id]
+            scores[blocked] = float("-inf")
+        return int(scores.argmax().item())
+
     @torch.no_grad()
     def generate_one(prefill):
         gm.prepare_inference_cache(1, args.max_length)  # (re)set the cache cursor to 0 per example
         leftpad = torch.zeros(1, dtype=torch.int32, device=device)
-        if args.variant in ("dense", "full"):
+        if args.variant in ("dense", "full", "document_end_landmark"):
             # Dense / full: prefill once (chunked mask applied + K,V cached), then single-token greedy
             # decode over the cache (plain causal since new tokens are FREE). Same "Answer:" early-stop.
             logits = gm.model(
                 torch.tensor([prefill], device=device), logits_to_keep=1, cache_leftpad=leftpad
             )
-            nxt = int(logits[0, -1].argmax().item())
+            nxt = next_token(logits)
             new_content = []
             for _ in range(max_new_tokens):
                 if nxt == eos_id:
@@ -479,7 +531,7 @@ def main():
                 if should_stop(nxt, new_content):
                     break
                 logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
-                nxt = int(logits[0, -1].argmax().item())
+                nxt = next_token(logits)
             text = tok.decode(new_content, skip_special_tokens=True)
             return text.split("</think>", 1)[1] if "</think>" in text else text
 
@@ -492,7 +544,7 @@ def main():
         logits = gm.model(
             torch.tensor([prefill], device=device), logits_to_keep=1, cache_leftpad=leftpad
         )
-        nxt = int(logits[0, -1].argmax().item())
+        nxt = next_token(logits)
         new_content = []
         since_landmark = 0
         for _ in range(max_new_tokens):
@@ -509,7 +561,7 @@ def main():
                 since_landmark = 0
             if should_stop(nxt, new_content):
                 break
-            nxt = int(logits[0, -1].argmax().item())
+            nxt = next_token(logits)
         text = tok.decode(new_content, skip_special_tokens=True)
         return text.split("</think>", 1)[1] if "</think>" in text else text
 

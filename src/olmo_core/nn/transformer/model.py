@@ -145,6 +145,7 @@ class Transformer(nn.Module):
         # ``causal_example`` arm and forwards both to every block (for
         # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`).
         self._summary_token_attention: Optional[Dict[str, Any]] = None
+        self._document_end_landmark: Optional[Dict[str, Any]] = None
         # Which arm of the mask mixture to serve at INFERENCE; see ``set_summary_eval_mask_mode``.
         self._summary_eval_mask_mode: str = "causal"
 
@@ -287,6 +288,37 @@ class Transformer(nn.Module):
             "mix": mix,
         }
 
+    def enable_document_end_landmark_attention(
+        self,
+        *,
+        doc_start_id: int,
+        doc_end_id: int,
+        landmark_token_id: int,
+        eos_id: int,
+        pad_id: Optional[int] = None,
+    ) -> None:
+        """Reconstruct document-end roles for the eager compressive reference.
+
+        Input must already contain one landmark after each complete context
+        document. No periodic insertion or causal-mask mixture is applied.
+        """
+        from ..attention.landmark_document_end import DocumentEndCompressiveLandmarkAttention
+
+        if self._summary_token_attention is not None:
+            raise OLMoConfigurationError("Cannot combine summary-token and document-end modes")
+        if not any(
+            isinstance(getattr(block, "attention", None), DocumentEndCompressiveLandmarkAttention)
+            for block in self.blocks.values()
+        ):
+            raise OLMoConfigurationError("No document_end_compressive_landmark layers found")
+        self._document_end_landmark = {
+            "doc_start_id": doc_start_id,
+            "doc_end_id": doc_end_id,
+            "summary_token_id": landmark_token_id,
+            "eos_id": eos_id,
+            "pad_id": pad_id,
+        }
+
     def enable_summary_token_attention(
         self,
         doc_start_id: int,
@@ -369,6 +401,8 @@ class Transformer(nn.Module):
 
         # Record how much of the model the mask actually covers. On a hybrid this is a minority of
         # layers, and that fact belongs in the saved config rather than in someone's memory.
+        if self._document_end_landmark is not None:
+            raise OLMoConfigurationError("Cannot combine summary-token and document-end modes")
         n_mixers = 0
         n_summary_layers = 0
         for block in self.blocks.values():
@@ -702,8 +736,9 @@ class Transformer(nn.Module):
         # would be the wrong object.
         summary_roles: Optional[torch.Tensor] = None
         causal_example: Optional[torch.Tensor] = None
-        if self._summary_token_attention is not None:
-            st_cfg = self._summary_token_attention
+        if self._summary_token_attention is not None or self._document_end_landmark is not None:
+            st_cfg = self._document_end_landmark or self._summary_token_attention
+            assert st_cfg is not None
             summary_roles = build_summary_roles(
                 input_ids,
                 doc_start_id=st_cfg["doc_start_id"],
@@ -751,7 +786,11 @@ class Transformer(nn.Module):
                         f"causal_this_batch={int(flags.sum())}/{flags.numel()} examples "
                         f"({input_ids.shape[0]} instances x {n_examples})"
                     )
-            elif not self.training and self._summary_eval_mask_mode == "causal":
+            elif (
+                self._document_end_landmark is None
+                and not self.training
+                and self._summary_eval_mask_mode == "causal"
+            ):
                 # Inference: the arm is a serving decision, not a coin. Mark every token causal so the
                 # mask reduces to plain causal attention (see ``set_summary_eval_mask_mode``). Leaving
                 # this None -- as every forward did before the mode existed -- silently served the

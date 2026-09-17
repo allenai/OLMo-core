@@ -65,8 +65,10 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
     emit_document_chunk_dense,
     emit_document_chunk_landmark,
     emit_document_chunk_summary,
+    emit_document_end_landmark,
     reserved_ids,
     segment_prompt_to_chunks,
+    validate_document_end_landmark_layout,
 )
 
 log = logging.getLogger("convert_unified_doc_chunked")
@@ -130,6 +132,8 @@ def tokenize_example(
         marker-free stream for a plain full-attention baseline. The only difference between the two
         outputs is the 2 marker tokens per document.
     """
+    if emit == "document_end_landmark" and (not doc_markers or summary_every_k):
+        raise ValueError("document_end_landmark requires document markers and no summary spans")
     segments, ids, _mask = segment_prompt_to_chunks(
         tok,
         example,
@@ -162,10 +166,23 @@ def tokenize_example(
             summary_token_id=ids_set.summary,
             n_summary_tokens=n_summary_tokens,
         )
-    else:  # landmark
+    elif emit == "document_end_landmark":
+        out_ids, out_mask = emit_document_end_landmark(segments, mem_id=ids_set.landmark)
+        validate_document_end_landmark_layout(
+            out_ids,
+            doc_start_id=ids_set.doc_start,
+            doc_end_id=ids_set.doc_end,
+            landmark_token_id=ids_set.landmark,
+            eos_id=ids_set.eos,
+            pad_id=ids_set.pad,
+        )
+    elif emit == "landmark":
         out_ids, out_mask = emit_document_chunk_landmark(
             segments, mem_freq=mem_freq, mem_id=ids_set.landmark, pad_id=ids_set.pad
         )
+
+    else:
+        raise ValueError(f"Unknown emission mode: {emit}")
 
     # Append the EOS document separator (PadToLengthInstanceSource pads each instance up to seq_len).
     out_ids.append(ids_set.eos)
@@ -233,9 +250,10 @@ def main() -> None:
     p.add_argument(
         "--emit",
         default="landmark",
-        choices=["landmark", "dense", "summary"],
+        choices=["landmark", "dense", "summary", "document_end_landmark"],
         help="'landmark': pack into landmark windows (DocumentLandmarkAttention). 'dense': wrapped "
-        "tokens only, no landmarks (DocumentChunkedAttention). 'summary': dense plus a run of "
+        "tokens only, no landmarks (DocumentChunkedAttention). 'document_end_landmark': one "
+        "landmark per document without window padding. 'summary': dense plus a run of "
         "--num-summary-tokens <|summ|> tokens after each context document (SummaryTokenAttention).",
     )
     p.add_argument(
@@ -541,8 +559,14 @@ def main() -> None:
         "eos_token_id": ids_set.eos,
         "doc_start_id": ids_set.doc_start,
         "doc_end_id": ids_set.doc_end,
-        "landmark_token_id": ids_set.landmark if args.emit == "landmark" else None,
-        "pad_token_id": ids_set.pad if args.emit == "landmark" else None,
+        "landmark_token_id": ids_set.landmark
+        if args.emit in ("landmark", "document_end_landmark")
+        else None,
+        "landmark_placement": "document_end"
+        if args.emit == "document_end_landmark"
+        else ("periodic" if args.emit == "landmark" else None),
+        "landmarks_per_document": 1 if args.emit == "document_end_landmark" else None,
+        "pad_token_id": ids_set.pad if args.emit in ("landmark", "document_end_landmark") else None,
         "mem_freq": args.mem_freq if args.emit == "landmark" else None,
         "dtype": np.dtype(TOKEN_DTYPE).name,
         "mask_dtype": "bool",

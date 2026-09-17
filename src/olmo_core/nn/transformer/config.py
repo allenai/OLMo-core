@@ -338,6 +338,8 @@ class TransformerConfig(ModelConfig):
     :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention` after the model is
     built. Requires the model be uniformly a document-chunked variant and rules out context parallelism.
     """
+    document_end_landmark_attention: Optional[Dict[str, Any]] = None
+    """Boundary/token IDs passed to enable_document_end_landmark_attention on build."""
     summary_token_attention: Optional[Dict[str, Any]] = None
     """
     Enable runtime ``summary_roles`` construction for
@@ -457,6 +459,9 @@ class TransformerConfig(ModelConfig):
 
         if self.summary_token_attention is not None:
             model.enable_summary_token_attention(**self.summary_token_attention)
+
+        if self.document_end_landmark_attention is not None:
+            model.enable_document_end_landmark_attention(**self.document_end_landmark_attention)
 
         log.info("%s", model)
         log.info(

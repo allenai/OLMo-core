@@ -47,6 +47,8 @@ __all__ = [
     "segment_prompt_to_chunks",
     "summary_span_text",
     "emit_document_chunk_dense",
+    "emit_document_end_landmark",
+    "validate_document_end_landmark_layout",
     "emit_document_chunk_landmark",
     "emit_document_chunk_summary",
 ]
@@ -717,3 +719,65 @@ def emit_document_chunk_landmark(
             fill_greedy(toks, msk)
     flush()
     return out_ids, out_mask
+
+
+def emit_document_end_landmark(
+    segments: List[ChunkSegment], *, mem_id: int
+) -> Tuple[List[int], List[bool]]:
+    """Append one loss-masked landmark after each context document, without padding.
+
+    Preserve input order and FREE spans. Call before packing independent examples;
+    callers must retain whole documents when applying a context-length budget.
+    """
+    return emit_document_chunk_summary(segments, summary_token_id=mem_id, n_summary_tokens=1)
+
+
+def validate_document_end_landmark_layout(
+    token_ids: List[int],
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    landmark_token_id: int,
+    eos_id: int,
+    pad_id: Optional[int] = None,
+) -> None:
+    """Validate complete documents and exactly one closing landmark per document.
+
+    Accept prompt-only sequences and packed EOS-separated examples. Dedicated
+    padding is allowed only at the tail. A missing landmark, nested document,
+    stray structural token, or partial document raises with its token offset.
+    """
+    structural = [doc_start_id, doc_end_id, landmark_token_id, eos_id]
+    if pad_id is not None:
+        structural.append(pad_id)
+    if len(set(structural)) != len(structural):
+        raise ValueError("Document-end layout requires distinct boundary/EOS/padding IDs")
+    inside = expecting_landmark = padding = False
+    for offset, token in enumerate(token_ids):
+        error = None
+        if padding:
+            if token != pad_id:
+                error = "non-padding token after padding"
+        elif expecting_landmark:
+            if token != landmark_token_id:
+                error = "document end must be immediately followed by one landmark"
+            expecting_landmark = False
+        elif token == doc_start_id:
+            if inside:
+                error = "nested document start"
+            inside = True
+        elif token == doc_end_id:
+            if not inside:
+                error = "document end without a start"
+            inside = False
+            expecting_landmark = True
+        elif token == landmark_token_id:
+            error = "landmark without a preceding document end"
+        elif token == eos_id or (pad_id is not None and token == pad_id):
+            if inside:
+                error = "example ends inside an incomplete document"
+            padding = token == pad_id
+        if error is not None:
+            raise ValueError(f"Invalid document-end layout at token {offset}: {error}")
+    if inside or expecting_landmark:
+        raise ValueError("Invalid document-end layout: incomplete document or missing landmark")
