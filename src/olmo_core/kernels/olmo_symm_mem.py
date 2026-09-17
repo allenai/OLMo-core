@@ -9,6 +9,8 @@ import torch
 import torch.distributed as dist
 import torch.distributed.distributed_c10d as c10d
 
+from olmo_core.distributed.utils import get_node_hostname
+
 from .symm_mem_vdev2d import _load_cuda_extension
 
 _BOOTSTRAP_GLOBAL_RANKS: tuple[int, ...] | None = None
@@ -49,8 +51,67 @@ def _all_gather_unique_ids(group: dist.ProcessGroup) -> list[list[int]]:
     return [list(item) for item in gathered if item is not None]
 
 
+def _validate_local_only_group(group: dist.ProcessGroup, device: torch.device) -> None:
+    host, active_uuid, error = "", "", ""
+    reachable: set[str] = set()
+    try:
+        host = get_node_hostname()
+        if not host:
+            raise RuntimeError("could not determine the node hostname")
+        device_uuids = []
+        for index in range(torch.cuda.device_count()):
+            uuid = getattr(torch.cuda.get_device_properties(index), "uuid", None)
+            if uuid is None or not str(uuid):
+                raise RuntimeError(f"CUDA device {index} has no GPU UUID")
+            device_uuids.append(str(uuid))
+        assert device.index is not None
+        active_uuid = device_uuids[device.index]
+        reachable = {
+            uuid
+            for index, uuid in enumerate(device_uuids)
+            if index == device.index or torch.cuda.can_device_access_peer(device.index, index)
+        }
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+
+    # Exchange inspection errors too, so no rank proceeds to NVSHMEM after a peer fails.
+    gathered: list[tuple[str, str, set[str], str] | None] = [
+        None for _ in range(dist.get_world_size(group))
+    ]
+    dist.all_gather_object(gathered, (host, active_uuid, reachable, error), group=group)
+    records = [item for item in gathered if item is not None]
+    errors = [f"group rank {rank}: {item[3]}" for rank, item in enumerate(records) if item[3]]
+    uuids = [item[1] for item in records]
+    if len(records) != len(gathered):
+        reason = "missing peer topology information"
+    elif errors:
+        reason = "; ".join(errors)
+    elif len({item[0] for item in records}) != 1:
+        reason = "the process group spans multiple hosts"
+    elif len(set(uuids)) != len(uuids):
+        reason = "multiple ranks use the same GPU UUID"
+    else:
+        inaccessible = [
+            (rank, peer)
+            for rank, item in enumerate(records)
+            for peer, uuid in enumerate(uuids)
+            if uuid not in item[2]
+        ]
+        reason = f"directed CUDA P2P access is unavailable for group rank pairs {inaccessible}"
+        if not inaccessible:
+            return
+    raise RuntimeError(
+        "NVSHMEM_REMOTE_TRANSPORT=none requires a single-host process group with distinct "
+        f"GPUs and full CUDA P2P access: {reason}"
+    )
+
+
 def init(group: dist.ProcessGroup, *, device: torch.device | str | int | None = None) -> None:
-    """Initialize NVSHMEM once per process for the ranks in ``group``."""
+    """Initialize NVSHMEM once per process for the ranks in ``group``.
+
+    Explicit ``NVSHMEM_REMOTE_TRANSPORT=none`` requires a single host with distinct,
+    mutually peer-accessible GPUs. All group ranks must use the same transport setting.
+    """
     global _BOOTSTRAP_GLOBAL_RANKS
 
     if not dist.is_available() or not dist.is_initialized():
@@ -66,6 +127,9 @@ def init(group: dist.ProcessGroup, *, device: torch.device | str | int | None = 
                 "Use one NVSHMEM bootstrap group per process."
             )
         return
+
+    if os.getenv("NVSHMEM_REMOTE_TRANSPORT", "").strip().lower() == "none":
+        _validate_local_only_group(group, resolved_device)
 
     unique_ids = _all_gather_unique_ids(group)
     ext = _load_cuda_extension()
