@@ -18,6 +18,7 @@ from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     OLMoDDPModelConfig,
+    TransformerActivationCheckpointingMode,
     TransformerBlockType,
     TransformerType,
 )
@@ -113,7 +114,11 @@ def test_native_activation_checkpointing_forwards_determinism_check(determinism_
         refresh_rowwise_fp8_cache=Mock(),
     )
     config = (
-        TransformerActivationCheckpointingConfig(determinism_check=determinism_check)
+        TransformerActivationCheckpointingConfig(
+            mode=TransformerActivationCheckpointingMode.budget,
+            activation_memory_budget=0.5,
+            determinism_check=determinism_check,
+        )
         if determinism_check is not None
         else None
     )
@@ -135,6 +140,51 @@ def test_native_activation_checkpointing_forwards_determinism_check(determinism_
             activation_memory_budget=config.activation_memory_budget,
             determinism_check=determinism_check,
         )
+
+
+@pytest.mark.parametrize("entrypoint", ["constructor", "config", "parallelize"])
+@pytest.mark.parametrize(
+    "mode",
+    [
+        TransformerActivationCheckpointingMode.full,
+        TransformerActivationCheckpointingMode.selected_blocks,
+        TransformerActivationCheckpointingMode.selected_modules,
+        TransformerActivationCheckpointingMode.selected_ops,
+    ],
+)
+def test_native_wrapper_checkpointing_rejected_before_initialization(monkeypatch, mode, entrypoint):
+    model = _tiny_model_config(d_model=32, n_layers=1).build(init_device="meta")
+    blocks = list(model.named_required_ddp_blocks())
+    device_lookup = Mock(side_effect=AssertionError("unexpected device initialization"))
+    monkeypatch.setattr(train_module_impl, "get_default_device", device_lookup)
+    apply_ep = Mock(side_effect=AssertionError("unexpected EP initialization"))
+    monkeypatch.setattr(model, "apply_ep", apply_ep)
+    kwargs = dict(
+        ac_config=TransformerActivationCheckpointingConfig(
+            mode=mode, block_interval=1, modules=["blocks.*"]
+        ),
+        ep_config=TransformerExpertParallelConfig(degree=2),
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="use recompute_each_block"):
+        if entrypoint == "parallelize":
+            module = object.__new__(OLMoDDPTrainModule)
+            module.parallelize_and_init_model(model, **kwargs)
+        else:
+            kwargs.update(
+                optim=OLMoDDPOptimizerConfig(),
+                rank_microbatch_size=16,
+                max_sequence_length=8,
+            )
+            if entrypoint == "config":
+                OLMoDDPTrainModuleConfig(**kwargs).build(model)
+            else:
+                OLMoDDPTrainModule(model=model, **kwargs)
+
+    device_lookup.assert_not_called()
+    apply_ep.assert_not_called()
+    assert list(model.named_required_ddp_blocks()) == blocks
+    assert all(param.is_meta for param in model.parameters())
 
 
 def _eval_only_parallelism_kwargs(parallelism):
@@ -217,6 +267,45 @@ def test_native_eval_only_constructor_validates_before_model_and_device_initiali
 
 
 @pytest.mark.parametrize("tbo", [False, True])
+@pytest.mark.parametrize("expert_parallel", [False, True])
+@pytest.mark.parametrize("pipeline", [False, True])
+@pytest.mark.parametrize("via_config", [False, True])
+def test_tbo_requires_expert_parallelism_before_device_initialization(
+    monkeypatch, tbo, expert_parallel, pipeline, via_config
+):
+    config = _tiny_model_config(d_model=32, n_layers=4 if pipeline else 2)
+    config.two_batch_overlap = tbo
+    model = config.build(init_device="meta")
+    initialize_device = Mock(side_effect=_ValidationPassed)
+    monkeypatch.setattr(train_module_impl, "get_default_device", initialize_device)
+    kwargs = dict(
+        optim=OLMoDDPOptimizerConfig(),
+        rank_microbatch_size=16,
+        max_sequence_length=8,
+        ep_config=TransformerExpertParallelConfig(degree=2) if expert_parallel else None,
+        pp_config=(
+            TransformerPipelineParallelConfig(
+                degree=2,
+                schedule=PipelineScheduleType.custom_interleaved_1F1B,
+                use_custom_stage_implementation=True,
+            )
+            if pipeline
+            else None
+        ),
+    )
+
+    invalid = tbo and not expert_parallel
+    expected_error = OLMoConfigurationError if invalid else _ValidationPassed
+    match = "Two-batch overlap requires expert parallelism" if invalid else None
+    with pytest.raises(expected_error, match=match):
+        if via_config:
+            OLMoDDPTrainModuleConfig(**kwargs).build(model)
+        else:
+            OLMoDDPTrainModule(model=model, **kwargs)
+    assert initialize_device.call_count == (0 if invalid else 1)
+
+
+@pytest.mark.parametrize("tbo", [False, True])
 @pytest.mark.parametrize("microbatch_instances", [0, 1, 2, 3, 4])
 def test_tbo_config_validates_instances_before_device_initialization(
     monkeypatch, tbo, microbatch_instances
@@ -233,6 +322,7 @@ def test_tbo_config_validates_instances_before_device_initialization(
             optim=OLMoDDPOptimizerConfig(lr=1e-3),
             rank_microbatch_size=microbatch_instances * 8,
             max_sequence_length=8,
+            ep_config=TransformerExpertParallelConfig(degree=2) if tbo else None,
         )
     assert initialize_device.call_count == (0 if invalid else 1)
 

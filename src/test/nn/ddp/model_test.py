@@ -16,6 +16,7 @@ from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.transformer import (
     OLMoDDPModelConfig,
+    TransformerActivationCheckpointingMode,
     TransformerBlockType,
     TransformerType,
 )
@@ -55,6 +56,59 @@ def test_moe_v2_model_builds():
     assert len(model.blocks) == 2
     assert any(p.numel() > 0 for p in model.parameters())
     assert model.num_flops_per_token(seq_len=512) > 0
+
+
+@pytest.mark.parametrize(
+    "mode,kwargs",
+    [
+        (TransformerActivationCheckpointingMode.full, {}),
+        (TransformerActivationCheckpointingMode.selected_blocks, {"block_interval": 1}),
+        (TransformerActivationCheckpointingMode.selected_ops, {}),
+        (TransformerActivationCheckpointingMode.selected_modules, {"modules": ["blocks.0"]}),
+        (
+            TransformerActivationCheckpointingMode.selected_modules,
+            {"modules": ["blocks.0.attention.w_q"]},
+        ),
+    ],
+)
+def test_native_wrapper_checkpointing_rejected_without_mutating_model(mode, kwargs):
+    model = _build_model_config(d_model=32, n_layers=1).build(init_device="meta")
+    blocks = list(model.named_required_ddp_blocks())
+    parameter_names = list(dict(model.named_parameters()))
+
+    with pytest.raises(OLMoConfigurationError, match="use recompute_each_block"):
+        model.apply_activation_checkpointing(mode, **kwargs)
+
+    assert list(model.named_required_ddp_blocks()) == blocks
+    assert list(model.named_routed_blocks()) == blocks
+    assert list(dict(model.named_parameters())) == parameter_names
+    model.init_weights(device=torch.device("cpu"), max_seq_len=8, max_local_microbatch_size=16)
+    assert all(torch.isfinite(param).all() for param in model.parameters())
+
+
+@pytest.mark.parametrize("budget", [None, 0.5])
+@pytest.mark.parametrize("recompute_each_block", [False, True])
+def test_native_checkpointing_preserves_block_identity_and_initialization(
+    monkeypatch, budget, recompute_each_block
+):
+    config = _build_model_config(d_model=32, n_layers=1)
+    config.recompute_each_block = recompute_each_block
+    model = config.build(init_device="meta")
+    blocks = list(model.named_required_ddp_blocks())
+    parameter_names = list(dict(model.named_parameters()))
+
+    if budget is not None:
+        monkeypatch.setattr(torch._functorch.config, "activation_memory_budget", 1.0)
+        model.apply_activation_checkpointing(
+            TransformerActivationCheckpointingMode.budget, activation_memory_budget=budget
+        )
+        assert torch._functorch.config.activation_memory_budget == budget
+
+    assert list(model.named_required_ddp_blocks()) == blocks
+    assert list(model.named_routed_blocks()) == blocks
+    assert list(dict(model.named_parameters())) == parameter_names
+    model.init_weights(device=torch.device("cpu"), max_seq_len=8, max_local_microbatch_size=16)
+    assert all(torch.isfinite(param).all() for param in model.parameters())
 
 
 def test_model_rejects_composable_ddp():
