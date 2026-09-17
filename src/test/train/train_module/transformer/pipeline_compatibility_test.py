@@ -22,6 +22,7 @@ from olmo_core.nn.lm_head import LMOutputWithLoss
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import OLMoDDPOptimizerConfig
 from olmo_core.testing import run_distributed_test
+from olmo_core.train.callbacks.hf_converter import HFConverterCallback
 from olmo_core.train.train_module.transformer import config as module_config
 from olmo_core.train.train_module.transformer import ddp_train_module
 from olmo_core.train.train_module.transformer import (
@@ -42,6 +43,39 @@ STANDARD_SCHEDULES = (
     PipelineScheduleType.interleaved_zero_bubble,
     PipelineScheduleType.zbv_zero_bubble,
 )
+
+
+@pytest.mark.parametrize("pp_group_size", [1, 2, 4])
+@pytest.mark.parametrize("local_parts", [0, 1, 2])
+def test_pipeline_model_accessor_requires_one_complete_model(pp_group_size, local_parts):
+    module = object.__new__(train_module.TransformerPipelineTrainModule)
+    module.pp_group_size = pp_group_size
+    module.model_parts = [nn.Identity() for _ in range(local_parts)]
+
+    if pp_group_size == 1 and local_parts == 1:
+        assert module.model is module.model_parts[0]
+    else:
+        with pytest.raises(RuntimeError, match="requires a single pipeline rank and model part"):
+            _ = module.model
+
+
+@pytest.mark.parametrize("schedule_name", SMOKE_SCHEDULES)
+def test_pipeline_hf_export_rejects_partial_model_before_state_dict_collectives(
+    monkeypatch, schedule_name
+):
+    module = object.__new__(train_module.TransformerPipelineTrainModule)
+    module.pp_group_size = 2
+    module.model_parts = [nn.Identity() for _ in range(1 if schedule_name.is_single_stage else 2)]
+    callback = HFConverterCallback()
+    callback._trainer = SimpleNamespace(train_module=module)
+    get_state_dict = Mock()
+    monkeypatch.setattr(
+        "olmo_core.train.callbacks.hf_converter.dist_cp_sd.get_model_state_dict", get_state_dict
+    )
+
+    with pytest.raises(RuntimeError, match="requires a single pipeline rank and model part"):
+        callback._get_full_model_state_dict()
+    get_state_dict.assert_not_called()
 
 
 def test_pipeline_defaults_preserve_torch_interleaved_schedule():
