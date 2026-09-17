@@ -84,6 +84,37 @@ def test_local_functionality(tmp_path):
         f"{tmp_path}/dir1/subdir1/file4.json",
     }
 
+    assert set(glob_directory(f"{tmp_path}/**", include_files=False)) == {
+        f"{tmp_path}/dir1",
+        f"{tmp_path}/dir1/subdir1",
+        f"{tmp_path}/dir2",
+        f"{tmp_path}/dir2/subdir1",
+    }
+
+
+@pytest.mark.parametrize("scheme", ["gs", "s3", "r2", "weka"])
+@pytest.mark.parametrize("include_files", [False, True])
+def test_remote_glob_file_filter(monkeypatch, scheme, include_files):
+    root = f"{scheme}://bucket/runs"
+    directory = f"{root}/step1"
+    file = f"{directory}/.metadata"
+
+    def remote_listing(*args, **kwargs):
+        assert args == (("bucket", "runs") if scheme == "gs" else (scheme, "bucket", "runs"))
+        assert kwargs == {
+            "recurse": True,
+            "include_files": include_files,
+            "include_dirs": True,
+        }
+        yield directory
+        if include_files:
+            yield file
+
+    backend = "_gcs_list_directory" if scheme == "gs" else "_s3_list_directory"
+    monkeypatch.setattr(f"olmo_core.io.{backend}", remote_listing)
+    expected = {directory, file} if include_files else {directory}
+    assert set(glob_directory(f"{root}/**", include_files=include_files)) == expected
+
 
 def _run_remote_functionality(tmp_path, remote_dir):
     (tmp_path / "file1.json").touch()
