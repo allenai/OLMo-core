@@ -28,6 +28,8 @@ class BatchSizeSchedulerCallback(Callback):
     A callback for setting a batch size scheduler over the course of a training run.
     Also adjusts the base learning rate with Adam optimizers for transformer train modules by a factor of
     ``sqrt(new_batch_size / current_batch_size)``.
+
+    Changing batch-size schedules are not supported with OLMoDDP pipeline parallelism.
     """
 
     batch_sizes: List[int] = dataclasses.field(default_factory=list)
@@ -89,7 +91,7 @@ class BatchSizeSchedulerCallback(Callback):
         return self.trainer.data_loader.global_batch_size
 
     def post_attach(self):
-        if not self.schedule:
+        if not self.enabled or not self.schedule:
             return
 
         scheduler: Optional[Scheduler] = None
@@ -136,6 +138,15 @@ class BatchSizeSchedulerCallback(Callback):
     def _maybe_update_batch_size_and_lr(self):
         if not self.enabled:
             return
+        train_module = self.trainer.train_module
+        if (
+            len(self.schedule) > 1
+            and isinstance(train_module, OLMoDDPTrainModule)
+            and train_module.pp_enabled
+        ):
+            raise OLMoConfigurationError(
+                "Changing batch-size schedules are not supported with OLMoDDP pipeline parallelism"
+            )
         # Find latest event in the schedule to apply.
         for target_batch_size, event_start in reversed(list(zip(self.batch_sizes, self.schedule))):
             if event_start.due(

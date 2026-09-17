@@ -124,6 +124,11 @@ class TransformerPipelineParallelConfig(PipelineParallelConfig):
         use_ddp: bool = False,
         p2p_group: Optional[dist.ProcessGroup] = None,
     ) -> Tuple[List[PipelineStage], List[Transformer]]:
+        if self.schedule == PipelineScheduleType.custom_1F1B:
+            raise OLMoConfigurationError(
+                "Custom1F1B is not implemented; use a standard PyTorch schedule, "
+                "CustomInterleaved1F1B, or Custom1F1BV"
+            )
         if self.p2p_backend != PipelineP2PBackend.nccl and not self.use_custom_stage_implementation:
             raise OLMoConfigurationError(
                 f"p2p_backend={self.p2p_backend.value!r} requires use_custom_stage_implementation=True"

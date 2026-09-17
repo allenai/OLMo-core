@@ -21,6 +21,7 @@ from olmo_core.train.train_module import (
 def test_post_attach_accepts_non_pipeline_transformer_modules(module_type):
     module = object.__new__(module_type)
     module._pp_config = None
+    module._cp_config = None
     callback = evaluator_callback.EvaluatorCallback()
     callback.trainer = SimpleNamespace(train_module=module)
 
@@ -38,6 +39,19 @@ def test_post_attach_rejects_olmo_ddp_pipeline_parallelism_on_every_stage(pp_gro
 
     with pytest.raises(
         OLMoConfigurationError, match="does not support OLMoDDP pipeline parallelism"
+    ):
+        callback.post_attach()
+
+
+def test_post_attach_rejects_olmo_ddp_context_parallelism():
+    module = object.__new__(OLMoDDPTrainModule)
+    module._pp_config = None
+    module._cp_config = SimpleNamespace(degree=2)
+    callback = evaluator_callback.EvaluatorCallback()
+    callback.trainer = SimpleNamespace(train_module=module)
+
+    with pytest.raises(
+        OLMoConfigurationError, match="does not support OLMoDDP context parallelism"
     ):
         callback.post_attach()
 
