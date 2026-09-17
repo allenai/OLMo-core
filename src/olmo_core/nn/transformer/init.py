@@ -196,8 +196,8 @@ class InitMethod(StrEnum):
         elif self == InitMethod.llama_depth:
             std = std / (2 * (block_idx + 1)) ** 0.5
         elif self == InitMethod.fan_in:
-            # For fan_in, router weight uses 1/√d_model
-            std = d_model**-0.5
+            # Routing decisions are always computed from model-space activations.
+            std = m.router.d_model**-0.5
 
         _apply_init(
             nn.init.trunc_normal_,
@@ -208,6 +208,13 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+        for projection in (m.latent_down_proj, m.latent_up_proj):
+            if projection is not None:
+                projection_std = (
+                    projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                )
+                init_linear(projection, std=projection_std, generator=generator)
 
         mlp = cast(Union[MoEMLP, DroplessMoEMLP], m.experts.mlp)
 
@@ -252,3 +259,122 @@ class InitMethod(StrEnum):
             b=3 * std,
             generator=generator,
         )
+
+    def init_moe_v2(
+        self,
+        b,
+        *,
+        d_model: int,
+        block_idx: int,
+        num_blocks: int,
+        std: float = 0.02,
+        generator: Optional[torch.Generator] = None,
+        ep_generator: Optional[torch.Generator] = None,
+    ):
+        """
+        Initialize the weights of an :class:`~olmo_core.nn.ddp.block.OLMoDDPTransformerBlock`.
+
+        :param ep_generator: An optional separate generator for expert-parallel-sharded weights
+            (the routed expert weights). Falls back to ``generator`` when expert parallelism is
+            not enabled.
+        """
+        from ..ddp.block import OLMoDDPTransformerBlock
+
+        b = cast(OLMoDDPTransformerBlock, b)
+        if self == InitMethod.llama:
+            std = std / (2 * num_blocks) ** 0.5
+        elif self == InitMethod.llama_depth:
+            std = std / (2 * (block_idx + 1)) ** 0.5
+
+        if ep_generator is None:
+            assert b.ep_enabled is False, "ep_generator should be provided when ep_enabled is True"
+            # Expert parallelism is not in use, so the routed expert weights are not sharded and
+            # can share the default generator.
+            ep_generator = generator
+
+        if b.shared_experts_router:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts_router.weight,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            if b.shared_experts_router.bias is not None:
+                _apply_init(nn.init.zeros_, b.shared_experts_router.bias)
+        if b.routed_experts_router:
+            routed_router_std = (
+                b.routed_experts_router.d_model**-0.5 if self == InitMethod.fan_in else std
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts_router.weight,
+                mean=0.0,
+                std=routed_router_std,
+                a=-3 * routed_router_std,
+                b=3 * routed_router_std,
+                generator=generator,
+            )
+            if b.routed_experts_router.bias is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts_router.bias)
+
+        for projection in (b.latent_down_proj, b.latent_up_proj):
+            if projection is not None:
+                projection_std = (
+                    projection.in_features**-0.5 if self == InitMethod.fan_in else std
+                )
+                init_linear(projection, std=projection_std, generator=generator)
+
+        if b.routed_experts:
+            # The routed expert weights may be sharded across the expert-parallel mesh, so use the
+            # EP generator to keep initialization consistent across shards.
+            routed_up_gate_std = (
+                b.routed_experts.d_model**-0.5 if self == InitMethod.fan_in else std
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_up_gate,
+                mean=0.0,
+                std=routed_up_gate_std,
+                a=-3 * routed_up_gate_std,
+                b=3 * routed_up_gate_std,
+                generator=ep_generator,
+            )
+            routed_down_std = (
+                b.routed_experts.hidden_size**-0.5 if self == InitMethod.fan_in else std
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.routed_experts.w_down,
+                mean=0.0,
+                std=routed_down_std,
+                a=-3 * routed_down_std,
+                b=3 * routed_down_std,
+                generator=ep_generator,
+            )
+            if b.routed_experts.b_up_gate is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts.b_up_gate)
+            if b.routed_experts.b_down is not None:
+                _apply_init(nn.init.zeros_, b.routed_experts.b_down)
+
+        if b.shared_experts:
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_up_gate,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
+            _apply_init(
+                nn.init.trunc_normal_,
+                b.shared_experts.w_down,
+                mean=0.0,
+                std=std,
+                a=-3 * std,
+                b=3 * std,
+                generator=generator,
+            )
