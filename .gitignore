@@ -60,3 +60,7 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# personal Beaker/launch infra (kept locally, not tracked/pushed)
+/launch_scripts/
+/artifacts/
