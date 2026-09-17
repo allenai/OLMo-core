@@ -6,6 +6,7 @@ import math
 import os
 import time
 from collections import OrderedDict
+from dataclasses import replace
 from functools import cached_property, lru_cache
 from itertools import product
 from typing import (
@@ -360,6 +361,8 @@ class OLMoDDPTrainModule(TrainModule):
 
             assert isinstance(optim, OLMoDDPOptimizerConfig)
             optim = cast(OLMoDDPOptimizerConfig, optim)
+            if max_grad_norm is not None:
+                optim = replace(optim, max_grad_norm=max_grad_norm)
             self.optim = optim.build(
                 self.model_parts,
                 self,
@@ -2965,6 +2968,7 @@ class OLMoDDPTrainModule(TrainModule):
                     block_interval=ac_config.block_interval,
                     modules=ac_config.modules,
                     activation_memory_budget=ac_config.activation_memory_budget,
+                    determinism_check=ac_config.determinism_check,
                 )
             log.info(f"Applied '{ac_config.mode}' activation checkpointing to the model")
 
