@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - import guard
     grouped_gemm = None  # type: ignore[assignment]
 import weakref
 from dataclasses import dataclass
-from typing import Iterator, Optional, cast
+from typing import Any, Callable, Iterator, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -482,6 +482,8 @@ class RoutedExperts(nn.Module):
         self.hidden_size = hidden_size
         self.num_experts = num_experts
         self.activation = ExpertActivation(activation)
+        self._profile_pairwise_swiglu = os.environ.get("OLMO_PROFILE_SWIGLU_PAIRWISE", "0") == "1"
+        self._profile_rounded_wgrad = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD", "0") == "1"
         self.activation_alpha = float(activation_alpha)
         self.activation_limit = None if activation_limit is None else float(activation_limit)
         self.bias = bias
@@ -922,8 +924,26 @@ class RoutedExperts(nn.Module):
         w_up_gate = self.w_up_gate  # (E, H, 2D)
         w_down = self.w_down  # (E, H, D)
 
+        projection: Callable[..., Any] = gmm
+        if self._profile_rounded_wgrad and torch.is_grad_enabled():
+            from olmo_core.ops.rounded_wgrad import rounded_weight_gmm
+
+            ep_qualification = os.environ.get("OLMO_PROFILE_ROUNDED_WGRAD_EP", "0") == "1"
+            if not ep_qualification and (
+                self.ep_dim != 1 or down_proj_out is not None or up_proj_input_grad_out is not None
+            ):
+                raise RuntimeError(
+                    "Rounded weight-gradient EP/buffer support requires the explicit "
+                    "OLMO_PROFILE_ROUNDED_WGRAD_EP qualification flag"
+                )
+
+            def rounded_projection(a, b, counts, trans_b=False, **kwargs):
+                return rounded_weight_gmm(a, b, counts, trans_b, **kwargs)
+
+            projection = rounded_projection
+
         # up (+ gate) projection
-        up_gate = gmm(
+        up_gate = projection(
             x,
             w_up_gate,
             batch_size_per_expert_tensor,
@@ -950,7 +970,7 @@ class RoutedExperts(nn.Module):
             h = h * row_weights.reshape(-1, 1).to(dtype=h.dtype)
 
         # down projection
-        down = gmm(
+        down = projection(
             h,
             w_down,
             batch_size_per_expert_tensor,
@@ -1087,6 +1107,17 @@ class RoutedExperts(nn.Module):
         # Forward-only EP can skip padded tail rows with a custom kernel while
         # keeping training on the autograd-backed PyTorch activation.
         if self.activation == ExpertActivation.swiglu:
+            if (
+                self._profile_pairwise_swiglu
+                and torch.is_grad_enabled()
+                and up_gate.is_cuda
+                and up_gate.dtype == torch.bfloat16
+                and up_gate.ndim == 2
+                and up_gate.is_contiguous()
+            ):
+                from olmo_core.ops.swiglu_pairwise import pairwise_swiglu
+
+                return pairwise_swiglu(up_gate)
             if (
                 num_elements is not None
                 and up_gate.is_cuda
