@@ -22,6 +22,7 @@ def test_post_attach_accepts_non_pipeline_transformer_modules(module_type):
     module = object.__new__(module_type)
     module._pp_config = None
     module._cp_config = None
+    module.model_parts = [SimpleNamespace(tbo=False)]
     callback = evaluator_callback.EvaluatorCallback()
     callback.trainer = SimpleNamespace(train_module=module)
 
@@ -54,6 +55,51 @@ def test_post_attach_rejects_olmo_ddp_context_parallelism():
         OLMoConfigurationError, match="does not support OLMoDDP context parallelism"
     ):
         callback.post_attach()
+
+
+@pytest.mark.parametrize("tbo_flags", [(True,), (False, True), (True, False)])
+def test_post_attach_rejects_any_tbo_part_even_with_even_configured_batch(tbo_flags):
+    module = object.__new__(OLMoDDPTrainModule)
+    module._pp_config = None
+    module._cp_config = None
+    module.model_parts = [SimpleNamespace(tbo=tbo) for tbo in tbo_flags]
+    module.rank_microbatch_size = 16
+    module.max_sequence_length = 8
+    callback = evaluator_callback.EvaluatorCallback()
+    callback.trainer = SimpleNamespace(train_module=module)
+
+    # Two configured instances still permit an odd final evaluation batch.
+    with pytest.raises(OLMoConfigurationError, match="disable two_batch_overlap"):
+        callback.post_attach()
+    assert tuple(model.tbo for model in module.model_parts) == tbo_flags
+
+
+@pytest.mark.parametrize("kind", ["lm", "downstream"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_tbo_eval_config_rejects_before_data_setup_unless_disabled(monkeypatch, kind, enabled):
+    module = object.__new__(OLMoDDPTrainModule)
+    module.model_parts = [SimpleNamespace(tbo=True)]
+    trainer = SimpleNamespace(train_module=module)
+    dataset = Mock()
+    tokenizer = Mock()
+    monkeypatch.setattr("olmo_eval.HFTokenizer", tokenizer)
+    if kind == "lm":
+        config = evaluator_callback.LMEvaluatorCallbackConfig(eval_dataset=dataset, enabled=enabled)
+    else:
+        config = evaluator_callback.DownstreamEvaluatorCallbackConfig(
+            tasks=["task"],
+            tokenizer=TokenizerConfig.dolma2(),
+            rank_batch_size_instances=2,
+            enabled=enabled,
+        )
+
+    if enabled:
+        with pytest.raises(OLMoConfigurationError, match="two-batch overlap"):
+            config.build(trainer)
+    else:
+        assert config.build(trainer) is None
+    dataset.build.assert_not_called()
+    tokenizer.assert_not_called()
 
 
 @pytest.mark.parametrize("module_type", [object, TransformerPipelineTrainModule])

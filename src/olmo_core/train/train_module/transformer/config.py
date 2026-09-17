@@ -526,6 +526,7 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     cp_config: Optional[TransformerContextParallelConfig] = None
     ep_config: Optional[TransformerExpertParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
+    """Only budget mode is supported; use the model config's ``recompute_each_block`` otherwise."""
 
     grad_accum_in_fp32: Optional[bool] = None
 

@@ -41,6 +41,7 @@ from ..moe.v2.ep_no_sync_buffers import (
     use_ep_no_sync_rowwise_symm_combine_out,
     use_ep_no_sync_rowwise_symm_dispatch_in,
 )
+from ..transformer.config import TransformerActivationCheckpointingMode
 from .block import OLMoDDPTransformerBlock
 
 if TYPE_CHECKING:
@@ -107,6 +108,39 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 "recompute_all_blocks_by_chunk is not supported with DeepEP expert "
                 "parallelism; use recompute_each_block instead."
             )
+
+    @staticmethod
+    def _validate_activation_checkpointing_mode(mode: TransformerActivationCheckpointingMode):
+        if mode != TransformerActivationCheckpointingMode.budget:
+            raise OLMoConfigurationError(
+                "OLMoDDPModel does not support wrapper-based activation checkpointing; "
+                "use recompute_each_block in the model config, or budget mode with compilation."
+            )
+
+    def apply_activation_checkpointing(
+        self,
+        mode: TransformerActivationCheckpointingMode,
+        block_interval: Optional[int] = None,
+        modules: Optional[List[str]] = None,
+        activation_memory_budget: Optional[float] = None,
+        determinism_check: str = "default",
+    ):
+        """
+        Apply budget-based activation checkpointing without wrapping native modules.
+
+        Wrapper-based modes are unsupported; use the model config's ``recompute_each_block``
+        instead. Budget mode requires compilation to take effect.
+
+        :raises OLMoConfigurationError: If a wrapper-based mode is requested.
+        """
+        self._validate_activation_checkpointing_mode(mode)
+        super().apply_activation_checkpointing(
+            mode,
+            block_interval=block_interval,
+            modules=modules,
+            activation_memory_budget=activation_memory_budget,
+            determinism_check=determinism_check,
+        )
 
     def named_ddp_blocks(self) -> Iterator[tuple[str, OLMoDDPTransformerBlock]]:
         """Iterate over block keys and OLMo DDP blocks."""

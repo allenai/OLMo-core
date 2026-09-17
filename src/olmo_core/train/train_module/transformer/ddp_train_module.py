@@ -158,6 +158,9 @@ class OLMoDDPTrainModule(TrainModule):
                 f"got {type(model).__name__}"
             )
 
+        if ac_config is not None:
+            OLMoDDPModel._validate_activation_checkpointing_mode(ac_config.mode)
+
         if pp_config is not None and pp_config.schedule not in (
             PipelineScheduleType.custom_interleaved_1F1B,
             PipelineScheduleType.custom_1F1B_V,
@@ -174,6 +177,11 @@ class OLMoDDPTrainModule(TrainModule):
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
         if getattr(model, "tbo", False):
+            if ep_config is None:
+                raise OLMoConfigurationError(
+                    "Two-batch overlap requires expert parallelism; set ep_config or disable "
+                    "two_batch_overlap in the model config."
+                )
             self._validate_tbo_microbatch_size(rank_microbatch_size // max_sequence_length)
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
@@ -2748,6 +2756,9 @@ class OLMoDDPTrainModule(TrainModule):
                 "model must be an OLMoDDPModel or a compatible adapter, "
                 f"got {type(model).__name__}"
             )
+
+        if ac_config is not None:
+            OLMoDDPModel._validate_activation_checkpointing_mode(ac_config.mode)
 
         if tp_config is not None:
             raise NotImplementedError("TP not supported yet")
