@@ -47,6 +47,30 @@ def test_recursive_checkpoint_globs_find_nested_checkpoints(tmp_path):
     assert trainer._get_checkpoints_to_eval() == [str(checkpoint)]
 
 
+def test_recursive_full_checkpoints_exclude_nested_model_state(tmp_path):
+    checkpoints = [tmp_path / "step2", tmp_path / "step10"]
+    for checkpoint in checkpoints:
+        (checkpoint / "train").mkdir(parents=True)
+        (checkpoint / "train/rank0.pt").touch()
+        (checkpoint / "model_and_optim").mkdir()
+        (checkpoint / "model_and_optim/.metadata").touch()
+        (checkpoint / Checkpointer.METADATA_FNAME).touch()
+
+    trainer = object.__new__(Trainer)
+    trainer.checkpointer = object.__new__(Checkpointer)
+    trainer.checkpoints_to_eval = [f"{tmp_path}/**"]
+    assert trainer._get_checkpoints_to_eval() == [str(path) for path in checkpoints]
+
+    trainer.checkpoints_to_eval = [f"{tmp_path}/**/model_and_optim"]
+    assert trainer._get_checkpoints_to_eval() == sorted(
+        str(path / "model_and_optim") for path in checkpoints
+    )
+
+    explicit = [str(checkpoints[0]), str(checkpoints[0] / "model_and_optim")]
+    trainer.checkpoints_to_eval = explicit
+    assert trainer._get_checkpoints_to_eval() == explicit
+
+
 @pytest.mark.parametrize("explicit", [False, True])
 def test_checkpoint_selection_preserves_missing_path_errors(tmp_path, explicit):
     trainer = object.__new__(Trainer)
