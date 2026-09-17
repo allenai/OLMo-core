@@ -250,6 +250,19 @@ class ExperimentConfig(Config):
     GPU-hours: compare against an answer-only arm at matched rows consumed, not steps."""
     chartverse_cot_sidecar: Optional[str] = None
     """Explicit derivation-sidecar directory (defaults to ``<subset path>-cot``)."""
+    chartgym_rate: float = 0.0
+    """Mixture fraction for ChartGym, the synthetic chart-capability corpus (0 disables).
+
+    ChartGym trains four visual capabilities with exact, code-derived ground truth, and
+    deliberately withholds one whole visual primitive (panel layout) so that CharXiv
+    templates 18/19 act as a transfer readout rather than a fit statistic. It carries
+    inapplicable questions at CharXiv's measured per-template rates -- 25.0% of the
+    benchmark's descriptive gold answers are "Not Applicable", and the checkpoint is worst
+    exactly there -- phrased naturally, never as the benchmark's literal answer token."""
+    chartgym_subset: str = "train-v1"
+    """ChartGym corpus directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartgym/``."""
+    chartgym_max_rows: Optional[int] = None
+    """Optional row cap, for exposure-matched ablations against a smaller corpus."""
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -539,6 +552,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
         FineVisionDatasetConfig,
         MMFineReasonDatasetConfig,
     )
+    from olmo_core.data.multimodal import paths as _mm_paths
 
     per_config = config.finevision_rate / max(len(FINEVISION_RATES), 1)
     fv = {
@@ -549,7 +563,10 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     captions = {name: per_caption for name in caption_subsets if per_caption > 0}
     mmfr_rate = config.mmfinereason_rate
     cv_rate = config.chartverse_rate
-    extra_total = mmfr_rate + cv_rate + sum(fv.values()) + sum(captions.values())
+    cg_rate = config.chartgym_rate
+    extra_total = (
+        mmfr_rate + cv_rate + cg_rate + sum(fv.values()) + sum(captions.values())
+    )
     if extra_total <= 0:
         return datasets, weights, names
     if extra_total >= 1:
@@ -561,6 +578,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     appended = (
         (["mmfinereason"] if mmfr_rate > 0 else [])
         + (["chartverse"] if cv_rate > 0 else [])
+        + (["chartgym"] if cg_rate > 0 else [])
         + list(captions)
         + [f"finevision[{name}]" for name in fv]
     )
@@ -575,6 +593,28 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     datasets = list(datasets)
     weights = [w * (1.0 - extra_total) for w in weights]
     names = list(names)
+    if cg_rate > 0:
+        # ChartGym is staged in FineVision's own schema (`texts` list-of-struct + `images`),
+        # so it needs no loader module of its own: FineVisionDataset._build emits a flat
+        # turn list, which encode_sft_example splits into independent branches sharing ONE
+        # image prefix. ~16 questions per chart therefore cost one image encode, and
+        # root_subsegments_root_tokens weights each branch 1/sqrt(16) so a 16-question
+        # figure does not carry 16x the gradient of a 1-question row.
+        datasets.append(
+            FineVisionDatasetConfig(
+                dataset_path=os.path.join(
+                    _mm_paths.MOLMO_EXPERIMENT_DATA_DIR, "chartgym", config.chartgym_subset
+                ),
+                # The row-filter index cache is keyed by row count, so a regenerated corpus
+                # with the same count would silently reuse a stale index.
+                index_cache_dir="",
+                max_rows=config.chartgym_max_rows,
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+            ).build(tokenizer)
+        )
+        weights.append(cg_rate)
+        names.append("chartgym")
     if cv_rate > 0:
         datasets.append(
             ChartVerseDatasetConfig(

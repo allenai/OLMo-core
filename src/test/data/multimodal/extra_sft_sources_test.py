@@ -66,6 +66,9 @@ def _config(mod, **overrides):
     cfg.caption_rate = kwargs.get("caption_rate", 0.0)
     cfg.chartverse_rate = kwargs.get("chartverse_rate", 0.0)
     cfg.chartverse_subset = kwargs.get("chartverse_subset", "sft_600k")
+    cfg.chartgym_rate = kwargs.get("chartgym_rate", 0.0)
+    cfg.chartgym_subset = kwargs.get("chartgym_subset", "train-v1")
+    cfg.chartgym_max_rows = kwargs.get("chartgym_max_rows", None)
     return cfg
 
 
@@ -138,4 +141,76 @@ def test_appending_a_source_the_base_tier_already_has_is_rejected(mod, stub_data
     with pytest.raises(ValueError, match="already in mixture"):
         mod._append_extra_sft_sources(
             cfg, None, [1, 2, 3, 4], BASE_WEIGHTS + [0.0], BASE_NAMES + ["chartverse"]
+        )
+
+
+def test_chartgym_rate_appends_under_its_own_name(mod, stub_dataset_configs, monkeypatch):
+    """ChartGym reuses FineVisionDatasetConfig but must not inherit its mixture name.
+
+    The FineVision loop hard-codes ``f"finevision[{cfg_name}]"``; ChartGym gets its own
+    append block precisely so the source is called ``chartgym``, which is what the
+    double-count guard and every downstream per-source metric key off.
+    """
+    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
+    # here would do nothing; patch the resolved constant instead.
+    from olmo_core.data.multimodal import paths as _mm_paths
+
+    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    datasets, weights, names = mod._append_extra_sft_sources(
+        _config(mod, chartgym_rate=0.25), None, [], list(BASE_WEIGHTS), list(BASE_NAMES)
+    )
+    assert names == BASE_NAMES + ["chartgym"]
+    assert not any(n.startswith("finevision[") for n in names)
+    assert weights[-1] == pytest.approx(0.25)
+    assert sum(weights) == pytest.approx(1.0)
+    built = datasets[-1]
+    assert built[1]["dataset_path"] == "/tmp/fake-experiment-data/chartgym/train-v1"
+    # Stale-index guard: the FineVision row-filter index is keyed by row count, so a
+    # regenerated corpus of the same size would silently reuse the previous index.
+    assert built[1]["index_cache_dir"] == ""
+
+
+def test_chartgym_subset_reaches_the_loader(mod, stub_dataset_configs, monkeypatch):
+    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
+    # here would do nothing; patch the resolved constant instead.
+    from olmo_core.data.multimodal import paths as _mm_paths
+
+    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    datasets, _, _ = mod._append_extra_sft_sources(
+        _config(mod, chartgym_rate=0.1, chartgym_subset="train-v2"),
+        None, [], list(BASE_WEIGHTS), list(BASE_NAMES),
+    )
+    assert datasets[-1][1]["dataset_path"].endswith("/chartgym/train-v2")
+
+
+def test_chartgym_counts_toward_the_extra_rate_budget(mod, stub_dataset_configs, monkeypatch):
+    """A ChartGym arm is chartgym 25 / omniscience 40 / replay 35 -- the rates must
+    compose with the caption knob rather than each rescaling the base independently."""
+    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
+    # here would do nothing; patch the resolved constant instead.
+    from olmo_core.data.multimodal import paths as _mm_paths
+
+    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    _, weights, names = mod._append_extra_sft_sources(
+        _config(mod, chartgym_rate=0.25, caption_subsets=["omniscience"], caption_rate=0.40),
+        None, [], list(BASE_WEIGHTS), list(BASE_NAMES),
+    )
+    assert sum(weights) == pytest.approx(1.0)
+    by_name = dict(zip(names, weights))
+    assert by_name["chartgym"] == pytest.approx(0.25)
+    assert by_name["omniscience"] == pytest.approx(0.40)
+    # the v9 replay is whatever is left
+    assert sum(w for n, w in by_name.items() if n in BASE_NAMES) == pytest.approx(0.35)
+
+
+def test_chartgym_double_append_is_rejected(mod, stub_dataset_configs, monkeypatch):
+    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
+    # here would do nothing; patch the resolved constant instead.
+    from olmo_core.data.multimodal import paths as _mm_paths
+
+    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    with pytest.raises(ValueError, match="already in mixture"):
+        mod._append_extra_sft_sources(
+            _config(mod, chartgym_rate=0.1), None, [],
+            list(BASE_WEIGHTS) + [0.1], list(BASE_NAMES) + ["chartgym"],
         )
