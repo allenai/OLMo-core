@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Optional
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -29,6 +30,99 @@ from olmo_core.train.train_module.transformer import (
     TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
 )
+from olmo_core.train.train_module.transformer import (
+    ddp_train_module as train_module_impl,
+)
+
+
+class _ValidationPassed(Exception):
+    pass
+
+
+@pytest.mark.parametrize("tbo", [False, True])
+@pytest.mark.parametrize("microbatch_instances", [0, 1, 2, 3, 4])
+def test_tbo_config_validates_instances_before_device_initialization(
+    monkeypatch, tbo, microbatch_instances
+):
+    model = SimpleNamespace(_olmo_ddp_compatible=True, tbo=tbo)
+    initialize_device = Mock(side_effect=_ValidationPassed)
+    monkeypatch.setattr(train_module_impl, "get_default_device", initialize_device)
+
+    invalid = tbo and (microbatch_instances <= 0 or microbatch_instances % 2 != 0)
+    expected_error = OLMoConfigurationError if invalid else _ValidationPassed
+    with pytest.raises(expected_error):
+        OLMoDDPTrainModule(
+            model=model,
+            optim=OLMoDDPOptimizerConfig(lr=1e-3),
+            rank_microbatch_size=microbatch_instances * 8,
+            max_sequence_length=8,
+        )
+    assert initialize_device.call_count == (0 if invalid else 1)
+
+
+@pytest.mark.parametrize("tbo", [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
+@pytest.mark.parametrize(
+    "batch_size,sequence_length,microbatch_tokens,num_pipeline_microbatches,valid",
+    [
+        (0, 8, 16, None, False),
+        (1, 8, 16, None, False),
+        (2, 8, 16, None, True),
+        (3, 8, 16, None, False),
+        (4, 8, 16, None, True),
+        (2, 8, 24, None, True),
+        (4, 8, 24, None, False),
+        (6, 8, 24, None, False),
+        (5, 8, 32, None, False),
+        (6, 8, 32, None, True),
+        (4, 10, 24, None, True),
+        (8, 4, 24, None, True),
+        (7, 4, 24, None, False),
+        (2, 32, 16, None, False),
+        (2, 8, 16, 2, False),
+        (4, 8, 16, 2, True),
+        (6, 8, 16, 2, False),
+        (6, 8, 16, 4, False),
+        (8, 8, 16, 4, True),
+        (10, 8, 16, 4, False),
+    ],
+)
+def test_tbo_train_batch_validates_all_chunks_before_processing(
+    tbo, dry_run, batch_size, sequence_length, microbatch_tokens, num_pipeline_microbatches, valid
+):
+    module = object.__new__(OLMoDDPTrainModule)
+    module.optim = object()
+    module.rank_microbatch_size = microbatch_tokens
+    module._pp_config = object() if num_pipeline_microbatches is not None else None
+    module._train_pp_schedule = SimpleNamespace(num_microbatches=num_pipeline_microbatches)
+    model = SimpleNamespace(tbo=tbo, train=Mock(side_effect=_ValidationPassed))
+    module.model_parts = [model]
+    batch = {"input_ids": torch.zeros(batch_size, sequence_length, dtype=torch.long)}
+
+    invalid = tbo and not valid
+    expected_error = OLMoConfigurationError if invalid else _ValidationPassed
+    with pytest.raises(expected_error):
+        module.train_batch(batch, dry_run=dry_run)
+    assert model.train.call_count == (0 if invalid else 1)
+    assert set(batch) == {"input_ids"}
+
+
+@pytest.mark.parametrize("tbo", [False, True])
+@pytest.mark.parametrize("pipeline", [False, True])
+@pytest.mark.parametrize("batch_size", [0, 1, 2, 3, 4])
+def test_tbo_eval_batch_validates_instances_before_processing(tbo, pipeline, batch_size):
+    module = object.__new__(OLMoDDPTrainModule)
+    module._cp_config = module._tp_config = None
+    module._pp_config = object() if pipeline else None
+    module.model_parts = [SimpleNamespace(tbo=tbo)]
+    module._prepare_batch = Mock(side_effect=_ValidationPassed)
+    batch = {"input_ids": torch.zeros(batch_size, 8, dtype=torch.long)}
+
+    invalid = tbo and (pipeline or batch_size <= 0 or batch_size % 2 != 0)
+    expected_error = OLMoConfigurationError if invalid else _ValidationPassed
+    with pytest.raises(expected_error):
+        module.eval_batch(batch)
+    assert module._prepare_batch.call_count == (0 if invalid else 1)
 
 
 class _MetricTrainerStub:

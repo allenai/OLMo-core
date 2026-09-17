@@ -412,7 +412,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         if self.tbo:
             if max_local_microbatch_size % 2 != 0:
                 raise RuntimeError(
-                    "TBO EP no-sync symmetric prewarm requires an even local microbatch size "
+                    "TBO EP no-sync symmetric prewarm requires an even local microbatch token count "
                     f"(got {max_local_microbatch_size})"
                 )
             prewarm_local_microbatch_size = max_local_microbatch_size // 2
@@ -1016,7 +1016,11 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             return_logits=return_logits,
             **kwargs,
         )
-        assert input_ids.size(0) % 2 == 0, "When TBO is enabled, the batch size must be even."
+        if input_ids.size(0) == 0 or input_ids.size(0) % 2 != 0:
+            raise OLMoConfigurationError(
+                "Two-batch overlap requires a positive, even number of instances per microbatch "
+                f"(got {input_ids.size(0)})"
+            )
 
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
@@ -1062,6 +1066,10 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         if labels is not None:
             labels0, labels1 = labels.chunk(2, dim=0)
             del labels
+        lm_head_kwargs0, lm_head_kwargs1 = lm_head_kwargs.copy(), lm_head_kwargs.copy()
+        for key in ("loss_weights", "response_mask", "logits_to_keep"):
+            if isinstance(value := lm_head_kwargs.get(key), torch.Tensor):
+                lm_head_kwargs0[key], lm_head_kwargs1[key] = value.chunk(2, dim=0)
         del h
         # Mark sizes as dynamic for torch.compile().
         if self.compile_enabled:
@@ -1083,7 +1091,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 x1_is_fresh = False  # after the first TBO block, x1 is no longer fresh
 
         # finish x1 last steps
-        h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs, labels0, labels1)
+        h0, h1 = self._tbo_last_step(x0, x1_ctx, lm_head_kwargs0, lm_head_kwargs1, labels0, labels1)
 
         return self._merge_tbo_outputs(h0, h1, loss_reduction=loss_reduction)
 
@@ -1091,7 +1099,8 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         self,
         x0,
         x1_ctx: object,
-        lm_head_kwargs: Dict[str, Any],
+        lm_head_kwargs0: Dict[str, Any],
+        lm_head_kwargs1: Dict[str, Any],
         labels0: Optional[torch.Tensor],
         labels1: Optional[torch.Tensor],
     ):
@@ -1105,12 +1114,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             with nvtx.annotate("TBO-1", color="orange"):
                 pending_ctx = ep_no_sync_rowwise_tbo_stage_c_launch(x1_ctx.block, x1_ctx)
 
-            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs, labels=labels0)
+            h0 = self.maybe_forward_lm_head(x0, lm_head_kwargs0, labels=labels0)
 
             with nvtx.annotate("TBO-1", color="orange"):
                 x1 = ep_no_sync_rowwise_tbo_stage_tail(x1_ctx.block, pending_ctx)
 
-            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs, labels=labels1)
+            h1 = self.maybe_forward_lm_head(x1, lm_head_kwargs1, labels=labels1)
             return h0, h1
 
         raise RuntimeError(
