@@ -47,6 +47,17 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _validate_tbo_eval_support(train_module: Any) -> None:
+    if isinstance(train_module, OLMoDDPTrainModule) and any(
+        getattr(model, "tbo", False) for model in train_module.model_parts
+    ):
+        raise OLMoConfigurationError(
+            "Evaluator callbacks do not support OLMoDDP two-batch overlap: evaluation can "
+            "produce odd-sized batches, including the final batch; disable two_batch_overlap "
+            "or disable evaluator callbacks"
+        )
+
+
 @dataclass
 class EvaluatorCallback(Callback):
     """
@@ -115,6 +126,7 @@ class EvaluatorCallback(Callback):
                 f"'{self.__class__.__name__}' does not support OLMoDDP context parallelism; "
                 "disable in-loop evaluation callbacks when using CP"
             )
+        _validate_tbo_eval_support(train_module)
 
     def pre_train(self):
         self._last_eval_step = None
@@ -257,6 +269,7 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
     def build(self, trainer: "Trainer") -> Optional[Callback]:
         if not self.enabled:
             return None
+        _validate_tbo_eval_support(trainer.train_module)
 
         dataset_max_sequence_length: int
         if isinstance(self.eval_dataset, NumpyVSLDatasetConfig):
@@ -512,6 +525,7 @@ class DownstreamEvaluatorCallbackConfig(CallbackConfig):
     def build(self, trainer: "Trainer") -> Optional[Callback]:
         if not self.enabled:
             return None
+        _validate_tbo_eval_support(trainer.train_module)
 
         from olmo_eval import HFTokenizer
 
