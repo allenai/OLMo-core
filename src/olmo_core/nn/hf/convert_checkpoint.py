@@ -43,6 +43,27 @@ from .convert import get_converter_to_hf
 log = logging.getLogger(__name__)
 
 
+def _normalize_legacy_latent_moe_config(value: Any) -> None:
+    """Normalize legacy LatentMoE and experimental KDA keys in saved configs."""
+    if isinstance(value, dict):
+        if "use_cute_kernel" in value:
+            if "use_experimental_kernels" in value:
+                raise ValueError("Config contains both legacy and current KDA kernel flags.")
+            value["use_experimental_kernels"] = value.pop("use_cute_kernel")
+        latent = value.get("latent_moe")
+        if isinstance(latent, dict) and "routed_expert_dim" in latent:
+            if "latent_dim" in latent:
+                raise ValueError(
+                    "LatentMoE config contains both 'routed_expert_dim' and 'latent_dim'."
+                )
+            latent["latent_dim"] = latent.pop("routed_expert_dim")
+        for child in value.values():
+            _normalize_legacy_latent_moe_config(child)
+    elif isinstance(value, list):
+        for child in value:
+            _normalize_legacy_latent_moe_config(child)
+
+
 def convert_checkpoint_to_hf(
     original_checkpoint_path: str | Path | None,
     output_path: str | Path,
@@ -86,6 +107,7 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    _normalize_legacy_latent_moe_config(transformer_config_dict)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
 

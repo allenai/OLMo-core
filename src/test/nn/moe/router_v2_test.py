@@ -3,8 +3,11 @@ import torch
 import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate, Shard, distribute_tensor
 
+import olmo_core.nn.moe.v2.router as router_v2
 from olmo_core.config import DType
-from olmo_core.distributed.utils import get_world_size
+from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.nn.moe.loss import MoELoadBalancingLossGranularity
 from olmo_core.nn.moe.router import MoERouterConfig, MoERouterGatingFunction
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
@@ -127,6 +130,131 @@ def test_router_bias_gamma_creates_buffer_and_biases_routing():
 
     # No bias buffer when bias_gamma is unset.
     assert _build(bias_gamma=None).score_bias is None
+
+
+def test_global_load_balancing_averages_counts_without_mutating_local_counts(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    router = _build(
+        top_k=1,
+        num_experts=2,
+        lb_loss_weight=1.0,
+        global_load_balancing=True,
+    )
+    router.lb_process_group = object()  # type: ignore[assignment]
+    local_counts = torch.tensor([8, 0])
+    captured = {}
+
+    def fake_all_reduce(counts, *, op, group):
+        assert op == dist.ReduceOp.SUM
+        assert group is router.lb_process_group
+        counts.add_(torch.tensor([0.0, 8.0]))
+
+    def fake_load_balancing_loss(**kwargs):
+        captured["counts"] = kwargs["batch_size_per_expert"].clone()
+        return kwargs["expert_scores"].sum() * 0
+
+    monkeypatch.setattr(router_v2.dist, "all_reduce", fake_all_reduce)
+    monkeypatch.setattr(router_v2.dist, "get_world_size", lambda group: 2)
+    monkeypatch.setattr(router_v2, "load_balancing_loss", fake_load_balancing_loss)
+
+    scores = torch.full((1, 8, 2), 0.5, requires_grad=True)
+    router.compute_aux_loss(
+        scores,
+        scores.log(),
+        local_counts,
+        local_counts.unsqueeze(0),
+        8.0,
+    )
+
+    torch.testing.assert_close(captured["counts"], torch.tensor([4.0, 4.0]))
+    torch.testing.assert_close(local_counts, torch.tensor([8, 0]))
+    torch.testing.assert_close(router.batch_size_per_expert, torch.tensor([8.0, 0.0]))
+    assert router.global_batch_size_per_expert is not None
+    torch.testing.assert_close(router.global_batch_size_per_expert, torch.tensor([4.0, 4.0]))
+
+    metrics = router.compute_metrics(reset=False)
+    torch.testing.assert_close(metrics["load imbalance"][0], torch.tensor(2.0))
+    torch.testing.assert_close(metrics["global load imbalance"][0], torch.tensor(1.0))
+
+    router.reset_metrics()
+    torch.testing.assert_close(router.batch_size_per_expert, torch.zeros(2))
+    torch.testing.assert_close(router.global_batch_size_per_expert, torch.zeros(2))
+
+
+def test_global_load_balancing_requires_process_group():
+    router = _build(lb_loss_weight=1.0, global_load_balancing=True)
+    _, _, _, aux = router(torch.randn(1, 4, 16), False)
+    assert aux is not None
+    with pytest.raises(RuntimeError, match="requires a load-balancing process group"):
+        router.compute_aux_loss(*aux)
+
+
+def test_global_load_balancing_rejects_instance_granularity():
+    with pytest.raises(OLMoConfigurationError, match="instance-granularity"):
+        _build(
+            lb_loss_weight=1.0,
+            global_load_balancing=True,
+            lb_loss_granularity=MoELoadBalancingLossGranularity.instance,
+        )
+
+
+def _run_global_load_balancing_matches_concatenated_reference():
+    world_size = get_world_size()
+    rank = get_rank()
+    group = dist.group.WORLD
+    torch.manual_seed(7)
+
+    local_tokens = 8
+    full_x = torch.randn(world_size, local_tokens, 4)
+    router = _build(
+        d_model=4,
+        num_experts=4,
+        top_k=1,
+        lb_loss_weight=1.0,
+        global_load_balancing=True,
+    )
+    router.set_load_balancing_process_group(group)
+
+    _, _, _, aux = router(full_x[rank : rank + 1], False, loss_div_factor=local_tokens)
+    assert aux is not None
+    loss = router.compute_aux_loss(*aux, accumulate_metrics=False)
+    assert loss is not None
+    loss.backward()
+    assert router.weight.grad is not None
+    distributed_grad = router.weight.grad.clone()
+    dist.all_reduce(distributed_grad, group=group)
+    distributed_grad.div_(world_size)
+
+    reference = _build(
+        d_model=4,
+        num_experts=4,
+        top_k=1,
+        lb_loss_weight=1.0,
+    )
+    with torch.no_grad():
+        reference.weight.copy_(router.weight)
+    _, _, _, reference_aux = reference(
+        full_x,
+        False,
+        loss_div_factor=world_size * local_tokens,
+    )
+    assert reference_aux is not None
+    reference_loss = reference.compute_aux_loss(*reference_aux, accumulate_metrics=False)
+    assert reference_loss is not None
+    reference_loss.backward()
+    assert reference.weight.grad is not None
+
+    torch.testing.assert_close(distributed_grad, reference.weight.grad)
+
+
+def test_global_load_balancing_matches_concatenated_reference_cpu():
+    run_distributed_test(
+        _run_global_load_balancing_matches_concatenated_reference,
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
+    )
 
 
 @pytest.mark.parametrize(
