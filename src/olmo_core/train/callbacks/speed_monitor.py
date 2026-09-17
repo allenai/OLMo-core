@@ -128,6 +128,19 @@ class SpeedMonitorCallback(Callback):
     def pre_step(self, batch: Dict[str, Any]):
         self._batch_load_time = time.perf_counter() - self._batch_load_start
 
+        # Reset unconditionally: these are per-step observations, and leaving a stale
+        # value would silently re-log the previous step's number for a batch that has
+        # no such measurement.
+        self._step_useful_tokens = None
+        self._step_crop_occupancy = None
+
+        # Fraction of the padded crop tensor that is real. The ViT runs on every crop in
+        # ``images``, pads included, so this bounds the vision-side waste.
+        if "n_real_crops" in batch and "images" in batch:
+            padded_crops = batch["images"].shape[0] * batch["images"].shape[1]
+            if padded_crops:
+                self._step_crop_occupancy = int(batch["n_real_crops"].sum()) / padded_crops
+
         if self._first_step:
             # We don't record the first batch since the first one tends to take
             # unusually long.
@@ -158,21 +171,18 @@ class SpeedMonitorCallback(Callback):
             # built on that figure *rises* when packs get emptier, so it cannot tell
             # "went faster" from "did less work". Pad positions carry ``example_ids ==
             # -1``, which is what makes the real count recoverable here.
+            #
+            # Left as ``None`` when ``example_ids`` is absent (packing off, or any
+            # text-only run). Falling back to ``_step_tokens`` there would report 100%
+            # occupancy for a batch that may be mostly padding -- fabricating precisely
+            # the reassurance this metric exists to withhold.
             if "example_ids" in batch:
                 self._step_useful_tokens = (
                     int((batch["example_ids"] >= 0).sum()) // self._parallel_degree
                 )
+                self._total_useful_tokens += self._step_useful_tokens
             else:
-                self._step_useful_tokens = self._step_tokens
-            self._total_useful_tokens += self._step_useful_tokens
-
-            # Fraction of the padded crop tensor that is real. The ViT runs on every
-            # crop in ``images``, pads included, so this bounds the vision-side waste.
-            self._step_crop_occupancy = None
-            if "n_real_crops" in batch and "images" in batch:
-                padded_crops = batch["images"].shape[0] * batch["images"].shape[1]
-                if padded_crops:
-                    self._step_crop_occupancy = int(batch["n_real_crops"].sum()) / padded_crops
+                self._step_useful_tokens = None
 
             self._step_flops = 0
             if (
@@ -228,20 +238,34 @@ class SpeedMonitorCallback(Callback):
             # Padding-aware companions to TPS. ``useful TPS`` is the rate of non-pad
             # tokens, so unlike TPS it cannot be improved by emitting emptier packs;
             # prefer it (or examples per second) when comparing pack geometries.
-            if self._total_useful_tokens:
+            #
+            # Reduced with ``mean`` rather than left rank-local like TPS: TPS is
+            # identical on every rank (equal-sized batches), but occupancy genuinely
+            # differs -- a rank that draws an all-text pack has ~0 crop occupancy while
+            # an image-heavy rank is near 1.0 -- so rank 0's value is not representative.
+            if self._step_useful_tokens is not None and self._total_useful_tokens:
                 self.trainer.record_metric(
-                    "throughput/device/useful TPS", self._step_useful_tokens / step_time
+                    "throughput/device/useful TPS",
+                    self._step_useful_tokens / step_time,
+                    reduce_type=ReduceType.mean,
                 )
                 self.trainer.record_metric(
                     "throughput/device/useful TPS (actual avg)",
                     self._total_useful_tokens / total_time,
+                    reduce_type=ReduceType.mean,
                 )
                 self.trainer.record_metric(
-                    "data/token occupancy", self._step_useful_tokens / self._step_tokens
+                    "throughput/device/token occupancy",
+                    self._step_useful_tokens / self._step_tokens,
+                    reduce_type=ReduceType.mean,
                 )
 
         if self._step_crop_occupancy is not None:
-            self.trainer.record_metric("data/crop occupancy", self._step_crop_occupancy)
+            self.trainer.record_metric(
+                "throughput/device/crop occupancy",
+                self._step_crop_occupancy,
+                reduce_type=ReduceType.mean,
+            )
 
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(
