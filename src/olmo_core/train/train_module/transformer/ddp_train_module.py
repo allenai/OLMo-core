@@ -166,6 +166,8 @@ class OLMoDDPTrainModule(TrainModule):
                 f"'rank_microbatch_size' ({rank_microbatch_size:,d} tokens) must be divisible by "
                 f"'max_sequence_length' ({max_sequence_length:,d} tokens)"
             )
+        if getattr(model, "tbo", False):
+            self._validate_tbo_microbatch_size(rank_microbatch_size // max_sequence_length)
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_only = eval_only
@@ -1766,9 +1768,32 @@ class OLMoDDPTrainModule(TrainModule):
         del batch
         return {}
 
+    @staticmethod
+    def _validate_tbo_microbatch_size(num_instances: int) -> None:
+        if num_instances <= 0 or num_instances % 2 != 0:
+            raise OLMoConfigurationError(
+                "Two-batch overlap requires each microbatch to contain a positive even number "
+                f"of instances (got {num_instances})"
+            )
+
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
+        if any(getattr(model, "tbo", False) for model in self.model_parts):
+            batch_size, sequence_length = batch["input_ids"].shape
+            if self.pp_enabled:
+                num_microbatches = self._pp_full_num_microbatches()
+                if batch_size % num_microbatches != 0:
+                    raise OLMoConfigurationError(
+                        "Two-batch overlap requires the pipeline rank batch to split evenly "
+                        f"into {num_microbatches} microbatches (got {batch_size} instances)"
+                    )
+                self._validate_tbo_microbatch_size(batch_size // num_microbatches)
+            else:
+                microbatch_instances = self.rank_microbatch_size // sequence_length
+                self._validate_tbo_microbatch_size(min(batch_size, microbatch_instances))
+                if remainder := batch_size % microbatch_instances:
+                    self._validate_tbo_microbatch_size(remainder)
         if dry_run:
             self._reset_dry_run_progress_timer()
 
@@ -2101,6 +2126,13 @@ class OLMoDDPTrainModule(TrainModule):
                 "please disable in-loop evals"
             )
 
+        if any(getattr(model, "tbo", False) for model in self.model_parts):
+            if self.pp_enabled:
+                raise OLMoConfigurationError(
+                    "Two-batch overlap does not support pipeline evaluation, which uses "
+                    "one instance per microbatch"
+                )
+            self._validate_tbo_microbatch_size(batch["input_ids"].shape[0])
         input_ids, labels, model_kwargs = self._prepare_batch(batch, labels)
 
         for m in self.model_parts:

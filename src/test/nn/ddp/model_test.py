@@ -1,4 +1,4 @@
-"""Tests for ``OLMoDDPModel`` construction and FLOP accounting."""
+"""Tests for ``OLMoDDPModel`` construction and forward paths."""
 
 import pytest
 import torch
@@ -9,7 +9,8 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp import model as ddp_model_module
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.lm_head import LMHeadConfig, LMOutputWithLoss
+from olmo_core.nn.moe.v2 import ep_no_sync_tbo_rowwise as tbo_module
 from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPath
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
@@ -148,3 +149,77 @@ def test_rowwise_prewarm_can_include_forward_only_scratch_buffers(monkeypatch):
     assert [call["need_dispatch_out"] for call in buffer_calls] == [False, True]
     assert all(call["need_dispatch_out"] for call in lease_calls)
     assert block._ep_no_sync_force_scratch_lifetime_buffers is False
+
+
+@pytest.mark.parametrize("with_labels", [False, True])
+@pytest.mark.parametrize("selection", ["all", "response", "positions", "last"])
+def test_tbo_splits_lm_head_inputs(monkeypatch, with_labels, selection):
+    config = _build_model_config(n_layers=1)
+    config.two_batch_overlap = True
+    config.block.ep = ExpertParallelConfig(path=ExpertParallelPath.rowwise_nvshmem, shared_slots=2)
+    model = config.build(init_device="cpu")
+    model.ep_enabled = True
+    block = next(model.routed_blocks())
+
+    # Keep the TBO forward and LM-head paths; replace only expert communication/computation.
+    def combined_forward(x0, x1_ctx, x1_is_fresh, **kwargs):
+        assert x1_is_fresh
+        return x0, tbo_module._NoSyncRowwiseTboPendingContext(
+            block=block, lane_id=1, a_state=None, global_x_rank_major=x1_ctx["x1"]
+        )
+
+    monkeypatch.setattr(block, "combined_forward_rowwise_nvshmem_tbo", combined_forward)
+    monkeypatch.setattr(tbo_module, "ep_no_sync_rowwise_tbo_stage_c_launch", lambda _, ctx: ctx)
+    monkeypatch.setattr(
+        tbo_module, "ep_no_sync_rowwise_tbo_stage_tail", lambda _, ctx: ctx.global_x_rank_major
+    )
+
+    input_ids = torch.arange(16).view(4, 4)
+    labels = input_ids.clone() if with_labels else None
+    weights = torch.arange(1, 17, dtype=torch.float32).view(4, 4) / 16
+    kwargs = dict(
+        loss_reduction="sum",
+        loss_div_factor=torch.tensor(7.0),
+        z_loss_multiplier=1e-4,
+        return_logits=True,
+    )
+    if with_labels:
+        labels[0, 0] = -100
+        kwargs["loss_weights"] = weights
+    if selection == "response":
+        kwargs["response_logits_only"] = True
+        kwargs["response_mask"] = input_ids % 3 == 0
+    elif selection == "positions":
+        kwargs["logits_to_keep"] = torch.tensor([[0, 1], [1, 2], [2, 3], [3, 0]])
+    elif selection == "last":
+        kwargs["logits_to_keep"] = 2
+
+    actual = model(input_ids, labels=labels, **kwargs)
+    expected = model.lm_head(model.forward_embed(input_ids), labels=labels, **kwargs)
+    if with_labels:
+        assert isinstance(actual, LMOutputWithLoss)
+        assert isinstance(expected, LMOutputWithLoss)
+        for actual_value, expected_value in zip(actual, expected):
+            torch.testing.assert_close(actual_value, expected_value)
+        parameters = (model.embeddings.weight, model.lm_head.w_out.weight)
+        actual_grads = torch.autograd.grad(actual.loss, parameters)
+        expected_grads = torch.autograd.grad(expected.loss, parameters)
+        for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+            torch.testing.assert_close(actual_grad, expected_grad)
+    else:
+        torch.testing.assert_close(actual, expected)
+
+
+@pytest.mark.parametrize("batch_size", [0, 1, 3])
+def test_tbo_rejects_invalid_instance_count_before_embedding(monkeypatch, batch_size):
+    config = _build_model_config(n_layers=1)
+    config.two_batch_overlap = True
+    model = config.build(init_device="cpu")
+    model.ep_enabled = True
+
+    def embed(_):
+        pytest.fail("Invalid TBO microbatches must be rejected before embedding")
+
+    monkeypatch.setattr(model.embeddings, "forward", embed)
+    with pytest.raises(OLMoConfigurationError, match="even number of instances"):
+        model(torch.zeros(batch_size, 4, dtype=torch.long))
