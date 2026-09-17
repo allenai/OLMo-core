@@ -18,7 +18,12 @@ from olmo_core.eval.multimodal_decoding import (
     source_indices,
     summarize,
 )
-from olmo_core.eval.multimodal_panel import SCORE_SOURCES, load_frozen_evaluator
+from olmo_core.eval.multimodal_panel import (
+    SCORE_SOURCES,
+    load_frozen_evaluator,
+    validate_frozen_panel_indices,
+    validate_panel_rows,
+)
 from olmo_core.nn.vision import MultimodalLMConfig
 from olmo_core.train import (
     Trainer,
@@ -200,6 +205,15 @@ def run(
     if dry_run:
         print(json.dumps(manifest, indent=2, allow_nan=False))
         return
+    error = None
+    try:
+        validate_frozen_panel_indices(evaluator_config, panel_manifest)
+    except Exception as exc:  # noqa: BLE001 - synchronize before model collectives
+        if check_complete:
+            raise
+        error = f"Panel selections: {type(exc).__name__}: {exc}"
+    if not check_complete:
+        _collective_error(error)
     if any(
         output_dir.is_relative_to(path) or path.is_relative_to(output_dir)
         for path in (checkpoint, panel_checkpoint)
@@ -212,6 +226,7 @@ def run(
             raise ValueError("Existing result does not match this checkpoint and definition")
         for source in SCORE_SOURCES:
             rows = [row for row in result["rows"] if row["source"] == source]
+            validate_panel_rows(rows, source, panel_manifest)
             source_summary(rows, source, evaluator_config.examples_per_source)
         return
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -244,6 +259,13 @@ def run(
             for evaluator in evaluators
         ):
             raise ValueError("Unexpected decoded panel batch count")
+        for source, evaluator in zip(sources, evaluators):
+            for index in range(total_batches):
+                validate_panel_rows(
+                    source_indices(evaluator, index, evaluator_config.rank_batch_size),
+                    source,
+                    panel_manifest,
+                )
     except Exception as exc:  # noqa: BLE001 - synchronize before model collectives
         error = f"Panel preparation: {type(exc).__name__}: {exc}"
     _collective_error(error)
@@ -267,6 +289,7 @@ def run(
                 ]
                 if sorted(row["panel_index"] for row in cached["rows"]) != expected_indices:
                     raise ValueError("Incomplete cached rank panel")
+                validate_panel_rows(cached["rows"], source, panel_manifest)
         except Exception as exc:  # noqa: BLE001 - synchronize before model collectives
             error = f"Saved source: {type(exc).__name__}: {exc}"
         _collective_error(error)

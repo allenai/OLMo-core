@@ -143,6 +143,67 @@ def test_frozen_panel_rejects_inconsistent_definitions(frozen_panel, corruption)
         panel.load_frozen_evaluator(path)
 
 
+def test_frozen_panel_indices_validate_all_sources_without_building_data(frozen_panel, monkeypatch):
+    path, payload, _ = frozen_panel
+    evaluator, manifest = panel.load_frozen_evaluator(path)
+    monkeypatch.setattr(SourceConfig, "build", lambda *args: pytest.fail("Opened source data"))
+    panel.validate_frozen_panel_indices(evaluator, manifest)
+    assert manifest == payload["manifest"]
+
+
+@pytest.mark.parametrize("source", ["scalar_count", "pixmo_points_basic", "pixmo_caption"])
+@pytest.mark.parametrize("change", ["manifest", "reorder", "selection"])
+def test_non_ocr_panel_rejects_stale_or_reordered_indices(frozen_panel, source, change):
+    path, payload, _ = frozen_panel
+    rows = payload["manifest"]["panels"][source]["rows"]
+    if change == "manifest":
+        rows[0]["base_source_index"] = 31
+    elif change == "reorder":
+        rows[0]["base_source_index"], rows[1]["base_source_index"] = 27, 3
+    else:
+        selected = path.with_name(f"{source}.indices")
+        selected.write_text("27\n3\n41\n")
+        payload["evaluator"]["eval_dataset"]["sources"][source]["selection_path"] = str(selected)
+    path.write_text(json.dumps(payload))
+    evaluator, manifest = panel.load_frozen_evaluator(path)
+    with pytest.raises(ValueError, match=f"Frozen panel {source} row identities differ"):
+        panel.validate_frozen_panel_indices(evaluator, manifest)
+
+
+@pytest.mark.parametrize("repeat", [1, 2, 3])
+def test_frozen_panel_indices_preserve_selection_repeat_mapping(frozen_panel, repeat):
+    path, _, _ = frozen_panel
+    evaluator, manifest = panel.load_frozen_evaluator(path)
+    evaluator.eval_dataset.sources["scalar_count"].selection_repeat = repeat
+    expected = [3, 27] if repeat == 1 else [3 * repeat, 3 * repeat + 1]
+    for row, base_index in zip(manifest["panels"]["scalar_count"]["rows"], expected):
+        row["base_source_index"] = base_index
+    panel.validate_frozen_panel_indices(evaluator, manifest)
+
+
+@pytest.mark.parametrize("source", list(panel.SCORE_SOURCES))
+def test_panel_rows_reject_wrong_base_identity_or_source(frozen_panel, source):
+    _, payload, _ = frozen_panel
+    manifest = payload["manifest"]
+    row = {"source": source, "panel_index": 1, "base_source_index": 27}
+    panel.validate_panel_rows([row], source, manifest)
+    with pytest.raises(ValueError, match="row identities differ"):
+        panel.validate_panel_rows([{**row, "base_source_index": 3}], source, manifest)
+    with pytest.raises(ValueError, match="row identities differ"):
+        panel.validate_panel_rows([{**row, "source": "another-source"}], source, manifest)
+
+
+@pytest.mark.parametrize("source", ["scalar_count", "ocr_doc_qa"])
+def test_frozen_panel_indices_reject_short_or_unapproved_selections(frozen_panel, source):
+    path, _, _ = frozen_panel
+    evaluator, manifest = panel.load_frozen_evaluator(path)
+    selected = path.with_name(f"{source}.indices")
+    selected.write_text("3\n")
+    evaluator.eval_dataset.sources[source].selection_path = str(selected)
+    with pytest.raises(ValueError, match="too few rows|absent from the saved selection"):
+        panel.validate_frozen_panel_indices(evaluator, manifest)
+
+
 def test_saved_selection_retains_tokens_masks_images_and_first_reference(frozen_panel):
     path, _, _ = frozen_panel
     config = panel.load_frozen_evaluator(path)[0].eval_dataset.sources["ocr_doc_qa"]

@@ -5,6 +5,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from olmo_core.config import Config
+from olmo_core.data.multimodal.alignment import MultimodalSourceConfig
 from olmo_core.eval import vision_decoded as runner
 from olmo_core.eval.multimodal_decoding import score_prediction
 
@@ -211,29 +213,55 @@ def test_rescoring_serialized_outputs_preserves_all_source_aggregates():
 
 
 class Evaluator:
-    def __init__(self, name):
+    def __init__(self, name, indices=range(100, 104)):
         self.name = f"{name}-validation"
-        self.batches = SimpleNamespace(total_batches=1, reset=lambda: None)
+        self.batches = SimpleNamespace(
+            total_batches=1,
+            reset=lambda: None,
+            dp_world_size=1,
+            dp_rank=0,
+            dataset=SimpleNamespace(
+                indices=range(4), dataset=SimpleNamespace(indices=list(indices))
+            ),
+        )
 
     def __iter__(self):
         yield {}
 
 
-def test_late_source_failure_keeps_completed_sources_and_retry_reuses_them(tmp_path, monkeypatch):
+@pytest.fixture
+def decoded_run(tmp_path, monkeypatch):
     sources = list(runner.SCORE_SOURCES)
+    selected = tmp_path / "saved.indices"
+    selected.write_text("100\n101\n102\n103\n")
+    panel_manifest = {
+        "examples_per_source": 4,
+        "panels": {
+            source: {
+                "rows": [
+                    {"panel_index": index, "base_source_index": index + 100} for index in range(4)
+                ]
+            }
+            for source in sources
+        },
+    }
     eval_config = SimpleNamespace(
         examples_per_source=4,
         rank_batch_size=4,
         eval_dataset=SimpleNamespace(
-            sources=dict.fromkeys(sources), build_tokenizer=lambda: (None, None)
+            sources={
+                source: MultimodalSourceConfig(dataset=Config(), selection_path=str(selected))
+                for source in sources
+            },
+            build_tokenizer=lambda: (None, None),
         ),
         as_config_dict=lambda: {"sources": sources},
         build=lambda context: SimpleNamespace(evaluators=[Evaluator(s) for s in sources]),
     )
     module = SimpleNamespace(device="cpu", dp_process_group=None, load_state_dict_direct=Mock())
     model_config = SimpleNamespace(build=lambda **kwargs: None)
-    module_config = SimpleNamespace(build=lambda *args, **kwargs: module)
-    monkeypatch.setattr(runner, "load_frozen_evaluator", lambda path: (eval_config, {"panel": 2}))
+    module_config = SimpleNamespace(build=Mock(return_value=module))
+    monkeypatch.setattr(runner, "load_frozen_evaluator", lambda path: (eval_config, panel_manifest))
     monkeypatch.setattr(
         runner,
         "checkpoint_configs",
@@ -242,9 +270,8 @@ def test_late_source_failure_keeps_completed_sources_and_retry_reuses_them(tmp_p
     monkeypatch.setattr(runner, "get_world_size", lambda: 1)
     monkeypatch.setattr(runner, "get_rank", lambda: 0)
     monkeypatch.setattr(runner, "is_distributed", lambda: False)
-    monkeypatch.setattr(runner, "source_indices", lambda *args: [])
     calls = []
-    fail = [True]
+    fail = [False]
 
     def decode(module, batch, tokenizer, token_ids, identities, source, **kwargs):
         calls.append(source)
@@ -260,6 +287,25 @@ def test_late_source_failure_keeps_completed_sources_and_retry_reuses_them(tmp_p
         tmp_path / "panel.json",
         tmp_path / "outputs",
     )
+    return SimpleNamespace(
+        args=args,
+        calls=calls,
+        fail=fail,
+        sources=sources,
+        selected=selected,
+        evaluator=eval_config,
+        module_config=module_config,
+    )
+
+
+def test_late_source_failure_keeps_completed_sources_and_retry_reuses_them(decoded_run):
+    args, sources, calls, fail = (
+        decoded_run.args,
+        decoded_run.sources,
+        decoded_run.calls,
+        decoded_run.fail,
+    )
+    fail[0] = True
     with pytest.raises(RuntimeError, match="injected"):
         runner.run(*args)
     assert (args[-1] / f"{sources[0]}-rank0.json").is_file()
@@ -272,6 +318,57 @@ def test_late_source_failure_keeps_completed_sources_and_retry_reuses_them(tmp_p
     before = list(calls)
     runner.run(*args)
     assert calls == before
+
+
+@pytest.mark.parametrize("source", ["scalar_count", "pixmo_points_basic", "pixmo_caption"])
+@pytest.mark.parametrize("cache", ["rank", "complete", "check_complete"])
+@pytest.mark.parametrize("change", ["wrong_row", "reorder"])
+def test_cached_panel_row_identity_is_validated(decoded_run, source, cache, change):
+    args = decoded_run.args
+    runner.run(*args)
+    result_path = args[-1] / "results.json"
+    if cache == "rank":
+        result_path.unlink()
+        result_path = args[-1] / f"{source}-rank0.json"
+    result = json.loads(result_path.read_text())
+    rows = [row for row in result["rows"] if row["source"] == source]
+    rows[0]["base_source_index"] = 101
+    if change == "reorder":
+        rows[1]["base_source_index"] = 100
+    result_path.write_text(json.dumps(result))
+    calls = list(decoded_run.calls)
+    with pytest.raises((ValueError, RuntimeError), match="row identities differ"):
+        runner.run(*args, check_complete=cache == "check_complete", world_size=1)
+    assert decoded_run.calls == calls
+
+
+@pytest.mark.parametrize("cache", ["rank", "complete", "check_complete"])
+def test_changed_selection_is_rejected_before_any_cache_reuse(decoded_run, cache):
+    args = decoded_run.args
+    runner.run(*args)
+    if cache == "rank":
+        (args[-1] / "results.json").unlink()
+    decoded_run.selected.write_text("101\n100\n102\n103\n")
+    decoded_run.module_config.build.reset_mock()
+    calls = list(decoded_run.calls)
+    with pytest.raises((ValueError, RuntimeError), match="row identities differ"):
+        runner.run(*args, check_complete=cache == "check_complete", world_size=1)
+    decoded_run.module_config.build.assert_not_called()
+    assert decoded_run.calls == calls
+
+
+def test_built_source_identity_is_validated_before_decoding_or_rank_cache(decoded_run):
+    # Simulate a selection change after the lightweight check but before source construction.
+    args, sources = decoded_run.args, decoded_run.sources
+    runner.run(*args)
+    (args[-1] / "results.json").unlink()
+    decoded_run.evaluator.build = lambda context: SimpleNamespace(
+        evaluators=[Evaluator(source, [101, 100, 102, 103]) for source in sources]
+    )
+    calls = list(decoded_run.calls)
+    with pytest.raises(RuntimeError, match="Panel preparation.*row identities differ"):
+        runner.run(*args)
+    assert decoded_run.calls == calls
 
 
 def test_shared_decoder_legacy_defaults_are_not_changed():
@@ -289,15 +386,28 @@ def test_explicit_world_size_is_recorded_by_metadata_checks(
     saved, tmp_path, monkeypatch, capsys, world_size, expected
 ):
     selected = {"examples_per_source": 64, "rank_batch_size": 4, "fixed_panel": True}
+    panel_manifest = {
+        "panels": {
+            source: {
+                "rows": [
+                    {"panel_index": index, "base_source_index": index + 100} for index in range(64)
+                ]
+            }
+            for source in runner.SCORE_SOURCES
+        }
+    }
     saved.evaluator.as_config_dict = lambda: selected
     monkeypatch.setattr(
         runner,
         "load_frozen_evaluator",
-        lambda path: (saved.evaluator, {"panel": "unchanged"}),
+        lambda path: (saved.evaluator, panel_manifest),
     )
+    index_check = Mock()
+    monkeypatch.setattr(runner, "validate_frozen_panel_indices", index_check)
     output = tmp_path / "outputs"
     args = (saved.checkpoint, saved.panel, tmp_path / "panel.json", output)
     runner.run(*args, dry_run=True, world_size=world_size)
+    index_check.assert_not_called()
     manifest = json.loads(capsys.readouterr().out)
     assert manifest["receipt_version"] == 1
     assert manifest["execution"]["world_size"] == expected
@@ -306,11 +416,22 @@ def test_explicit_world_size_is_recorded_by_metadata_checks(
     assert saved.module.rank_microbatch_size == 4 * saved.evaluator.sequence_length
     output.mkdir()
     (output / "results.json").write_text(
-        json.dumps({"manifest": manifest, "completed": True, "rows": []})
+        json.dumps(
+            {
+                "manifest": manifest,
+                "completed": True,
+                "rows": [
+                    make_row(source, index, "7", "7")
+                    for source in runner.SCORE_SOURCES
+                    for index in range(64)
+                ],
+            }
+        )
     )
     summary = Mock()
     monkeypatch.setattr(runner, "source_summary", summary)
     runner.run(*args, check_complete=True, world_size=world_size)
+    index_check.assert_called_once_with(saved.evaluator, panel_manifest)
     assert summary.call_count == len(runner.SCORE_SOURCES)
     if expected == 16:
         with pytest.raises(ValueError, match="does not match"):

@@ -41,6 +41,11 @@ class SavedPanelSourceConfig(MultimodalSourceConfig):
 
     def build(self, tokenizer: Any) -> Any:
         """Build the source and select its recorded original row indices."""
+        indices = self._load_panel_indices()
+        base = MultimodalSourceConfig(dataset=self.dataset).build(tokenizer)
+        return _SelectedDataset(base, indices, self.dataset)
+
+    def _load_panel_indices(self) -> np.ndarray:
         if self.selection_path is None:
             raise ValueError("A comparison panel requires a saved held-out selection")
         indices = np.asarray(self.row_indices, dtype=np.int64)
@@ -57,8 +62,7 @@ class SavedPanelSourceConfig(MultimodalSourceConfig):
         for path in self.excluded_selection_paths:
             if np.intersect1d(indices, _load_indices(path)).size:
                 raise ValueError("Panel overlaps an excluded training selection")
-        base = MultimodalSourceConfig(dataset=self.dataset).build(tokenizer)
-        return _SelectedDataset(base, indices, self.dataset)
+        return indices
 
 
 def load_frozen_evaluator(
@@ -110,3 +114,53 @@ def load_frozen_evaluator(
         ):
             raise ValueError(f"Frozen OCR panel {name} config and row identities differ")
     return evaluator, manifest
+
+
+def validate_panel_rows(rows: list[dict[str, Any]], source: str, manifest: dict[str, Any]) -> None:
+    """Check decoded or selected row identities against their frozen panel positions."""
+    expected = manifest["panels"][source]["rows"]
+    for row in rows:
+        index = row["panel_index"]
+        if (
+            type(index) is not int
+            or not 0 <= index < len(expected)
+            or row.get("source", source) != source
+            or row["base_source_index"] != expected[index]["base_source_index"]
+        ):
+            raise ValueError(f"Frozen panel {source} row identities differ")
+
+
+def validate_frozen_panel_indices(
+    evaluator: MultimodalEvaluatorCallbackConfig, manifest: dict[str, Any]
+) -> None:
+    """Verify the ordered selection lists without opening datasets or decoding examples."""
+    examples = evaluator.examples_per_source
+    for name, source in evaluator.eval_dataset.sources.items():
+        if isinstance(source, SavedPanelSourceConfig):
+            indices = source._load_panel_indices()
+        elif isinstance(source, MultimodalSourceConfig):
+            repeat = source.selection_repeat
+            if type(repeat) is not int or repeat < 1:
+                raise ValueError("selection_repeat must be a positive integer")
+            if source.selection_path is None:
+                if repeat != 1 or source.excluded_selection_paths:
+                    raise ValueError("Repeated or excluded selections require selection_path")
+                indices = np.arange(examples)
+            else:
+                indices = _load_indices(source.selection_path)
+                for path in source.excluded_selection_paths:
+                    if np.intersect1d(indices, _load_indices(path), assume_unique=True).size:
+                        raise ValueError(f"Frozen panel {name} overlaps an excluded selection")
+                indices = (indices[:examples, None] * repeat + np.arange(repeat)).reshape(-1)
+        else:
+            raise ValueError(f"Frozen panel {name} requires a prepared source selection")
+        if len(indices) < examples:
+            raise ValueError(f"Frozen panel {name} selection has too few rows")
+        validate_panel_rows(
+            [
+                {"panel_index": index, "base_source_index": int(base_index)}
+                for index, base_index in enumerate(indices[:examples])
+            ],
+            name,
+            manifest,
+        )
