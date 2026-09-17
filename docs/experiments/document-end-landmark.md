@@ -2,12 +2,12 @@
 
 Development branch: `amandab/doclandmark`.
 
-## Implemented reference
+## Implementation
 
 - `emit_document_end_landmark(segments, mem_id=...)` preserves segment order and
   inserts one loss-masked landmark after each context document, without padding.
-- `AttentionType.document_end_compressive_landmark` builds an eager reference layer
-  with inherited projections, RoPE, QK normalization, and GQA expansion.
+- `AttentionType.document_end_compressive_landmark` defaults to query-tiled attention
+  with inherited projections, RoPE, QK normalization, and native GQA.
 - `model.enable_document_end_landmark_attention(doc_start_id=...,
   doc_end_id=..., landmark_token_id=..., eos_id=..., pad_id=...)` reconstructs
   roles using the existing summary-role schema. Save these arguments in
@@ -31,21 +31,24 @@ remains accessible through its landmark gate.
 
 ## Remaining work
 
-1. Replace the Python-loop reference with a tiled variable-length implementation
-   using document offsets. The reference materializes dense scores and is intended
-   only for short tests; it is not appropriate for long-context training.
-2. Replace reference cached decoding with an optimized span-based implementation.
-3. Add document-level top-k with retrieved-token accounting, followed by CP support.
-4. Integrate launcher configuration and run GPU validation before training.
+1. Validate and profile the tensor backend on CUDA, then implement a fused
+   variable-length kernel for long-context throughput.
+2. Add document-level top-k with retrieved-token accounting, followed by CP support.
+3. Integrate launcher configuration and run GPU validation before training.
 
-Dropout, sliding windows, and mask mixing are rejected. No GPU kernel, training
-launcher, job, or benchmark is included yet.
+Dropout, sliding windows, and mask mixing are rejected. No fused CUDA/Triton
+kernel, training launcher, or remote job has been added. A local benchmark is
+available below.
 
 ## Validation
 
-`PYTHONPATH=src python -m pytest -q
-src/test/nn/attention/landmark_document_end_test.py
-src/test/data/document_chunk_landmark_test.py`
+```sh
+PYTHONPATH=src python -m pytest -q \
+  src/test/nn/attention/landmark_document_end_test.py \
+  src/test/nn/attention/landmark_document_end_tiled_test.py \
+  src/test/data/document_end_landmark_conversion_test.py \
+  src/test/data/document_chunk_landmark_test.py
+```
 
 Tests cover emission, equal-block forward/gradient parity against existing
 compressive grouped softmax, unequal document lengths with analytically known
@@ -75,5 +78,58 @@ answers, not streaming new context documents.
 
 Additional tests cover train/eval emitter parity, malformed layouts, model-config
 serialization, cached/full-logit equivalence with RoPE, and cache resets. These are
-CPU correctness tests; the eager Python-loop implementation remains unsuitable
-for long contexts.
+CPU correctness tests. CUDA-specific numerical tests are included but skipped
+on machines without CUDA.
+
+## Query-tiled backend
+
+`AttentionConfig.document_end_backend` selects `"tiled"` (default) or
+`"reference"`. The latter retains the independent token-loop oracle for small
+numerical checks. `document_end_query_tile_size` caps the query tile size (default
+64); the implementation shrinks tiles to target at most 1,048,576 elements per
+score-shaped workspace. One query row is the minimum. This is an element budget
+for each workspace, not a cap on total memory; several workspaces coexist.
+
+The tiled path applies to training, prefill, and cached decode. Each tile:
+
+1. Computes grouped QK products with the original KV head count, without repeating
+   K/V to the query head count. Future keys beyond the tile's last query are skipped.
+2. Forms the local/landmark gate softmax and all past-document softmaxes using
+   segmented max/sum reductions. There are no per-token or per-document Python loops.
+3. Multiplies their probabilities and contracts with the shared V heads.
+
+The custom backward saves only Q/K/V and linear-sized role/group metadata,
+recomputes each tile's probabilities, and contracts dK/dV across query heads within
+each KV group. It includes both derivatives for a landmark: its within-document
+contribution and its gate contribution. No score/probability matrices are retained
+between forward and backward. Accumulators use FP32 (FP64 for numerical tests),
+including under autocast. Higher-order derivatives are not supported.
+
+Arithmetic is still quadratic. Workspace is O(B*Hq*query_tile*K), plus linear
+inputs, outputs, gradients, and group metadata. This is a portable PyTorch tensor
+implementation, not a FlashAttention-style fused kernel; tensor reductions and
+FP32 matmuls require CUDA profiling before asserting long-context training speed.
+
+### Reproducible local benchmark
+
+```sh
+PYTHONPATH=src python src/scripts/benchmarks/document_end_attention.py --length 256
+PYTHONPATH=src python src/scripts/benchmarks/document_end_attention.py \
+  --length 4096 --backend tiled --repeats 2
+# On a CUDA machine, add --device cuda --dtype bfloat16.
+```
+
+Measured locally with PyTorch 2.6.0 on CPU, one thread, FP32, batch 1, 4 query
+heads, 2 KV heads, head dimension 32, unequal-length documents:
+
+| Length | Backend | Forward | Forward + backward | Saved tensor storage |
+| --- | --- | ---: | ---: | ---: |
+| 256 | Reference | 227.8 ms | 1016.0 ms | 18.54 MB |
+| 256 | Tiled | 7.36 ms | 19.89 ms | 0.268 MB |
+| 4096 | Tiled | 1730.5 ms | 4766.7 ms | 4.293 MB |
+
+Timings are medians of 3 repeats at 256 and 2 at 4096. Saved storage counts unique
+tensor storage retained for backward, including inputs; it is **not peak memory**.
+Increasing length 16x increases tiled saved storage exactly 16x. The script also
+reports allocator peak extra memory on CUDA. No CUDA performance result is claimed.
+Raw measurements are in `document-end-landmark-cpu-benchmark.json`.

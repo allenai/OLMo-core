@@ -412,6 +412,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     The number of regular tokens between landmark tokens, used only by
     :class:`LandmarkAttention` (``name="landmark"``). The landmark block size is ``mem_freq + 1``.
     """
+    document_end_backend: Optional[str] = None
+    """Document-end attention: 'tiled' (default) or 'reference' for debugging."""
+    document_end_query_tile_size: Optional[int] = None
+    """Maximum queries per document-end tile (default 64; shrinks to workspace budget)."""
     landmark_use_kernel: Optional[bool] = None
     """
     For :class:`LandmarkAttention` only: use the fused Triton kernel instead of the eager path.
@@ -754,6 +758,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         )
 
         mem_freq = kwargs.pop("mem_freq", None)
+        document_end_backend = kwargs.pop("document_end_backend", None)
+        document_end_query_tile_size = kwargs.pop("document_end_query_tile_size", None)
+        if (document_end_backend is not None or document_end_query_tile_size is not None) and (
+            AttentionType.document_end_compressive_landmark not in possible_types
+        ):
+            raise OLMoConfigurationError(
+                "Document-end backend options require document-end attention"
+            )
         landmark_use_kernel = kwargs.pop("landmark_use_kernel", None)
         num_landmarks = kwargs.pop("num_landmarks", None)
         landmark_pool = kwargs.pop("landmark_pool", None)
@@ -1141,6 +1153,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 kwargs["n_layers"] = n_layers
                 return DilatedSlidingWindowAttention(**kwargs)
             elif effective_name == "document_end_compressive_landmark":
+                if document_end_backend is not None:
+                    kwargs["document_end_backend"] = document_end_backend
+                if document_end_query_tile_size is not None:
+                    kwargs["query_tile_size"] = document_end_query_tile_size
                 return DocumentEndCompressiveLandmarkAttention(**kwargs)
             elif effective_name == "summary_token":
                 # Per-document summary-token masking. The levers are named for what they control;

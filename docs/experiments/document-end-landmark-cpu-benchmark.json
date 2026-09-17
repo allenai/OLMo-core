@@ -1,0 +1,54 @@
+[
+  {
+    "config": {
+      "device": "cpu",
+      "dtype": "float32",
+      "backend": "both",
+      "length": 256,
+      "heads": 4,
+      "kv_heads": 2,
+      "head_dim": 32,
+      "query_tile_size": 64,
+      "repeats": 3,
+      "threads": 1
+    },
+    "torch": "2.6.0",
+    "results": {
+      "reference": {
+        "forward_ms": 227.8039179946063,
+        "forward_backward_ms": 1015.951663008309,
+        "saved_tensor_storage_bytes_including_inputs": 18536000,
+        "cuda_peak_extra_bytes": null
+      },
+      "tiled": {
+        "forward_ms": 7.3639689944684505,
+        "forward_backward_ms": 19.88585598883219,
+        "saved_tensor_storage_bytes_including_inputs": 268288,
+        "cuda_peak_extra_bytes": null
+      }
+    }
+  },
+  {
+    "config": {
+      "device": "cpu",
+      "dtype": "float32",
+      "backend": "tiled",
+      "length": 4096,
+      "heads": 4,
+      "kv_heads": 2,
+      "head_dim": 32,
+      "query_tile_size": 64,
+      "repeats": 2,
+      "threads": 1
+    },
+    "torch": "2.6.0",
+    "results": {
+      "tiled": {
+        "forward_ms": 1730.5483595046098,
+        "forward_backward_ms": 4766.7253780018655,
+        "saved_tensor_storage_bytes_including_inputs": 4292608,
+        "cuda_peak_extra_bytes": null
+      }
+    }
+  }
+]

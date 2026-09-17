@@ -1,15 +1,18 @@
-"""Eager reference for one compressive landmark at each document end.
+"""One compressive landmark at each document end.
 
-Uses the summary-token role schema, with exactly one SUMMARY per document. This
-implementation intentionally uses explicit groups rather than periodic block arithmetic.
-It is a correctness reference, not a long-context kernel.
+The layer defaults to query-tiled exact attention with recomputed backward and
+native GQA. The independent eager function remains a small-sequence oracle.
+Both use the summary-token role schema with one SUMMARY per document.
 """
 
 from typing import Optional
 
 import torch
 
+from olmo_core.exceptions import OLMoConfigurationError
+
 from . import Attention
+from .landmark_document_end_tiled import tiled_document_end_compressive_attention
 from .summary_mask import ROLE_DOC_ID, ROLE_EXAMPLE_ID, ROLE_KIND, ROLE_SUMMARY_OFFSET, TokenKind
 
 
@@ -75,15 +78,28 @@ def document_end_compressive_attention(q, k, v, roles, softmax_scale=None, *, qu
 
 
 class DocumentEndCompressiveLandmarkAttention(Attention):
-    """Projection/RoPE-integrated eager reference; requires explicit summary_roles.
+    """Projection/RoPE-integrated document-end attention; requires explicit summary_roles.
 
     Supports unpadded, single-example cached generation into the trailing query
     region. Context parallelism, dropout, and sliding windows are not implemented.
     """
 
-    def __init__(self, *, softmax_scale: Optional[float] = None, **kwargs):
+    def __init__(
+        self,
+        *,
+        softmax_scale: Optional[float] = None,
+        document_end_backend: str = "tiled",
+        query_tile_size: int = 64,
+        **kwargs,
+    ):
+        if document_end_backend not in ("tiled", "reference"):
+            raise OLMoConfigurationError("document_end_backend must be 'tiled' or 'reference'")
+        if query_tile_size < 1:
+            raise OLMoConfigurationError("document-end query tile size must be positive")
+        self.document_end_backend = document_end_backend
+        self.query_tile_size = query_tile_size
         if kwargs.get("window_size") is not None or kwargs.get("dropout", 0):
-            raise ValueError("Document-end reference does not support windows or dropout")
+            raise ValueError("Document-end attention does not support windows or dropout")
         super().__init__(softmax_scale=softmax_scale, **kwargs)
         self.softmax_scale = softmax_scale
         self._document_roles = None
@@ -104,19 +120,33 @@ class DocumentEndCompressiveLandmarkAttention(Attention):
 
     def sdpa(self, q, k, v, **kwargs):
         if self.cp_enabled:
-            raise NotImplementedError("Document-end reference does not support CP")
+            raise NotImplementedError("Document-end attention does not support CP")
         cache_leftpad = kwargs.pop("cache_leftpad", None)
         if any(value is not None for value in kwargs.values()):
             raise NotImplementedError(
-                "Document-end reference uses roles, not backend packing metadata"
+                "Document-end attention uses roles, not backend packing metadata"
             )
         if self.kv_cache_manager is not None:
             return self._sdpa_cached(q, k, v, cache_leftpad=cache_leftpad)
         if cache_leftpad is not None and bool(cache_leftpad.any()):
-            raise NotImplementedError("Document-end reference does not support left-padding")
+            raise NotImplementedError("Document-end attention does not support left-padding")
         return self._attend(q, k, v, self._document_roles)
 
     def _attend(self, q, k, v, roles, query_start=0):
+        if self.document_end_backend == "tiled":
+            return (
+                tiled_document_end_compressive_attention(
+                    q.transpose(1, 2),
+                    k.transpose(1, 2),
+                    v.transpose(1, 2),
+                    roles,
+                    self.softmax_scale,
+                    query_start=query_start,
+                    query_tile_size=self.query_tile_size,
+                )
+                .transpose(1, 2)
+                .contiguous()
+            )
         n_rep = q.shape[2] // k.shape[2]
         k = k.repeat_interleave(n_rep, dim=2)
         v = v.repeat_interleave(n_rep, dim=2)
@@ -149,7 +179,7 @@ class DocumentEndCompressiveLandmarkAttention(Attention):
         )
 
     def _sdpa_cached(self, q, k, v, *, cache_leftpad=None):
-        """Reference prefill followed by one or more trailing QUERY tokens.
+        """Exact prefill followed by one or more trailing QUERY tokens.
 
         Incoming per-step roles cannot describe prior documents; retain prompt
         roles and append QUERY roles instead. Position zero always replaces old

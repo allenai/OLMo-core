@@ -297,7 +297,7 @@ class Transformer(nn.Module):
         eos_id: int,
         pad_id: Optional[int] = None,
     ) -> None:
-        """Reconstruct document-end roles for the eager compressive reference.
+        """Reconstruct document-end roles for compressive landmark attention.
 
         Input must already contain one landmark after each complete context
         document. No periodic insertion or causal-mask mixture is applied.
