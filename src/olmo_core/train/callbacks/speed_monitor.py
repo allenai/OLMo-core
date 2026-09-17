@@ -134,8 +134,17 @@ class SpeedMonitorCallback(Callback):
         self._step_useful_tokens = None
         self._step_crop_occupancy = None
 
-        # Fraction of the padded crop tensor that is real. The ViT runs on every crop in
-        # ``images``, pads included, so this bounds the vision-side waste.
+        # Fraction of the padded crop tensor that is real, as seen at collation time --
+        # before ``MultimodalLM._encode_images`` does its own DP-wide
+        # ``all_reduce(MAX)`` and pads every rank's crop axis further to match the
+        # busiest rank. That second padding round is invisible here: ``pre_step`` runs
+        # before the forward pass, and the extra count is a local variable inside
+        # ``_encode_images``, never surfaced. So this is a lower bound on the padding
+        # the ViT actually executes, i.e. an optimistic occupancy figure -- measured at
+        # ~2 percentage points on the packing profiles this metric was built against
+        # (16-way DP, single-image tiers). Getting the exact figure would mean either a
+        # second collective in this callback or threading a value out of the model's
+        # forward pass; not worth it for 2 points on a monitoring metric.
         if "n_real_crops" in batch and "images" in batch:
             padded_crops = batch["images"].shape[0] * batch["images"].shape[1]
             if padded_crops:

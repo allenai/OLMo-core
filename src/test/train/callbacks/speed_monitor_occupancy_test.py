@@ -98,3 +98,26 @@ def test_parallel_degree_divides_useful_tokens_like_padded_tokens():
     cb.pre_step(_batch([100, 60]))
     assert cb._step_tokens == (2 * _SEQ) // 2
     assert cb._step_useful_tokens == 160 // 2
+
+
+def test_crop_occupancy_is_measured_before_the_dp_wide_pad_round():
+    """Documents a known bias rather than pinning a wrong value as correct.
+
+    ``MultimodalLM._encode_images`` does its own DP-wide ``all_reduce(MAX)`` and pads
+    every rank's crop axis to the busiest rank's width -- but that happens during the
+    forward pass, after ``pre_step`` has already measured occupancy from the collated
+    batch. So the metric is a lower bound on true padding (an optimistic occupancy
+    figure), not the exact fraction the ViT executes. This locks in that the metric
+    reflects the batch as collated, not as the model additionally pads it, so a future
+    change that tried to "fix" this without updating the metric's documented meaning
+    would be caught here.
+    """
+    cb = _cb()
+    # Two ranks' worth of already-DP-padded crops would look identical to two ranks that
+    # were never padded at all -- pre_step has no way to tell, because it only sees the
+    # collator's rank-local batch.
+    cb.pre_step(_batch([10, 10], n_real_crops=[2, 2], padded_crops=4))
+    pre_dp_pad = cb._step_crop_occupancy
+
+    cb.pre_step(_batch([10, 10], n_real_crops=[2, 2], padded_crops=4))  # same collated shape
+    assert cb._step_crop_occupancy == pre_dp_pad == 4 / 8
