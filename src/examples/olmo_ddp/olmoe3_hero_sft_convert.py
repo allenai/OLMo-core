@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from olmoe3_hero_sft_plan import BATCH, CAMPAIGN, DATA, MOUNT, data_plan, find_run
+from olmoe3_hero_sft_plan import BATCH, CAMPAIGN, DATA, MOUNT, find_run
 from olmoe3_lr_sweep_watch import atomic_json, status
 
 

@@ -10,7 +10,7 @@ import sys
 from olmoe3_hero_decay_plan import inventory
 from olmoe3_hero_decay_plan import validate_checkpoint as validate_parent
 from olmoe3_hero_decay_runtime import verify_runtime
-from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, data_plan, find_run, runs
+from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, find_run, runs
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 

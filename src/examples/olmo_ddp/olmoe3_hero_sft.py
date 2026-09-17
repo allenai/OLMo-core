@@ -323,7 +323,6 @@ class SFTValidation(Callback):
 
 def trainer_config(common):
     r = find_run(common.run_name)
-    plan = data_plan()
     config = hero.trainer_config(common)
     for key in ("hero_audit", "hero_complete", "lm_evaluator"):
         config.callbacks.pop(key, None)
