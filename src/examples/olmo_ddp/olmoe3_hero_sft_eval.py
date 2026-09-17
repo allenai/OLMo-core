@@ -54,7 +54,7 @@ def validate_export(model):
     root = model.parent
     receipt_path = model / "_HERO_CONVERSION_SUCCESS.json"
     receipt = json.loads(receipt_path.read_text())
-    assert receipt["passed"] and receipt["step"] == 1810
+    assert receipt["passed"] and root.name == f"step{receipt['step']}"
     for file in (
         "config.json",
         "tokenizer.json",
@@ -147,7 +147,7 @@ def execute(receipt_path):
 def main():
     from olmo_eval.evals.tasks.common import get_task
     from olmoe3_hero_sft_convert import export_root
-    from olmoe3_hero_sft_plan import MOUNT, find_run
+    from olmoe3_hero_sft_plan import CAMPAIGN, MOUNT, find_run
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", required=True)
@@ -156,15 +156,21 @@ def main():
     assert MOUNT.is_mount()
     run = find_run(args.run)
     assert not run.smoke
-    model = export_root(run) / run.arm / "step1810/hf"
+    model = export_root(run) / run.arm / f"step{run.total_steps}/hf"
     conversion = validate_export(model)
     output = model.parent / "posttrain-evals-r1" / args.bundle
-    resume = os.environ.get("HERO_SFT_RESUME") == "1"
+    # Math/IFBench/Alpaca can replay immutable completed responses after preemption.
+    # Code requires fresh sandbox/handler state, so each attempt has its own folder.
+    base_output = output
+    if args.bundle in ("humaneval", "smoke"):
+        assert os.environ.get("BEAKER_JOB_ID"), "A fresh Beaker attempt ID is required"
+        output = output / "attempts" / os.environ["BEAKER_JOB_ID"]
+    resume = args.bundle in ("math500", "ifbench", "alpaca") and (output / "recipe.json").is_file()
     if resume:
         assert args.bundle in ("math500", "ifbench", "alpaca")
         assert (output / "recipe.json").is_file(), "Resume needs the original recipe"
     else:
-        output.mkdir(parents=True, exist_ok=False)
+        output.mkdir(parents=True, exist_ok=True)
     # Retain the lock until this main invocation and its evaluator subprocess finish.
     output_lock = (output / "RESUME.lock").open("a")
     fcntl.flock(output_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -233,7 +239,7 @@ def main():
         "-O",
         str(output),
         "--experiment-group",
-        "olmo35-small-sft-20260914",
+        CAMPAIGN,
         "--experiment-name",
         run.run_id + "-" + args.bundle,
     ]
@@ -257,7 +263,7 @@ def main():
         ).hexdigest(),
         "conversion_profile": conversion["inference_profile"],
         "inference_profile": "bf16-grouped-fla-pilot-v1",
-        "epoch": 2,
+        "epoch": run.epochs,
         "recipe_reference": "oe-eval-internal@e8c7fedaee8067421bf651419b2648117262a72a",
         "note": "Think chat adapters; no PT few-shot prompts; unfinished reasoning scores as empty final answer.",
     }
@@ -315,6 +321,10 @@ def main():
         "alpaca": judge,
     }
     (output / "success.json").write_text(json.dumps(proof, indent=2, default=str) + "\n")
+    if output != base_output:
+        from olmoe3_lr_sweep_watch import atomic_json
+
+        atomic_json(base_output / "success.json", {**proof, "attempt_output": str(output)})
     print("SFT_POSTTRAIN_EVAL_SUCCESS", json.dumps(proof, default=str), flush=True)
 
 

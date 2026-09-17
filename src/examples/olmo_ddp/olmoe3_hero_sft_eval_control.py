@@ -10,7 +10,7 @@ import time
 from olmoe3_hero_decay_eval import HELPER_REF, OLD_HELPER, OLD_ROOT, TEMPLATES
 from olmoe3_hero_sft_convert import export_root
 from olmoe3_hero_sft_exports import ExportController
-from olmoe3_hero_sft_plan import AUTOMATION, MOUNT, runs
+from olmoe3_hero_sft_plan import AUTOMATION, DATA_PLAN, MOUNT, runs
 from olmoe3_lr_sweep_watch import atomic_json, log, replace_env
 
 DEPLOYMENT = AUTOMATION / "deployments/posteval-r1"
@@ -47,7 +47,7 @@ def is_system_preemption(beaker, work):
 
 def model_path(run):
     """Return the sole authorized evaluation epoch for this run."""
-    return export_root(run) / run.arm / "step1810/hf"
+    return export_root(run) / run.arm / f"step{run.total_steps}/hf"
 
 
 def spec_for(template, stage, run, commit):
@@ -95,7 +95,7 @@ def spec_for(template, stage, run, commit):
             "sharedMemory": "16 GiB",
         }
     task["arguments"] = [command]
-    task["context"].update(priority="urgent", minRuntime=3600000000000, autoResume=False)
+    task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
     task["timeout"] = "12h"
     if not any(d["mountPath"] == "/weka/oe-adapt-default" for d in task["datasets"]):
         task["datasets"].append(
@@ -119,8 +119,8 @@ def spec_for(template, stage, run, commit):
     spec["description"] = json.dumps(
         {
             "run": run.run_id,
-            "epoch": 2,
-            "step": 1810,
+            "epoch": run.epochs,
+            "step": run.total_steps,
             "stage": stage,
             "model": model,
             "commit": commit,
@@ -151,6 +151,10 @@ def main():
         all_runs = list(runs())
         previous = None
         while True:
+            if not DATA_PLAN.is_file() or not (AUTOMATION / "config-success.json").is_file():
+                log("SFT_EVAL_WAITING_FOR_DATA_CONFIG_GATE")
+                time.sleep(60)
+                continue
             snapshot = {}
             pilot = model_path(all_runs[0]).parent / "posttrain-evals-r1/smoke/success.json"
             pilot_ok = pilot.is_file() and json.loads(pilot.read_text()).get("passed") is True
@@ -167,23 +171,14 @@ def main():
                     stages += list(BUNDLES)
                 for stage in stages:
                     # New campaign: every worker must understand this source/EMO split.
-                    stage_commit = ORIGINAL_PIN
+                    stage_commit = commit
                     control.commit = stage_commit
                     template = templates["qualify" if stage == "qualify" else "gen_mc"]
-                    name = run.run_id + "-epoch2-" + stage + "-r1"
+                    name = run.run_id + f"-epoch{run.epochs}-" + stage + "-r1"
                     work = control.ensure(name, spec_for(template, stage, run, stage_commit))
                     state = control.report(work) if work else "ambiguous_submission"
                     replaces = None
-                    if (
-                        stage in ("math500", "ifbench", "alpaca")
-                        and state == "STATUS_CANCELED"
-                        and is_system_preemption(b, work)
-                    ):
-                        replaces = work.experiment.id
-                        spec = resume_spec(b.experiment.get_spec(work).to_json(), commit)
-                        control.commit = commit
-                        work = control.ensure(name.removesuffix("-r1") + "-r2-preemption", spec)
-                        state = control.report(work) if work else "ambiguous_submission"
+                    # Beaker auto-resumes system preemptions; runtime failures remain visible.
                     states[stage] = {
                         "status": state,
                         "experiment": work.experiment.id if work else None,

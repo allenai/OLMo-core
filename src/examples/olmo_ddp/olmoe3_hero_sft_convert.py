@@ -52,7 +52,7 @@ def spec_for(beaker, run, step, commit):
 
 def advance_conversions(beaker, control, run, commit):
     states = {}
-    for epoch, step in enumerate((data_plan()["steps_per_epoch"], data_plan()["total_steps"]), 1):
+    for epoch, step in [(run.epochs, run.total_steps)]:
         workload = control.ensure(
             run.run_id + f"-epoch{epoch}-convert", spec_for(beaker, run, step, commit)
         )
@@ -78,10 +78,7 @@ def main():
     parser.add_argument("--qualify-only", action="store_true")
     args = parser.parse_args()
     run = find_run(args.run)
-    assert not run.smoke and args.step in (
-        data_plan()["steps_per_epoch"],
-        data_plan()["total_steps"],
-    )
+    assert not run.smoke and args.step == run.total_steps
     import olmoe3_hero_decay_plan as copy_worker
     from olmoe3_hero_sft_node import validate_checkpoint
 

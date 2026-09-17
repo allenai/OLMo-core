@@ -1,4 +1,4 @@
-"""Matched SFT sweep from EMO PT followed by EMO-disabled MT and LC."""
+"""GPT-OSS high-effort SFT: two LC lineages, independent two/five-epoch schedules."""
 
 import json
 from dataclasses import dataclass
@@ -15,13 +15,13 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 )
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-CAMPAIGN = "olmo35-small-gptoss-sft-posttrain-noemo-20260914"
-BRANCH = "codex/hero-sft-posttrain-noemo-20260914"
+CAMPAIGN = "olmo35-small-gptoss-high-sft-20260917"
+BRANCH = "codex/hero-sft-gptoss-high-20260917"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
     Path("/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/sft-data")
-    / "gptoss120b-deduped-olmo-thinker-20260914"
+    / "gptoss120b-high-olmo-thinker-20260917"
 )
 DATA_PLAN = AUTOMATION / "data-plan.json"
 CACHE = ROOT / "packing-cache"
@@ -29,9 +29,12 @@ BATCH = 524288
 SEQUENCE = 65536
 GPUS = 8
 SEED = 1729
-LRS = {"1em5": 1e-5, "5em5": 5e-5, "1em4": 1e-4}
-LC_CAMPAIGN = "olmo35-small-2t-lc100b-noemo-20260914"
-LC_JOBS = {"emo": "01M2FV97BETNXMM08QS0WYE02G"}
+LRS = {"5em5": 5e-5}
+LC_CAMPAIGNS = {
+    "emo": "olmo35-small-2t-lc100b-noemo-20260914",
+    "non-emo": "olmo35-small-2t-lc100b-20260913",
+}
+LC_JOBS = {"emo": "01M2FV97BETNXMM08QS0WYE02G", "non-emo": "01M2CKNMBW4WV21HCJQV5FTJAX"}
 
 
 @dataclass(frozen=True)
@@ -41,14 +44,16 @@ class SFTRun:
     arm: str
     lr_label: str
     smoke: bool = False
+    epochs: int = 2
 
     def __post_init__(self):
         assert self.arm in LC_JOBS and self.lr_label in LRS
         assert not self.smoke or self.lr_label == "5em5"
+        assert self.epochs in (2, 5) and (not self.smoke or self.epochs == 2)
 
     @property
     def run_id(self):
-        return f"{CAMPAIGN}-{'smoke-' if self.smoke else ''}{self.arm}-lr{self.lr_label}"
+        return f"{CAMPAIGN}-{'smoke-' if self.smoke else ''}{self.arm}-lr{self.lr_label}-ep{self.epochs}"
 
     @property
     def emo(self):
@@ -68,8 +73,8 @@ class SFTRun:
         return (
             MOUNT
             / "production-hero-small-lc"
-            / LC_CAMPAIGN
-            / f"{LC_CAMPAIGN}-{self.arm}"
+            / LC_CAMPAIGNS[self.arm]
+            / f"{LC_CAMPAIGNS[self.arm]}-{self.arm}"
             / "step5961"
         )
 
@@ -79,13 +84,22 @@ class SFTRun:
 
     @property
     def prefix(self):
-        return f"{CAMPAIGN}/{'smoke/' if self.smoke else ''}{self.arm}/lr{self.lr_label}"
+        return f"{CAMPAIGN}/{'smoke/' if self.smoke else ''}{self.arm}/lr{self.lr_label}/ep{self.epochs}"
+
+    @property
+    def total_steps(self):
+        return data_plan()["steps_per_epoch"] * self.epochs
+
+    @property
+    def checkpoint_steps(self):
+        # Intermediate recovery checkpoint plus final, protected from deletion until export.
+        return [data_plan()["steps_per_epoch"], self.total_steps]
 
     def as_dict(self):
         return {
             "run_id": self.run_id,
             "arm": self.arm,
-            "pretrain_emo": True,
+            "pretrain_emo": self.arm == "emo",
             "midtrain_emo": False,
             "long_context_emo": False,
             "source_emo": False,
@@ -98,7 +112,7 @@ class SFTRun:
             "checkpoint_root": str(self.root),
             "bucket": self.bucket,
             "prefix": self.prefix,
-            "epochs": 2,
+            "epochs": self.epochs,
             "batch_tokens": BATCH,
             "sequence_length": SEQUENCE,
             "gpus": GPUS,
@@ -111,8 +125,12 @@ class SFTRun:
 
 
 def runs(smoke=False):
-    """Return three matched trials from the new native LC source or one restart smoke."""
-    return [SFTRun(arm, label, smoke) for arm in LC_JOBS for label in (["5em5"] if smoke else LRS)]
+    """Return four independent schedules, or one source-load/restart smoke per lineage."""
+    return [
+        SFTRun(arm, "5em5", smoke, epochs)
+        for epochs in ([2] if smoke else [2, 5])
+        for arm in LC_JOBS
+    ]
 
 
 def find_run(name):

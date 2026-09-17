@@ -44,7 +44,7 @@ def training_spec(original, run, commit, prepare=False):
         name="sft-prepare" if prepare else "sft",
         replicas=1,
         leaderSelection=False,
-        timeout="3h" if prepare or run.smoke else "24h",
+        timeout="3h" if prepare or run.smoke else "72h",
     )
     task.pop("synchronizedStartTimeout", None)
     task["propagateFailure"] = False
@@ -184,11 +184,8 @@ def main():
                 row = {"status": state, "experiment": w.experiment.id if w else None}
                 if state == "STATUS_SUCCEEDED":
                     proof = json.loads((r.root / "audit/sft-success.json").read_text())
-                    assert (
-                        proof["step"] == data_plan()["total_steps"]
-                        and proof["all_8_ranks_verified"]
-                    )
-                    checkpoints = [data_plan()["steps_per_epoch"], data_plan()["total_steps"]]
+                    assert proof["step"] == r.total_steps and proof["all_8_ranks_verified"]
+                    checkpoints = r.checkpoint_steps
                     row["uploads"] = {
                         str(step): bool(
                             (saved := store.load_checkpoint(r.run_id, step))

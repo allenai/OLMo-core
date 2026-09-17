@@ -73,12 +73,10 @@ def main():
             [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--attention-smoke"],
             check=True,
         )
-    target = 4 if r.smoke else data_plan()["total_steps"]
+    target = 4 if r.smoke else r.total_steps
     if not r.smoke:
         for smoke in runs(True):
-            gate = json.loads(
-                (smoke.root / "audit/sft-gate-success.json").read_text()
-            )
+            gate = json.loads((smoke.root / "audit/sft-gate-success.json").read_text())
             assert gate["all_8_ranks_verified"] and gate["source_commit"] == os.environ["GIT_REF"]
     choices = [(0, r.source)] + [
         (int(p.name[4:]), p)
