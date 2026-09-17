@@ -218,6 +218,59 @@ def test_pipeline_pre_train_passes_loss_callback(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "global_batch_size,rank_microbatch_size,dp_world_size,expected_microbatches",
+    [
+        (64, 16, 1, 4),
+        (128, 16, 2, 4),
+        (16, 16, 1, 1),
+        (56, 16, 1, None),
+        (56, 16, 2, None),
+        (65, 16, 2, None),
+        (8, 16, 1, None),
+        (16, 16, 2, None),
+        (0, 16, 1, None),
+        (-16, 16, 1, None),
+        (64, 0, 1, None),
+    ],
+)
+def test_native_pipeline_validates_batch_size_before_schedule_setup(
+    monkeypatch, global_batch_size, rank_microbatch_size, dp_world_size, expected_microbatches
+):
+    module = object.__new__(ddp_train_module.OLMoDDPTrainModule)
+    module._trainer = SimpleNamespace(global_batch_size=global_batch_size, dp_process_group=None)
+    module.rank_microbatch_size = rank_microbatch_size
+    module._pp_config = module_config.TransformerPipelineParallelConfig(
+        degree=2,
+        schedule=PipelineScheduleType.custom_interleaved_1F1B,
+        use_custom_stage_implementation=True,
+    )
+    module.model_parts = []
+    module._pp_stages = []
+    module._train_pp_schedule = None
+    module.world_mesh = {"dense": {"pp": object()}}
+    prewarm = Mock()
+    monkeypatch.setattr(module, "_rowwise_lifetime_lease_slots_env_is_set", lambda: False)
+    monkeypatch.setattr(module, "_prewarm_ep_no_sync_symm_buffers", prewarm)
+    monkeypatch.setattr(
+        module, "_estimate_pp_rowwise_lifetime_lease_slots_for_model_parts", lambda: 1
+    )
+    monkeypatch.setattr(ddp_train_module, "get_world_size", lambda group: dp_world_size)
+    constructor = Mock()
+    monkeypatch.setattr(ddp_train_module, "PipelineSchedule", constructor)
+
+    if expected_microbatches is None:
+        with pytest.raises(OLMoConfigurationError, match="batch size"):
+            module.on_attach()
+        constructor.assert_not_called()
+        prewarm.assert_not_called()
+        assert module._train_pp_schedule is None
+    else:
+        module.on_attach()
+        assert constructor.call_args.kwargs["num_microbatches"] == expected_microbatches
+        prewarm.assert_called_once()
+
+
+@pytest.mark.parametrize(
     "schedule_name,class_name",
     [
         (PipelineScheduleType.custom_interleaved_1F1B, "CustomScheduleInterleaved1F1B"),

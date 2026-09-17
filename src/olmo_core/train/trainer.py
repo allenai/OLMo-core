@@ -907,7 +907,9 @@ class Trainer:
             try:
                 for raw_path in self.checkpoints_to_eval:
                     path = normalize_path(raw_path)
-                    candidate_paths = sorted(glob_directory(path)) if "*" in path else [path]
+                    candidate_paths = (
+                        sorted(glob_directory(path, include_files=False)) if "*" in path else [path]
+                    )
                     if not candidate_paths:
                         raise FileNotFoundError(f"No checkpoints found in '{path}'")
 

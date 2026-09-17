@@ -706,6 +706,18 @@ class OLMoDDPTrainModule(TrainModule):
     def on_attach(self):
         """Initialize the pipeline schedule from the attached trainer's batch configuration."""
         if self.pp_enabled:
+            dp_ws = get_world_size(self.trainer.dp_process_group)
+            global_batch_size = self.trainer.global_batch_size
+            if global_batch_size <= 0 or self.rank_microbatch_size <= 0:
+                raise OLMoConfigurationError(
+                    "global batch size and rank micro-batch size must be positive"
+                )
+            if global_batch_size % (self.rank_microbatch_size * dp_ws) != 0:
+                raise OLMoConfigurationError(
+                    f"global batch size ({global_batch_size:,d}) must be divisible by "
+                    f"micro-batch size ({self.rank_microbatch_size:,d}) x DP world size ({dp_ws})"
+                )
+
             # Initialize pipeline schedule.
             assert self._train_pp_schedule is None  # make sure we don't initialize this twice
             assert self._pp_stages is not None
@@ -715,8 +727,7 @@ class OLMoDDPTrainModule(TrainModule):
             assert pp_mesh is not None
 
             # Determine the number of micro-batches.
-            dp_ws = get_world_size(self.trainer.dp_process_group)
-            rank_batch_size = self.trainer.global_batch_size // dp_ws
+            rank_batch_size = global_batch_size // dp_ws
             num_microbatches = rank_batch_size // self.rank_microbatch_size
 
             self._train_pp_schedule = PipelineSchedule(
