@@ -16,6 +16,7 @@ from olmoe3_lr_sweep_watch import Controller, atomic_json, log, status
 AUTOMATION = CAMPAIGN_ROOT / "eval-pipeline"
 STAGES = ("decay", "mt", "lc", "sft")
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
+PT_MT_LC_EVAL_COMMIT = "ca80837014c92771ca19b4bedafcd8c0dbd082c7"
 
 
 def controller(b, commit, stage):
@@ -36,10 +37,13 @@ def record(c, name, spec):
 def tick(stage, b, commit, validate_only=False):
     # Each stage gets a fresh interpreter: older MT/LC adapters have module-level
     # path globals that must never be mixed in a single eval controller process.
+    if stage != "sft":
+        # Existing evals retain their exact specs/receipts; no duplicate attempts.
+        commit = PT_MT_LC_EVAL_COMMIT
     c = controller(b, commit, stage)
     result = {}
     if stage == "sft":
-        from olmoe3_hero_sft_plan import runs
+        from olmoe3_hero_sft_plan import DATA_PLAN, runs
         from olmoe3_hero_sft_convert import export_root, spec_for as convert_spec
         from olmoe3_hero_sft_eval_control import spec_for, BUNDLES
         from olmoe3_hero_decay_eval import TEMPLATES
@@ -47,7 +51,11 @@ def tick(stage, b, commit, validate_only=False):
 
         template = b.experiment.get_spec(b.workload.get(TEMPLATES["gen_mc"])).to_json()
         for r in runs():
-            specs = {str(step): convert_spec(b, r, step, commit) for step in (905, 1810)}
+            if not DATA_PLAN.is_file():
+                result[r.run_id] = {"waiting": "sft_data_config_gate"}
+                continue
+            final_step = r.total_steps
+            specs = {str(final_step): convert_spec(b, r, final_step, commit)}
             specs.update({bundle: spec_for(template, bundle, r, commit) for bundle in BUNDLES})
             if validate_only:
                 from beaker import BeakerExperimentSpec
@@ -61,15 +69,16 @@ def tick(stage, b, commit, validate_only=False):
                 result[r.run_id] = {"waiting": "sft_final_checkpoint"}
                 continue
             proof = json.loads(proof_path.read_text())
-            assert proof["step"] == 1810 and proof["all_8_ranks_verified"]
+            assert proof["step"] == final_step and proof["all_8_ranks_verified"]
             if status(b.workload.get(proof["experiment"])) != "STATUS_SUCCEEDED":
                 result[r.run_id] = {"waiting": "successful_sft_exit"}
                 continue
             rows = {}
-            for step in (1810, 905):
-                rows[str(step)] = record(c, r.run_id + f"-step{step}-convert", specs[str(step)])
-            if rows["1810"]["status"] == "STATUS_SUCCEEDED":
-                model = export_root(r) / r.arm / "step1810/hf"
+            rows[str(final_step)] = record(
+                c, r.run_id + f"-step{final_step}-convert", specs[str(final_step)]
+            )
+            if rows[str(final_step)]["status"] == "STATUS_SUCCEEDED":
+                model = export_root(r) / r.arm / f"step{final_step}/hf"
                 validate_export(model)
                 assert json.loads((model / "sft-metadata-audit.json").read_text())["passed"]
                 for bundle in BUNDLES:

@@ -22,6 +22,9 @@ from olmoe3_lr_sweep_watch import Controller, atomic_json, log, replace_env, sta
 from olmoe3_small_hero_plan import CONTROL, STATE, MOUNT, UPLOADER, WORKSPACE
 
 AUTOMATION = DECAY_AUTOMATION / "native-pipeline"
+# Preserve already-submitted MT/LC specs, receipts and their qualified runtime.
+# Only the SFT recipe and controller change in this deployment.
+MT_LC_COMMIT = "d031ab975c0dd11e986b3f017e0aac2e3608b521"
 
 
 def controller(beaker, commit):
@@ -37,15 +40,25 @@ def recipe(stage, arm):
 
 def native_spec(beaker, stage, run, commit, parent_id, phase="train"):
     """Build from the actual successful parent, preserving the pinned runtime."""
-    original = beaker.experiment.get_spec(beaker.workload.get(parent_id)).to_json()
+    parent = beaker.workload.get(parent_id)
+    original = beaker.experiment.get_spec(parent).to_json()
     if stage == "mt":
         from olmoe3_hero_mt_control import training_spec
 
-        return training_spec(original, run, commit)
+        return training_spec(original, run, MT_LC_COMMIT)
     if stage == "lc":
         from olmoe3_hero_lc_control import training_spec
 
-        return training_spec(original, run, commit, phase)
+        # Trainer progress updates replace the display description with prose.
+        # Bind provenance to immutable task arguments/source, not that mutable text.
+        assert parent.experiment.name == run.parent.run_id + "-train"
+        assert all(
+            t["arguments"]
+            == ["python", "src/examples/olmo_ddp/olmoe3_hero_mt_node.py", run.parent.run_id]
+            for t in original["tasks"]
+        )
+        original["description"] = json.dumps(dict(run_id=run.parent.run_id, posttrain_emo=False))
+        return training_spec(original, run, MT_LC_COMMIT, phase)
     from olmoe3_hero_sft_control import training_spec
 
     return training_spec(original, run, commit)
@@ -126,7 +139,15 @@ def ensure(c, name, spec, snapshot):
     from beaker import BeakerExperimentSpec
 
     BeakerExperimentSpec.from_json(copy.deepcopy(spec))
-    w = c.ensure(name, spec)
+    refs = {v["value"] for task in spec["tasks"] for v in task["envVars"] if v["name"] == "GIT_REF"}
+    assert len(refs) == 1
+    previous_commit = c.commit
+    try:
+        c.commit = refs.pop()
+        assert c.commit in (previous_commit, MT_LC_COMMIT)
+        w = c.ensure(name, spec)
+    finally:
+        c.commit = previous_commit
     snapshot[name] = dict(status=c.report(w), experiment=w.experiment.id if w else None)
     return w
 
@@ -155,8 +176,19 @@ def main():
             check=True,
             env=dict(os.environ, OLMO35_HERO_STOP="4"),
         )
+        for stage in ("decay", "mt", "lc", "sft"):
+            subprocess.run(
+                [
+                    sys.executable,
+                    "src/examples/olmo_ddp/olmoe3_hero_4t_evals.py",
+                    "--tick",
+                    stage,
+                    "--validate-only",
+                ],
+                check=True,
+            )
         atomic_json(
-            AUTOMATION / "config-success.json",
+            AUTOMATION / ("config-success-" + os.environ["GIT_REF"] + ".json"),
             dict(passed=True, source_commit=os.environ["GIT_REF"]),
         )
         log("FOUR_T_ALL_CONFIGS_VALIDATED")
@@ -180,7 +212,8 @@ def main():
             + sft_runs()
             + sft_runs(True)
         )
-        assert len(sft_runs()) == 6 and all(not r.emo for r in all_runs)
+        assert len(sft_runs()) == 2 and all(not r.emo for r in all_runs)
+        assert all(r.epochs == 2 and r.lr == 5e-5 for r in sft_runs())
         for r in all_runs:
             r.root.mkdir(parents=True, exist_ok=True)
             store.register(
@@ -209,8 +242,11 @@ def main():
             "FOUR_T_NATIVE_PIPELINE_ARMED",
             commit=commit,
             gpus=0,
-            training_runs=10,
-            sft_lrs=[1e-5, 5e-5, 1e-4],
+            training_runs=6,
+            sft_lrs=[5e-5],
+            sft_epochs=2,
+            sft_dataset="jacobmorrison/length-investigation-gptoss-120b-high",
+            mt_lc_commit=MT_LC_COMMIT,
         )
         while True:
             snapshot = {}
@@ -231,6 +267,7 @@ def main():
 
                 mount_lc(config_spec["tasks"][0])
                 t = config_spec["tasks"][0]
+                replace_env(t, {"GIT_REF": commit, "GIT_BRANCH": BRANCH})
                 # Config construction / packing validation needs no GPU. Avoid
                 # consuming even one GPU from the gang-scheduled training pool.
                 t.pop("resources", None)
@@ -254,7 +291,9 @@ def main():
                 atomic_json(AUTOMATION / "status.json", dict(updated_at=time.time(), runs=snapshot))
                 time.sleep(60)
                 continue
-            config_proof = json.loads((AUTOMATION / "config-success.json").read_text())
+            config_proof = json.loads(
+                (AUTOMATION / ("config-success-" + commit + ".json")).read_text()
+            )
             assert config_proof["passed"] and config_proof["source_commit"] == commit
             for arm in ("emo", "non-emo"):
                 try:
@@ -278,7 +317,7 @@ def main():
                         proof = json.loads(
                             (AUTOMATION / f"prepared-{stage}-{arm}.json").read_text()
                         )
-                        assert proof["passed"] and proof["source_commit"] == commit
+                        assert proof["passed"] and proof["source_commit"] == MT_LC_COMMIT
                         if stage == "lc":
                             name = r.run_id + "-smoke"
                             ensure(

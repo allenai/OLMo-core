@@ -1,4 +1,4 @@
-"""Matched SFT sweep from EMO PT followed by EMO-disabled MT and LC."""
+"""4T LC descendants: GPT-OSS high-effort SFT, two epochs, selected LR, EMO off."""
 
 import json
 from dataclasses import dataclass
@@ -15,13 +15,13 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 )
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-CAMPAIGN = "olmo35-small-4t-gptoss-sft-noemo-20260916"
-BRANCH = "codex/hero-4t-pipeline-20260916"
+CAMPAIGN = "olmo35-small-4t-gptoss-high-sft-20260917"
+BRANCH = "codex/hero-4t-high-sft-20260917"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
     Path("/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/sft-data")
-    / "gptoss120b-deduped-olmo-thinker-20260914"
+    / "gptoss120b-high-olmo-thinker-20260917"
 )
 DATA_PLAN = AUTOMATION / "data-plan.json"
 CACHE = ROOT / "packing-cache"
@@ -29,9 +29,11 @@ BATCH = 524288
 SEQUENCE = 65536
 GPUS = 8
 SEED = 1729
-LRS = {"1em5": 1e-5, "5em5": 5e-5, "1em4": 1e-4}
-LC_CAMPAIGN = "olmo35-small-4t-lc100b-noemo-20260916"
-LC_JOBS = {arm: "jacobm/" + LC_CAMPAIGN + "-" + arm + "-train" for arm in ("emo", "non-emo")}
+LRS = {"5em5": 5e-5}
+LC_CAMPAIGNS = {arm: "olmo35-small-4t-lc100b-noemo-20260916" for arm in ("emo", "non-emo")}
+LC_JOBS = {
+    arm: "jacobm/" + campaign + "-" + arm + "-train" for arm, campaign in LC_CAMPAIGNS.items()
+}
 
 
 @dataclass(frozen=True)
@@ -41,14 +43,16 @@ class SFTRun:
     arm: str
     lr_label: str
     smoke: bool = False
+    epochs: int = 2
 
     def __post_init__(self):
         assert self.arm in LC_JOBS and self.lr_label in LRS
         assert not self.smoke or self.lr_label == "5em5"
+        assert self.epochs == 2
 
     @property
     def run_id(self):
-        return f"{CAMPAIGN}-{'smoke-' if self.smoke else ''}{self.arm}-lr{self.lr_label}"
+        return f"{CAMPAIGN}-{'smoke-' if self.smoke else ''}{self.arm}-lr{self.lr_label}-ep{self.epochs}"
 
     @property
     def emo(self):
@@ -68,8 +72,8 @@ class SFTRun:
         return (
             MOUNT
             / "production-hero-small-lc"
-            / LC_CAMPAIGN
-            / f"{LC_CAMPAIGN}-{self.arm}"
+            / LC_CAMPAIGNS[self.arm]
+            / f"{LC_CAMPAIGNS[self.arm]}-{self.arm}"
             / "step5961"
         )
 
@@ -79,7 +83,16 @@ class SFTRun:
 
     @property
     def prefix(self):
-        return f"{CAMPAIGN}/{'smoke/' if self.smoke else ''}{self.arm}/lr{self.lr_label}"
+        return f"{CAMPAIGN}/{'smoke/' if self.smoke else ''}{self.arm}/lr{self.lr_label}/ep{self.epochs}"
+
+    @property
+    def total_steps(self):
+        return data_plan()["steps_per_epoch"] * self.epochs
+
+    @property
+    def checkpoint_steps(self):
+        # Keep per-epoch recovery points; the uploader protects the latest two.
+        return [data_plan()["steps_per_epoch"] * epoch for epoch in range(1, self.epochs + 1)]
 
     def as_dict(self):
         return {
@@ -98,7 +111,7 @@ class SFTRun:
             "checkpoint_root": str(self.root),
             "bucket": self.bucket,
             "prefix": self.prefix,
-            "epochs": 2,
+            "epochs": self.epochs,
             "batch_tokens": BATCH,
             "sequence_length": SEQUENCE,
             "gpus": GPUS,
@@ -111,8 +124,8 @@ class SFTRun:
 
 
 def runs(smoke=False):
-    """Return three matched trials from the new native LC source or one restart smoke."""
-    return [SFTRun(arm, label, smoke) for arm in LC_JOBS for label in (["5em5"] if smoke else LRS)]
+    """Return one two-epoch run (or source-load/restart smoke) per 4T LC lineage."""
+    return [SFTRun(arm, "5em5", smoke, 2) for arm in LC_JOBS]
 
 
 def find_run(name):

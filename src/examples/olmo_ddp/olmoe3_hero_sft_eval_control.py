@@ -20,7 +20,7 @@ BUNDLES = ("math500", "ifbench", "humaneval", "alpaca")
 
 def model_path(run):
     """Return the sole authorized evaluation epoch for this run."""
-    return export_root(run) / run.arm / "step1810/hf"
+    return export_root(run) / run.arm / f"step{run.total_steps}/hf"
 
 
 def spec_for(template, stage, run, commit):
@@ -93,8 +93,8 @@ def spec_for(template, stage, run, commit):
     spec["description"] = json.dumps(
         {
             "run": run.run_id,
-            "epoch": 2,
-            "step": 1810,
+            "epoch": run.epochs,
+            "step": run.total_steps,
             "stage": stage,
             "model": model,
             "commit": commit,

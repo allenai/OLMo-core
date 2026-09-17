@@ -44,7 +44,7 @@ def training_spec(original, run, commit, prepare=False):
         name="sft-prepare" if prepare else "sft",
         replicas=1,
         leaderSelection=False,
-        timeout="3h" if prepare or run.smoke else "24h",
+        timeout="3h" if prepare or run.smoke else "72h",
     )
     task.pop("synchronizedStartTimeout", None)
     task["propagateFailure"] = False

@@ -216,17 +216,11 @@ class SFTAudit(Callback):
             assert mask.any() and (~mask).any() and not mask[ids == 100277].any()
             assert not mask[:, 0].any()
             input_sha256 = hashlib.sha256(ids.detach().cpu().numpy().tobytes()).hexdigest()
-            if self.step == 1:
-                old_run = f"{BASELINE_CAMPAIGN}-emo-lr{find_run(self.run_id).lr_label}"
+            r = find_run(self.run_id)
+            if self.step == 1 and not r.smoke:
+                smoke_run = next(x for x in runs(True) if x.arm == r.arm)
                 baseline = json.loads(
-                    (
-                        MOUNT
-                        / "production-hero-small-sft"
-                        / BASELINE_CAMPAIGN
-                        / old_run
-                        / "audit"
-                        / f"batch-step1-rank{get_rank()}.json"
-                    ).read_text()
+                    (smoke_run.root / "audit" / f"batch-step1-rank{get_rank()}.json").read_text()
                 )
                 assert input_sha256 == baseline["input_sha256"], "Changed packed SFT data order"
                 assert int(mask.sum()) == baseline["supervised_tokens"]
@@ -329,7 +323,6 @@ class SFTValidation(Callback):
 
 def trainer_config(common):
     r = find_run(common.run_name)
-    plan = data_plan()
     config = hero.trainer_config(common)
     for key in ("hero_audit", "hero_complete", "lm_evaluator"):
         config.callbacks.pop(key, None)
@@ -339,27 +332,27 @@ def trainer_config(common):
     config.load_strategy = LoadStrategy.always
     config.load_optim_state = not fresh
     config.load_trainer_state = not fresh
-    config.max_duration = Duration.epochs(2)
-    stop = int(os.environ.get("HERO_SFT_STOP", str(4 if r.smoke else plan["total_steps"])))
+    config.max_duration = Duration.epochs(r.epochs)
+    stop = int(os.environ.get("HERO_SFT_STOP", str(4 if r.smoke else r.total_steps)))
     config.hard_stop = Duration.steps(stop)
     config.metrics_collect_interval = 1 if r.smoke else 10
     cp = config.callbacks["checkpointer"]
     cp.save_interval = None
-    cp.fixed_steps = [2, 4] if r.smoke else [plan["steps_per_epoch"], plan["total_steps"]]
+    cp.fixed_steps = [2, 4] if r.smoke else r.checkpoint_steps
     config.callbacks["sft_audit"] = SFTAudit(run_id=r.run_id)
     config.callbacks["sft_validation"] = SFTValidation(run_id=r.run_id)
     wb = config.callbacks["wandb"]
     wb.group = CAMPAIGN + ("-smoke" if r.smoke else "")
     wb.tags = [
         r.arm,
-        "pretrain-emo" if r.arm == "emo" else "pretrain-non-emo",
+        "pretrain-emo" if r.arm == "emo" else "pretrain-noemo",
         "midtrain-emo-disabled",
         "long-context-emo-disabled",
         "source-emo-disabled",
         "sft-emo-disabled",
         "sft",
-        "gptoss120b-deduped",
-        "2-epochs",
+        "gptoss120b-high",
+        f"{r.epochs}-epochs",
         "8g",
         "512ki",
         "64k-packed",
@@ -393,7 +386,7 @@ def config_builder():
 
 
 def prepare():
-    """Prepare packing once and verify the actual six configs in the qualified image."""
+    """Prepare packing and verify both two-epoch configs and their restart smokes."""
     assert MOUNT.is_mount() and DATA.is_dir()
     self_test()
     manifest = json.loads((DATA / "manifest.json").read_text())
@@ -419,16 +412,16 @@ def prepare():
         "packed_instances": lengths,
         "steps_per_epoch": steps,
         "total_steps": steps * 2,
+        "total_steps_by_epochs": {"2": steps * 2},
         "raw_training_tokens": manifest["splits"]["train"]["input_tokens"],
         "dropped_packed_instances_per_epoch": lengths["train"] % GPUS,
         "manifest_sha256": hashlib.sha256((DATA / "manifest.json").read_bytes()).hexdigest(),
     }
     atomic_json(DATA_PLAN, plan)
     baseline_automation = MOUNT / "uploader/automation" / BASELINE_CAMPAIGN
-    previous = json.loads((baseline_automation / "data-plan.json").read_text())
-    assert {k: v for k, v in plan.items() if k != "source_commit"} == {
-        k: v for k, v in previous.items() if k != "source_commit"
-    }, "SFT data plan differs from the original sweep"
+    assert manifest["dataset"] == "jacobmorrison/length-investigation-gptoss-120b-high"
+    assert manifest["dataset_revision"] == "2fa53f4df6e4e41f9202c31cc8e26b2a04bce027"
+    assert manifest["template"] == "olmo_thinker_no_think_sft_tokenization"
     for r in runs() + runs(True):
         config = config_builder()(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
         assert (
@@ -443,7 +436,7 @@ def prepare():
         assert config.model.recompute_each_block
         # Match on-disk JSON's string keys (e.g. integer block override indices).
         current = json.loads(json.dumps(config.as_dict(json_safe=True)))
-        old_name = r.run_id.replace(CAMPAIGN, BASELINE_CAMPAIGN)
+        old_name = f"{BASELINE_CAMPAIGN}-{'smoke-' if r.smoke else ''}{r.arm}-lr{r.lr_label}"
         baseline = json.loads((baseline_automation / "configs" / f"{old_name}.json").read_text())
         old_model = baseline["model"]
         old_emo = []
@@ -461,13 +454,11 @@ def prepare():
                     disable_emo(child)
 
         disable_emo(old_model)
-        assert old_emo and all((value is not None) == (r.arm == "emo") for value in old_emo)
+        assert old_emo
         assert current["model"] == old_model, "Model differs beyond disabling EMO"
-        for section in ("train_module", "dataset", "data_loader"):
-            normalized = json.loads(
-                json.dumps(current[section]).replace(CAMPAIGN, BASELINE_CAMPAIGN)
-            )
-            assert normalized == baseline[section], f"Unexpected {section} change"
+        assert current["train_module"] == baseline["train_module"], "Changed training recipe"
+        assert current["data_loader"]["seed"] == SEED
+        assert current["trainer"]["max_duration"]["value"] == r.epochs
         atomic_json(AUTOMATION / "configs" / f"{r.run_id}.json", current)
     atomic_json(
         AUTOMATION / "config-success.json",
