@@ -27,6 +27,7 @@ from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModule, OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
     MoEV2TransformerTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
@@ -44,6 +45,96 @@ class _ValidationPassed(Exception):
 class _RecordingTrainModuleConfig(OLMoDDPTrainModuleConfig):
     def _build_train_module(self, **kwargs):
         return kwargs
+
+
+@pytest.mark.parametrize("via_config", [False, True])
+@pytest.mark.parametrize("optimizer_limit", [None, 0.75])
+@pytest.mark.parametrize("module_limit", [None, 0.0, 0.25, 2.0])
+def test_native_gradient_clipping_override_preserves_optimizer_config(
+    monkeypatch, via_config, optimizer_limit, module_limit
+):
+    class RecordingOptimizer:
+        def __init__(self, param_groups, **kwargs):
+            self.param_groups = param_groups
+            self.max_grad_norm = kwargs["max_grad_norm"]
+            self.clip_grad_norm_by_scheduler_group = kwargs["clip_grad_norm_by_scheduler_group"]
+
+    monkeypatch.setattr(
+        OLMoDDPOptimizerConfig, "optimizer", classmethod(lambda cls: RecordingOptimizer)
+    )
+    monkeypatch.setattr(train_module_impl, "is_distributed", lambda: True)
+    monkeypatch.setattr(
+        OLMoDDPTrainModule,
+        "_build_world_mesh",
+        lambda self, **kwargs: self.world_mesh.update({"dense": {}}),
+    )
+    monkeypatch.setattr(
+        OLMoDDPTrainModule, "parallelize_and_init_model", lambda self, model, **kwargs: [model]
+    )
+    model = torch.nn.Linear(2, 2)
+    model._olmo_ddp_compatible = True
+    model.has_grad_accum_fp32_buffer = False
+    model.num_flops_per_token = lambda _: 0
+    optim = OLMoDDPOptimizerConfig(clip_grad_norm_by_scheduler_group=True)
+    if optimizer_limit is not None:
+        optim.max_grad_norm = optimizer_limit
+    before = optim.as_dict()
+    kwargs = dict(
+        optim=optim,
+        max_grad_norm=module_limit,
+        rank_microbatch_size=16,
+        max_sequence_length=8,
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+    )
+    if via_config:
+        module = OLMoDDPTrainModuleConfig(**kwargs).build(model, device=torch.device("cpu"))
+    else:
+        module = OLMoDDPTrainModule(model=model, device=torch.device("cpu"), **kwargs)
+
+    assert module.optim.max_grad_norm == (
+        optim.max_grad_norm if module_limit is None else module_limit
+    )
+    assert module.optim.clip_grad_norm_by_scheduler_group is True
+    assert optim.as_dict() == before
+
+
+@pytest.mark.parametrize("determinism_check", [None, "default", "none"])
+def test_native_activation_checkpointing_forwards_determinism_check(determinism_check):
+    module = object.__new__(OLMoDDPTrainModule)
+    module.world_mesh = {"dense": {"dp": None}}
+    module.dense_dp_cp_group = None
+    module.max_sequence_length = 8
+    module.rank_microbatch_size = 16
+    module.init_model_weights = Mock()
+    module._cast_to_fwd_bwd_precision = Mock()
+    model = SimpleNamespace(
+        _olmo_ddp_compatible=True,
+        apply_activation_checkpointing=Mock(),
+        refresh_rowwise_fp8_cache=Mock(),
+    )
+    config = (
+        TransformerActivationCheckpointingConfig(determinism_check=determinism_check)
+        if determinism_check is not None
+        else None
+    )
+
+    assert module.parallelize_and_init_model(
+        model,
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        ac_config=config,
+        eval_only=True,
+    ) == [model]
+
+    if config is None:
+        model.apply_activation_checkpointing.assert_not_called()
+    else:
+        model.apply_activation_checkpointing.assert_called_once_with(
+            config.mode,
+            block_interval=config.block_interval,
+            modules=config.modules,
+            activation_memory_budget=config.activation_memory_budget,
+            determinism_check=determinism_check,
+        )
 
 
 def _eval_only_parallelism_kwargs(parallelism):

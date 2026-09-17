@@ -512,6 +512,8 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
 
     optim: OLMoDDPOptimizerConfig
     max_grad_norm: Optional[float] = None
+    """Override the optimizer's clipping threshold; ``None`` preserves its configured value."""
+
     scheduler: Optional[Scheduler] = None
 
     # Model settings.
