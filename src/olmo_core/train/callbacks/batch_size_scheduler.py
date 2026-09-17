@@ -2,16 +2,20 @@ import dataclasses
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import torch
 
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, SkipStepAdamW
+from olmo_core.optim import INITIAL_LR_FIELD, LR_FIELD, OLMoDDPOptimizer, SkipStepAdamW
 from olmo_core.optim.scheduler import WSD, ConstantScheduler, Scheduler
 
 from ..common import Duration
-from ..train_module import TransformerPipelineTrainModule, TransformerTrainModule
+from ..train_module import (
+    OLMoDDPTrainModule,
+    TransformerPipelineTrainModule,
+    TransformerTrainModule,
+)
 from .callback import Callback
 from .speed_monitor import SpeedMonitorCallback
 
@@ -24,6 +28,8 @@ class BatchSizeSchedulerCallback(Callback):
     A callback for setting a batch size scheduler over the course of a training run.
     Also adjusts the base learning rate with Adam optimizers for transformer train modules by a factor of
     ``sqrt(new_batch_size / current_batch_size)``.
+
+    Changing batch-size schedules are not supported with OLMoDDP pipeline parallelism.
     """
 
     batch_sizes: List[int] = dataclasses.field(default_factory=list)
@@ -85,13 +91,15 @@ class BatchSizeSchedulerCallback(Callback):
         return self.trainer.data_loader.global_batch_size
 
     def post_attach(self):
-        if not self.schedule:
+        if not self.enabled or not self.schedule:
             return
 
         scheduler: Optional[Scheduler] = None
         if isinstance(self.trainer.train_module, TransformerTrainModule):
             scheduler = self.trainer.train_module.scheduler
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
+            scheduler = self.trainer.train_module.scheduler
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
             scheduler = self.trainer.train_module.scheduler
 
         # If we have an LR scheduler, we need to make sure that the value it uses for `t_max`
@@ -130,6 +138,15 @@ class BatchSizeSchedulerCallback(Callback):
     def _maybe_update_batch_size_and_lr(self):
         if not self.enabled:
             return
+        train_module = self.trainer.train_module
+        if (
+            len(self.schedule) > 1
+            and isinstance(train_module, OLMoDDPTrainModule)
+            and train_module.pp_enabled
+        ):
+            raise OLMoConfigurationError(
+                "Changing batch-size schedules are not supported with OLMoDDP pipeline parallelism"
+            )
         # Find latest event in the schedule to apply.
         for target_batch_size, event_start in reversed(list(zip(self.batch_sizes, self.schedule))):
             if event_start.due(
@@ -156,7 +173,9 @@ class BatchSizeSchedulerCallback(Callback):
         lr_adjustment_factor = math.sqrt(ratio)
         self.trainer.data_loader.global_batch_size = batch_size
 
-        optimizers: Optional[List[torch.optim.Optimizer]] = None
+        # Heterogeneous: OLMoDDPOptimizer isn't a torch.optim.Optimizer subclass (it exposes the
+        # same `param_groups` surface the LR adjustment below relies on).
+        optimizers: Optional[List[Any]] = None
         scheduler: Optional[Scheduler] = None
         if isinstance(self.trainer.train_module, TransformerTrainModule):
             optimizers = [self.trainer.train_module.optim]
@@ -164,14 +183,26 @@ class BatchSizeSchedulerCallback(Callback):
         elif isinstance(self.trainer.train_module, TransformerPipelineTrainModule):
             optimizers = self.trainer.train_module.optimizers
             scheduler = self.trainer.train_module.scheduler
+        elif isinstance(self.trainer.train_module, OLMoDDPTrainModule):
+            optimizers = [self.trainer.train_module.optim]
+            scheduler = self.trainer.train_module.scheduler
 
-        if not optimizers:
+        if optimizers is None:
             raise NotImplementedError(
                 f"Unable to adjust learning rate for {self.trainer.train_module.__class__.__name__} train module class"
             )
 
+        # In eval-only mode the train module has no optimizer(s) (e.g. Trainer.eval_checkpoints
+        # reusing a training config with a batch-size schedule), so there is no LR to adjust.
+        optimizers = [optim for optim in optimizers if optim is not None]
+        if not optimizers:
+            log.info("No optimizer present (eval-only); skipping learning-rate adjustment.")
+            return
+
         for optim in optimizers:
-            if not isinstance(optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW)):
+            if not isinstance(
+                optim, (torch.optim.Adam, torch.optim.AdamW, SkipStepAdamW, OLMoDDPOptimizer)
+            ):
                 raise NotImplementedError(
                     f"Unable to adjust learning rate for {optim.__class__.__name__} optimizer"
                 )

@@ -82,4 +82,5 @@ class MetricSaverCallback(Callback):
         self._metrics_step = 0
 
     def _write_metrics(self, fname: str, metrics: Dict[str, float]) -> PathOrStr:
-        return self.trainer.write_file(fname, json.dumps(metrics))
+        # Training, checkpointing, and evaluation can log separate fragments at the same step.
+        return self.trainer.write_file(fname, json.dumps(metrics), save_overwrite=True)

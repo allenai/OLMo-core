@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Optional, Tuple, Type, Union
+from typing import Any, Optional, Tuple, Type, Union
 
 import torch
 import torch.distributed as dist
@@ -14,6 +14,7 @@ from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_single_cp2hp_qkvpacked,
     all_to_all_single_hp2cp,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention.kv_cache import KVCacheManager
 from olmo_core.nn.buffer_cache import BufferCache
 
@@ -254,9 +255,13 @@ class AttentionBackend(nn.Module):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the attention operation.
+
+        :param sinks: Optional per-head attention-sink logits (learnable "no-op" attention
+            targets). Only the :class:`TorchAttentionBackend` consumes these.
         """
         raise NotImplementedError
 
@@ -285,6 +290,8 @@ class AttentionBackend(nn.Module):
 class TorchAttentionBackend(AttentionBackend):
     """
     PyTorch's built-in scaled dot-product attention (SDPA) backend.
+
+    Attention sinks are not supported with context parallelism.
     """
 
     SUPPORTS_OR_MASK = True
@@ -335,6 +342,7 @@ class TorchAttentionBackend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 
@@ -342,6 +350,9 @@ class TorchAttentionBackend(AttentionBackend):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
 
         q, k, v = qkv
+
+        if sinks is not None and self.cp_enabled:
+            raise OLMoConfigurationError("attention_sinks do not support context parallelism")
 
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
@@ -353,6 +364,15 @@ class TorchAttentionBackend(AttentionBackend):
                 seq_len_kv=k.shape[1],
                 device=q.device,
                 window_size=self.window_size,
+            )
+        elif sinks is not None:
+            # The sink path applies softmax manually (see below), so it needs an explicit causal
+            # mask rather than relying on SDPA's ``is_causal``.
+            attn_mask = self._get_sliding_window_mask(
+                seq_len_q=q.shape[1],
+                seq_len_kv=k.shape[1],
+                device=q.device,
+                window_size=(-1, -1),
             )
 
         if or_mask is not None:
@@ -412,15 +432,43 @@ class TorchAttentionBackend(AttentionBackend):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
 
         # shape: (batch_size, n_heads, seq_len, head_dim)
-        att = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout_p,
-            is_causal=attn_mask is None,
-            scale=self.scale,
-        )
+        if sinks is None:
+            att = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=self.dropout_p,
+                is_causal=attn_mask is None,
+                scale=self.scale,
+            )
+        else:
+            # Attention sinks add a per-head learnable logit as an extra softmax column. Since SDPA
+            # can't express that, run the softmax explicitly: concatenate the sink logit, normalize
+            # over the widened last dim, then drop the sink column before the value matmul.
+            scale = self.scale if self.scale is not None else self.head_dim**-0.5
+            attn_weights = torch.matmul(q, k.transpose(2, 3)) * scale
+            assert attn_mask is not None
+            if attn_mask.dtype == torch.bool:
+                attn_weights = attn_weights.masked_fill(
+                    ~attn_mask,
+                    torch.finfo(attn_weights.dtype).min,
+                )
+            else:
+                attn_weights = attn_weights + attn_mask
+
+            sink_logits = sinks.to(dtype=attn_weights.dtype, device=attn_weights.device)
+            sink_logits = sink_logits.view(1, -1, 1, 1).expand(
+                attn_weights.shape[0],
+                -1,
+                attn_weights.shape[-2],
+                -1,
+            )
+            combined_logits = torch.cat((attn_weights, sink_logits), dim=-1)
+            combined_logits = combined_logits - combined_logits.max(dim=-1, keepdim=True).values
+            probs = F.softmax(combined_logits, dim=-1, dtype=combined_logits.dtype)[..., :-1]
+            probs = F.dropout(probs, p=self.dropout_p, training=self.training).to(v.dtype)
+            att = torch.matmul(probs, v)
 
         # shape: (batch_size, seq_len, n_heads, head_dim)
         att = att.transpose(1, 2)
@@ -640,16 +688,15 @@ class FlexAttentionBackend(AttentionBackend):
         example_id: Optional[torch.Tensor] = None,
         window_size: Tuple[int, int] = (-1, -1),
     ):
-        """Build a :class:`~torch.nn.attention.flex_attention.BlockMask` from O(S) vectors.
-
-        Call once per forward (before the vision encoder) and reuse across all attention
-        layers — matching mm_olmo's ``build_block_mask`` timing and avoiding a peak when
-        ViT activations are already resident.
-        """
+        """Build a FlexAttention block mask directly from O(S) token metadata."""
         from torch.nn.attention.flex_attention import create_block_mask
 
         helper = FlexAttentionBackend(
-            head_dim=1, n_heads=1, n_kv_heads=1, scale=1.0, window_size=window_size
+            head_dim=1,
+            n_heads=1,
+            n_kv_heads=1,
+            scale=1.0,
+            window_size=window_size,
         )
         mask_mod = helper._build_mask_mod(is_image, subsegment_ids, None, example_id)
         return create_block_mask(mask_mod, B=B, H=None, Q_LEN=S, KV_LEN=S, device=device)
@@ -667,14 +714,15 @@ class FlexAttentionBackend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
         flex_attn_is_image: Optional[torch.Tensor] = None,
         flex_attn_subsegment_ids: Optional[torch.Tensor] = None,
         flex_attn_example_ids: Optional[torch.Tensor] = None,
-        flex_attn_block_mask: Optional[torch.Tensor] = None,
+        flex_attn_block_mask: Optional[Any] = None,
     ) -> torch.Tensor:
         from torch.nn.attention.flex_attention import create_block_mask
 
-        del local_k_slice
+        del local_k_slice, sinks
         if isinstance(qkv, torch.Tensor):
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support packed QKV")
         if kv_cache_manager is not None:
@@ -710,26 +758,39 @@ class FlexAttentionBackend(AttentionBackend):
         if flex_attn_block_mask is not None:
             block_mask = flex_attn_block_mask
         else:
-            if (
-                flex_attn_is_image is not None
-                or flex_attn_subsegment_ids is not None
-                or flex_attn_example_ids is not None
+            if any(
+                value is not None
+                for value in (
+                    flex_attn_is_image,
+                    flex_attn_subsegment_ids,
+                    flex_attn_example_ids,
+                )
             ):
-                # O(S) per-token vectors from MultimodalLM — avoids materializing (B, S, S) masks
-                # at 16k sequence length.
-                is_image = flex_attn_is_image
-                subsegment_ids = flex_attn_subsegment_ids
+                is_image = (
+                    flex_attn_is_image.to(device=q.device, dtype=torch.bool)
+                    if flex_attn_is_image is not None
+                    else None
+                )
+                subsegment_ids = (
+                    flex_attn_subsegment_ids.to(device=q.device)
+                    if flex_attn_subsegment_ids is not None
+                    else None
+                )
                 seg_code = None
-                example_id = flex_attn_example_ids
+                example_id = (
+                    flex_attn_example_ids.to(device=q.device)
+                    if flex_attn_example_ids is not None
+                    else None
+                )
             else:
                 om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
-                am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                am = (
+                    and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                )
                 is_image, seg_code, example_id = self._per_token_from_masks(om, am)
                 subsegment_ids = None
             mask_mod = self._build_mask_mod(is_image, subsegment_ids, seg_code, example_id)
-            # `B`/`H=None` so the mask may depend on the batch index (image / subsegment ids are
-            # per-example) but broadcasts over heads. Rebuilt each step since the masks are data
-            # dependent; block-sparsity makes this cheap.
+            # `B`/`H=None` allows batch-dependent masks while broadcasting over heads.
             block_mask = create_block_mask(
                 mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
             )
@@ -788,6 +849,7 @@ class FlashAttention2Backend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -1014,6 +1076,7 @@ class FlashAttention3Backend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if isinstance(qkv, torch.Tensor):
             if kv_cache_manager is not None:
@@ -1212,6 +1275,7 @@ class FlashAttention4Backend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert isinstance(qkv, tuple), f"'{self.__class__.__name__}' requires unpacked QKV"
         assert local_k_slice is None, f"'{self.__class__.__name__}' doesn't support local_k_slice"
@@ -1401,6 +1465,7 @@ class TEAttentionBackend(AttentionBackend):
         kv_cache_manager: Optional[KVCacheManager] = None,
         or_mask: Optional[torch.Tensor] = None,
         and_mask: Optional[torch.Tensor] = None,
+        sinks: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         del local_k_slice
 

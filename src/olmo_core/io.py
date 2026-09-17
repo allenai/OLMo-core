@@ -462,13 +462,17 @@ def list_directory(
             )
 
 
-def glob_directory(pattern: str) -> Generator[str, None, None]:
+def glob_directory(pattern: str, *, include_files: bool = True) -> Generator[str, None, None]:
     """
     Similar to ``glob.glob()`` from the standard library, but works with remote directories as well.
 
     .. warning::
         Only a subset of glob patterns are supported. Specifically, ``*`` and ``**`` wildcards,
         which the follow the semantics defined here https://docs.python.org/3/library/pathlib.html#pattern-language.
+
+    :param pattern: The local or remote glob pattern.
+    :param include_files: Include regular files in the results. Set to ``False`` to return only
+        matching directories.
     """
     # Pull out base directory from pattern by finding the first part before any wildcard.
     # Split by '/' and take path components until we hit one with a wildcard.
@@ -488,7 +492,7 @@ def glob_directory(pattern: str) -> Generator[str, None, None]:
         + "$"
     )
 
-    for path in list_directory(dir, recurse="**" in pattern):
+    for path in list_directory(dir, recurse="**" in pattern, include_files=include_files):
         if pattern_regex.match(path):
             yield path
 

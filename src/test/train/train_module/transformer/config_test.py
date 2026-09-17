@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from olmo_core.distributed.parallel import (
@@ -5,15 +6,40 @@ from olmo_core.distributed.parallel import (
     PipelineScheduleType,
     PipelineSplitStyle,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.transformer import TransformerConfig
-from olmo_core.optim import AdamWConfig
+from olmo_core.optim import AdamWConfig, OLMoDDPOptimizerConfig
 from olmo_core.testing import run_distributed_test
 from olmo_core.train.train_module.transformer import (
+    OLMoDDPTrainModuleConfig,
     TransformerDataParallelConfig,
     TransformerPipelineParallelConfig,
+    TransformerPipelineTrainModuleConfig,
     TransformerTrainModuleConfig,
 )
+from olmo_core.train.train_module.transformer.pipeline_train_module import (
+    TransformerPipelineTrainModule,
+)
+
+
+def test_olmo_ddp_reduce_scatter_config_is_nested_under_data_parallel():
+    default_dp = TransformerDataParallelConfig(name=DataParallelType.ddp)
+    assert default_dp.use_reduce_scatter is False
+
+    dp_config = TransformerDataParallelConfig(
+        name=DataParallelType.ddp,
+        use_reduce_scatter=True,
+    )
+    train_config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=16,
+        max_sequence_length=16,
+        optim=OLMoDDPOptimizerConfig(),
+        dp_config=dp_config,
+    )
+    build_kwargs = train_config.as_dict(exclude_none=True, recurse=False)
+    assert build_kwargs["dp_config"].use_reduce_scatter is True
+    assert "reduce_scatter_grads" not in build_kwargs
 
 
 def test_generate_pipeline_split_points():
@@ -31,6 +57,34 @@ def test_generate_pipeline_split_points():
         degree=2, schedule=PipelineScheduleType.interleaved_1F1B, style=PipelineSplitStyle.loop
     )
     assert pp_config.get_split_points(4) == [1, 2, 3]
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        PipelineScheduleType.custom_interleaved_1F1B,
+        PipelineScheduleType.custom_1F1B_V,
+    ],
+)
+def test_custom_schedule_requires_custom_stage(schedule: PipelineScheduleType):
+    # A custom schedule paired with torch's PipelineStage would fail during pre_train/step; the
+    # config should reject it up front (the check runs before the model/mesh are touched).
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2, schedule=schedule, use_custom_stage_implementation=False
+    )
+    with pytest.raises(OLMoConfigurationError):
+        pp_config.split_model(None, pp_mesh=None, device=torch.device("cpu"))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("use_custom_stage", [False, True])
+def test_custom_1f1b_rejected_before_stage_allocation(use_custom_stage):
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        schedule=PipelineScheduleType.custom_1F1B,
+        use_custom_stage_implementation=use_custom_stage,
+    )
+    with pytest.raises(OLMoConfigurationError, match="Custom1F1B is not implemented"):
+        pp_config.split_model(None, pp_mesh=None, device=torch.device("cpu"))  # type: ignore[arg-type]
 
 
 def _run_pp_num_flops_per_token():
@@ -78,3 +132,81 @@ def test_pp_num_flops_per_token():
     run_distributed_test(
         _run_pp_num_flops_per_token, world_size=2, backend="gloo", start_method="spawn"
     )
+
+
+def _tiny_dense_train_module_config() -> "TransformerTrainModuleConfig":
+    return TransformerTrainModuleConfig(
+        rank_microbatch_size=128,
+        max_sequence_length=128,
+        optim=AdamWConfig(),
+    )
+
+
+def _tiny_dense_model():
+    return TransformerConfig.llama_like(
+        d_model=64,
+        vocab_size=128,
+        n_layers=2,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=128, bias=False),
+    ).build(init_device="cpu")
+
+
+def test_dense_train_module_eval_only_skips_optimizer():
+    tm = _tiny_dense_train_module_config().build(
+        _tiny_dense_model(), device=torch.device("cpu"), eval_only=True
+    )
+    assert tm.eval_only is True
+    assert tm.optim is None
+    # No optimizer -> state dict must omit optim state, and train-only entry points are unavailable.
+    assert "optim" not in tm.state_dict()
+    assert "optim" not in tm.state_dict_to_save()
+    with pytest.raises(AssertionError):
+        tm.optim_step()
+    with pytest.raises(AssertionError):
+        tm.zero_grads()
+
+
+def test_dense_train_module_builds_optimizer_by_default():
+    tm = _tiny_dense_train_module_config().build(_tiny_dense_model(), device=torch.device("cpu"))
+    assert tm.eval_only is False
+    assert tm.optim is not None
+    assert "optim" in tm.state_dict()
+
+
+@pytest.mark.parametrize(
+    "config_type", [TransformerTrainModuleConfig, TransformerPipelineTrainModuleConfig]
+)
+def test_pipeline_eval_only_rejected_before_building_module(monkeypatch, config_type):
+    def unexpected_init(*args, **kwargs):
+        raise AssertionError("Eval-only PP must be rejected before building the module")
+
+    monkeypatch.setattr(TransformerPipelineTrainModule, "__init__", unexpected_init)
+    config = config_type(
+        rank_microbatch_size=128,
+        max_sequence_length=128,
+        optim=AdamWConfig(),
+        pp_config=TransformerPipelineParallelConfig(degree=2),
+    )
+    with pytest.raises(OLMoConfigurationError, match="eval_only=True.*pipeline parallelism"):
+        config.build(_tiny_dense_model(), device=torch.device("cpu"), eval_only=True)
+
+
+def test_pipeline_eval_only_constructor_rejected_before_building_mesh(monkeypatch):
+    def unexpected_build(*args, **kwargs):
+        raise AssertionError("Eval-only PP must be rejected before building the mesh")
+
+    monkeypatch.setattr(
+        "olmo_core.train.train_module.transformer.pipeline_train_module.build_world_mesh",
+        unexpected_build,
+    )
+    with pytest.raises(OLMoConfigurationError, match="eval_only=True.*pipeline parallelism"):
+        TransformerPipelineTrainModule(
+            model=_tiny_dense_model(),
+            rank_microbatch_size=128,
+            max_sequence_length=128,
+            optim=AdamWConfig(),
+            pp_config=TransformerPipelineParallelConfig(degree=2),
+            device=torch.device("cpu"),
+            eval_only=True,
+        )

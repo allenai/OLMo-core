@@ -41,6 +41,7 @@ doc/_build/
 *.pyc
 *.pyo
 __pycache__
+/src/olmo_core/kernels/*.so
 
 
 # testing and continuous integration

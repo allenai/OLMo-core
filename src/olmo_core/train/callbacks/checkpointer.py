@@ -81,7 +81,8 @@ class CheckpointerCallback(Callback):
     save_async: Optional[bool] = None
     """
     Save checkpoints asynchronously. Requires a separate CPU-only backend.
-    Defaults to ``True`` if there is one.
+    Defaults to ``True`` if the backend and train module support it. Modules using
+    direct checkpoint saves require ``False``.
     """
 
     remove: CheckpointRemovalStrategy = CheckpointRemovalStrategy.ephemeral_only
@@ -209,7 +210,7 @@ class CheckpointerCallback(Callback):
         self._checkpoints_to_remove.clear()
 
     def _trim_checkpoints(self):
-        if self.max_checkpoints is not None:
+        if self.remove != CheckpointRemovalStrategy.never and self.max_checkpoints is not None:
             while len(self._checkpoints) > self.max_checkpoints:
                 oldest_path = self._checkpoints.pop(0)
                 self._schedule_for_removal(oldest_path)
@@ -218,8 +219,15 @@ class CheckpointerCallback(Callback):
         if not self.enabled:
             return
 
+        train_module = self.trainer.train_module
+        supports_async = not hasattr(train_module, "save_state_dict_direct")
         if self.save_async is None:
-            self.save_async = backend_supports_cpu()
+            self.save_async = supports_async and backend_supports_cpu()
+        elif self.save_async and not supports_async:
+            raise OLMoConfigurationError(
+                f"{type(train_module).__name__} does not support async checkpointing. "
+                "Set save_async=False for this train module."
+            )
 
         # Maybe create a new process group for async checkpointing.
         if is_distributed() and self.save_async and self.checkpointer.process_group is None:
@@ -238,17 +246,29 @@ class CheckpointerCallback(Callback):
         ):
             self._checkpoints.append(self._save_checkpoint())
 
-        # Collect existing ephemeral checkpoints from previous runs.
+        # Collect existing checkpoints from previous runs.
         if self.remove != CheckpointRemovalStrategy.never:
+            permanent_checkpoints: List[Tuple[int, str]] = []
             ephemeral_checkpoints: List[Tuple[int, str]] = []
 
             # Only search from rank 0 to avoid hammering remote file stores with requests.
             if get_rank() == 0:
                 try:
+                    for step_num, path in self.checkpointer.find_checkpoints(
+                        self.save_folder, ephemeral=False
+                    ):
+                        if step_num <= self.step:
+                            permanent_checkpoints.append((step_num, path))
+                except FileNotFoundError:
+                    pass
+
+                permanent_checkpoint_paths = {path for _, path in permanent_checkpoints}
+                try:
                     for step_num, path in self.checkpointer.find_checkpoints(self.save_folder):
-                        if (
+                        if step_num > self.step or path in permanent_checkpoint_paths:
+                            continue
+                        elif (
                             step_num == 0
-                            or step_num > self.step
                             or (self.fixed_steps is not None and step_num in self.fixed_steps)
                             or (
                                 self.save_interval is not None
@@ -265,7 +285,19 @@ class CheckpointerCallback(Callback):
                 except FileNotFoundError:
                     pass
 
+            permanent_checkpoints = broadcast_object(permanent_checkpoints)
             ephemeral_checkpoints = broadcast_object(ephemeral_checkpoints)
+
+            # Include a pre-train checkpoint saved above even if an asynchronous save has not
+            # finalized yet, while avoiding a duplicate if checkpoint discovery already found it.
+            checkpoints_by_path = {path: step for step, path in permanent_checkpoints}
+            for path in self._checkpoints:
+                checkpoints_by_path.setdefault(path, self.step)
+            self._checkpoints = [
+                path
+                for _, path in sorted((step, path) for path, step in checkpoints_by_path.items())
+            ]
+            self._trim_checkpoints()
 
             # TODO: handle this if we ever restore callback state.
             assert not self._ephemeral_checkpoints
