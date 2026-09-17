@@ -110,6 +110,11 @@ class EvaluatorCallback(Callback):
                 f"'{self.__class__.__name__}' does not support OLMoDDP pipeline parallelism; "
                 "disable in-loop evaluation callbacks when using PP"
             )
+        if isinstance(train_module, OLMoDDPTrainModule) and train_module.cp_enabled:
+            raise OLMoConfigurationError(
+                f"'{self.__class__.__name__}' does not support OLMoDDP context parallelism; "
+                "disable in-loop evaluation callbacks when using CP"
+            )
 
     def pre_train(self):
         self._last_eval_step = None

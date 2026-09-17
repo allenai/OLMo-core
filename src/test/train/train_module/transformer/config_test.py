@@ -76,6 +76,17 @@ def test_custom_schedule_requires_custom_stage(schedule: PipelineScheduleType):
         pp_config.split_model(None, pp_mesh=None, device=torch.device("cpu"))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("use_custom_stage", [False, True])
+def test_custom_1f1b_rejected_before_stage_allocation(use_custom_stage):
+    pp_config = TransformerPipelineParallelConfig(
+        degree=2,
+        schedule=PipelineScheduleType.custom_1F1B,
+        use_custom_stage_implementation=use_custom_stage,
+    )
+    with pytest.raises(OLMoConfigurationError, match="Custom1F1B is not implemented"):
+        pp_config.split_model(None, pp_mesh=None, device=torch.device("cpu"))  # type: ignore[arg-type]
+
+
 def _run_pp_num_flops_per_token():
     """
     Verifies that TransformerPipelineTrainModule.num_flops_per_token returns total-model
