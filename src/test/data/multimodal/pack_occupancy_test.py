@@ -43,9 +43,10 @@ def test_n_real_crops_records_unpadded_counts():
     # ...but the real counts survive, so the waste is measurable.
     np.testing.assert_array_equal(batch["n_real_crops"].numpy(), [2, 9, 0])
 
-    real, padded = int(batch["n_real_crops"].sum()), 3 * 9
-    assert real == 11 and padded == 27
-    assert abs(real / padded - 11 / 27) < 1e-9
+    # 2 + 9 + 0 real crops against a (3 x 9) padded tensor: the ViT runs 27 crops to do
+    # 11 crops of work.
+    assert int(batch["n_real_crops"].sum()) == 11
+    assert batch["images"].shape[0] * batch["images"].shape[1] == 27
 
 
 def test_text_only_batch_still_pays_for_one_dummy_crop():
@@ -64,7 +65,7 @@ def test_token_occupancy_is_recoverable_from_example_ids():
     assert tuple(batch["input_ids"].shape) == (2, _SEQ)
     useful = int((batch["example_ids"] >= 0).sum())
     assert useful == 400  # not 2 * 512
-    assert abs(useful / batch["input_ids"].numel() - 400 / 1024) < 1e-9
+    assert batch["input_ids"].numel() == 1024  # so occupancy is 400/1024, not 1.0
 
 
 def test_packed_rows_count_every_example_not_just_the_row():
