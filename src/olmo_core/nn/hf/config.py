@@ -7,6 +7,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
+from olmo_core.nn.moe.router import MoERouterGatingFunction
 from olmo_core.nn.rope import RoPEScalingConfig
 from olmo_core.nn.transformer.block import (
     MoEReorderedNormTransformerBlock,
@@ -20,6 +21,15 @@ from olmo_core.nn.transformer.model import (
 )
 
 log = logging.getLogger(__name__)
+
+try:
+    from olmo_core.nn.ddp.model import OLMoDDPModel  # type: ignore
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import (
+        Olmo3MoeConfig,  # type: ignore
+    )
+except ImportError:
+    Olmo3MoeConfig = None  # type: ignore[assignment,misc]
+    OLMoDDPModel = None  # type: ignore[assignment,misc]
 
 try:
     from transformers import FlexOlmoConfig  # type: ignore
@@ -83,8 +93,251 @@ def _get_flex_olmo_config(model: MoETransformer) -> PretrainedConfig:
     )
 
 
+def _register_olmo3moe_auto_classes() -> None:
+    """
+    Register the standalone ``olmo3moe`` config/model with transformers' ``Auto*`` mappings.
+
+    transformers ships no ``olmo3moe`` architecture. The in-memory ``Auto*.register`` calls let
+    ``AutoModelForCausalLM.from_config`` resolve it while exporting a checkpoint. The
+    ``register_for_auto_class`` calls additionally persist an ``auto_map`` into the exported
+    ``config.json`` and bundle the model code alongside it, so a fresh process can reload the
+    checkpoint with ``trust_remote_code=True``. In-memory registration is idempotent —
+    transformers raises :class:`ValueError` on a duplicate.
+    """
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    try:
+        AutoConfig.register("olmo3moe", Olmo3MoeConfig)
+    except ValueError:
+        pass  # already registered
+    try:
+        AutoModelForCausalLM.register(Olmo3MoeConfig, Olmo3MoeForCausalLM)
+    except ValueError:
+        pass  # already registered
+
+    Olmo3MoeConfig.register_for_auto_class("AutoConfig")
+    Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
+
+
+def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
+    from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+    if Olmo3MoeConfig is None:
+        raise RuntimeError(
+            "Building an Olmo3MoeConfig requires the olmo3moe HF model files "
+            "(olmo_core.nn.moe.v2.hf)."
+        )
+
+    _register_olmo3moe_auto_classes()
+
+    blocks = list(model.blocks.values())
+
+    # Identify the dense (non-MoE) layers and pick a representative MoE and dense block.
+    dense_layers_indices: List[int] = []
+    moe_block: Optional[OLMoDDPTransformerBlock] = None
+    dense_block: Optional[TransformerBlock] = None
+    for idx, block in enumerate(blocks):
+        if isinstance(block, OLMoDDPTransformerBlock):
+            if moe_block is None:
+                moe_block = block
+        else:
+            # olmo3moe places the layernorms after attention/MLP (reordered norm); a standard
+            # pre-norm dense block would export with its norms in the wrong position.
+            if not isinstance(block, ReorderedNormTransformerBlock):
+                raise NotImplementedError(
+                    f"Exporting olmo3moe requires reordered-norm dense blocks, got "
+                    f"{type(block).__name__}."
+                )
+            dense_layers_indices.append(idx)
+            if dense_block is None:
+                dense_block = block
+
+    if moe_block is None:
+        raise NotImplementedError(
+            f"No {OLMoDDPTransformerBlock.__name__} found, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+
+    if moe_block.use_peri_norm:
+        raise NotImplementedError(
+            "Building an Olmo3MoeConfig is not supported for peri-LN (use_peri_norm=True) models."
+        )
+
+    attention = moe_block.attention
+    if not isinstance(attention, Attention):
+        raise NotImplementedError(
+            f"Attention is not a {Attention.__name__}, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+    if attention.rope is None:
+        raise NotImplementedError(
+            f"Attention does not use rope, unable to build HF config for "
+            f"{model.__class__.__name__}"
+        )
+    # The olmo3moe converter only round-trips head-wise QK-norm, unscaled RoPE, and bias-free
+    # attention; reject anything else rather than silently exporting a divergent model.
+    if attention.rope.scaling is not None:
+        raise NotImplementedError("Exporting olmo3moe with scaled RoPE is not supported.")
+    if any(
+        proj.bias is not None
+        for proj in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
+    ):
+        raise NotImplementedError("Exporting olmo3moe with attention biases is not supported.")
+    if not attention.use_head_qk_norm or attention.q_norm is None:
+        raise NotImplementedError(
+            "Exporting olmo3moe requires head-wise QK-norm (use_head_qk_norm=True); other "
+            "QK-norm configurations are not supported."
+        )
+
+    if moe_block.routed_experts is None or moe_block.routed_experts_router is None:
+        raise NotImplementedError("MoE block is missing routed experts or its router.")
+
+    routed_experts = moe_block.routed_experts
+    router = moe_block.routed_experts_router
+    # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
+    # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
+    # path, so exporting any of these would silently diverge (or crash on the first HF forward).
+    unsupported_modifiers = []
+    if router.bias_gamma is not None:
+        unsupported_modifiers.append("bias_gamma")
+    if router.score_correction_bias:
+        unsupported_modifiers.append("score_correction_bias")
+    if router.gating_function not in (
+        MoERouterGatingFunction.softmax,
+        MoERouterGatingFunction.sigmoid,
+    ):
+        unsupported_modifiers.append(f"gating_function={router.gating_function.value}")
+    if router.n_group is not None or router.topk_group is not None:
+        unsupported_modifiers.append("grouped routing (n_group/topk_group)")
+    # ``expert_weight_scale`` multiplies the selected expert weights in the router forward, but the
+    # HF Olmo3Moe router has no corresponding field/multiply. (``original_top_k`` and
+    # ``restore_weight_scale`` ARE representable — they map to the HF config below.)
+    if router.expert_weight_scale is not None:
+        unsupported_modifiers.append("expert_weight_scale")
+    # The HF sigmoid router hard-codes a 1e-7 stability epsilon, so a different value would route
+    # with different weights after export.
+    if (
+        router.gating_function == MoERouterGatingFunction.sigmoid
+        and router.sigmoid_stability_epsilon != 1e-7
+    ):
+        unsupported_modifiers.append(
+            f"sigmoid_stability_epsilon={router.sigmoid_stability_epsilon}"
+        )
+    if unsupported_modifiers:
+        raise NotImplementedError(
+            f"Exporting olmo3moe with router selection modifiers "
+            f"({', '.join(unsupported_modifiers)}) is not supported."
+        )
+
+    # The HF olmo3moe router/expert linears are bias-free and the converter only copies
+    # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
+    if router.bias is not None:
+        raise NotImplementedError("Exporting olmo3moe with a biased router is not supported.")
+    if routed_experts.bias:
+        raise NotImplementedError("Exporting olmo3moe with biased routed experts is not supported.")
+    if routed_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with routed-expert activation "
+            f"{routed_experts.activation.value!r} is not supported (only SwiGLU)."
+        )
+    shared_experts = moe_block.shared_experts
+    if shared_experts is not None and shared_experts.activation.value != "swiglu":
+        raise NotImplementedError(
+            f"Exporting olmo3moe with shared-expert activation "
+            f"{shared_experts.activation.value!r} is not supported (only SwiGLU)."
+        )
+
+    # Dense MLP intermediate size, if there are any dense layers.
+    dense_mlp_intermediate_size: Optional[int] = None
+    if dense_block is not None:
+        if any(
+            proj.bias is not None
+            for proj in (
+                dense_block.feed_forward.w1,
+                dense_block.feed_forward.w2,
+                dense_block.feed_forward.w3,
+            )
+        ):
+            raise NotImplementedError(
+                "Exporting olmo3moe with biased dense feed-forward layers is not supported."
+            )
+        dense_mlp_intermediate_size = dense_block.feed_forward.hidden_size
+
+    # Shared experts (optional). The HF model has a single shared expert.
+    shared_expert_intermediate_size: Optional[int] = None
+    if moe_block.shared_experts is not None:
+        if moe_block.shared_experts.num_experts > 1:
+            raise NotImplementedError(
+                "Exporting olmo3moe with more than one shared expert is not supported."
+            )
+        shared_expert_intermediate_size = moe_block.shared_experts.hidden_size
+
+    # Sliding window: OLMo-core stores a per-layer window on the attention backend; a value of
+    # (-1, -1) means full attention. HF expects a value one larger than the flash-attention window
+    # (which excludes the current position); see the OLMo 3 handling in `get_hf_config`.
+    layer_types: List[str] = []
+    window_sizes = set()
+    for block in blocks:
+        window = block.attention.backend.window_size
+        if window != (-1, -1):
+            layer_types.append("sliding_attention")
+            window_sizes.add(window[0])
+        else:
+            layer_types.append("full_attention")
+
+    if len(window_sizes) > 1:
+        raise ValueError(
+            "All sliding window attention layers must have the same window size for "
+            f"Olmo3MoeConfig. Found different window sizes: {window_sizes}."
+        )
+    sliding_window = (window_sizes.pop() + 1) if window_sizes else attention.head_dim
+
+    attention_hidden_size = attention.n_heads * attention.head_dim
+
+    return Olmo3MoeConfig(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        attention_hidden_size=attention_hidden_size,
+        head_dim=attention.head_dim,
+        dense_mlp_intermediate_size=dense_mlp_intermediate_size,
+        moe_intermediate_size=routed_experts.hidden_size,
+        shared_expert_intermediate_size=shared_expert_intermediate_size,
+        n_routed_experts=routed_experts.num_experts,
+        num_experts_per_tok=router.top_k,
+        original_num_experts_per_tok=router.original_top_k,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        hidden_act="silu",
+        gating_function=str(router.gating_function),
+        normalize_expert_weights=router.normalize_expert_weights,
+        restore_weight_scale=router.restore_weight_scale,
+        max_position_embeddings=-1,
+        attention_bias=attention.w_out.bias is not None,
+        rope_theta=attention.rope.theta,
+        rope_scaling=None,
+        rms_norm_eps=moe_block.feed_forward_norm.eps,
+        use_head_qk_norm=attention.use_head_qk_norm,
+        sliding_window=sliding_window,
+        layer_types=layer_types,
+        dense_layers_indices=dense_layers_indices,
+        embed_scale=model.embed_scale if model.embed_scale is not None else 1.0,
+        embed_norm=model.embedding_norm is not None,
+        use_peri_ln=False,
+        pad_token_id=None,  # type: ignore
+        bos_token_id=None,
+        eos_token_id=None,  # type: ignore
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
+    if OLMoDDPModel is not None and isinstance(model, OLMoDDPModel):
+        return _get_olmo3moe_config(model)
+
     if isinstance(model, NormalizedTransformer):
         raise NotImplementedError(
             f"Building HF config not implemented for {model.__class__.__name__}"

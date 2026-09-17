@@ -9,6 +9,7 @@ from .config import (
 )
 from .dion import DionConfig
 from .lion import Lion, LionConfig, SkipStepLion, SkipStepLionConfig
+from .moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
 from .muon import MuonConfig, NorMuonConfig
 from .noop import NoOpConfig, NoOpOptimizer
 from .scheduler import (
@@ -43,6 +44,8 @@ __all__ = [
     "Lion",
     "MuonConfig",
     "NorMuonConfig",
+    "OLMoDDPOptimizer",
+    "OLMoDDPOptimizerConfig",
     "DionConfig",
     "SkipStepLionConfig",
     "SkipStepLion",

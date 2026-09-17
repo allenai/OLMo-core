@@ -1,5 +1,6 @@
 import pytest
 import torch
+from packaging.version import parse as parse_version
 
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
@@ -94,6 +95,16 @@ def _run_hsdp_dion(shard_degree: int, num_replicas: int):
 
 @requires_dion
 @requires_multi_gpu
+# TODO(dion torch-2.13): remove once dion is torch-2.13-clean upstream. dion HSDP is broken on
+# torch 2.13 in multiple ways: the replica-only path (num_replicas > 1) deterministically feeds a
+# CPU tensor into a Triton kernel in its adamw/scalar update ("Pointer argument cannot be accessed
+# from Triton"), and the sharded path intermittently hangs on an ALLREDUCE (NCCL watchdog timeout ->
+# SIGABRT). It also crashes on A100 under torch 2.13. Skip the whole test rather than xfail, since a
+# flaky hang can't be cleanly xfailed (it would burn the 120s NCCL timeout and flip run-to-run).
+@pytest.mark.skipif(
+    parse_version(torch.__version__) >= parse_version("2.13"),
+    reason="dion HSDP is broken on torch>=2.13 (CPU-tensor Triton error + flaky ALLREDUCE hang)",
+)
 @pytest.mark.parametrize(
     "shard_degree,num_replicas",
     [

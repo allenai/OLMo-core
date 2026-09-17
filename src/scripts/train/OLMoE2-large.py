@@ -126,6 +126,8 @@ if __name__ == "__main__":
         train_module_config_builder=build_train_module_config,
         trainer_config_builder=build_trainer_config,
         include_default_evals=False,
+        # Preserve the original training environment. Run this historical script from its
+        # corresponding OLMo-core revision, whose dependencies match this image.
         beaker_image=OLMoCoreBeakerImage.tch271_cu126,
         num_nodes=8,
     )
