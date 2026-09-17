@@ -915,6 +915,11 @@ class Trainer:
 
                     expanded_paths: List[str] = []
                     for candidate_path in candidate_paths:
+                        if any(
+                            candidate_path.startswith(f"{checkpoint_path.rstrip('/')}/")
+                            for checkpoint_path in expanded_paths
+                        ):
+                            continue
                         if self.checkpointer.dir_is_checkpoint(candidate_path):
                             expanded_paths.append(candidate_path)
                         else:
