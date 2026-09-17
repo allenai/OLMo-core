@@ -660,7 +660,9 @@ def _build_trainer(
     return trainer
 
 
-def _build_launch(cli: CliContext) -> BeakerLaunchConfig | None:
+def _build_launch(
+    cli: CliContext, *, work_dir: str = VisionAlignmentRecipeConfig.work_dir
+) -> BeakerLaunchConfig | None:
     if cli.cluster == "local":
         return None
     preset = get_preset("olmo-ddp")
@@ -681,6 +683,7 @@ def _build_launch(cli: CliContext) -> BeakerLaunchConfig | None:
     launch.env_vars.extend(
         BeakerEnvVar(name=k, value=v)
         for k, v in {
+            "OLMO_CORE_DATA_VERIFICATION_CACHE_DIR": str(Path(work_dir) / "data-verification"),
             "OLMO_USE_OWN_SYMM_MEM": "1",
             "OLMO_EP_MP_HIGH_PRIORITY_GROUP": "1",
             "OLMO_OWN_SYMM_PREWARM": "1",
@@ -712,7 +715,7 @@ def build_config(cli: CliContext) -> VisionAlignmentExperimentConfig:
     dataset, validation, token_ids = _build_datasets(recipe, checkpoint, parent, sequence_length)
     config = VisionAlignmentExperimentConfig(
         run_name=cli.run_name,
-        launch=_build_launch(cli),
+        launch=_build_launch(cli, work_dir=recipe.work_dir),
         model=_build_model(recipe, checkpoint, parent, token_ids),
         dataset=dataset,
         data_loader=_build_data_loader(cli, recipe, sequence_length),

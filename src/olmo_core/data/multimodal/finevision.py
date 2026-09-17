@@ -46,11 +46,13 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from olmo_core.config import Config
+from olmo_core.fs_cache import maybe_cache
 from olmo_core.nn.vision.molmo2_tokens import Molmo2TokenIds
 
 from .message_sequence import encode_sft_example
@@ -86,6 +88,92 @@ _QUALITY_COLUMNS = {
 }
 
 
+def _file_identity(path: Path) -> tuple[int, ...]:
+    stat = path.stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def _materialized_file_identities(path: str) -> dict[Path, tuple[int, ...]]:
+    root = Path(path).resolve()
+    return {
+        file: _file_identity(file)
+        for file in [root / "dataset_info.json", *sorted(root.glob("data-*.arrow"))]
+    }
+
+
+@maybe_cache(cache_dir_env_var="OLMO_CORE_DATA_VERIFICATION_CACHE_DIR")
+def _verify_file(path: str, identity: tuple[int, ...], expected_sha256: str) -> None:
+    """Verify bytes, caching only when the data-verification cache is configured."""
+    if _file_identity(Path(path)) != identity:
+        raise ValueError(f"FineVision file changed before verification: {path}")
+    with open(path, "rb") as stream:
+        observed = hashlib.file_digest(stream, "sha256").hexdigest()
+    if _file_identity(Path(path)) != identity:
+        raise ValueError(f"FineVision file changed during verification: {path}")
+    if observed != expected_sha256:
+        raise ValueError(f"FineVision file checksum differs: {path}")
+
+
+def _verify_materialization(config: FineVisionDatasetConfig, dataset: Any) -> None:
+    """Validate the materialization content pin, independently of HF transformation hashes."""
+    root = Path(config.resolved_path()).resolve()
+    manifest_path = root.parent / "vision-alignment-finevision-materialization.json"
+    with manifest_path.open() as stream:
+        manifest = json.load(stream)
+    if (
+        manifest.get("format") != "vision_alignment_finevision_materialization"
+        or manifest.get("version") != 1
+        or manifest.get("status") != "verified"
+    ):
+        raise ValueError(f"Invalid FineVision materialization manifest: {manifest_path}")
+    outputs = [
+        output
+        for output in manifest["outputs"]
+        if output["name"] == config.config_name and output["path"] == root.name
+    ]
+    if len(outputs) != 1:
+        raise ValueError(f"FineVision manifest does not identify {root}")
+    output = outputs[0]
+    payload = {
+        "version": "vision-alignment-finevision-arrow-content-v1",
+        "source_name": config.config_name,
+        "rows": output["rows"],
+        "physical_schema_sha256": output["physical_schema_sha256"],
+        "shards": [
+            {"rows": shard["rows"], "sha256": shard["sha256"]} for shard in output["shards"]
+        ],
+        "dataset_info_sha256": output["dataset_info_sha256"],
+    }
+    observed = hashlib.sha256(
+        json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode()
+    ).hexdigest()
+    if (
+        observed != config.expected_materialized_fingerprint
+        or observed != output["dataset_fingerprint"]
+    ):
+        raise ValueError(f"FineVision materialization fingerprint differs for {root}")
+    shards = [root.parent / shard["path"] for shard in output["shards"]]
+    if (
+        not shards
+        or any(path.parent != root for path in shards)
+        or shards != sorted(root.glob("data-*.arrow"))
+        or shards != [Path(item["filename"]).resolve() for item in dataset.cache_files]
+        or len(dataset) != output["rows"]
+        or sum(shard["rows"] for shard in output["shards"]) != len(dataset)
+    ):
+        raise ValueError(f"FineVision loaded shard inventory differs for {root}")
+    files = [(root / "dataset_info.json", output["dataset_info_sha256"])] + [
+        (path, shard["sha256"]) for path, shard in zip(shards, output["shards"])
+    ]
+    identities = [_file_identity(path) for path, _ in files]
+    for (path, checksum), identity in zip(files, identities):
+        _verify_file(str(path), identity, checksum)
+    if identities != [_file_identity(path) for path, _ in files]:
+        raise ValueError(f"FineVision materialization changed during verification: {root}")
+
+
 def _parse_turn(turn: Any, *, first: bool, has_image: bool) -> tuple[str, str] | None:
     """Normalize a usable turn, including an explicitly image-only first prompt."""
     if not isinstance(turn, dict):
@@ -117,10 +205,13 @@ class FineVisionDatasetConfig(Config):
     Overrides :attr:`root` + :attr:`config_name` when set."""
 
     expected_materialized_fingerprint: Optional[str] = None
-    """Externally pinned, path-independent materialization fingerprint.
+    """Content SHA-256 from a FineVision materialization manifest.
 
-    Strict perception adapters can pin reviewed Arrow artifacts. When unset, use the
-    live Arrow fingerprint.
+    When set, verify the loaded Arrow files against the adjacent
+    ``vision-alignment-finevision-materialization.json`` manifest. This is not a Hugging
+    Face dataset fingerprint. Set ``OLMO_CORE_DATA_VERIFICATION_CACHE_DIR`` to cache byte verification
+    across processes and launches; file replacement or modification invalidates the cache.
+    When unset, use the live Arrow fingerprint for resume identity.
     """
 
     split: str = "train"
@@ -205,12 +296,21 @@ class FineVisionDataset:
         self.config = config
         self.tokenizer = tokenizer
 
+        identities = (
+            _materialized_file_identities(config.resolved_path())
+            if config.expected_materialized_fingerprint is not None
+            else None
+        )
         self._data = load_hf_dataset(
             config.resolved_path(),
             config.split,
             keep_columns=[config.texts_column, config.images_column]
             + list(_QUALITY_COLUMNS.values()),
         )
+        if config.expected_materialized_fingerprint is not None:
+            _verify_materialization(config, self._data)
+            if identities != _materialized_file_identities(config.resolved_path()):
+                raise ValueError("FineVision materialization changed while loading")
         self._index = self._build_index()
         if config.strict_annotations:
             self.content_fingerprint = self._build_content_fingerprint()

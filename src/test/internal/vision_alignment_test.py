@@ -855,7 +855,7 @@ def test_launch_uses_standard_experiment_command_and_preset(monkeypatch, phase):
         cluster="ai2/holmes",
         overrides=[f"--recipe.phase={phase}"],
     )
-    launch = vision_alignment._build_launch(cli)
+    launch = vision_alignment._build_launch(cli, work_dir="/tmp/alignment-data-cache")
     assert launch is not None
     assert launch.cmd == [cli.script, "train", cli.run_name, cli.cluster, *cli.overrides]
     assert launch.num_nodes == 2 and launch.num_gpus == 8
@@ -866,6 +866,11 @@ def test_launch_uses_standard_experiment_command_and_preset(monkeypatch, phase):
     assert launch.post_setup == preset.post_setup
     env = {entry.name: entry.value for entry in launch.env_vars}
     assert all(env[key] == value for key, value in preset.env_vars)
+    assert (
+        env["OLMO_CORE_DATA_VERIFICATION_CACHE_DIR"]
+        == "/tmp/alignment-data-cache/data-verification"
+    )
+    assert "OLMO_CORE_FS_CACHE_DIR" not in env
     assert launch.priority == "urgent"
     assert launch.min_runtime == "8h"
     assert launch.shared_memory == "32GiB"

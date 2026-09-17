@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import os
 import zlib
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Dict, List
 
 import numpy as np
@@ -275,6 +279,216 @@ def test_finevision_strict_annotations_and_fingerprint(monkeypatch):
     dataset = config.build(_Tokenizer())
     with pytest.raises(ValueError, match="exactly one image"):
         dataset.validate_required_annotations()
+
+
+@pytest.fixture
+def finevision_materialization(tmp_path, monkeypatch):
+    import pyarrow as pa
+
+    root = tmp_path / "materialized" / "visualwebinstruct-filtered"
+    root.mkdir(parents=True)
+    arrow = _finevision_arrow(
+        texts=[[{"user": "Describe it.", "assistant": "A triangle."}]] * 2,
+        images=[[{"bytes": b"image", "path": None}]] * 2,
+    ).add_column("unused", [0, 1])
+    info = {"features": arrow.features.to_dict()}
+    # Match the List-authored materializations loaded through the Arrow compatibility path.
+    info["features"]["texts"] = {
+        "_type": "List",
+        "feature": info["features"]["texts"][0],
+    }
+    info_path = root / "dataset_info.json"
+    info_path.write_text(json.dumps(info))
+    table = arrow.data.table
+    shards = []
+    for i in range(2):
+        path = root / f"data-{i:05d}-of-00002.arrow"
+        with pa.ipc.new_stream(str(path), table.schema) as writer:
+            writer.write_table(table.slice(i, 1))
+        shards.append(
+            {
+                "path": str(path.relative_to(root.parent)),
+                "rows": 1,
+                "bytes": path.stat().st_size,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
+        )
+    output = {
+        "name": "visualwebinstruct(filtered)",
+        "path": root.name,
+        "rows": 2,
+        "physical_schema_sha256": hashlib.sha256(
+            table.schema.remove_metadata().serialize().to_pybytes()
+        ).hexdigest(),
+        "dataset_info_sha256": hashlib.sha256(info_path.read_bytes()).hexdigest(),
+        "shards": shards,
+    }
+    identity = {
+        "version": "vision-alignment-finevision-arrow-content-v1",
+        "source_name": output["name"],
+        "rows": output["rows"],
+        "physical_schema_sha256": output["physical_schema_sha256"],
+        "dataset_info_sha256": output["dataset_info_sha256"],
+        "shards": [{"rows": item["rows"], "sha256": item["sha256"]} for item in shards],
+    }
+    output["dataset_fingerprint"] = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    (root.parent / "vision-alignment-finevision-materialization.json").write_text(
+        json.dumps(
+            {
+                "format": "vision_alignment_finevision_materialization",
+                "version": 1,
+                "status": "verified",
+                "outputs": [output],
+            }
+        )
+    )
+    monkeypatch.setenv("OLMO_CORE_DATA_VERIFICATION_CACHE_DIR", str(tmp_path / "verified-cache"))
+    return finevision.FineVisionDatasetConfig(
+        dataset_path=str(root),
+        expected_materialized_fingerprint=output["dataset_fingerprint"],
+        strict_annotations=True,
+        message_format="document",
+    )
+
+
+def test_finevision_materialization_pin_is_not_projected_hf_fingerprint(finevision_materialization):
+    config = finevision_materialization
+    raw = finevision.load_hf_dataset(config.resolved_path())
+    dataset = config.build(_Tokenizer())
+    assert "unused" in raw.column_names and "unused" not in dataset._data.column_names
+    assert len(raw._fingerprint) == len(dataset._data._fingerprint) == 16
+    assert raw._fingerprint != dataset._data._fingerprint
+    assert config.expected_materialized_fingerprint not in (
+        raw._fingerprint,
+        dataset._data._fingerprint,
+    )
+    assert len(dataset) == 2
+    dataset.validate_required_annotations()
+    # Byte verification preserves the established pin-based resume identity.
+    assert dataset.content_fingerprint == config.build(_Tokenizer()).content_fingerprint
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_finevision_materialization_rejects_wrong_pin(finevision_materialization, strict):
+    config = replace(
+        finevision_materialization,
+        expected_materialized_fingerprint="0" * 64,
+        strict_annotations=strict,
+    )
+    with pytest.raises(ValueError, match="materialization fingerprint differs"):
+        config.build(_Tokenizer())
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "reordered_loaded"])
+def test_finevision_materialization_requires_exact_loaded_shards(
+    finevision_materialization, monkeypatch, change
+):
+    from datasets import Dataset, concatenate_datasets
+
+    config = finevision_materialization
+    root = Path(config.resolved_path())
+    shards = sorted(root.glob("data-*.arrow"))
+    if change == "missing":
+        shards[-1].unlink()
+    elif change == "extra":
+        (root / "data-unexpected.arrow").write_bytes(shards[0].read_bytes())
+    else:
+        wrong = concatenate_datasets([Dataset.from_file(str(path)) for path in reversed(shards)])
+        monkeypatch.setattr(finevision, "load_hf_dataset", lambda *args, **kwargs: wrong)
+    with pytest.raises(ValueError, match="loaded shard inventory differs"):
+        config.build(_Tokenizer())
+
+
+def test_finevision_materialization_cache_detects_same_size_edits_and_does_not_cache_failure(
+    finevision_materialization, monkeypatch
+):
+    config = finevision_materialization
+    calls = []
+    file_digest = hashlib.file_digest
+
+    def count_hash(stream, algorithm):
+        calls.append(Path(stream.name))
+        return file_digest(stream, algorithm)
+
+    monkeypatch.setattr(finevision.hashlib, "file_digest", count_hash)
+    config.build(_Tokenizer())
+    assert len(calls) == 3  # Two Arrow shards and dataset_info.json.
+    config.build(_Tokenizer())
+    assert len(calls) == 3
+
+    path = sorted(Path(config.resolved_path()).glob("data-*.arrow"))[0]
+    before = path.stat()
+    original = path.read_bytes()
+    changed = original.replace(b"triangle", b"squarexx", 1)
+    assert changed != original and len(changed) == len(original)
+    path.write_bytes(changed)
+    os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert path.stat().st_mtime_ns == before.st_mtime_ns
+    assert path.stat().st_ctime_ns != before.st_ctime_ns
+    for expected_calls in (4, 5):
+        with pytest.raises(ValueError, match="file checksum differs"):
+            config.build(_Tokenizer())
+        assert len(calls) == expected_calls
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_finevision_materialization_rejects_changes_during_verification(
+    finevision_materialization, monkeypatch, cached
+):
+    config = finevision_materialization
+    path = sorted(Path(config.resolved_path()).glob("data-*.arrow"))[0]
+    if cached:
+        config.build(_Tokenizer())
+        verify_file = finevision._verify_file
+
+        def mutate_after_cache_hit(filename, *args):
+            result = verify_file(filename, *args)
+            if Path(filename) == path:
+                path.touch()
+            return result
+
+        monkeypatch.setattr(finevision, "_verify_file", mutate_after_cache_hit)
+    else:
+        file_digest = hashlib.file_digest
+
+        def mutate_during_hash(stream, algorithm):
+            result = file_digest(stream, algorithm)
+            if Path(stream.name) == path:
+                path.touch()
+            return result
+
+        monkeypatch.setattr(finevision.hashlib, "file_digest", mutate_during_hash)
+    with pytest.raises(ValueError, match="changed during verification"):
+        config.build(_Tokenizer())
+
+
+def test_finevision_materialization_rejects_stale_mapping_after_atomic_replacement(
+    finevision_materialization, monkeypatch
+):
+    config = finevision_materialization
+    path = sorted(Path(config.resolved_path()).glob("data-*.arrow"))[0]
+    original = path.read_bytes()
+    changed = original.replace(b"triangle", b"squarexx", 1)
+    assert changed != original and len(changed) == len(original)
+    path.write_bytes(changed)
+    old_inode = path.stat().st_ino
+    load = finevision.load_hf_dataset
+
+    def load_then_replace(*args, **kwargs):
+        stale = load(*args, **kwargs)
+        replacement = path.with_name(f".{path.name}.replacement")
+        replacement.write_bytes(original)
+        replacement.replace(path)
+        assert path.stat().st_ino != old_inode
+        # The path now has the pinned bytes, but the mapped table still reads the old inode.
+        assert stale[0]["texts"][0]["assistant"] == "A squarexx."
+        return stale
+
+    monkeypatch.setattr(finevision, "load_hf_dataset", load_then_replace)
+    with pytest.raises(ValueError, match="changed while loading"):
+        config.build(_Tokenizer())
 
 
 @pytest.mark.parametrize(

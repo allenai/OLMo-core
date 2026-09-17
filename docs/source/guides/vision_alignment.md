@@ -131,6 +131,12 @@ transcripts with loss-weight targets of 0.70/0.30. Perception and joint add PixM
 scalar counting, CoSyn pointing, OCR/document data and filtered VisualWebInstruct/Geo170K
 alignment data. The visual recipe does not include Tulu.
 
+Pinned FineVision sources verify their materialization manifest and loaded Arrow files.
+The launcher caches successful byte verification under `recipe.work_dir/data-verification`;
+unchanged files need only metadata checks on subsequent launches. Modified or replaced files
+are reverified. Local runs can set `OLMO_CORE_DATA_VERIFICATION_CACHE_DIR` to a trusted shared
+cache directory for the same behavior. This does not decode images or replay training data.
+
 Targets describe supervised-loss weight, not image counts or input tokens. Source sampling
 is proportional to `target_loss_mass / mean_loss_weight`. The supplied means use each
 phase's tokenizer, prepared population, serialization and response weighting. When these
