@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from olmo_core.train.callbacks.metric_saver import MetricSaverCallback
+from olmo_core.train.callbacks.restore_metrics import RestoreMetricsCallback
 from olmo_core.train.checkpoint import Checkpointer
 from olmo_core.train.trainer import Trainer
 
@@ -59,6 +60,59 @@ def test_resumed_metrics_replace_existing_snapshots_without_overwriting_checkpoi
         metrics_trainer.write_file("step100/marker", "replacement")
     assert (metrics_trainer.save_folder / "step100/marker").read_text() == "checkpoint"
     assert metrics_trainer.checkpointer.save_overwrite is False
+
+
+@pytest.mark.parametrize("scheme", [None, "s3", "gs"])
+def test_resume_restores_same_step_metrics_before_evaluation(metrics_trainer, monkeypatch, scheme):
+    old = MetricSaverCallback(save_interval=100)
+    old.trainer = metrics_trainer
+    old.log_metrics(100, {"train/CE loss": 3.0, "eval/caption/CE loss": 4.0})
+    snapshot = metrics_trainer.save_folder / "metrics_step100.json"
+    if scheme is not None:
+        metrics_trainer.save_folder = f"{scheme}://bucket/checkpoints"
+        exists = Mock(return_value=True)
+        resource = Mock(return_value=snapshot)
+        monkeypatch.setattr("olmo_core.train.callbacks.restore_metrics.file_exists", exists)
+        monkeypatch.setattr("olmo_core.train.callbacks.restore_metrics.resource_path", resource)
+    metrics_trainer.write_file = Mock(return_value="metrics_step100.json")
+    metrics_trainer.global_step = 100
+    metrics_trainer.checkpoint_loaded = True
+    resumed = MetricSaverCallback(save_interval=100)
+    resumed.trainer = metrics_trainer
+    metrics_trainer.callbacks = {"metrics": resumed}
+    restore = RestoreMetricsCallback(metrics_callback="metrics")
+    restore.trainer = metrics_trainer
+    restore.pre_train()
+    if scheme is not None:
+        exists.assert_called_once_with(f"{scheme}://bucket/checkpoints/metrics_step100.json")
+        resource.assert_called_once_with(f"{scheme}://bucket/checkpoints", "metrics_step100.json")
+    resumed.log_metrics(100, {"eval/caption/CE loss": 2.0})
+    assert resumed.metrics == {"train/CE loss": 3.0, "eval/caption/CE loss": 2.0}
+    assert json.loads(metrics_trainer.write_file.call_args.args[1]) == resumed.metrics
+    assert metrics_trainer.write_file.call_args.kwargs == {"save_overwrite": True}
+
+
+@pytest.mark.parametrize(
+    "rank,loaded,exists", [(1, True, True), (0, False, True), (0, True, False)]
+)
+def test_resume_skips_unavailable_metrics(monkeypatch, rank, loaded, exists):
+    exists_mock = Mock(return_value=exists)
+    resource = Mock()
+    monkeypatch.setattr("olmo_core.train.callbacks.restore_metrics.get_rank", lambda: rank)
+    monkeypatch.setattr("olmo_core.train.callbacks.restore_metrics.file_exists", exists_mock)
+    monkeypatch.setattr("olmo_core.train.callbacks.restore_metrics.resource_path", resource)
+    saver = Mock(step_metrics_fname="metrics_step{step}.json")
+    restore = RestoreMetricsCallback(metrics_callback="metrics")
+    restore.trainer = SimpleNamespace(
+        save_folder="s3://bucket/checkpoints",
+        global_step=100,
+        checkpoint_loaded=loaded,
+        callbacks={"metrics": saver},
+    )
+    restore.pre_train()
+    assert exists_mock.call_count == int(rank == 0 and loaded)
+    resource.assert_not_called()
+    saver.log_metrics.assert_not_called()
 
 
 @pytest.mark.parametrize("global_overwrite", [False, True])

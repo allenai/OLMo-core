@@ -1,32 +1,27 @@
-"""Train module for Molmo2 :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training.
+"""Multimodal training with globally normalized response-token losses.
 
-:class:`MultimodalTransformerTrainModule` extends :class:`TransformerTrainModule` for a
-:class:`~olmo_core.nn.vision.MultimodalLM` (a plain ``nn.Module``, *not* a
-:class:`~olmo_core.nn.transformer.Transformer`). It differs from the base module in
-three ways:
-
-1. The model is **not** routed through ``parallelize_model`` (which requires a
-   ``Transformer``). DDP (``replicate``) and FSDP/HSDP (``fully_shard`` of the LM,
-   vision encoder, and connector) are applied here directly; TP/CP/PP/EP are out of scope.
-2. The loss uses **float per-token** ``loss_masks`` (response-only, ``root_subsegments``
-   weighted by the data pipeline) via
-   :func:`~olmo_core.nn.functional.weighted_cross_entropy_loss`, reproducing mm_olmo.
-3. The loss divisor is the **global** sum of ``loss_masks`` (all-reduced, divided by the
-   DP world size) so that, after DDP gradient averaging, the effective normalization is
-   the global loss-weight — matching mm_olmo's ``BatchDivisor.global_batch``.
+:class:`MultimodalTransformerTrainModule` supports DDP, FSDP, and HSDP for
+:class:`~olmo_core.nn.vision.MultimodalLM`. :class:`MultimodalOLMoDDPTrainModule` adds
+multimodal batch handling to OLMoDDP's data- and expert-parallel training path. Both accept
+per-token loss weights and optional independently normalized loss groups. Router auxiliary
+losses use valid input tokens, independently of response-token loss weights.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import math
 import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Literal, Optional, Tuple, cast
+from functools import lru_cache
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple, cast
 
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from torch.optim import Optimizer
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
@@ -44,6 +39,8 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
+from olmo_core.nn.lm_head import LMOutputWithLoss
+from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, move_to_device, warn_once
@@ -51,12 +48,22 @@ from olmo_core.utils import get_default_device, move_to_device, warn_once
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerActivationCheckpointingConfig, TransformerDataParallelConfig
+from .config import (
+    OLMoDDPTrainModuleConfig,
+    TransformerActivationCheckpointingConfig,
+    TransformerDataParallelConfig,
+)
+from .ddp_train_module import OLMoDDPTrainModule
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MultimodalTransformerTrainModule", "MultimodalTransformerTrainModuleConfig"]
+__all__ = [
+    "MultimodalTransformerTrainModule",
+    "MultimodalTransformerTrainModuleConfig",
+    "MultimodalOLMoDDPTrainModule",
+    "MultimodalOLMoDDPTrainModuleConfig",
+]
 
 
 def _mm_train_verbose_logs() -> bool:
@@ -64,8 +71,156 @@ def _mm_train_verbose_logs() -> bool:
     return os.environ.get("MM_TRAIN_VERBOSE_LOGS", "0").lower() in ("1", "true", "yes")
 
 
+def _retain_embedding_gradient_rows(grad: torch.Tensor, row_ids: Tuple[int, ...]) -> torch.Tensor:
+    """Return an embedding gradient with only ``row_ids`` retained."""
+    row_mask = torch.zeros((grad.shape[0], 1), dtype=grad.dtype, device=grad.device)
+    row_mask[list(row_ids)] = 1
+    return grad * row_mask
+
+
+def _matched_component_grad_norm_patterns(
+    component_patterns: Mapping[str, Tuple[str, ...]], trainable_names: set[str]
+) -> Dict[str, Tuple[str, ...]]:
+    """Keep diagnostic components that match at least one trainable optimizer parameter."""
+    return {
+        component: patterns
+        for component, patterns in component_patterns.items()
+        if any(fnmatch(name, pattern) for name in trainable_names for pattern in patterns)
+    }
+
+
+def _validate_loss_group_weights(weights: Optional[Dict[str, float]]) -> Dict[str, float]:
+    if weights is None:
+        return {}
+    if (
+        not weights
+        or any(
+            not isinstance(name, str) or not name or not math.isfinite(value) or value <= 0
+            for name, value in weights.items()
+        )
+        or abs(sum(weights.values()) - 1.0) > 1e-6
+    ):
+        raise OLMoConfigurationError("loss_group_weights must be positive and sum to one")
+    return dict(sorted(weights.items()))
+
+
+def _normalize_loss_groups(
+    batch: Dict[str, Any],
+    group_weights: Dict[str, float],
+    *,
+    label_ignore_index: int,
+    device: torch.device,
+    dp_process_group: Optional[dist.ProcessGroup],
+) -> Tuple[Dict[str, Any], torch.Tensor]:
+    """Rescale annotation weights to a globally normalized sum of group objectives.
+
+    This runs once for the full optimizer batch, before accumulation splits it. If ``M_g``
+    is global active annotation mass for group ``g``, use ``w * alpha_g * M / M_g``.
+    The existing global divisor and averaged DP gradients then yield
+    ``sum_g alpha_g * sum_i(w_i * CE_i) / M_g``. LM z-loss uses the same weights;
+    router auxiliary losses retain their independent valid-token normalization.
+    """
+    masks = batch.get("loss_masks")
+    labels = batch.get("labels")
+    names = batch.get("loss_group_names")
+    shape = batch["input_ids"].shape
+    error = None
+    if (
+        not isinstance(masks, torch.Tensor)
+        or not isinstance(labels, torch.Tensor)
+        or masks.shape != shape
+        or labels.shape != shape
+        or not isinstance(names, list)
+        or len(names) != shape[0]
+        or any(not isinstance(name, str) or name not in group_weights for name in names)
+    ):
+        error = "Group-normalized loss requires aligned labels, loss_masks, and loss_group_names"
+    elif not bool(torch.isfinite(masks).all()) or bool((masks < 0).any()):
+        error = "Group-normalized loss requires finite nonnegative annotation weights"
+    # Even malformed metadata on one rank must fail before peers enter mass reductions.
+    if reduce_distributed_failure_flag(error is not None, device, group=dp_process_group):
+        raise OLMoConfigurationError(error or "Invalid loss-group batch on another DP rank")
+    assert isinstance(masks, torch.Tensor) and isinstance(labels, torch.Tensor)
+    assert isinstance(names, list)
+    active_weights = masks.to(device=device, dtype=torch.float32) * (
+        labels.to(device) != label_ignore_index
+    )
+    group_indices = {name: index for index, name in enumerate(group_weights)}
+    row_groups = torch.tensor(
+        [group_indices[name] for name in names], device=device, dtype=torch.long
+    )
+    local_mass = torch.stack(
+        [active_weights[row_groups == index].sum() for index in range(len(group_weights))]
+    )
+    global_mass = local_mass.clone()
+    if is_distributed():
+        dist.all_reduce(global_mass, group=dp_process_group)
+    if not bool(torch.isfinite(global_mass).all()) or bool((global_mass <= 0).any()):
+        raise OLMoConfigurationError(
+            "Every configured loss group must have positive finite supervised mass globally "
+            "in every optimizer batch (ignored labels do not count)"
+        )
+    # Both train modules guard the divisor against zero; one clamps before dividing by
+    # DP size and one afterwards. Keep the per-rank reference mass >= 1 so either path
+    # preserves the objective, even with very small fractional annotation weights.
+    reference_mass = global_mass.sum().clamp_min(float(get_world_size(dp_process_group)))
+    coefficients = torch.tensor(list(group_weights.values()), device=device)
+    scales = coefficients * reference_mass / global_mass
+    normalized_batch = dict(batch)
+    normalized_batch["loss_masks"] = active_weights * scales[row_groups, None]
+    return normalized_batch, global_mass
+
+
+def _trim_microbatch_image_padding(batch: dict[str, Any]) -> dict[str, Any]:
+    """Remove unused trailing crop/pooling slots while retaining one dummy slot."""
+    images = batch.get("images")
+    pooled = batch.get("pooled_patches_idx")
+    if not isinstance(images, torch.Tensor) or images.ndim != 4:
+        raise OLMoConfigurationError("Image-padding trimming requires rank-4 images")
+    if not isinstance(pooled, torch.Tensor) or pooled.ndim != 3:
+        raise OLMoConfigurationError("Image-padding trimming requires rank-3 pooled_patches_idx")
+    size, crops, patches, _ = images.shape
+    if size == 0 or crops == 0 or patches == 0 or pooled.shape[0] != size or pooled.shape[1] == 0:
+        raise OLMoConfigurationError(
+            "Image-padding trimming requires aligned nonempty image tensors"
+        )
+    counts = []
+    for name, limit in (("image_crop_counts", crops), ("pooled_token_counts", pooled.shape[1])):
+        value = batch.get(name)
+        if (
+            not isinstance(value, torch.Tensor)
+            or value.shape != (size,)
+            or value.dtype not in (torch.int32, torch.int64)
+            or bool((value < 0).any())
+            or bool((value > limit).any())
+        ):
+            raise OLMoConfigurationError(
+                f"Image-padding trimming requires integer {name} with shape ({size},) "
+                f"and values in [0, {limit}]"
+            )
+        counts.append(value.to(device=pooled.device))
+    crop_counts, pooled_counts = counts
+    if pooled.dtype not in (torch.int32, torch.int64) or bool((pooled < -1).any()):
+        raise OLMoConfigurationError("pooled_patches_idx must contain integer patch indices or -1")
+    if bool((pooled >= crop_counts[:, None, None] * patches).any()):
+        raise OLMoConfigurationError(
+            "Pooled patch indices reference crops outside image_crop_counts"
+        )
+    trailing = (
+        torch.arange(pooled.shape[1], device=pooled.device)[None, :] >= pooled_counts[:, None]
+    )
+    if bool(((pooled >= 0) & trailing[:, :, None]).any()):
+        raise OLMoConfigurationError("pooled_token_counts would discard non-padding pooled rows")
+    out = dict(batch)
+    out["images"] = images[:, : max(int(crop_counts.max()), 1)]
+    out["pooled_patches_idx"] = pooled[:, : max(int(pooled_counts.max()), 1)]
+    return out
+
+
 class MultimodalTransformerTrainModule(TransformerTrainModule):
     """A :class:`TrainModule` for :class:`~olmo_core.nn.vision.MultimodalLM` stage-1 training."""
+
+    optim: Optimizer
 
     def __init__(
         self,
@@ -81,20 +236,21 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         scheduler: Optional[Scheduler] = None,
         device: Optional[torch.device] = None,
         compile_model: bool = False,
+        compile_vision: bool = True,
+        compile_connector: bool = True,
         dp_config: Optional[TransformerDataParallelConfig] = None,
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         vision_activation_checkpointing: bool = True,
         connector_activation_checkpointing: bool = True,
-        compile_vision: bool = True,
-        compile_connector: bool = True,
         label_ignore_index: int = -100,
         response_logits_only: bool = False,
+        loss_group_weights: Optional[Dict[str, float]] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
     ):
-        # NOTE: deliberately bypass ``TransformerTrainModule.__init__`` (which calls
-        # ``parallelize_model``, requiring a ``Transformer``); call the grandparent.
+        # TransformerTrainModule initialization requires a Transformer; multimodal models apply
+        # parallelism to their LM, vision encoder, and connector directly below.
         TrainModule.__init__(self)
 
         if rank_microbatch_size % max_sequence_length != 0:
@@ -154,18 +310,13 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             )
             log.info("Applied '%s' activation checkpointing to model.lm", ac_config.mode)
         if compile_model:
-            # Compile per block (not the whole LM) so dynamic multimodal attention masks
-            # (or_mask / and_mask) don't trip full-graph compile on the outer forward.
             log.info("Compiling model.lm blocks ...")
             model.lm.apply_compile()
-            # mm_olmo compiles the vision tower and connector too (`compile_vit: blocks`,
-            # `compile_connector: dynamic`). The connector is compiled with dynamic shapes
-            # because its pooled-group count follows the per-batch crop count.
             if compile_vision and hasattr(model.vision, "apply_compile"):
-                log.info("Compiling model.vision blocks ...")
+                log.info("Compiling vision encoder blocks ...")
                 model.vision.apply_compile()
             if compile_connector and hasattr(model.connector, "apply_compile"):
-                log.info("Compiling model.connector (dynamic) ...")
+                log.info("Compiling connector ...")
                 model.connector.apply_compile()
         self.model = model
         self._model_mode = None
@@ -176,6 +327,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self._ep_config = None
         self.label_ignore_index = label_ignore_index
         self.response_logits_only = response_logits_only
+        self.loss_group_weights = _validate_loss_group_weights(loss_group_weights)
         self.z_loss_multiplier = z_loss_multiplier
         self.rank_microbatch_size = rank_microbatch_size
         self.max_sequence_length = max_sequence_length
@@ -194,6 +346,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         # DDP/FSDP keep the model's type, attributes, and (prefix-free) parameter names,
         # and FSDP additionally needs the optimizer built on the sharded DTensor params.
         if self.world_mesh is not None:
+            assert dp_config is not None
             self._parallelize(dp_config)
 
         log.info("Building optimizer...")
@@ -231,8 +384,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             fully_shard(self.model.connector, mesh=dp_mesh, mp_policy=mp)
             fully_shard(self.model, mesh=dp_mesh, mp_policy=mp)
 
-    # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
-
     @property
     def _multimodal(self) -> torch.nn.Module:
         # ``replicate`` is applied in-place, so ``self.model`` is the MultimodalLM itself.
@@ -248,8 +399,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             self.rank_microbatch_size, max_sequence_length=self.max_sequence_length
         )
 
-    # -- batch preparation -------------------------------------------------------
-
     def _prepare_batch(  # type: ignore[override]
         self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, Dict[str, Any]]:
@@ -260,16 +409,18 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         labels = labels if labels is not None else batch.pop("labels", None)
         loss_masks = batch.pop("loss_masks")
         batch.pop("pack_source_names", None)
+        batch.pop("image_crop_counts", None)
+        batch.pop("pooled_token_counts", None)
+        batch.pop("loss_group_names", None)
         return input_ids, labels, loss_masks, batch
 
     def _set_model_mode(self, mode: Literal["train", "eval"]):
         super()._set_model_mode(mode)
-        # Frozen vision should stay in eval mode (mm_olmo trains the ViT; stage-1 freezes it).
-        if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
+        if mode == "train" and any(fnmatch(name, "vision.*") for name in self.freeze_params):
             self._multimodal.vision.eval()
 
     def _log_batch_sources(self, batch: Dict[str, Any], local_weight: torch.Tensor) -> None:
-        """Log per-rank packed source names (enable with ``MM_TRAIN_VERBOSE_LOGS=1``)."""
+        """Log per-rank packed source names when verbose diagnostics are enabled."""
         if not _mm_train_verbose_logs():
             return
         sources = batch.get("pack_source_names")
@@ -290,10 +441,16 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             tuple(batch["input_ids"].shape),
         )
 
-    # -- training step -----------------------------------------------------------
-
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._set_model_mode("train")
+        if self.loss_group_weights:
+            batch, _ = _normalize_loss_groups(
+                batch,
+                self.loss_group_weights,
+                label_ignore_index=self.label_ignore_index,
+                device=self.device,
+                dp_process_group=self.dp_process_group,
+            )
 
         # Global loss-weight divisor (mm_olmo BatchDivisor.global_batch): the sum of
         # positive loss weights over the whole global batch, divided by DP world size.
@@ -369,10 +526,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                         flat_labels = labels.to(self.device).reshape(-1)[response_mask.reshape(-1)]
                         flat_weights = mb_loss_masks.reshape(-1)[response_mask.reshape(-1)]
                     else:
-                        # `loss_masks` is passed even though the logits are dense: the model
-                        # needs it to build the per-token residual drop mask when the LM was
-                        # configured with `masked_dropout` (response_residual_dropout). It is
-                        # popped by `MultimodalLM.forward` and ignored otherwise.
                         logits = self.model(
                             input_ids, labels=None, loss_masks=mb_loss_masks, **model_kwargs
                         )
@@ -396,11 +549,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
 
-                # This flag is an all_reduce, so EVERY rank must call it on every
-                # microbatch — gating it on the local result would leave healthy ranks
-                # in backward's collectives while a failing rank calls this one
-                # (mismatched collectives -> NCCL hang).
-                local_failed = bool(not torch.isfinite(ce_loss))
+                # Every rank must enter the distributed failure reduction on every
+                # microbatch. Otherwise a failing rank could issue this collective while
+                # healthy ranks continue into backward collectives and hang NCCL.
+                local_failed = not bool(torch.isfinite(ce_loss).item())
                 if reduce_distributed_failure_flag(
                     local_failed, self.device, group=self.dp_process_group
                 ):
@@ -453,9 +605,10 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             self.record_metric("Z loss", mean_z, ReduceType.mean, namespace="train")
 
         if hasattr(self._lm, "compute_auxiliary_metrics"):
-            for metric_name, (metric_val, reduction) in self._lm.compute_auxiliary_metrics(
-                reset=True
-            ).items():
+            for metric_name, (
+                metric_val,
+                reduction,
+            ) in self._lm.compute_auxiliary_metrics(reset=True).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
 
         if not dry_run and _mm_train_verbose_logs():
@@ -488,6 +641,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             "(stage-1 training runs without in-loop eval)."
         )
 
+    @lru_cache
     def num_flops_per_token(self, seq_len: int) -> Optional[int]:
         try:
             if hasattr(self._lm, "num_flops_per_token"):
@@ -503,7 +657,11 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         images = batch.get("images")
         if images is None:
             return 0
-        b, t, n_patches = int(images.shape[0]), int(images.shape[1]), int(images.shape[2])
+        b, t, n_patches = (
+            int(images.shape[0]),
+            int(images.shape[1]),
+            int(images.shape[2]),
+        )
         n_pooled = int((batch["input_ids"] == self._multimodal.cfg.image_patch_token_id).sum())
         return self._multimodal.image_encoder_flops(b * t, n_patches, n_pooled)
 
@@ -519,21 +677,27 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
     compile_model: bool = False
+    compile_vision: bool = True
+    """Also compile the vision encoder when :data:`compile_model` is enabled."""
+    compile_connector: bool = True
+    """Also compile the connector with dynamic shapes when :data:`compile_model` is enabled."""
     dp_config: Optional[TransformerDataParallelConfig] = None
     ac_config: Optional[TransformerActivationCheckpointingConfig] = None
     vision_activation_checkpointing: bool = True
     connector_activation_checkpointing: bool = True
-    compile_vision: bool = True
-    """Also ``torch.compile`` the vision tower when :data:`compile_model` is set
-    (mm_olmo ``compile_vit: blocks``)."""
-
-    compile_connector: bool = True
-    """Also ``torch.compile`` the connector when :data:`compile_model` is set, with dynamic
-    shapes (mm_olmo ``compile_connector: dynamic``)."""
     z_loss_multiplier: Optional[float] = None
     autocast_precision: Optional[DType] = None
     label_ignore_index: int = -100
     response_logits_only: bool = False
+    loss_group_weights: Optional[Dict[str, float]] = None
+    """Opt-in coefficients for separately normalized full-update group CE objectives.
+
+    Positive coefficients must sum to one. Batches require one ``loss_group_names`` entry
+    per homogeneous packed sequence (emitted by grouped mixture-loader quotas). Annotation
+    weights remain relative within each group; ignored labels never add to its denominator.
+    Every group must have positive supervised weight globally on every update. LM z-loss
+    shares these weights; router auxiliary normalization is unchanged.
+    """
     state_dict_save_opts: Optional[Dict[str, Any]] = None
     state_dict_load_opts: Optional[Dict[str, Any]] = None
     load_key_mapping: Optional[Dict[str, str]] = None
@@ -549,3 +713,826 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
         if (load_opts := kwargs.pop("state_dict_load_opts", None)) is not None:
             kwargs["state_dict_load_opts"] = dist_cp_sd.StateDictOptions(**load_opts)
         return MultimodalTransformerTrainModule(model=model, device=device, **kwargs)
+
+
+class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
+    """OLMoDDP EP/DP training for a multimodal model with weighted token loss."""
+
+    def __init__(
+        self,
+        model: torch.nn.Module,
+        *args,
+        freeze_params: Optional[List[str]] = None,
+        vision_activation_checkpointing: bool = False,
+        connector_activation_checkpointing: bool = False,
+        response_logits_only: bool = False,
+        diagnostics_interval: Optional[int] = None,
+        train_embedding_rows: Optional[List[int]] = None,
+        source_loss_mass_targets: Optional[Dict[str, float]] = None,
+        loss_group_weights: Optional[Dict[str, float]] = None,
+        trim_microbatch_image_padding: bool = False,
+        **kwargs,
+    ):
+        from olmo_core.nn.vision import MultimodalOLMoDDPModel
+
+        if not isinstance(model, MultimodalOLMoDDPModel):
+            raise TypeError(
+                f"{type(self).__name__} requires MultimodalOLMoDDPModel, got {type(model).__name__}"
+            )
+        unsupported = [
+            name for name in ("tp_config", "cp_config", "pp_config") if kwargs.get(name) is not None
+        ]
+        if unsupported:
+            raise OLMoConfigurationError(
+                "Multimodal OLMoDDP currently supports data and expert parallelism only; "
+                f"unset {', '.join(unsupported)}"
+            )
+        if model.tbo:
+            raise OLMoConfigurationError(
+                "Two-batch overlap is not supported for multimodal OLMoDDP"
+            )
+        if diagnostics_interval is not None and diagnostics_interval <= 0:
+            raise OLMoConfigurationError("diagnostics_interval must be positive or None")
+        self.trim_microbatch_image_padding = trim_microbatch_image_padding
+        if trim_microbatch_image_padding:
+            if model.cfg.vision.attention_dropout or model.cfg.vision.residual_dropout:
+                raise OLMoConfigurationError(
+                    "Image-padding trimming requires zero vision attention and residual dropout"
+                )
+            log.warning(
+                "Image-padding trimming is enabled; vision FLOP estimates still use untrimmed "
+                "collator shapes. Compare measured throughput and profiles, not estimated MFU."
+            )
+
+        self.freeze_params = freeze_params or []
+        frozen = []
+        for name, param in model.named_parameters():
+            if any(fnmatch(name, pattern) for pattern in self.freeze_params):
+                param.requires_grad_(False)
+                frozen.append(name)
+        if self.freeze_params:
+            log.info(
+                "Froze %d parameter tensors matching %s",
+                len(frozen),
+                self.freeze_params,
+            )
+        self.train_embedding_rows = tuple(sorted(train_embedding_rows or []))
+        if len(self.train_embedding_rows) != len(set(self.train_embedding_rows)):
+            raise OLMoConfigurationError("train_embedding_rows must contain unique IDs")
+        if vision_activation_checkpointing:
+            model.vision.apply_activation_checkpointing()
+            log.info("Applied activation checkpointing to the vision encoder")
+        if connector_activation_checkpointing:
+            model.connector.apply_activation_checkpointing()
+            log.info("Applied activation checkpointing to the vision connector")
+        self.response_logits_only = response_logits_only
+        self.loss_group_weights = _validate_loss_group_weights(loss_group_weights)
+        self.diagnostics_interval = diagnostics_interval
+        self.source_loss_mass_targets = dict(source_loss_mass_targets or {})
+        if self.source_loss_mass_targets and (
+            any(
+                not math.isfinite(value) or value <= 0
+                for value in self.source_loss_mass_targets.values()
+            )
+            or abs(sum(self.source_loss_mass_targets.values()) - 1.0) > 1e-6
+        ):
+            raise OLMoConfigurationError("source_loss_mass_targets must be positive and sum to one")
+        super().__init__(model, *args, **kwargs)
+
+        # OLMoDDP materializes meta-device weights inside ``super().__init__`` with ``to_empty``,
+        # which replaces Parameter objects. Install gradient hooks only on the final materialized
+        # parameters so they run before MultiGroupDDP's post-accumulate FP32 reduction hooks.
+        materialized_lm = self.multimodal_model.lm
+        self._embedding_grad_hook = None
+        if self.train_embedding_rows:
+            embeddings = materialized_lm.embeddings
+            if embeddings is None:
+                raise OLMoConfigurationError("train_embedding_rows requires LM embeddings")
+            if self.train_embedding_rows[0] < 0 or self.train_embedding_rows[-1] >= int(
+                embeddings.weight.shape[0]
+            ):
+                raise OLMoConfigurationError(
+                    "train_embedding_rows contains an ID outside the LM embedding table"
+                )
+            if not embeddings.weight.requires_grad:
+                raise OLMoConfigurationError(
+                    "The LM embedding parameter must remain trainable when row masking is enabled"
+                )
+            if (
+                materialized_lm.lm_head is not None
+                and materialized_lm.lm_head.w_out.weight is embeddings.weight
+            ):
+                raise OLMoConfigurationError(
+                    "Row-masked image embeddings require untied LM input and output weights"
+                )
+            self._embedding_grad_hook = embeddings.weight.register_hook(
+                lambda grad: _retain_embedding_gradient_rows(grad, self.train_embedding_rows)
+            )
+            log.info(
+                "Restricted LM input-embedding gradients to rows %s",
+                self.train_embedding_rows,
+            )
+
+    @property
+    def multimodal_model(self):
+        """Return the model beneath the data-parallel wrapper."""
+        model = self.model_parts[0]
+        return getattr(model, "module", model)
+
+    def _prepare_batch(
+        self, batch: Dict[str, Any], labels: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
+        if (
+            getattr(self, "trim_microbatch_image_padding", False)
+            and batch.get("images") is not None
+        ):
+            batch = _trim_microbatch_image_padding(batch)
+        input_ids, labels, model_kwargs = super()._prepare_batch(batch, labels)
+        model_kwargs.pop("image_crop_counts", None)
+        model_kwargs.pop("pooled_token_counts", None)
+        model_kwargs.pop("loss_group_names", None)
+        # A full microbatch needs no routing override and remains compatible with the ordinary
+        # sync/no-EP paths used by small tests and evaluation. A mask containing padding is kept
+        # and the routed block enforces the production rowwise path.
+        router_token_mask = model_kwargs.get("router_token_mask")
+        if router_token_mask is not None and bool(router_token_mask.all()):
+            model_kwargs.pop("router_token_mask")
+        # Response-only logits are specific to multimodal batches carrying loss weights.
+        # Ordinary downstream LM evaluators do not provide ``loss_masks`` and require full
+        # sequence logits, even when the training module uses response-only logits for Stage 1.
+        if self.response_logits_only and "loss_masks" in batch:
+            model_kwargs["response_logits_only"] = True
+        return input_ids, labels, model_kwargs
+
+    @contextlib.contextmanager
+    def _eval_batch_context(self):
+        # Downstream text batches use synchronized EP because rank-local sequence shapes may
+        # differ. Torch 2.11 Inductor cannot lower several valid OLMES shapes, while the eager EP
+        # path is correct. Force the complete text forward eager, including attention and the LM
+        # head, without changing the compiled training model. Keep grad mode enabled because the
+        # torch 2.11 no-grad specialization can produce incorrect attention outputs on B300.
+        with torch.enable_grad(), torch.compiler.set_stance("force_eager"):
+            yield
+
+    @contextlib.contextmanager
+    def _multimodal_eval_batch_context(self):
+        # Fixed-shape rowwise EP evaluation uses training dispatch and forward-only scratch
+        # buffers. Synchronized EP retains eval dispatch for variable token counts. Grad mode
+        # avoids incorrect compiled no-grad attention on B300 with torch 2.11; eval_batch detaches
+        # the outputs. Updating only the block flag leaves its children in evaluation mode.
+        block_modes = []
+        for block in self.multimodal_model.lm.routed_blocks():
+            block_modes.append(
+                (
+                    block,
+                    block.training,
+                    block._ep_no_sync_force_scratch_lifetime_buffers,
+                )
+            )
+            use_training_dispatch = (
+                block.ep_enabled
+                and block.ep.no_sync
+                and block.ep.path == ExpertParallelPath.rowwise_nvshmem
+            )
+            block.training = use_training_dispatch
+            # A forward-only rowwise graph has no backward pass to release the training lifetime
+            # leases. Use the prewarmed static scratch buffers only for that dispatch path.
+            block._ep_no_sync_force_scratch_lifetime_buffers = use_training_dispatch
+        try:
+            with torch.enable_grad():
+                yield
+        finally:
+            for block, training, force_scratch in block_modes:
+                block.training = training
+                block._ep_no_sync_force_scratch_lifetime_buffers = force_scratch
+
+    def _batch_auxiliary_loss_kwargs(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        token_mask = batch.get("router_token_mask")
+        if token_mask is None:
+            raise OLMoConfigurationError(
+                "Multimodal OLMoDDP batches require router_token_mask so padding is excluded "
+                "from MoE routing and auxiliary losses"
+            )
+        if token_mask.shape != batch["input_ids"].shape:
+            raise OLMoConfigurationError(
+                "router_token_mask must match input_ids: "
+                f"got {tuple(token_mask.shape)} and {tuple(batch['input_ids'].shape)}"
+            )
+
+        # Match OLMo-core's DDP loss-scaling convention: normalize by the global valid-token
+        # count divided by the DP world size, so subsequent averaged gradients have the same
+        # scale as a single global batch. This population is deliberately independent of the
+        # response-only CE loss weights.
+        router_loss_div_factor = move_to_device(token_mask.sum(dtype=torch.long), self.device)
+        if is_distributed():
+            dist.all_reduce(router_loss_div_factor, group=self.dp_process_group)
+            router_loss_div_factor = router_loss_div_factor.clamp_min(1)
+            router_loss_div_factor = router_loss_div_factor / get_world_size(self.dp_process_group)
+        else:
+            router_loss_div_factor = router_loss_div_factor.clamp_min(1)
+        return {"router_loss_div_factor": router_loss_div_factor}
+
+    def _record_data_metrics(self, batch: Dict[str, Any]) -> None:
+        """Record packing and supervision density without synchronizing CUDA."""
+        token_mask = batch.get("router_token_mask")
+        if token_mask is None:
+            return
+        if getattr(self, "source_loss_mass_targets", None) and (
+            getattr(self, "_trainer", None) is None or self._diagnostics_enabled_for_step()
+        ):
+            self._record_source_data_metrics(batch, token_mask)
+        self.record_metric(
+            "packing fill",
+            token_mask.float().mean(),
+            ReduceType.mean,
+            namespace="data",
+        )
+
+        if (loss_masks := batch.get("loss_masks")) is not None:
+            self.record_metric(
+                "response token density",
+                ((loss_masks > 0) & token_mask).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+        if (token_type_ids := batch.get("token_type_ids")) is not None:
+            self.record_metric(
+                "image token density",
+                ((token_type_ids != 0) & token_mask).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+        if (example_ids := batch.get("example_ids")) is not None:
+            self.record_metric(
+                "examples per sequence",
+                (example_ids.amax(dim=1) + 1).float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+
+        if (crop_counts := batch.get("image_crop_counts")) is not None:
+            self.record_metric(
+                "real crops per sequence",
+                crop_counts.float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+            images = batch.get("images")
+            if images is not None:
+                padded_crops = int(images.shape[1])
+                utilization = crop_counts.float().sum() / max(
+                    int(crop_counts.numel()) * padded_crops, 1
+                )
+                self.record_metric(
+                    "padded crops per sequence",
+                    torch.tensor(float(padded_crops), device=crop_counts.device),
+                    ReduceType.mean,
+                    namespace="data",
+                )
+                self.record_metric(
+                    "crop utilization",
+                    utilization,
+                    ReduceType.mean,
+                    namespace="data",
+                )
+        if (pooled_counts := batch.get("pooled_token_counts")) is not None:
+            self.record_metric(
+                "pooled image tokens per sequence",
+                pooled_counts.float().mean(),
+                ReduceType.mean,
+                namespace="data",
+            )
+
+    def _record_source_data_metrics(self, batch: Dict[str, Any], token_mask: torch.Tensor) -> None:
+        """Record globally summed examples, tokens, and weighted loss mass by source.
+
+        The configured mixture targets are expressed in *global supervised-loss mass*.
+        Computing a ratio on each DP rank and averaging those ratios is not equivalent to
+        dividing globally summed source weights by the globally summed total, especially when
+        dense native-text rows and short response-only visual rows land on different ranks.
+        This method therefore performs one stacked DP reduction at the diagnostics cadence and
+        derives every reported share from those global sums.
+        """
+        packed_sources = batch.get("pack_source_names")
+        example_ids = batch.get("example_ids")
+        loss_masks = batch.get("loss_masks")
+        labels = batch.get("labels")
+        if packed_sources is None or example_ids is None or loss_masks is None or labels is None:
+            raise OLMoConfigurationError(
+                "Per-source telemetry requires packed source names, example IDs, labels, "
+                "and loss masks"
+            )
+        if len(packed_sources) != int(example_ids.shape[0]):
+            raise OLMoConfigurationError("Packed source metadata does not match the rank batch")
+        metric_names = (
+            "examples",
+            "tokens",
+            "positive_tokens",
+            "loss_weight",
+            "active_loss_weight",
+        )
+        stats: Dict[str, Dict[str, torch.Tensor]] = {
+            source_name: {name: loss_masks.new_zeros(()) for name in metric_names}
+            for source_name in self.source_loss_mass_targets
+        }
+        label_ignore_index = getattr(self, "label_ignore_index", -100)
+        for row, source_names in enumerate(packed_sources):
+            for example_id, source_name in enumerate(source_names):
+                if source_name not in self.source_loss_mass_targets:
+                    raise OLMoConfigurationError(
+                        f"Observed unconfigured source {source_name!r} in packed telemetry"
+                    )
+                positions = (example_ids[row] == example_id) & token_mask[row]
+                observed_stats = stats[source_name]
+                active_positions = positions & (labels[row] != label_ignore_index)
+                observed_stats["examples"] += 1
+                observed_stats["tokens"] += positions.sum()
+                observed_stats["positive_tokens"] += (
+                    (loss_masks[row] > 0) & active_positions
+                ).sum()
+                observed_stats["loss_weight"] += (loss_masks[row] * positions).sum()
+                observed_stats["active_loss_weight"] += (loss_masks[row] * active_positions).sum()
+
+        source_names = tuple(self.source_loss_mass_targets)
+        global_stats = torch.stack(
+            [stats[source_name][name] for source_name in source_names for name in metric_names]
+        )
+        if is_distributed():
+            global_stats = move_to_device(global_stats, self.device)
+            dist.all_reduce(global_stats, group=self.dp_process_group)
+        global_stats = global_stats.reshape(len(source_names), len(metric_names))
+        stats = {
+            source_name: {
+                name: global_stats[source_index, metric_index]
+                for metric_index, name in enumerate(metric_names)
+            }
+            for source_index, source_name in enumerate(source_names)
+        }
+        total_loss_weight = sum(
+            (source_stats["loss_weight"] for source_stats in stats.values()),
+            start=global_stats.new_zeros(()),
+        ).clamp_min(1.0)
+        for source_name, target in self.source_loss_mass_targets.items():
+            metric_stats = stats[source_name]
+            for metric_name, value in metric_stats.items():
+                self.record_metric(
+                    f"source/{source_name}/{metric_name}",
+                    value,
+                    # Every DP rank holds the identical already-summed tensor.
+                    ReduceType.mean,
+                    namespace="data",
+                )
+            realized_share = metric_stats["loss_weight"] / total_loss_weight
+            self.record_metric(
+                f"source/{source_name}/loss_mass_share",
+                realized_share,
+                ReduceType.mean,
+                namespace="data",
+            )
+            # With explicit group quotas, source sampling targets are relative to their group,
+            # so they cannot be compared directly with global source shares.
+            if "loss_group_names" not in batch:
+                self.record_metric(
+                    f"source/{source_name}/loss_mass_target_abs_error",
+                    (realized_share - target).abs(),
+                    ReduceType.mean,
+                    namespace="data",
+                )
+
+    def _diagnostics_enabled_for_step(self) -> bool:
+        return bool(
+            self.diagnostics_interval is not None
+            and self._trainer is not None
+            and self.trainer.global_step % self.diagnostics_interval == 0
+        )
+
+    def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
+        original_batch = batch
+        if self.loss_group_weights:
+            batch, global_mass = _normalize_loss_groups(
+                batch,
+                self.loss_group_weights,
+                label_ignore_index=self.label_ignore_index,
+                device=self.device,
+                dp_process_group=self.dp_process_group,
+            )
+            if not dry_run:
+                for index, group in enumerate(self.loss_group_weights):
+                    self.record_metric(
+                        f"group/{group}/active_loss_weight",
+                        global_mass[index],
+                        ReduceType.mean,
+                        namespace="data",
+                    )
+                    self.record_metric(
+                        f"group/{group}/objective_weight",
+                        self.loss_group_weights[group],
+                        ReduceType.mean,
+                        namespace="data",
+                    )
+        if not dry_run:
+            self._record_data_metrics(original_batch)
+        collect_diagnostics = not dry_run and self._diagnostics_enabled_for_step()
+        if collect_diagnostics:
+            self.multimodal_model.set_input_diagnostics(True)
+        try:
+            result = super().train_batch(batch, dry_run=dry_run)
+        except BaseException:
+            if collect_diagnostics:
+                self.multimodal_model.set_input_diagnostics(False)
+            raise
+        if collect_diagnostics:
+            diagnostics = self.multimodal_model.pop_input_diagnostics(
+                reduce_across_process_group=is_distributed(),
+                process_group=self.dp_process_group,
+            )
+            for name, value in diagnostics.items():
+                self.record_metric(name, value, reduce_type=None, namespace="multimodal")
+        return result
+
+    def optim_step(self):
+        optim = self._require_optimizer()
+        collect_diagnostics = self._diagnostics_enabled_for_step()
+        if collect_diagnostics:
+            component_patterns = {
+                "vision": ("vision.*", "*vision.*"),
+                "connector": ("connector.*", "*connector.*"),
+                "input embeddings": ("lm.embeddings.weight", "*lm.embeddings.weight"),
+                "LM output head": (
+                    "lm.lm_head.w_out.*",
+                    "*lm.lm_head.w_out.*",
+                ),
+                "LM attention": ("lm.blocks.*.attention.*", "*lm.blocks.*.attention.*"),
+                "LM routed experts": (
+                    "lm.blocks.*.routed_experts.*",
+                    "*lm.blocks.*.routed_experts.*",
+                ),
+                "LM shared experts": (
+                    "lm.blocks.*.shared_experts.*",
+                    "*lm.blocks.*.shared_experts.*",
+                ),
+                "LM routers": (
+                    "lm.blocks.*.routed_experts_router.*",
+                    "*lm.blocks.*.routed_experts_router.*",
+                ),
+                "LM normalization": ("lm.*norm*", "*lm.*norm*"),
+            }
+            trainable_names = {
+                name
+                for group in optim.param_groups
+                for name, param in group["named_params"].items()
+                if param.requires_grad
+            }
+            optim.set_component_grad_norm_patterns(
+                _matched_component_grad_norm_patterns(component_patterns, trainable_names)
+            )
+        try:
+            super().optim_step()
+            if collect_diagnostics:
+                for component, value in optim.latest_component_grad_norms.items():
+                    self.record_metric(
+                        f"{component} grad norm",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+                for group_name, value in optim.latest_clip_group_grad_norms.items():
+                    component = (
+                        "language model"
+                        if group_name == optim.DEFAULT_CLIP_GROUP_NAME
+                        else group_name
+                    )
+                    self.record_metric(
+                        f"{component} clip group grad norm",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+                for group_name, value in optim.latest_clip_group_coefficients.items():
+                    component = (
+                        "language model"
+                        if group_name == optim.DEFAULT_CLIP_GROUP_NAME
+                        else group_name
+                    )
+                    self.record_metric(
+                        f"{component} clip coefficient",
+                        value,
+                        reduce_type=None,
+                        namespace="optim",
+                    )
+        finally:
+            optim.set_component_grad_norm_patterns(None)
+
+    def extra_flops_per_batch(self, batch: Dict[str, Any]) -> int:
+        """Estimate vision/connector FLOPs from untrimmed collator tensor shapes.
+
+        This estimate does not account for optional microbatch image-padding trimming
+        or subsequent cross-rank crop padding; it is not a measurement of optimized work.
+        """
+        images = batch.get("images")
+        if images is None:
+            return 0
+        batch_size, crops, patches = (int(value) for value in images.shape[:3])
+        pooled = int((batch["input_ids"] == self.multimodal_model.cfg.image_patch_token_id).sum())
+        return self.multimodal_model.image_encoder_flops(batch_size * crops, patches, pooled)
+
+    def eval_batch(
+        self,
+        batch: Dict[str, Any],
+        labels: Optional[torch.Tensor] = None,
+        *,
+        return_response_logits: bool = False,
+    ) -> LMOutputWithLoss:
+        """Evaluate multimodal response loss or delegate ordinary LM evaluation.
+
+        Multimodal Stage 1 batches carry ``loss_masks`` and use a scalar summed response-token
+        loss without materializing full-sequence logits. Text-only downstream batches do not
+        carry ``loss_masks`` and need the standard OLMoDDP path so evaluators receive logits.
+
+        :param return_response_logits: Retain logits at supervised response positions for a
+            multimodal batch. This requires ``response_logits_only=True`` on the train module so
+            an evaluator cannot accidentally materialize full-sequence vocabulary logits.
+        """
+        if "loss_masks" not in batch:
+            if return_response_logits:
+                raise ValueError(
+                    "return_response_logits is only valid for multimodal loss-mask batches"
+                )
+            output = super().eval_batch(batch, labels=labels)
+            assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
+            return output._replace(
+                logits=output.logits.detach() if output.logits is not None else None,
+                loss=output.loss.detach(),
+                ce_loss=output.ce_loss.detach(),
+                z_loss=output.z_loss.detach() if output.z_loss is not None else None,
+            )
+
+        if self.cp_enabled or self.tp_enabled or self.pp_enabled:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.eval_batch() only supports the Stage 1 EP/DP topology"
+            )
+        if return_response_logits and not self.response_logits_only:
+            raise RuntimeError(
+                "return_response_logits requires response_logits_only=True to avoid "
+                "materializing full-sequence vocabulary logits"
+            )
+
+        # EvaluatorCallback derives ordinary LM labels from input_ids, but multimodal batches
+        # carry branch-aware, already-shifted labels. Prefer those and leave the original batch
+        # intact so the evaluator can use its loss weights after the forward pass.
+        model_batch = dict(batch)
+        if (batch_labels := model_batch.pop("labels", None)) is not None:
+            labels = batch_labels
+        input_ids, labels, model_kwargs = self._prepare_batch(model_batch, labels)
+        if labels is None:
+            raise OLMoConfigurationError("Multimodal evaluation batches require labels")
+
+        for model_part in self.model_parts:
+            model_part.eval()
+
+        try:
+            with self._multimodal_eval_batch_context():
+                output = self.model_forward_no_pipeline(
+                    input_ids,
+                    labels=labels,
+                    ignore_index=self.label_ignore_index,
+                    loss_reduction="sum",
+                    return_logits=return_response_logits,
+                    **model_kwargs,
+                )
+                assert isinstance(output, LMOutputWithLoss), "Expected LMOutputWithLoss"
+                return output._replace(
+                    logits=(
+                        output.logits.detach()
+                        if return_response_logits and output.logits is not None
+                        else None
+                    ),
+                    loss=output.loss.detach(),
+                    ce_loss=output.ce_loss.detach(),
+                    z_loss=output.z_loss.detach() if output.z_loss is not None else None,
+                )
+        finally:
+            # Router metrics from held-out data must not leak into the next training window.
+            for model_part in self.model_parts:
+                model_part.reset_auxiliary_metrics()
+
+    def load_molmo2_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
+        """Strictly load the Molmo2 vision tower, leaving the connector untouched."""
+        from olmo_core.nn.vision import molmo2_hf_state_dict_to_vision
+
+        model = self.multimodal_model
+        vision_state = molmo2_hf_state_dict_to_vision(hf_state_dict, model.cfg.vision)
+        self.load_vision_state_dict(vision_state)
+
+    def load_siglip_vision_state_dict(self, hf_state_dict: Dict[str, torch.Tensor]) -> None:
+        """Strictly load a SigLIP vision tower and synchronize optimizer masters."""
+        from olmo_core.nn.vision import siglip_hf_state_dict_to_vision
+
+        model = self.multimodal_model
+        vision_state = siglip_hf_state_dict_to_vision(hf_state_dict, model.cfg.vision)
+        self.load_vision_state_dict(vision_state)
+
+    @torch.no_grad()
+    def load_vision_state_dict(self, vision_state: Dict[str, torch.Tensor]) -> None:
+        """Strictly load vision weights and synchronize trainable optimizer masters.
+
+        OLMoDDP creates FP32 optimizer master parameters when the train module is built. Any
+        model-only load performed afterwards must update those masters before the first optimizer
+        step, otherwise that step copies the stale initialization back into the vision tower.
+
+        :param vision_state: State dictionary in the native vision encoder format.
+        """
+        model = self.multimodal_model
+        model.vision.load_state_dict(vision_state, strict=True)
+
+        if self.optim is None:
+            return
+
+        vision_param_names = self._trainable_vision_param_names()
+        if not vision_param_names:
+            return
+
+        optim = self._require_optimizer()
+        optim._copy_model_params_to_main_params(vision_param_names)
+        optim._check_model_param_main_param_the_same(vision_param_names)
+
+    def assert_vision_optimizer_state_synced(self) -> None:
+        """Check every trainable vision tensor against its optimizer-owned FP32 master."""
+        if self.optim is None:
+            raise RuntimeError("Cannot check optimizer state on an eval-only train module")
+
+        self.optim._check_model_param_main_param_the_same(self._trainable_vision_param_names())
+
+    def _trainable_vision_param_names(self) -> set[str]:
+        """Resolve every trainable vision parameter to its optimizer-owned name."""
+        optim = self._require_optimizer()
+        trainable_vision_params = {
+            id(param) for param in self.multimodal_model.vision.parameters() if param.requires_grad
+        }
+        vision_param_names = {
+            name
+            for param_group in optim.param_groups
+            for name, param in param_group["named_params"].items()
+            if id(param) in trainable_vision_params
+        }
+        if len(vision_param_names) != len(trainable_vision_params):
+            raise RuntimeError(
+                "Could not map every trainable vision parameter to its optimizer master: "
+                f"found {len(vision_param_names)} of {len(trainable_vision_params)}"
+            )
+        return vision_param_names
+
+    @torch.no_grad()
+    def reset_image_token_rows(
+        self, token_ids: List[int], *, seed: int, reset_output_rows: bool = True
+    ) -> None:
+        """Initialize newly assigned image-token rows and update optimizer main state.
+
+        :param token_ids: Input-embedding row IDs to initialize.
+        :param seed: Initialization seed.
+        :param reset_output_rows: Also initialize the same untied LM-head rows. Keep false when
+            those rows already participated in the pretrained model's output softmax.
+        """
+        if not token_ids or len(set(token_ids)) != len(token_ids):
+            raise ValueError("token_ids must be a non-empty list of unique IDs")
+
+        model = self.multimodal_model
+        lm = model.lm
+        if lm.embeddings is None or lm.lm_head is None:
+            raise RuntimeError("Image-token initialization requires LM embeddings and an LM head")
+        if min(token_ids) < 0 or max(token_ids) >= lm.vocab_size:
+            raise ValueError(
+                f"Image token IDs must be within [0, {lm.vocab_size}), got {token_ids}"
+            )
+
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+        row_count = len(token_ids)
+        embedding_rows = torch.nn.Embedding(
+            row_count,
+            lm.d_model,
+            device=self.device,
+            dtype=lm.embeddings.weight.dtype,
+        )
+        lm.init_method.init_embeddings(
+            embedding_rows,
+            d_model=lm.d_model,
+            embed_scale=lm.embed_scale,
+            std=lm.embedding_init_std if lm.embedding_init_std is not None else lm.init_std,
+            generator=generator,
+        )
+        row_index = torch.tensor(token_ids, device=self.device, dtype=torch.long)
+        lm.embeddings.weight.index_copy_(0, row_index, embedding_rows.weight)
+
+        if reset_output_rows and lm.lm_head.w_out.weight is not lm.embeddings.weight:
+            output_rows = torch.nn.Linear(
+                lm.d_model,
+                row_count,
+                bias=False,
+                device=self.device,
+                dtype=lm.lm_head.w_out.weight.dtype,
+            )
+            lm.init_method.init_final_w_out(
+                output_rows,
+                d_model=lm.d_model,
+                std=lm.init_std,
+                generator=generator,
+            )
+            lm.lm_head.w_out.weight.index_copy_(0, row_index, output_rows.weight)
+
+        optim = self._require_optimizer()
+        reset_params = {
+            name
+            for group in optim.param_groups
+            for name, param in group["named_params"].items()
+            if param is lm.embeddings.weight
+            or (reset_output_rows and param is lm.lm_head.w_out.weight)
+        }
+        optim._copy_model_param_rows_to_main_params(reset_params, token_ids)
+
+    def _resolve_model_checkpoint_key(self, param_name: str, checkpoint_keys) -> Optional[str]:
+        checkpoint_key = super()._resolve_model_checkpoint_key(param_name, checkpoint_keys)
+        if checkpoint_key is not None:
+            return checkpoint_key
+
+        stripped = self._strip_wrapper_prefixes(param_name)
+        if stripped.startswith("lm."):
+            return super()._resolve_model_checkpoint_key(
+                stripped.removeprefix("lm."), checkpoint_keys
+            )
+        return None
+
+    def _frozen_checkpoint_model_param_state_dict_for_load(self, checkpoint_keys):
+        """Load frozen multimodal parameters from stable or native optimizer-main keys.
+
+        Native s002 checkpoints predate ``frozen_model.*`` entries and store every model tensor
+        only as a flattened FP32 optimizer main parameter. A parameter frozen by the multimodal
+        recipe is absent from the current optimizer state, so explicitly map that native tensor
+        onto the frozen model parameter without routing trainable masters through BF16.
+        """
+        state = super()._frozen_checkpoint_model_param_state_dict_for_load(checkpoint_keys)
+        stable_prefix = self._FROZEN_MODEL_PARAM_KEY_PREFIX
+        optimizer_owned_anchor_ids = self._optimizer_owned_anchor_param_ids()
+        for model_part in self.model_parts:
+            for name, param in model_part.named_parameters():
+                if param.requires_grad or id(param) in optimizer_owned_anchor_ids:
+                    continue
+                stable_key = stable_prefix + self._strip_wrapper_prefixes(name)
+                if stable_key in state:
+                    continue
+                checkpoint_key = self._resolve_model_checkpoint_key(name, checkpoint_keys)
+                if checkpoint_key is not None and checkpoint_key.endswith(".main"):
+                    if checkpoint_key in state:
+                        raise RuntimeError(
+                            f"Multiple frozen parameters map to checkpoint key '{checkpoint_key}'"
+                        )
+                    state[checkpoint_key] = param
+        return state
+
+    def _resolve_optimizer_checkpoint_key(self, state_key: str, checkpoint_keys) -> Optional[str]:
+        checkpoint_key = super()._resolve_optimizer_checkpoint_key(state_key, checkpoint_keys)
+        if checkpoint_key is not None:
+            return checkpoint_key
+
+        candidates = []
+        for prefix in ("model.module.lm.", "model.lm.", "module.lm.", "lm."):
+            if state_key.startswith(prefix):
+                candidates.append(state_key.replace(prefix, prefix.replace("lm.", ""), 1))
+        for candidate in candidates:
+            if candidate in checkpoint_keys:
+                return candidate
+        return None
+
+    def _allow_missing_optimizer_checkpoint_key(self, state_key: str) -> bool:
+        return any(
+            f".{component}." in state_key or state_key.startswith(f"{component}.")
+            for component in ("connector", "vision")
+        )
+
+
+@dataclass
+class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
+    """Configuration for :class:`MultimodalOLMoDDPTrainModule`."""
+
+    freeze_params: Optional[List[str]] = None
+    vision_activation_checkpointing: bool = False
+    connector_activation_checkpointing: bool = False
+    response_logits_only: bool = False
+    diagnostics_interval: Optional[int] = None
+    train_embedding_rows: Optional[List[int]] = None
+    """Embedding rows allowed to receive gradients; all other rows are held fixed."""
+    source_loss_mass_targets: Optional[Dict[str, float]] = None
+    """Optional expected source loss-mass shares that enable online delivery telemetry."""
+    loss_group_weights: Optional[Dict[str, float]] = None
+    """Opt-in separately normalized group CE weights; see
+    :class:`MultimodalTransformerTrainModuleConfig` for the batch contract.
+    """
+    trim_microbatch_image_padding: bool = False
+    """Opt in to removing trailing image-crop and pooled-row padding per microbatch.
+
+    When images are supplied, requires collator ``image_crop_counts`` / ``pooled_token_counts``
+    metadata and zero vision dropout. Retains at least one dummy crop and pooled row, existing
+    vision collectives, and all LM token slots. FLOP estimates retain untrimmed batch shapes.
+    """
+
+    def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
+        return MultimodalOLMoDDPTrainModule(**kwargs)

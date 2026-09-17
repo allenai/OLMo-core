@@ -20,12 +20,19 @@ CACHE_DIR_ENV_VAR = "OLMO_CORE_FS_CACHE_DIR"
 F = TypeVar("F", bound=Callable[..., object])
 
 
-def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F], F]:
-    f"""
+def maybe_cache(
+    *,
+    condition: Callable[..., bool] | None = None,
+    cache_dir_env_var: str = CACHE_DIR_ENV_VAR,
+) -> Callable[[F], F]:
+    """
     Similar ``functools.cache``, but uses a persistent cache on the filesystem when the env var
-    '{CACHE_DIR_ENV_VAR}' is set, otherwise caching is disabled.
+    ``OLMO_CORE_FS_CACHE_DIR`` is set, otherwise caching is disabled.
 
     Arguments must be JSON-serializable. The result must be pickle-able.
+
+    :param condition: Optional predicate controlling whether to cache a call.
+    :param cache_dir_env_var: Environment variable containing the cache directory.
     """
 
     def decorator(user_function: F) -> F:
@@ -33,7 +40,7 @@ def maybe_cache(*, condition: Callable[..., bool] | None = None) -> Callable[[F]
         def wrapper(*args, **kwargs):
             cache_dir: Path | None = None
             if (condition is None or condition(*args, **kwargs)) and (
-                _cache_dir := os.environ.get(CACHE_DIR_ENV_VAR)
+                _cache_dir := os.environ.get(cache_dir_env_var)
             ) is not None:
                 cache_dir = Path(_cache_dir)
 

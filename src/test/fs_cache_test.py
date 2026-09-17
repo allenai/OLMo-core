@@ -26,3 +26,27 @@ def test_fs_cache(tmp_path):
 
     foo(x=2)
     assert _CACHE_MISSES == 3
+
+
+def test_dedicated_cache_does_not_enable_global_remote_metadata_cache(tmp_path, monkeypatch):
+    import olmo_core.io as io
+
+    dedicated_env = "OLMO_CORE_DATA_VERIFICATION_CACHE_DIR"
+    monkeypatch.delenv(fs_cache.CACHE_DIR_ENV_VAR, raising=False)
+    monkeypatch.setenv(dedicated_env, str(tmp_path / "verification"))
+    calls = []
+
+    @fs_cache.maybe_cache(cache_dir_env_var=dedicated_env)
+    def verified(value):
+        calls.append(value)
+        return value
+
+    assert verified(1) == verified(1) == 1
+    assert calls == [1]
+    sizes = iter([10, 20])
+    monkeypatch.setattr(io, "_http_file_size", lambda path: next(sizes))
+    assert io.get_file_size("https://example.test/data.arrow") == 10
+    assert io.get_file_size("https://example.test/data.arrow") == 20
+    monkeypatch.delenv(dedicated_env)
+    assert verified(1) == 1
+    assert calls == [1, 1]

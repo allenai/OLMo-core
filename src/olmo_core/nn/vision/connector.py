@@ -1,10 +1,12 @@
+"""Patch-group pooling and projection into language-model embedding space."""
+
 from dataclasses import dataclass
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper
+from torch.utils.checkpoint import checkpoint
 
 from olmo_core.config import DType, StrEnum
 from olmo_core.nn.config import ModuleConfig
@@ -132,9 +134,7 @@ class _PoolingCrossAttention(nn.Module):
             v.transpose(1, 2),
             attn_mask=attn_mask,
             is_causal=False,
-        ).transpose(
-            1, 2
-        )  # (B, 1, num_heads * head_dim)
+        ).transpose(1, 2)
 
         out = out.reshape(B, 1, self.num_heads * self.head_dim)
         return self.wo(out)
@@ -338,6 +338,7 @@ class VisionConnector(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported projector type: {cfg.projector_type}")
 
+        self._activation_checkpointing = False
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -350,10 +351,8 @@ class VisionConnector(nn.Module):
             nn.init.normal_(self.projector.weight, std=self.cfg.initializer_range)
 
     def apply_activation_checkpointing(self) -> None:
-        """Checkpoint pooling + projector (mm_olmo ``connector_activation_checkpointing``)."""
-        if self.pooling is not None:
-            self.pooling = checkpoint_wrapper(self.pooling)
-        self.projector = checkpoint_wrapper(self.projector)
+        """Checkpoint pooling and projection during training to reduce activation memory."""
+        self._activation_checkpointing = True
 
     def apply_compile(self) -> None:
         """``torch.compile`` pooling + projector (mm_olmo ``compile_connector: dynamic``).
@@ -416,7 +415,17 @@ class VisionConnector(nn.Module):
                 query = flat.sum(dim=1, keepdim=True) / denom.unsqueeze(-1).to(flat.dtype)
             else:
                 query = flat.mean(dim=1, keepdim=True)
-            pooled = self.pooling(query, flat, attn_mask=attn_mask)  # (B*n_pooled, 1, emb_dim)
+            if self._activation_checkpointing and self.training:
+                pooled = checkpoint(
+                    self.pooling,
+                    query,
+                    flat,
+                    attn_mask,
+                    use_reentrant=False,
+                    preserve_rng_state=False,
+                )
+            else:
+                pooled = self.pooling(query, flat, attn_mask=attn_mask)
             pooled = pooled.reshape(B, n_pooled, cfg.image_emb_dim)
         elif cfg.pooling_type == ImagePoolingType.none:
             # No pooling: pool_size must be 1, just squeeze.
@@ -425,4 +434,11 @@ class VisionConnector(nn.Module):
         else:
             raise NotImplementedError(f"Unsupported pooling type: {cfg.pooling_type}")
 
+        if self._activation_checkpointing and self.training:
+            return checkpoint(
+                self.projector,
+                pooled,
+                use_reentrant=False,
+                preserve_rng_state=False,
+            )
         return self.projector(pooled)

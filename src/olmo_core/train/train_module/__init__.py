@@ -8,6 +8,8 @@ from .train_module import (
 from .transformer import (
     MoEV2TransformerTrainModule,
     MoEV2TransformerTrainModuleConfig,
+    MultimodalOLMoDDPTrainModule,
+    MultimodalOLMoDDPTrainModuleConfig,
     MultimodalTransformerTrainModule,
     MultimodalTransformerTrainModuleConfig,
     OLMoDDPTrainModule,
@@ -36,6 +38,8 @@ __all__ = [
     "TransformerTrainModuleConfig",
     "MultimodalTransformerTrainModule",
     "MultimodalTransformerTrainModuleConfig",
+    "MultimodalOLMoDDPTrainModule",
+    "MultimodalOLMoDDPTrainModuleConfig",
     "TransformerPipelineTrainModule",
     "TransformerPipelineTrainModuleConfig",
     "OLMoDDPTrainModule",
