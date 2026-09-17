@@ -142,6 +142,40 @@ def test_truncate_example_uses_model_specific_image_patch_id():
         truncate_example(seq, 2, image_patch_token_id=1234)
 
 
+@pytest.mark.parametrize("max_len", [4, 8])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_truncation_preserves_metadata_and_non_token_fields(max_len, wrapped):
+    token_fields = {
+        "input_ids": np.arange(10, 18),
+        "labels": np.arange(11, 19),
+        "loss_masks": np.ones(8),
+        "position_ids": np.arange(8),
+    }
+    other_fields = {
+        "metadata": {"example_id": "row-1", "answers": ["answer"]},
+        "source": "academic",
+        "weight": 1.0,
+        "optional": None,
+        "references": list(range(8)),
+        "scalar": np.array(1),
+        "images": np.zeros((8, 2, 2)),
+        "pooled_patches_idx": np.zeros((8, 4), dtype=np.int64),
+    }
+    example = {**token_fields, **other_fields}
+    if wrapped:
+        bounded = MaxSequenceLengthDataset([example], max_len, token_ids=Molmo2TokenIds())
+        out = bounded[0]
+    else:
+        out = truncate_example(example, max_len)
+
+    for key, value in token_fields.items():
+        np.testing.assert_array_equal(out[key], value[:max_len])
+        assert len(example[key]) == 8
+    for key, value in other_fields.items():
+        assert out[key] is value
+    assert set(out) == set(example)
+
+
 def test_max_sequence_dataset_forwards_epoch_and_rejects_structural_image_truncation():
     token_ids = Molmo2TokenIds(
         im_start_id=101,

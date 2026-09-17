@@ -209,13 +209,13 @@ def decode_pil_image(obj: Any):
 
 
 def truncate_example(
-    seq: Dict[str, np.ndarray],
+    seq: Dict[str, Any],
     max_len: int,
     *,
     image_patch_token_id: int = IM_PATCH_ID,
     image_token_ids: Optional[Collection[int]] = None,
     recompute_root_subsegments: bool = False,
-) -> Dict[str, np.ndarray]:
+) -> Dict[str, Any]:
     """Right-truncate every per-token field of ``seq`` to ``max_len``.
 
     :param seq: A built example (as returned by the sequence builders).
@@ -260,7 +260,10 @@ def truncate_example(
     if not np.any(seq["loss_masks"][:max_len] > 0):
         raise ValueError(f"Truncation to {max_len} removed all loss tokens")
     n = len(seq["input_ids"])
-    out = {k: (v[:max_len] if v.ndim == 1 and len(v) == n else v) for k, v in seq.items()}
+    out = {
+        k: (v[:max_len] if isinstance(v, np.ndarray) and v.ndim == 1 and len(v) == n else v)
+        for k, v in seq.items()
+    }
     if original_branch_count > 1 and "subsegment_ids" in out:
         surviving_branch_ids = np.unique(out["subsegment_ids"][out["loss_masks"] > 0])
         surviving_branch_ids = surviving_branch_ids[
@@ -304,10 +307,10 @@ class MaxSequenceLengthDataset:
     def __len__(self) -> int:
         return len(self.dataset)
 
-    def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
+    def __getitem__(self, index: int) -> Dict[str, Any]:
         return self.get(index, 0)
 
-    def get(self, index: int, epoch: int = 0) -> Dict[str, np.ndarray]:
+    def get(self, index: int, epoch: int = 0) -> Dict[str, Any]:
         """Load and safely bound one example, forwarding source epochs when supported."""
         getter = getattr(self.dataset, "get", None)
         example = getter(index, epoch) if getter is not None else self.dataset[index]
