@@ -791,6 +791,11 @@ class Trainer:
         evaluator callbacks' ``pre_train``/``post_train`` hooks are skipped (only the evaluators'
         ``perform_eval()`` runs).
 
+        Logging steps increase strictly, using the saved training step (or a ``stepN`` checkpoint
+        name) when possible. ``checkpoint/train_step`` retains that step, or -1 if unknown.
+        Without trainer state, token/FLOP counters are reported as zero (unknown), distinguished by
+        ``checkpoint/trainer_state_loaded=0``.
+
         :raises OLMoConfigurationError: If ``no_evals=True``, no ``EvaluatorCallback`` is configured,
             or ``checkpoints_to_eval`` is unset.
         """
@@ -838,6 +843,7 @@ class Trainer:
                 self._shutdown()
                 return
 
+            eval_step_floor = 0
             for checkpoint_num, checkpoint_path in enumerate(checkpoint_paths, start=1):
                 if self.is_canceled:
                     break
@@ -849,9 +855,13 @@ class Trainer:
                 # Offline eval only needs model weights: skip optimizer state (never needed, and
                 # eval-only/weights-only checkpoints have none), and leave trainer state at the
                 # trainer's default (load-if-present) so it isn't required either.
-                self.load_checkpoint(checkpoint_path, load_optim_state=False)
+                self.load_checkpoint(
+                    checkpoint_path, load_optim_state=False, _eval_step_floor=eval_step_floor
+                )
+                eval_step_floor = self.global_step + 1
 
                 self.record_metric("throughput/total tokens", self.global_train_tokens_seen)
+                total_petaflops = self.global_train_petaflops
                 # Duck-typed so this stays train-module-agnostic (transformer train modules expose
                 # these; the base TrainModule doesn't).
                 num_flops_fn = getattr(self.train_module, "num_flops_per_token", None)
@@ -859,10 +869,8 @@ class Trainer:
                 if callable(num_flops_fn) and max_seq_len is not None:
                     num_flops_per_token = num_flops_fn(max_seq_len)
                     if num_flops_per_token is not None:
-                        self.record_metric(
-                            "throughput/total petaflops",
-                            self.global_train_tokens_seen * num_flops_per_token / 1e15,
-                        )
+                        total_petaflops = self.global_train_tokens_seen * num_flops_per_token / 1e15
+                self.record_metric("throughput/total petaflops", total_petaflops)
 
                 for callback in evaluator_callbacks:
                     callback.perform_eval()
@@ -1061,6 +1069,7 @@ class Trainer:
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
         reset_optimizer_states_on_load: Optional[bool] = None,
+        _eval_step_floor: Optional[int] = None,
     ):
         """
         Load a checkpoint.
@@ -1122,6 +1131,33 @@ class Trainer:
         )
         if trainer_state is not None:
             self.load_state_dict(cast(TrainerStateDict, trainer_state))
+
+        if _eval_step_floor is not None:
+            # Set the offline-evaluation logging step before load metrics and callbacks. A later
+            # assignment would leave fragments attributed to the previous checkpoint's step.
+            train_step = self.global_step if trainer_state is not None else None
+            if trainer_state is None:
+                checkpoint_path = Path(dir)
+                if checkpoint_path.name == "model_and_optim":
+                    checkpoint_path = checkpoint_path.parent
+                name = checkpoint_path.name
+                if name.startswith("step") and name[4:].isdigit():
+                    train_step = int(name[4:])
+                self.global_train_tokens_seen = 0
+                self.global_train_petaflops = 0.0
+                self.epoch = 1
+                log.info("No trainer state loaded; token/FLOP counters are unknown (reported as 0)")
+
+            self.global_step = max(train_step if train_step is not None else 1, _eval_step_floor)
+            if self.global_step != train_step:
+                log.info(
+                    f"Using evaluation logging step {self.global_step} "
+                    f"for training step {train_step if train_step is not None else 'unknown'}"
+                )
+            self.record_metric(
+                "checkpoint/train_step", train_step if train_step is not None else -1
+            )
+            self.record_metric("checkpoint/trainer_state_loaded", int(trainer_state is not None))
 
         self.record_metric(
             "checkpoint/load_duration_s",
