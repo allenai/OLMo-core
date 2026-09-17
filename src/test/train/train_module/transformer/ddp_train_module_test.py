@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from olmo_core.config import DType
-from olmo_core.distributed.parallel import DataParallelType
+from olmo_core.distributed.parallel import DataParallelType, PipelineScheduleType
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
@@ -26,6 +26,8 @@ from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.train.train_module import OLMoDDPTrainModule, OLMoDDPTrainModuleConfig
 from olmo_core.train.train_module.transformer import (
+    MoEV2TransformerTrainModuleConfig,
+    TransformerContextParallelConfig,
     TransformerDataParallelConfig,
     TransformerExpertParallelConfig,
     TransformerPipelineParallelConfig,
@@ -37,6 +39,90 @@ from olmo_core.train.train_module.transformer import (
 
 class _ValidationPassed(Exception):
     pass
+
+
+class _RecordingTrainModuleConfig(OLMoDDPTrainModuleConfig):
+    def _build_train_module(self, **kwargs):
+        return kwargs
+
+
+def _eval_only_parallelism_kwargs(parallelism):
+    kwargs = {"dp_config": TransformerDataParallelConfig(name=DataParallelType.ddp)}
+    if parallelism in ("pp", "pp_cp"):
+        kwargs["pp_config"] = TransformerPipelineParallelConfig(
+            degree=2,
+            schedule=PipelineScheduleType.custom_interleaved_1F1B,
+            use_custom_stage_implementation=True,
+        )
+    if parallelism in ("cp", "pp_cp"):
+        kwargs["cp_config"] = TransformerContextParallelConfig.zig_zag(degree=2)
+    if parallelism == "ep":
+        kwargs["ep_config"] = TransformerExpertParallelConfig(degree=2)
+    return kwargs
+
+
+@pytest.mark.parametrize(
+    "config_type",
+    [OLMoDDPTrainModuleConfig, MoEV2TransformerTrainModuleConfig, _RecordingTrainModuleConfig],
+    ids=["native", "legacy", "subclass"],
+)
+@pytest.mark.parametrize("eval_only", [False, True])
+@pytest.mark.parametrize("parallelism", ["dp", "ep", "pp", "cp", "pp_cp"])
+def test_native_eval_only_config_validates_before_building_module(
+    monkeypatch, config_type, eval_only, parallelism
+):
+    build_module = Mock(side_effect=lambda **kwargs: kwargs)
+    monkeypatch.setattr(train_module_impl, "OLMoDDPTrainModule", build_module)
+    kwargs = _eval_only_parallelism_kwargs(parallelism)
+    config = config_type(
+        rank_microbatch_size=16,
+        max_sequence_length=8,
+        optim=OLMoDDPOptimizerConfig(),
+        **kwargs,
+    )
+    model = object()
+
+    if eval_only and parallelism in ("pp", "cp", "pp_cp"):
+        with pytest.raises(
+            OLMoConfigurationError, match="eval_only=True.*pipeline or context parallelism"
+        ):
+            config.build(model, eval_only=eval_only)
+        build_module.assert_not_called()
+    else:
+        result = config.build(model, eval_only=eval_only)
+        assert result["model"] is model
+        assert result["eval_only"] is eval_only
+        for key, value in kwargs.items():
+            assert result[key] is value
+        assert build_module.call_count == (0 if config_type is _RecordingTrainModuleConfig else 1)
+
+
+@pytest.mark.parametrize("eval_only", [False, True])
+@pytest.mark.parametrize("parallelism", ["dp", "ep", "pp", "cp", "pp_cp"])
+def test_native_eval_only_constructor_validates_before_model_and_device_initialization(
+    monkeypatch, eval_only, parallelism
+):
+    model = SimpleNamespace(_olmo_ddp_compatible=True)
+    check_model = Mock(wraps=train_module_impl._is_olmo_ddp_compatible)
+    initialize_device = Mock(side_effect=_ValidationPassed)
+    monkeypatch.setattr(train_module_impl, "_is_olmo_ddp_compatible", check_model)
+    monkeypatch.setattr(train_module_impl, "get_default_device", initialize_device)
+    kwargs = _eval_only_parallelism_kwargs(parallelism)
+
+    invalid = eval_only and parallelism in ("pp", "cp", "pp_cp")
+    expected_error = OLMoConfigurationError if invalid else _ValidationPassed
+    match = "eval_only=True.*pipeline or context parallelism" if invalid else None
+    with pytest.raises(expected_error, match=match):
+        OLMoDDPTrainModule(
+            model=model,
+            optim=OLMoDDPOptimizerConfig(),
+            rank_microbatch_size=16,
+            max_sequence_length=8,
+            eval_only=eval_only,
+            **kwargs,
+        )
+    assert check_model.call_count == (0 if invalid else 1)
+    assert initialize_device.call_count == (0 if invalid else 1)
 
 
 @pytest.mark.parametrize("tbo", [False, True])
