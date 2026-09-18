@@ -27,3 +27,43 @@ def test_load_olmo3_7b_config():
     # Round-trip through as_config_dict / from_dict should be lossless.
     roundtripped = TransformerConfig.from_dict(config.as_config_dict())
     assert roundtripped.as_config_dict() == config.as_config_dict()
+
+
+def test_legacy_fused_attention_config():
+    """Load legacy attention fields, including a per-layer override, into V2."""
+    import pytest
+
+    from olmo_core.nn.attention import (
+        AttentionBackendName,
+        AttentionType,
+        FusedAttentionV2,
+    )
+    from olmo_core.nn.layer_norm import LayerNormType
+    from olmo_core.nn.rope import RoPEType
+
+    config = TransformerConfig.llama_like(
+        d_model=32,
+        vocab_size=64,
+        n_layers=2,
+        n_heads=2,
+        fused_ops=True,
+        use_flash=True,
+        layer_norm_name=LayerNormType.rms,
+    )
+    assert isinstance(config.block, TransformerBlockConfig)
+    attention = config.block.sequence_mixer
+    assert attention.name == AttentionType.fused_v2
+    assert attention.backend == AttentionBackendName.flash_2
+    assert attention.use_flash is None
+    assert attention.rope.name == RoPEType.default
+
+    serialized = config.as_config_dict()
+    block = serialized["block"]
+    block["attention"] = block.pop("sequence_mixer")
+    block["attention"].update(name="fused", backend="torch")
+    block["attention"]["rope"]["name"] = "fused"
+    serialized["block_overrides"] = {"1": block}
+    restored = TransformerConfig.from_dict(serialized)
+    with pytest.warns(UserWarning, match="not numerically identical"):
+        model = restored.build()
+    assert all(isinstance(block.attention, FusedAttentionV2) for block in model.blocks.values())
