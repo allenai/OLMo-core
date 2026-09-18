@@ -42,11 +42,22 @@ def family(fid: str, capability: str, answer_type: str, held_out: bool = False):
     return deco
 
 
-def _qa(fid, question, answer, *, tol=None, na=False):
+def _qa(fid, question, answer, *, tol=None, na=False, target=None):
+    """One QA record. `answer` is the bare gold the eval scores; `target` is what training
+    supervises -- for procedure-supervised families it is the enumeration/search trace
+    ending in the answer, everywhere else it defaults to the bare answer.
+
+    Why the split exists: prompting the model to enumerate lifted CharXiv t17 by +20
+    (32.14 -> 52.23, chi2=21.75) but a global cue cost -2.0 benchmark-wide because it
+    cannot be enumeration-for-aggregates and terse-for-read-offs at once. Per-question
+    supervision can: trace targets go ONLY on aggregation/verification families, read-off
+    families stay terse, so the discrimination itself is what gets trained.
+    """
     m = _REG[fid]
     return dict(family=fid, capability=m["capability"], question=question,
                 answer=str(answer), answer_type="na" if na else m["answer_type"],
-                tol=tol, held_out=m["held_out"], is_na=na)
+                tol=tol, held_out=m["held_out"], is_na=na,
+                target=str(target) if target is not None else str(answer))
 
 
 def _panel_ref(spec, panel):
@@ -56,6 +67,18 @@ def _panel_ref(spec, panel):
     if panel.title:
         return f"In the panel titled \"{panel.title}\", "
     return None  # untitled panel in a multi-panel figure: not referable without layout
+
+
+def _tick_list(axis):
+    return ", ".join(lbl for _, lbl in axis.ticks.labeled_pairs())
+
+
+def _axis_enum_trace(panel):
+    """Enumeration trace over one panel's two axes, ending in the total."""
+    nx, ny = panel.x.ticks.n_labeled, panel.y.ticks.n_labeled
+    return (f"Horizontal axis ticks: {_tick_list(panel.x)} ({nx}). "
+            f"Vertical axis ticks: {_tick_list(panel.y)} ({ny}). "
+            f"Total: {nx + ny}.")
 
 
 # --------------------------------------------------------------------- counting
@@ -79,7 +102,9 @@ def _ticks_total(spec, audit, rng):
             "Counting all axes together, how many tick marks have text written next to them?",
             "How many of the tick marks in this figure are annotated with a value or name? Count across all axes.",
         ])
-        out.append(_qa("cnt.ticks_total", q, spec.total_labeled_ticks()))
+        panel = spec.panels[0]
+        out.append(_qa("cnt.ticks_total", q, spec.total_labeled_ticks(),
+                       target=_axis_enum_trace(panel)))
         return out
     for panel in spec.panels:
         ref = _panel_ref(spec, panel)
@@ -90,7 +115,7 @@ def _ticks_total(spec, audit, rng):
             f"{ref}add up the tick marks carrying a written label on both of its axes. How many are there?",
             f"{ref}counting its two axes together, how many tick marks have text written next to them?",
         ])
-        out.append(_qa("cnt.ticks_total", q, n))
+        out.append(_qa("cnt.ticks_total", q, n, target=_axis_enum_trace(panel)))
     return out
 
 
@@ -106,8 +131,10 @@ def _ticks_axis(spec, audit, rng):
                 f"{ref}how many labelled tick marks sit along the {word} axis?",
                 f"{ref}count the tick marks with written values on the {word} axis.",
             ])
+            n_ax = axis.ticks.n_labeled
+            trace = f"The labelled ticks are {_tick_list(axis)} - {n_ax} in total."
             out.append(_qa("cnt.ticks_axis", q[0].upper() + q[1:] if not ref else q,
-                           axis.ticks.n_labeled))
+                           n_ax, target=trace))
     return out
 
 
@@ -143,9 +170,14 @@ def _legend_entries(spec, audit, rng):
         q = q[0].upper() + q[1:] if not ref else q
         if not panel.has_legend:
             out.append(_qa("cnt.legend_entries", q,
-                           "There is no legend on this chart.", na=True))
+                           "There is no legend on this chart.", na=True,
+                           target="Checking for a key inside and beside the axes: none is "
+                                  "drawn. There is no legend on this chart."))
         else:
-            out.append(_qa("cnt.legend_entries", q, len(panel.legend_entries)))
+            names = ", ".join(panel.legend_entries)
+            out.append(_qa("cnt.legend_entries", q, len(panel.legend_entries),
+                           target=f"The key lists: {names} - "
+                                  f"{len(panel.legend_entries)} entries."))
     return out
 
 
@@ -186,7 +218,10 @@ def _title(spec, audit, rng):
         if panel.title:
             out.append(_qa("ocr.title", q, panel.title))
         else:
-            out.append(_qa("ocr.title", q, "This chart has no heading written on it.", na=True))
+            out.append(_qa("ocr.title", q, "This chart has no heading written on it.",
+                           na=True,
+                           target="Checking above the axes for a heading: nothing is "
+                                  "printed there. This chart has no heading written on it."))
     return out
 
 
@@ -207,7 +242,10 @@ def _axis_label(spec, audit, rng):
                 out.append(_qa("ocr.axis_label", q, axis.label))
             else:
                 out.append(_qa("ocr.axis_label", q,
-                               f"The {word} axis carries no written name.", na=True))
+                               f"The {word} axis carries no written name.", na=True,
+                               target=f"Checking along the {word} axis for a name: only "
+                                      f"tick values are printed. The {word} axis carries "
+                                      "no written name."))
     return out
 
 
@@ -225,8 +263,13 @@ def _legend_names(spec, audit, rng):
         q = q[0].upper() + q[1:] if not ref else q
         if panel.has_legend and panel.legend_entries:
             out.append(_qa("ocr.legend_names", q, ", ".join(panel.legend_entries)))
-        else:
-            out.append(_qa("ocr.legend_names", q, "This chart has no key.", na=True))
+        elif rng.random() < 0.5:
+            # NA recall on legend names was already 85-94% before any training; these
+            # examples buy little and push the prior toward over-declaring absence
+            # (t12 precision fell to 74.5%). Emit them at half rate.
+            out.append(_qa("ocr.legend_names", q, "This chart has no key.", na=True,
+                           target="Checking inside and beside the axes for a key: none is "
+                                  "drawn. This chart has no key."))
     return out
 
 

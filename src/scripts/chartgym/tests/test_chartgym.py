@@ -239,3 +239,33 @@ def test_tick_total_is_panel_scoped_on_multipanel_figures():
                 assert int(q["answer"]) in per_panel
                 assert int(q["answer"]) < spec.total_labeled_ticks() or spec.n_panels == 1
     assert seen_single and seen_multi, "need both scopes exercised"
+
+
+def test_procedure_traces_are_correct_and_selective():
+    """Trace targets must (a) end in the bare answer, (b) exist ONLY on aggregation and
+    NA-verification families, and (c) never leak onto read-off families.
+
+    The selectivity is the entire point: a global enumeration prompt lifted CharXiv t17 by
+    +20 but cost -2.0 benchmark-wide because it narrated simple look-ups too. Supervision
+    is the instrument that can be enumeration-for-aggregates and terse-for-read-offs at
+    once -- but only if the corpus actually is.
+    """
+    import re
+
+    TRACE_FAMILIES = {"cnt.ticks_total", "cnt.ticks_axis", "cnt.legend_entries"}
+    seen_traced = set()
+    for spec, audit in _figures(n=30):
+        for q in emit_all(spec, audit, np.random.default_rng(9), include_held_out=False):
+            if q["target"] == q["answer"]:
+                continue
+            seen_traced.add(q["family"])
+            if q["is_na"]:
+                # search trace: must end by expressing the NA conclusion
+                assert q["answer"].rstrip(".") in q["target"], q
+                assert q["target"].lower().startswith("checking"), q
+            else:
+                assert q["family"] in TRACE_FAMILIES, f"trace leaked onto {q['family']}"
+                # enumeration trace: the LAST number must be the answer
+                nums = re.findall(r"-?\d+(?:\.\d+)?", q["target"].replace(",", ""))
+                assert nums and float(nums[-1]) == float(q["answer"]), q
+    assert TRACE_FAMILIES <= seen_traced, f"missing traces for {TRACE_FAMILIES - seen_traced}"

@@ -27,7 +27,10 @@ from pathlib import Path
 from datasets import Dataset, Features, Image, Value
 
 MAX_CHARS_PER_ROW = 6000       # ~1.5k tokens of text against a 16,384 budget
-MAX_ANSWER_CHARS = 200
+# Bare answers stay short; procedure traces (enumeration / search) legitimately run to a
+# few hundred characters -- a 14-tick axis enumerated twice is ~350. The cap exists to
+# catch runaway generation bugs, not to trim traces.
+MAX_TARGET_CHARS = 600
 
 
 def main() -> int:
@@ -51,8 +54,9 @@ def main() -> int:
             if q["held_out"]:
                 dropped["held_out_primitive"] += 1
                 continue
-            if len(q["answer"]) > MAX_ANSWER_CHARS:
-                dropped["answer_too_long"] += 1
+            target = q.get("target") or q["answer"]
+            if len(target) > MAX_TARGET_CHARS:
+                dropped["target_too_long"] += 1
                 continue
             img = shard / "figures" / f"{q['figure_id']}.png"
             if not img.exists():
@@ -62,7 +66,8 @@ def main() -> int:
                 "images": [str(img)], "texts": [], "figure_id": q["figure_id"],
                 "difficulty": q["difficulty"], "families": [], "capabilities": [],
             })
-            row["texts"].append({"user": q["question"], "assistant": q["answer"]})
+            # Training supervises the procedure (`target`); the eval scores the bare answer.
+            row["texts"].append({"user": q["question"], "assistant": target})
             row["families"].append(q["family"])
             row["capabilities"].append(q["capability"])
 
