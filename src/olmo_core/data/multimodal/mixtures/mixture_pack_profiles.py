@@ -20,6 +20,12 @@ single-image. They now get the single-image profile, which is both cheaper and c
 but it does change how those bisect runs pack, so a before/after comparison of a bisect
 result is not apples-to-apples across this change. ``pixmo_multi_points`` stays on the
 multi-image profile.
+
+The single-image budget is additionally *tuned*, not just derived: it is the measured
+balance point where token and crop occupancy bind at the same time (see
+:data:`SINGLE_IMAGE_PACK_MAX_CROPS`). The multi-image budget is deliberately left at its
+conservative derived ceiling -- it has never been swept, and a multi-image row costs
+several images' worth of crops, so the single-image measurement does not transfer.
 """
 
 from __future__ import annotations
@@ -35,14 +41,47 @@ __all__ = [
     "MixturePackProfile",
     "MULTI_IMAGE_PACK_MAX_CROPS",
     "SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS",
+    "SINGLE_IMAGE_PACK_MAX_CROPS",
     "SINGLE_IMAGE_PACK_PROFILE",
     "MULTI_IMAGE_PACK_PROFILE",
     "get_mixture_pack_profile",
     "mixture_is_multi_image",
 ]
 
-# One high-res image: 1 global + up to 24 local crops (mm_olmo pointing/high-res budget).
+# The *floor*: one high-res image is 1 global + up to 24 local crops (mm_olmo
+# pointing/high-res budget). A per-pack budget below this would force a high-res row into
+# its own mostly-padding 16k pack, so it is the smallest defensible capacity — not a
+# recommendation. This is the value the single-image profile shipped with until the
+# crop-budget sweep below.
 SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS = 1 + 24
+
+# The shipped single-image budget: the measured balance point, not one example's cost.
+#
+# A 16,384-token pack at the 25-crop floor is ~69% padding -- the pack fills its crop
+# budget (97.5% crop occupancy) long before it fills its token budget (30.6%), so the LM
+# runs 3.2x more padded sequences than it needs to for the same ViT work. Total ViT crops
+# are exactly invariant across the sweep; only the number of 16k LM sequences changes.
+#
+# Swept on 8xB300 against `single-image-only-v10` (100-step medians, pad-attention fix in,
+# `rank_microbatch_instances=2`, `dl_num_workers=8`), measured in *useful* (non-pad) TPS:
+#
+#     crops |  25  |  32  |  40  |  50  |  64  |  80  | 100
+#     useful TPS | 8,400 | 9,527 | 11,164 | 12,140 | 14,815 | 15,729 | 14,624
+#
+# 80 is the peak: token occupancy saturates at 98.7% there, and 100 buys no extra
+# occupancy while costing step time (6.64s vs 6.17s) -- crop budget with no tokens to
+# spend it on is pure cost. Over 2,000 steps this is **1.85x more rows/sec** (100.0 vs
+# 54.0 rows/sec at 8 GPUs), convergence-neutral against examples consumed.
+#
+# TWO THINGS TO KNOW BEFORE CHANGING THIS:
+#   * `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is REQUIRED at this budget. See
+#     `SHIP_STACK_ENV` in `src/scripts/train/Molmo2-Stage2.py`.
+#   * `GLOBAL_BATCH_INSTANCES` counts *packs*, so raising the crop budget raises
+#     examples/step at a fixed pack count (~4.1 -> ~13.1 examples/pack). Pick the pack
+#     count deliberately; see STAGE2_FAST_CONFIG.md.
+#
+# `crops=64` (+69.9%) is the lower-risk alternative if you want memory margin.
+SINGLE_IMAGE_PACK_MAX_CROPS = 80
 
 # Worst case for multi-image sources in image-only-v9: 5 images × 25 crops each.
 #
@@ -61,9 +100,9 @@ class MixturePackProfile:
 
 
 SINGLE_IMAGE_PACK_PROFILE = MixturePackProfile(
-    pack_max_crops=SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+    pack_max_crops=SINGLE_IMAGE_PACK_MAX_CROPS,
     pack_shortcut_max_len_images=True,
-    description="single-image sources only (mm_olmo effective SFT packing)",
+    description="single-image sources only (throughput-tuned crop budget)",
 )
 
 MULTI_IMAGE_PACK_PROFILE = MixturePackProfile(

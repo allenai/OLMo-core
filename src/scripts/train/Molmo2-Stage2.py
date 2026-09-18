@@ -21,6 +21,7 @@ Set ``--trainer.load_path=null`` to initialise from HF ``allenai/Molmo2-4B`` ins
 """
 
 import logging
+import os
 import sys
 from dataclasses import dataclass
 from datetime import timedelta
@@ -42,6 +43,7 @@ from olmo_core.data.multimodal.mixtures.image_only_v10 import (
 )
 from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
     MULTI_IMAGE_PACK_MAX_CROPS,
+    SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
     get_mixture_pack_profile,
 )
 from olmo_core.data.multimodal.mixtures.tiers import (
@@ -99,8 +101,14 @@ PACK_SEQUENCES = True
 COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 0
-DL_NUM_WORKERS = 2
-"""Process workers for packed mixture DataLoader (0 = sync pack+collate on iterator thread)."""
+DL_NUM_WORKERS = 8
+"""Process workers for packed mixture DataLoader (0 = sync pack+collate on iterator thread).
+
+Load-bearing at the tuned crop budget, not a nicety. The packer runs inside these workers,
+and a fuller pack is more packing work per step: at the previous default of 2 the 8xB300
+`single-image-only-v10` sweep measured the run **43% data-loader-bound**. 8 fixes it; 16 is
+indistinguishable from 8 (12,146 vs 12,140 useful TPS), so there is nothing above 8 to buy.
+"""
 DL_PREFETCH_FACTOR = 2
 DL_PERSISTENT_WORKERS = True
 MAX_CROPS = 8
@@ -111,7 +119,21 @@ PACK_SHORTCUT_MAX_LEN_IMAGES = False
 EST_TOKENS_PER_EXAMPLE = 1500  # packed 16k sequences; tune if batch counts look off
 
 # mm_olmo train_image_video_sft.py (image-only-v9): global 128, microbatch 2 per GPU.
+#
+# GLOBAL_BATCH_INSTANCES counts *packs*, not examples, so it does not mean the same thing
+# at every crop budget. At the single-image tier's tuned budget a pack holds ~13.1 examples
+# instead of ~4.1, so 128 packs is ~1,677 examples/step rather than ~524 against an
+# unchanged LR schedule. **Choose the pack count deliberately** -- the validated 8-GPU runs
+# used 32 packs (419 examples/step) and 48 packs (629); no one has run 128 packs at the
+# tuned budget. Constraint: global packs must divide `dp_world_size x
+# RANK_MICROBATCH_INSTANCES` (16 at 8 GPUs, 64 at 32 GPUs), else the trainer aborts with
+# "global batch size must be divisible by micro-batch size x DP world size".
+# See STAGE2_FAST_CONFIG.md.
 GLOBAL_BATCH_INSTANCES = 128
+# Keep at 2. `mb=1` is not a safe fallback, it is a ~19% throughput loss at identical
+# occupancy and examples/step (10,204 vs 12,140 useful TPS at crops=50), and mb=2 at the
+# tuned crop budget does *not* OOM -- an untested assumption that it would once cost half
+# the measured win. `mb=3` does OOM on B300 (~261/268 GiB).
 RANK_MICROBATCH_INSTANCES = 2
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
@@ -172,6 +194,13 @@ DEFAULT_LOAD_PATH = (
 # radius. A local `train` run under torchrun therefore still gets the in-code defaults,
 # not these ship-stack values - that's intended.
 SHIP_STACK_ENV: Dict[str, str] = {
+    # NOT a tuning knob -- a correctness requirement at the single-image tier's crop
+    # budget. Without it the run OOMs at around step 1,307 AFTER PASSING three separate
+    # 100-step smokes, reporting ~39 GiB reserved-but-unallocated. A 100-step smoke cannot
+    # validate memory stability here; the only evidence that matters is a long run.
+    # The raw-YAML launch path always set this; the Gantry path never did until it was
+    # added here, which is exactly how the ~3-hour tail failure got shipped once already.
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     "VIT_CROP_MICROBATCH": "32",  # +3.0% TPS (20,185 vs 19,594, 8-GPU mb2)
     "MM_FSDP_RESHARD_AFTER_FORWARD": "0",  # +2.4% TPS (13,281 vs 12,973, 8-GPU)
     # MM_FSDP_IMAGE_ALIGN_HACK is deliberately NOT set here (i.e. the align tie stays on).
@@ -598,6 +627,28 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     return datasets, weights, names
 
 
+def _warn_if_allocator_unconfigured(config: ExperimentConfig) -> None:
+    """Warn when running a raised crop budget without ``expandable_segments``.
+
+    ``SHIP_STACK_ENV`` only reaches Beaker launches. A ``torchrun`` invocation of this
+    script gets the ambient environment, and without this allocator setting a run at the
+    tuned crop budget OOMs at around step 1,307 -- long after every smoke test has passed.
+    Fail loudly at step 0 instead of silently three hours in.
+    """
+    if config.pack_max_crops <= SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS:
+        return
+    if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
+        return
+    log.warning(
+        "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is NOT set, and pack_max_crops=%d "
+        "is above the one-example floor of %d. This configuration has been observed to OOM "
+        "at ~step 1,307 after passing three separate 100-step smokes. Export it before "
+        "training (Beaker launches get it from SHIP_STACK_ENV automatically).",
+        config.pack_max_crops,
+        SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+    )
+
+
 def train(config: ExperimentConfig):
     seed_all(config.init_seed)
 
@@ -631,6 +682,7 @@ def train(config: ExperimentConfig):
         config.model.vit_crop_microbatch,
         config.effective_dl_num_workers,
     )
+    _warn_if_allocator_unconfigured(config)
     prefetch_workers = config.prefetch_workers
     data_loader = MixtureDataLoader(
         datasets,
