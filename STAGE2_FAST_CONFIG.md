@@ -118,24 +118,30 @@ it does not sit on the one long run above. `--pack_max_crops=64` overrides the p
 ### 1. Batch granularity — the thing most likely to bite you
 
 `GLOBAL_BATCH_INSTANCES` counts **packs**, not examples, and a pack now holds **~13.1
-examples instead of ~4.1**. So the unchanged default of 128 packs is **~1,677
-examples/step**, not the ~524 it used to be, against an unchanged LR schedule. Nobody has
-run 128 packs at `crops=80`.
+examples instead of ~4.1**. Leaving it at the old 128 would have meant **~1,677
+examples/step** instead of ~524 — a 3.2x batch change smuggled in alongside a performance
+change, against an unchanged LR schedule.
+
+**The default is therefore 32 packs (~419 examples/step)**, slightly *below* the old
+baseline, so adopting this config does not silently enlarge your batch. `crops=80` was
+measured at 32 packs and still gave **+85.6%** (vs +87.3% at 48), so the speedup does not
+depend on a large batch.
 
 Global packs must divide `dp_world_size x rank_microbatch_instances` — **16** at 8 GPUs
-with mb=2, **64** at 32 GPUs. A 104-pack config died at startup with `global batch size
-must be divisible by micro-batch size x DP world size`.
+with mb=2, **64** at 32 GPUs:
 
-Matching the old 524 examples/step would need ~40 packs, which is **not reachable** at mb=2
-on 8 GPUs. So adopting this config means *choosing* a nearby batch size on purpose:
+| packs | examples/step | 8 GPU | 16 GPU | 32 GPU | notes |
+|---|---|---|---|---|---|
+| **32** | ~419 | OK | OK | **FAIL** | the default; validated at +85.6% |
+| 48 | ~629 | OK | FAIL | FAIL | what most of the sweep ran at |
+| 64 | ~838 | OK | OK | OK | smallest valid choice at 32 GPUs |
+| 128 | ~1,677 | OK | OK | OK | the old default; 3.2x the old batch, unvalidated |
 
-| packs | examples/step (8 GPUs) | notes |
-|---|---|---|
-| 32 | ~419 | validated; *smaller* than the old baseline and still +85.6% |
-| 48 | ~629 | the config most of the sweep above ran at |
-| 128 | ~1,677 | the current default — **3.2x the old batch size**, unvalidated |
-
-Set it explicitly: `--global_batch_size=$((48 * 16384))`.
+**So a 32-GPU run must raise it** — 64 packs is the smallest that works there.
+`launch()` checks this against the requested GPU count and refuses on your machine, naming
+the valid values, rather than letting the trainer abort after the job has been scheduled.
+Matching the old 524 examples/step exactly would need ~40 packs, which is unreachable at
+mb=2 on any of these world sizes.
 
 ### 2. `expandable_segments` is not optional
 
