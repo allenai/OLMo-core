@@ -16,7 +16,7 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
 CAMPAIGN = "olmo35-small-4t-gptoss-high-sft-20260917"
-BRANCH = "codex/hero-4t-high-sft-20260917"
+BRANCH = "codex/hero-4t-sft-lr-sweep-20260918"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
@@ -29,7 +29,18 @@ BATCH = 524288
 SEQUENCE = 65536
 GPUS = 8
 SEED = 1729
-LRS = {"5em5": 5e-5}
+LRS = {
+    "5em6": 5e-6,
+    "1em5": 1e-5,
+    "2em5": 2e-5,
+    "3p5em5": 3.5e-5,
+    "5em5": 5e-5,
+    "7em5": 7e-5,
+    "1em4": 1e-4,
+    "2em4": 2e-4,
+}
+# The exact training/runtime version whose source-load and restart gates passed.
+SMOKE_GATE_COMMIT = "e18e332f8370f8abd0670a8c798369fc16ada34e"
 LC_CAMPAIGNS = {arm: "olmo35-small-4t-lc100b-noemo-20260916" for arm in ("emo", "non-emo")}
 LC_JOBS = {
     arm: "jacobm/" + campaign + "-" + arm + "-train" for arm, campaign in LC_CAMPAIGNS.items()
@@ -130,7 +141,17 @@ def runs(smoke=False):
 
 def find_run(name):
     """Reject arbitrary source checkpoints and sweep members."""
-    return next(r for r in runs() + runs(True) if r.run_id == name)
+    return next(r for r in lr_sweep_runs() + runs(True) if r.run_id == name)
+
+
+def lr_sweep_runs():
+    """All 16 comparisons, retaining the two original 5e-5 identities."""
+    return [SFTRun(arm, label) for label in LRS for arm in LC_JOBS]
+
+
+def new_lr_runs():
+    """The 14 additional trials; never resubmit the completed 5e-5 models."""
+    return [r for r in lr_sweep_runs() if r.lr_label != "5em5"]
 
 
 def data_plan():

@@ -34,9 +34,22 @@ class FourTSFTPlanTest(unittest.TestCase):
                 self.assertEqual(model_path(r), export_root(r) / r.arm / "step3426/hf")
 
     def test_reject_unrequested_schedules(self):
-        for args in [("emo", "1em5"), ("emo", "5em5", False, 5)]:
+        for args in [("emo", "3em4"), ("emo", "5em5", False, 5)]:
             with self.assertRaises(AssertionError):
                 plan.SFTRun(*args)
+
+    def test_wide_sweep_preserves_baselines(self):
+        trials = plan.lr_sweep_runs()
+        self.assertEqual(len(trials), 16)
+        self.assertEqual(len(plan.new_lr_runs()), 14)
+        self.assertEqual(len({r.run_id for r in trials}), 16)
+        self.assertEqual(max(plan.LRS.values()) / min(plan.LRS.values()), 40)
+        self.assertTrue(all(not r.emo and r.epochs == 2 for r in trials))
+        self.assertTrue(all("4t-lc100b-noemo" in str(r.source) for r in trials))
+        self.assertEqual(
+            {r.run_id for r in trials if r.lr_label == "5em5"}, {r.run_id for r in plan.runs()}
+        )
+        self.assertTrue(all(plan.find_run(r.run_id) == r for r in trials))
 
     def test_eval_bundles(self):
         self.assertEqual(set(BUNDLES), {"math500", "ifbench", "humaneval", "alpaca"})

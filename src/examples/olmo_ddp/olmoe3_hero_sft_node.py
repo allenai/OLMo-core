@@ -10,7 +10,7 @@ import sys
 from olmoe3_hero_decay_plan import inventory
 from olmoe3_hero_decay_plan import validate_checkpoint as validate_parent
 from olmoe3_hero_decay_runtime import verify_runtime
-from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, find_run, runs
+from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, SMOKE_GATE_COMMIT, find_run, runs
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 
@@ -77,7 +77,16 @@ def main():
     if not r.smoke:
         for smoke in (s for s in runs(True) if s.arm == r.arm):
             gate = json.loads((smoke.root / "audit/sft-gate-success.json").read_text())
-            assert gate["all_8_ranks_verified"] and gate["source_commit"] == os.environ["GIT_REF"]
+            expected = os.environ["GIT_REF"] if r.lr_label == "5em5" else SMOKE_GATE_COMMIT
+            assert gate["all_8_ranks_verified"] and gate["source_commit"] == expected
+            if r.lr_label != "5em5":
+                from olmoe3_hero_sft_plan import AUTOMATION
+
+                qualification = json.loads(
+                    (AUTOMATION / "lr-sweep-20260918/config-gate.json").read_text()
+                )
+                assert qualification["passed"] and qualification["commit"] == os.environ["GIT_REF"]
+                assert r.run_id in qualification["runs"] and gate["source"] == str(r.source)
     choices = [(0, r.source)] + [
         (int(p.name[4:]), p)
         for p in r.root.glob("step*")
