@@ -330,6 +330,77 @@ def test_sdpa(
 
 @requires_gpu
 @requires_flash_attn_2
+@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
+@pytest.mark.parametrize(
+    "use_flash", [pytest.param(True, id="flash_2"), pytest.param(False, id="torch-SDPA")]
+)
+def test_fused_attention_v2_against_non_fused(dtype: torch.dtype, use_flash: bool):
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 32
+    batch_size = 2
+    kwargs: Dict[str, Any] = dict(
+        d_model=d_model,
+        n_heads=8,
+        init_device="cuda",
+    )
+
+    attention = Attention(use_flash=use_flash, **kwargs)
+    fused_att = FusedAttentionV2(backend=AttentionBackendName.flash_2, **kwargs)
+
+    # Make sure weights match.
+    with torch.no_grad():
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        fused_att.w_qkv.bias.copy_(
+            torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+        )
+
+    x1 = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
+    x2 = x1.clone()
+
+    with torch.autocast("cuda", dtype=dtype, enabled=True):
+        y1 = attention(x1)
+        y2 = fused_att(x2)
+
+    torch.testing.assert_close(y1, y2)
+
+
+@requires_gpu
+@requires_flash_attn_2
+def test_fused_attention_v2_with_rope():
+    seed_all(0)
+
+    d_model = 128
+    seq_len = 32
+
+    fused_att = FusedAttentionV2(
+        d_model=d_model,
+        n_heads=8,
+        rope=RoPEConfig(),
+        init_device="cuda",
+        backend=AttentionBackendName.flash_2,
+    )
+
+    x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    x2 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
+    x = torch.cat([x1, x2])
+
+    # Make sure batch outputs match individual outputs.
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        y1 = fused_att(x1)
+        y2 = fused_att(x2)
+        y = fused_att(x)
+
+    torch.testing.assert_close(y[0:1, :, :], y1)
+    torch.testing.assert_close(y[1:, :, :], y2)
+
+
+@requires_gpu
+@requires_flash_attn_2
 def test_attention_with_intra_document_masking():
     seed_all(0)
 
@@ -337,6 +408,20 @@ def test_attention_with_intra_document_masking():
     seq_len = 32
 
     attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
+    fused_att = FusedAttentionV2(
+        d_model=d_model, n_heads=8, init_device="cuda", backend=AttentionBackendName.flash_2
+    )
+
+    # Make sure weights match.
+    with torch.no_grad():
+        fused_att.w_out.load_state_dict(attention.w_out.state_dict())
+        fused_att.w_qkv.weight.copy_(
+            torch.cat([attention.w_q.weight, attention.w_k.weight, attention.w_v.weight])
+        )
+        fused_att.w_qkv.bias.copy_(
+            torch.cat([attention.w_q.bias, attention.w_k.bias, attention.w_v.bias])
+        )
+
     x = torch.randn(2, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
 
     with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
@@ -347,7 +432,17 @@ def test_attention_with_intra_document_masking():
             cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
         )
 
+        y1_fused = fused_att(x.clone())
+        y2_fused = fused_att(
+            x.clone(),
+            max_doc_len=seq_len,
+            cu_doc_lens=torch.tensor([0, seq_len, 2 * seq_len], dtype=torch.int32, device="cuda"),
+        )
+
     torch.testing.assert_close(y1, y2)
+    torch.testing.assert_close(y1_fused, y2_fused)
+    torch.testing.assert_close(y1, y1_fused)
+    torch.testing.assert_close(y2, y2_fused)
 
 
 @requires_gpu
@@ -1294,6 +1389,28 @@ def test_attention_num_flops_per_token():
 
     # Gating should add additional compute.
     assert mha_full_gated > mha_full
+
+
+def test_fused_attention_v2_num_flops_per_token():
+    n_heads = 8
+
+    fused_small = FusedAttentionV2(d_model=128, n_heads=n_heads, init_device="cpu")
+
+    # Compare against the basic Attention estimate for the same configuration.
+    attn_small = Attention(
+        d_model=128,
+        n_heads=n_heads,
+        backend=AttentionBackendName.torch,
+        init_device="cpu",
+    )
+    assert fused_small.num_flops_per_token(32) == attn_small.num_flops_per_token(32)
+
+    # Longer sequences should be more expensive.
+    assert fused_small.num_flops_per_token(64) > fused_small.num_flops_per_token(32)
+
+    # Larger models should be more expensive.
+    fused_large = FusedAttentionV2(d_model=256, n_heads=n_heads, init_device="cpu")
+    assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
 
 
 def test_attention_sinks_num_params_and_build():
