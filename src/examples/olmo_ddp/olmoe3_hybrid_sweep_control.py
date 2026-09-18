@@ -1,4 +1,4 @@
-"""CPU-only durable controller: config gate -> both-arm smoke -> EMO -> non-EMO.
+"""CPU-only durable controller: config gate -> both-arm smoke -> all six points.
 
 Decay is internal to every training job. Never launch hero runs or separate decay
 jobs. Failed/ambiguous submissions require review; no automatic retry copies.
@@ -197,8 +197,24 @@ def ensure_training(controller, template, run, commit):
     return controller.ensure(name, spec)
 
 
+def submit_points(controller, template, commit):
+    """Submit both arms before waiting; adopt existing experiments without duplicates."""
+    jobs = {}
+    for emo in (True, False):
+        arm_jobs = {}
+        for run in (r for r in runs() if r.emo == emo):
+            workload = ensure_training(controller, template, run, commit)
+            assert workload is not None, "Ambiguous submission requires review"
+            arm_jobs[run.run_id] = workload.experiment.id
+        atomic_json(
+            controller.automation / f"{'emo' if emo else 'non-emo'}-submitted.json", arm_jobs
+        )
+        jobs.update(arm_jobs)
+    return jobs
+
+
 def main():
-    """Enforce order with an experiment-scoped lock and persistent submission intents."""
+    """Enforce smoke qualification with a lock and persistent submission intents."""
     from beaker import Beaker
 
     # A controller-only repair need not change the smoke-qualified training code.
@@ -239,33 +255,26 @@ def main():
                 )
                 break
             time.sleep(30)
-        for emo in (True, False):
-            phase = [r for r in runs() if r.emo == emo]
-            jobs = {}
-            for run in phase:
-                w = ensure_training(c, template, run, commit)
-                assert w is not None, "Ambiguous submission requires review"
-                jobs[run.run_id] = w.experiment.id
-            atomic_json(AUTOMATION / f"{'emo' if emo else 'non-emo'}-submitted.json", jobs)
-            while True:
-                states = {r.run_id: c.report(b.workload.get(jobs[r.run_id])) for r in phase}
-                atomic_json(
-                    AUTOMATION / "status.json",
-                    dict(
-                        phase="emo" if emo else "non-emo",
-                        states=states,
-                        jobs=jobs,
-                        training_commit=commit,
-                        controller_commit=controller_commit,
-                    ),
-                )
-                if any(s in FAILED for s in states.values()):
-                    raise RuntimeError(f"Sweep failure requires review: {states}")
-                if all(s == "STATUS_SUCCEEDED" for s in states.values()):
-                    for run in phase:
-                        check_finished(run)
-                    break
-                time.sleep(30)
+        jobs = submit_points(c, template, commit)
+        while True:
+            states = {r.run_id: c.report(b.workload.get(jobs[r.run_id])) for r in runs()}
+            atomic_json(
+                AUTOMATION / "status.json",
+                dict(
+                    phase="all",
+                    states=states,
+                    jobs=jobs,
+                    training_commit=commit,
+                    controller_commit=controller_commit,
+                ),
+            )
+            if any(s in FAILED for s in states.values()):
+                raise RuntimeError(f"Sweep failure requires review: {states}")
+            if all(s == "STATUS_SUCCEEDED" for s in states.values()):
+                for run in runs():
+                    check_finished(run)
+                break
+            time.sleep(30)
         atomic_json(AUTOMATION / "COMPLETE.json", dict(commit=commit, points=6))
         log("HYBRID_SWEEP_COMPLETE", points=6)
 
