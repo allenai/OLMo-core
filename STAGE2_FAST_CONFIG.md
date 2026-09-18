@@ -78,10 +78,16 @@ cost.
 - Token occupancy **30.8% -> 98.7%**; crop occupancy ~97%.
 - A production run of **15.7M rows** goes from **80.8 h to 43.7 h** — ~37 hours saved.
   At the more conservative `crops=64`, 47.8 h.
-- **16 GPUs: 190.4 rows/sec = 1.90x for 2x the hardware** (95% scaling), per-device useful
-  TPS 14,995.
-- **Memory:** peak reserved **223.0 GiB of 267.7** (44.7 GiB headroom), and *flat* across
-  4,874 steps — p99 equals max in every quarter of the run, so there is no drift.
+- **16 GPUs: 187.0 rows/sec = 1.87x for 2x the hardware** (94% scaling), per-device useful
+  TPS **14,715 averaged over a completed 10,000-step run** (median of the per-step samples:
+  15,045). The average is the honest production number — it absorbs the checkpoint saves
+  (every 1,000 steps, plus ephemeral every 250) that a 100-step smoke never pays.
+- **Memory:** peak reserved **232.9 GiB of 267.7 — 34.8 GiB headroom (13%)**. The allocator
+  arena grows for the first ~300 steps after start, reaches 232.9 GiB at **step 5,060**, and
+  is then *exactly* flat for the remaining **4,940 steps**. Nothing drifts; but note this
+  ceiling is ~10 GiB above what the run showed before it got there, so **do not read a peak
+  off a run that has not yet plateaued** (an earlier reading of 223.0 GiB, taken at step
+  4,874, was a pre-plateau undercount).
 
 **Convergence is neutral.** CE against *examples consumed* (the fair axis: `crops=80` sees
 1.26M examples in 2,000 steps vs the baseline's 1.05M), binned: final-bin means differ by
@@ -94,13 +100,14 @@ cost.
 
 Read this section before treating any of the above as settled.
 
-1. **The long run never finished.** The 10,000-step proof run was **preempted at step
-   4,874**. It was resumed (Beaker `01M2RR6GNY7WZS5YN291Z85Y4K`) but has not completed. So
-   the stability evidence is **4,874 steps with zero memory drift**, not a full
-   production-length run.
-2. **n=1 for the long run**, on a configuration that has already hidden a tail failure once
-   (see the allocator trap below). The 100-step and 2,000-step numbers repeat well; the
-   multi-thousand-step behaviour rests on a single observation.
+1. **n=1 for the long run.** The 10,000-step proof run **completed** (Beaker
+   `01M2RR6GNY7WZS5YN291Z85Y4K`, 16xB300, final CE 0.674, both nodes exit 0), which is the
+   strongest stability evidence here — but it is one observation, on a configuration that
+   has already hidden a tail failure once (see the allocator trap below). The 100-step and
+   2,000-step numbers repeat well; the multi-thousand-step behaviour does not.
+   It also ran as **two segments**: preempted at step 4,874, resumed from `step4750`. A
+   restart re-initialises the allocator, so the run does not prove that a *single
+   uninterrupted* 10,000-step process holds 232.9 GiB — only that each segment does.
 3. **Single-image tier only.** The multi-image profile (`pack_max_crops=125`) is *untested*
    at these settings and deliberately unchanged. A multi-image row costs several images'
    worth of crops, so none of the single-image occupancy arithmetic transfers.
@@ -110,6 +117,9 @@ Read this section before treating any of the above as settled.
 
 **If you want margin, use `crops=64`** (+69.9% instead of +85%): more memory headroom, and
 it does not sit on the one long run above. `--pack_max_crops=64` overrides the profile.
+This matters more now than it did at the 223 GiB reading: 34.8 GiB of headroom is 13%, so a
+mixture whose crop distribution runs heavier than `single-image-only-v10`'s has less room
+than the earlier number suggested.
 
 ---
 
