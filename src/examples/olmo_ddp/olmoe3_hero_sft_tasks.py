@@ -24,9 +24,12 @@ from olmo_eval.evals.tasks.humaneval import HumanEval
 from olmo_eval.evals.tasks.ifeval_ood import IFEvalOOD
 from olmo_eval.evals.tasks.minerva_math import Math500
 
+TEMPERATURE = float(os.environ.get("HERO_SFT_TEMPERATURE", "0.6"))
+assert TEMPERATURE in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
 SAMPLING = SamplingParams(
     max_tokens=32768,
-    temperature=0.6,
+    temperature=TEMPERATURE,
     top_p=0.95,
     top_k=-1,
     num_samples=1,

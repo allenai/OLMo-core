@@ -7,12 +7,13 @@ import hashlib
 import json
 import math
 import os
+import statistics
 import subprocess
 import sys
 from pathlib import Path
 
 from olmoe3_hero_sft_resume import install_resume_cache
-from olmoe3_hero_sft_tasks import TASKS
+from olmoe3_hero_sft_tasks import TASKS, TEMPERATURE
 
 # Multiprocessing spawn imports this module before entering the inference worker.
 install_resume_cache()
@@ -154,6 +155,10 @@ def main():
     model = export_root(run) / run.arm / f"step{run.total_steps}/hf"
     conversion = validate_export(model)
     output = model.parent / "posttrain-evals-r1" / args.bundle
+    if TEMPERATURE != 0.6:
+        assert args.bundle != "smoke"
+        label = f"t{round(TEMPERATURE * 10):02d}"
+        output = model.parent / "posttrain-temperature-20260918" / label / args.bundle
     # Math/IFBench/Alpaca can replay immutable completed responses after preemption.
     # Code requires fresh sandbox/handler state, so each attempt has its own folder.
     base_output = output
@@ -262,6 +267,8 @@ def main():
         "recipe_reference": "oe-eval-internal@e8c7fedaee8067421bf651419b2648117262a72a",
         "note": "Think chat adapters; no PT few-shot prompts; unfinished reasoning scores as empty final answer.",
     }
+    if TEMPERATURE != 0.6:
+        receipt["temperature"] = TEMPERATURE
     recipe = output / "recipe.json"
     if resume:
         assert json.loads(recipe.read_text()) == json.loads(
@@ -298,17 +305,27 @@ def main():
             and not row.get("error")
             and not row.get("instances_failed", 0)
         )
+        assert row["config"] == json.loads(json.dumps(definitions[name]))
         rows = [json.loads(p.read_text()) for p in (output / "responses" / name).glob("*.json")]
         assert len(rows) == expected and len({r["native_id"] for r in rows}) == expected
+        lengths = [r["output_metadata"]["num_tokens"] for r in rows]
+        assert all(isinstance(n, int) and 0 <= n <= 32768 for n in lengths)
+        assert all(r["reasoning_closed"] == ("</think>" in r["raw_response"]) for r in rows)
         counts[name] = {
             "instances": expected,
             "reasoning_closed": sum(r["reasoning_closed"] for r in rows),
+            "at_token_limit": sum(n == 32768 for n in lengths),
+            "unclosed_reasoning": sum(not r["reasoning_closed"] for r in rows),
+            "empty_final": sum(not r["final_response"].strip() for r in rows),
+            "mean_output_tokens": statistics.mean(lengths),
+            "median_output_tokens": statistics.median(lengths),
         }
     judge = judge_alpaca(output) if args.bundle == "alpaca" else None
     proof = {
         "passed": True,
         "model": str(model),
         "bundle": args.bundle,
+        "temperature": TEMPERATURE,
         "counts": counts,
         "metrics": str(metrics_path),
         "metrics_sha256": hashlib.sha256(metrics_path.read_bytes()).hexdigest(),

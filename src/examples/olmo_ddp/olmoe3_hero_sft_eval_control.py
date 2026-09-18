@@ -68,7 +68,7 @@ def spec_for(template, stage, run, commit):
             "sharedMemory": "16 GiB",
         }
     task["arguments"] = [command]
-    task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
+    task["context"].update(priority="urgent", minRuntime="8h", autoResume=True)
     task["timeout"] = "24h"
     if not any(d["mountPath"] == "/weka/oe-adapt-default" for d in task["datasets"]):
         task["datasets"].append(

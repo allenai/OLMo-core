@@ -17,6 +17,42 @@ AUTOMATION = CAMPAIGN_ROOT / "eval-pipeline"
 STAGES = ("decay", "mt", "lc", "sft")
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 PT_MT_LC_EVAL_COMMIT = "ca80837014c92771ca19b4bedafcd8c0dbd082c7"
+TEMPERATURES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
+
+def temperature_spec(spec, temperature):
+    """Change only sampling temperature and scheduling for a bounded SFT sweep."""
+    from olmoe3_lr_sweep_watch import replace_env
+
+    assert temperature in TEMPERATURES
+    spec = copy.deepcopy(spec)
+    task = spec["tasks"][0]
+    replace_env(task, {"HERO_SFT_TEMPERATURE": temperature})
+    task["context"].update(priority="urgent", minRuntime="8h", autoResume=True)
+    description = json.loads(spec["description"])
+    description.update(
+        temperature=temperature,
+        sampling=f"Think final answers; T={temperature} P=.95 max_new_tokens=32768 seed=1234 n=1",
+        sweep="4t-sft-temperature-20260918",
+    )
+    spec["description"] = json.dumps(description)
+    return spec
+
+
+def stage_call(stage):
+    """Contain a slow/failed API tick without killing other stages or the watcher."""
+    try:
+        return subprocess.run(
+            [sys.executable, __file__, "--tick", stage],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        # Durable per-submission intents are reconciled on the next tick. Never
+        # create new experiment names merely because the API response timed out.
+        log("FOUR_T_EVAL_TICK_RETRY", stage=stage, error_type=type(exc).__name__)
+        return None
 
 
 def controller(b, commit, stage):
@@ -88,6 +124,21 @@ def tick(stage, b, commit, validate_only=False):
                             (model.parent / f"posttrain-evals-r1/{bundle}/success.json").read_text()
                         )
                         assert receipt["passed"] and receipt["bundle"] == bundle
+                if os.environ.get("HERO_SFT_TEMPERATURE_SWEEP") == "1":
+                    rows["temperature_sweep"] = {}
+                    for temperature in TEMPERATURES:
+                        label = f"t{round(temperature * 10):02d}"
+                        swept = rows["temperature_sweep"][label] = {}
+                        for bundle in BUNDLES:
+                            if temperature == 0.6:
+                                # The canonical evaluations are the .6 cell;
+                                # never run a duplicate copy of this baseline.
+                                swept[bundle] = {**rows[bundle], "reused": True}
+                                continue
+                            name = r.run_id + "-epoch2-" + bundle + "-" + label
+                            swept[bundle] = record(
+                                c, name, temperature_spec(specs[bundle], temperature)
+                            )
             result[r.run_id] = rows
     else:
         plan = importlib.import_module("olmoe3_hero_" + stage + "_plan")
@@ -169,12 +220,9 @@ def main():
                 time.sleep(60)
                 continue
             for stage in STAGES:
-                call = subprocess.run(
-                    [sys.executable, __file__, "--tick", stage],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
+                call = stage_call(stage)
+                if call is None:
+                    continue
                 output = call.stdout.strip().splitlines()
                 summary = output[-1] if output else ""
                 if call.returncode:
