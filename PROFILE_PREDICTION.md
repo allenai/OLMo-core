@@ -60,3 +60,80 @@ which they had no obligation to do.
 - FSDP/NCCL still at ~45%. That would mean comm time is *not* constant per step -- most
   likely because it is bandwidth-bound on activations/gradients that grew with the crop
   count, not just on parameters. Phase 4 would stay live.
+
+---
+
+# CORRECTION, written before the profile returned
+
+The prediction above is **wrong**, and I am leaving it in place rather than editing it.
+It was superseded by a better calculation, not by data -- the profile job was still
+`QUEUED` when this was written.
+
+## What was wrong
+
+Prediction 1 rested on a recorded "~28% ViT at `crops=25`" figure. That number is a
+**measured time share** from an old profile. I treated it as a FLOP share and scaled it by
+the crop ratio. Computing the FLOP split properly from the real `molmo2_4B` config
+(`num_flops_per_token` and `image_encoder_flops`, meta device, no weights) gives something
+very different:
+
+| crops/pack | ViT mode | LM PF | ViT PF | connector PF | **ViT share of FLOPs** |
+|---|---|---|---|---|---|
+| 24 | frozen | 0.8704 | 0.0149 | 0.0012 | 1.7% |
+| 24 | trained | 0.8704 | 0.0446 | 0.0012 | 4.9% |
+| 79 | frozen | 0.8704 | 0.0489 | 0.0039 | 5.3% |
+| **79** | **trained** | **0.8704** | **0.1467** | **0.0039** | **14.4%** |
+
+**The LM dominates FLOPs even at `crops=80` -- roughly 6:1.** The ViT runs 57.6k patch
+tokens through a 0.38B encoder; the LM runs 16,384 tokens through a 4B model with a
+quadratic attention term at S=16384. The ViT was never going to be half the step.
+
+The "1.64x predicted vs 1.71x measured" agreement I cited was therefore **numerology** --
+two wrong inputs landing near a right answer. The real per-pack FLOP ratio is 1.11x, not
+1.64x.
+
+## What the corrected arithmetic says instead
+
+| | crops=25 | crops=80 |
+|---|---|---|
+| PF per pack | 0.916 | 1.021 |
+| packs per rank per step | 16 | 6 |
+| **total FLOP throughput** | 1.524 PF/s | **0.993 PF/s (-35%)** |
+| **useful LM FLOP throughput** | 0.446 PF/s | **0.836 PF/s (+87%)** |
+
+This is the honest account of the win, and it is a sharper story than the one I had:
+**`crops=80` makes the hardware do *less* raw work per second, not more.** Absolute FLOP
+throughput falls 35%. It wins because at `crops=25` most of the LM's FLOPs were spent on
+padding, and the +87% in *useful* LM FLOPs/s lands right on top of the independently
+measured +85-87% useful TPS and 1.85-1.87x rows/sec.
+
+## Revised predictions
+
+1. **The LM dominates the profile, not the ViT.** `mm::lm_forward` should be the large
+   majority of GPU time; `mm::vision_encode` should be well short of half.
+2. **But the ViT should punch above its 14.4% FLOP weight.** The 35% drop in raw FLOP
+   throughput has to come from somewhere, and the ViT is the component whose share grew.
+   If `mm::vision_encode` comes in at, say, 25-35% of step time against 14.4% of FLOPs,
+   that gap -- not the FLOP count -- is the remaining ViT lever, and it would point at
+   launch/memory-bound behaviour in `_encode_images` chunking rather than at fp8.
+3. **Prediction 2 from the original (comms share falls) still stands**, and for a reason
+   the correction does not touch: comms are per-parameter and roughly constant per step,
+   while per-step time rose. I expect FSDP/NCCL well below the recorded ~45%.
+
+## Falsification, restated
+
+- `mm::vision_encode` at ~14% of time would mean the ViT is running at the same efficiency
+  as the LM and there is no ViT lever at all -- the 35% throughput drop would then have to
+  be comms or attention, and Phase 4 comes back to life.
+- `mm::lm_forward` under half the step would falsify revised prediction 1 outright.
+
+## Fallout: reported MFU is an undercount on this branch
+
+`image_encoder_flops` charges the ViT **forward-only** on an explicit "the encoder is
+frozen" docstring assumption. Stage 2 **trains** the ViT (`VISION_LR=5e-6`), so the term
+should be 3x. The fix (`vision_is_trainable()`) exists on `donovan/perf-deep-dive` but is
+**not** on `donovan/stage2-fast-defaults`, which is the branch intended for others to use.
+
+At `crops=80` this understates total FLOPs by **10.6% relative**: the proof run's reported
+**41.35% MFU is really ~45.7%**. At `crops=25` the error is only 3.4%, so the bug also
+makes the crop-budget change look slightly worse than it is on the MFU axis. Worth porting.
