@@ -45,7 +45,7 @@ import numpy as np
 from olmo_core.config import Config
 
 from .message_sequence import encode_sft_example
-from .paths import _DEFAULT_EXPERIMENT_DATA
+from .paths import require_experiment_data_dir
 from .sequence_builder import example_rng
 from .sft_common import (
     decode_pil_image,
@@ -139,7 +139,7 @@ class ChartVerseDatasetConfig(Config):
     def _resolved_data_root(self) -> str:
         if self.data_root is not None:
             return self.data_root
-        return os.environ.get("MOLMO_EXPERIMENT_DATA_DIR", _DEFAULT_EXPERIMENT_DATA)
+        return require_experiment_data_dir("the staged ChartVerse subsets")
 
     def resolved_path(self) -> str:
         if self.dataset_path is not None:

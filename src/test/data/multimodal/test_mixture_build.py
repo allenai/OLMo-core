@@ -37,13 +37,11 @@ def test_build_single_image_only_v10_mixture_builds_each_source_once(monkeypatch
 
 
 def test_build_single_image_only_v10_mixture_names_match_weights():
-    from olmo_core.data.multimodal.mixtures.image_only_v10 import compute_flat_mixture_weights
+    # Import from its own module: `image_only_v10` used to re-export this incidentally,
+    # which stopped being true once the shared mixture plumbing moved to `registry`.
+    from olmo_core.data.multimodal.mixture_weights import compute_flat_mixture_weights
 
-    needed = {
-        src.name
-        for group in SINGLE_IMAGE_ONLY_V10_SUBMIXTURES
-        for src in group.datasets
-    }
+    needed = {src.name for group in SINGLE_IMAGE_ONLY_V10_SUBMIXTURES for src in group.datasets}
     lengths = {name: 100 for name in needed}
     flat = compute_flat_mixture_weights(SINGLE_IMAGE_ONLY_V10_SUBMIXTURES, lengths)
     assert pytest.approx(sum(w for _, w in flat)) == 1.0

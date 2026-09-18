@@ -230,6 +230,35 @@ DATASET_PATH = f"{PIXMO_DATASETS}/cap"
 MAX_STEPS = 32000
 
 # Stage-1 mixture rates (mm_olmo train_captioner --pointing/--nlp). Caption gets the
+# Prompt family for the pointing/counting data, from the released Molmo2-4B-Pretrain
+# `data_formatter` (`prompt_templates: none`, `system_prompt: style_and_length_v2`): the question
+# is the bare lowercased label behind a `"<style>:"` prefix, not a natural-language template.
+# The formatter defaults to the stage-2 family, which trains a model that is then out of
+# distribution for pointing evals -- worth ~11 f1 on pixmo_point_eval_v3_mp, most of it
+# abstention, because the "Please say 'There are none.'" instruction only exists in the
+# stage-2 template.
+# Caption loss weight. The released Molmo2-4B-Pretrain leaves every source at 1.0, which puts
+# captions at ~77.5% of the sum(CE*w)/sum(w) loss mass; 1.25 lifts that to ~81%. Measured against
+# two-seed baselines: dense_caption avg 57.271 -> 57.808 (+0.537, seed spread 0.085) and
+# consistency 69.973 -> 70.701 (released is 70.745), for pointing costs of ~0.009-0.013 f1 at
+# seed spreads of 0.008-0.011. Override with `--caption_message_weight=1.0` to reproduce the
+# released weighting exactly.
+CAPTION_MESSAGE_WEIGHT = 1.25
+
+POINTING_DATASET_KWARGS = {
+    "prompt_templates": "none",
+    "system_prompt": "style_and_length_v2",
+    # The pointing/counting dataset classes default to `root_subsegments`, which scales an
+    # example's loss by 1/sqrt(n_labels). The released run leaves this unset for every dataset
+    # (`mm_preprocessor.loss_token_weighting: None`, `message_weight: None` on all four pointing
+    # entries), so it weights every response token equally. Our pointing rows carry ~12.5 labels
+    # per example and counting ~2.8, so the default silently gave that data ~3.5x / ~1.7x less
+    # gradient weight per token than captions -- for exactly the reason the caption dataset's
+    # own comment gives: the factor does not cancel out of the global sum(CE*w)/sum(w) divisor
+    # when branch counts differ across examples.
+    "loss_token_weighting": "none",
+}
+
 # remainder (1 - POINTING_RATE - NLP_RATE). Set both to 0.0 for a caption-only run.
 POINTING_RATE = 0.30
 NLP_RATE = 0.10
@@ -273,6 +302,10 @@ class ExperimentConfig(Config):
     nlp_rate: float = NLP_RATE
     """Fraction of mixture samples from Tulu4 NLP SFT (mm_olmo ``--nlp``)."""
     train_vit: bool = TRAIN_VIT
+    caption_message_weight: float = CAPTION_MESSAGE_WEIGHT
+    """Multiplier on the caption source's loss tokens; 1.0 reproduces the released
+    weighting. Read before ``merge`` runs, so it is declared here only to be accepted as a
+    top-level override."""
     """Train the vision encoder in its own optimizer group (mm_olmo ``ft_vit``). When False
     the encoder is frozen and kept in eval mode."""
 
@@ -301,6 +334,13 @@ class ExperimentConfig(Config):
 
     dl_persistent_workers: bool = DL_PERSISTENT_WORKERS
     """Keep DataLoader workers alive across epochs (only used when ``dl_num_workers > 0``)."""
+
+    ignore_shuffle_algo_version_mismatch: bool = False
+    """Resume a checkpoint whose mixture shuffle algorithm predates
+    ``MixtureDataLoader.SHUFFLE_ALGO_VERSION``. Off by default: such a resume regenerates a
+    different epoch and skips into it at the old batch offset, silently repeating some
+    examples and omitting others. Set it to accept that for a checkpoint written before
+    the version field existed (the alternative is restarting the run)."""
 
     pack_max_crops: int = PACK_MAX_CROPS
     """Image-crop budget per pack — the knapsack's second dimension."""
@@ -339,9 +379,13 @@ def _read_override(overrides: List[str], key: str, default: str) -> str:
     read off the merged config. Later occurrences win, matching ``merge``.
     """
     value = default
+    # `Config.merge` normalizes hyphens to underscores (`_clean_opt`), so `--model-size=8b` and
+    # `--model_size=8b` are the same override to it. Comparing the raw name here would miss the
+    # dashed spelling and silently build the config from the default while `merge` applied the
+    # requested value to the top-level field -- a divergence with no error.
     for override in overrides:
         name, _, raw = override.lstrip("-").partition("=")
-        if name == key and raw:
+        if name.replace("-", "_") == key and raw:
             value = raw
     return value
 
@@ -352,6 +396,15 @@ def _read_bool_override(overrides: List[str], key: str, default: bool) -> bool:
     if raw not in _BOOLS:
         raise OLMoConfigurationError(f"{key}={raw!r} is not a boolean")
     return _BOOLS[raw]
+
+
+def _read_float_override(overrides: List[str], key: str, default: float) -> float:
+    """Read a float top-level scalar out of the raw overrides."""
+    raw = _read_override(overrides, key, str(default)).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        raise OLMoConfigurationError(f"{key}={raw!r} is not a float") from None
 
 
 def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
@@ -376,6 +429,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # Resolved pre-merge because it shapes `freeze_params`, the optimizer groups and the
     # per-group scheduler, all of which are built before `Config.merge` runs.
     train_vit = _read_bool_override(overrides, "train_vit", TRAIN_VIT)
+    caption_message_weight = _read_float_override(
+        overrides, "caption_message_weight", CAPTION_MESSAGE_WEIGHT
+    )
     freeze_base_embeddings = _read_bool_override(
         overrides, "freeze_base_embeddings", FREEZE_BASE_EMBEDDINGS
     )
@@ -391,6 +447,15 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         # cancel out of the global `sum(CE*w)/sum(w)` divisor when branch counts differ across
         # examples, so it would re-weight caption vs pointing vs NLP relative to mm_olmo.
         loss_token_weighting="none",
+        # Captions carry 1.25x weight. The released Molmo2-4B-Pretrain leaves every source at
+        # 1.0, which puts captions at ~77.5% of the sum(CE*w)/sum(w) loss mass; 1.25 lifts that
+        # to ~81%. Measured on two-seed baselines (n=2 per arm, seed spread in parentheses):
+        #   dense_caption avg   57.271 -> 57.808  (+0.537, spread 0.085)
+        #   consistency         69.973 -> 70.701  (+0.728, spread 0.024) -- released is 70.745
+        #   pixmo_points f1      0.7938 ->  0.7847 (-0.009, spread 0.008)
+        #   sa_co f1             0.5537 ->  0.5408 (-0.013, spread 0.011)
+        # i.e. a caption gain ~6x the noise floor for pointing costs at ~1x it.
+        message_weight=caption_message_weight,
         seed=95818,
     )
 
@@ -659,9 +724,16 @@ def _init_weights_from_scratch(
 
     log.info(f"[scratch init] Loading base ViT weights from {SCRATCH_VIT_ID} ...")
     hf_vit = SiglipVisionModel.from_pretrained(SCRATCH_VIT_ID, dtype=torch.float32)
+    # Derive both prefixes from the module tree rather than hardcoding a layout: the
+    # vision modules live under `vision_backbone.` today, and `load_state_dict` matches
+    # (and reports missing/unexpected keys under) the model's *registered* names.
+    vision_prefix = next(
+        (f"{name}." for name, mod in model.named_modules() if mod is model.vision),
+        "vision.",
+    )
     converted.update(
         siglip_state_dict_to_vision_encoder(
-            hf_vit.state_dict(), n_blocks=len(model.vision.blocks), prefix="vision."
+            hf_vit.state_dict(), n_blocks=len(model.vision.blocks), prefix=vision_prefix
         )
     )
     del hf_vit
@@ -670,9 +742,6 @@ def _init_weights_from_scratch(
     missing, unexpected = model.load_state_dict(converted, strict=False)
     del converted
     # Everything except the connector must have been covered by the two base checkpoints.
-    # `load_state_dict` reports missing keys under the model's *registered* names, which the
-    # legacy-key remap deliberately leaves alone (it only rewrites the dicts it is handed).
-    # So derive the connector's prefix from the module tree rather than assuming a layout.
     connector_prefix = next(
         (f"{name}." for name, mod in model.named_modules() if mod is model.connector),
         "connector.",
@@ -703,10 +772,18 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
 
     if p > 0:
         pointing = [
-            PixMoPointsDatasetConfig(kind="basic", max_crops=MAX_CROPS).build(tokenizer),
-            PixMoCountDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
-            PixMoPointsDatasetConfig(kind="high_frequency", max_crops=MAX_CROPS).build(tokenizer),
-            CoSynPointDatasetConfig(max_crops=MAX_CROPS).build(tokenizer),
+            PixMoPointsDatasetConfig(
+                kind="basic", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
+            ).build(tokenizer),
+            PixMoCountDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                tokenizer
+            ),
+            PixMoPointsDatasetConfig(
+                kind="high_frequency", max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS
+            ).build(tokenizer),
+            CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
+                tokenizer
+            ),
         ]
         frac = np.sqrt(np.array([len(d) for d in pointing], dtype=np.float64))
         frac = frac / frac.sum()
@@ -757,6 +834,7 @@ def train(config: ExperimentConfig):
             work_dir=config.trainer.save_folder,
             global_batch_size=config.global_batch_size,
             seed=config.data_seed,
+            ignore_shuffle_algo_version_mismatch=config.ignore_shuffle_algo_version_mismatch,
             pack=config.pack_sequences,
             pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
             pack_buffer_size=config.pack_buffer_size,

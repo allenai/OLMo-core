@@ -27,18 +27,20 @@ import os
 import sys
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Dict, List, Optional, Sequence, cast
+from typing import Any, Dict, List, Optional, Sequence, cast
 
 from olmo_core.config import Config, DType
 from olmo_core.data.multimodal import MixtureDataLoader, MultimodalCollatorConfig
 from olmo_core.data.multimodal.chartverse import CHARTVERSE_DEFAULT_SUBSET
+from olmo_core.data.multimodal.mixture_data_loader import (
+    MixtureLoaderStrategy,
+    resolve_loader_strategy,
+)
 from olmo_core.data.multimodal.mixtures.image_only_v9 import (
-    VALIDATION_MIXTURES,
     build_image_only_v9_mixture,
     build_single_image_only_v9_mixture,
 )
 from olmo_core.data.multimodal.mixtures.image_only_v10 import (
-    VALIDATION_MIXTURES_V10,
     build_image_only_v10_mixture,
     build_single_image_only_v10_mixture,
 )
@@ -47,12 +49,22 @@ from olmo_core.data.multimodal.mixtures.image_only_v11 import (
     build_image_only_v11_mixture,
     build_single_image_only_v11_mixture,
 )
+from olmo_core.data.multimodal.mixtures.image_only_v10 import (
+    build_image_only_v10_mixture,
+    build_single_image_only_v10_mixture,
+)
 from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
     MULTI_IMAGE_PACK_MAX_CROPS,
+    SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
     get_mixture_pack_profile,
+)
+from olmo_core.data.multimodal.mixtures.tiers import (
+    all_validation_mixtures,
+    is_v10_mixture,
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
@@ -102,8 +114,14 @@ PACK_SEQUENCES = True
 COMPILE_MODEL = True
 RESPONSE_LOGITS_ONLY = True
 DATA_PREFETCH_WORKERS = 0
-DL_NUM_WORKERS = 2
-"""Process workers for packed mixture DataLoader (0 = sync pack+collate on iterator thread)."""
+DL_NUM_WORKERS = 8
+"""Process workers for packed mixture DataLoader (0 = sync pack+collate on iterator thread).
+
+Load-bearing at the tuned crop budget, not a nicety. The packer runs inside these workers,
+and a fuller pack is more packing work per step: at the previous default of 2 the 8xB300
+`single-image-only-v10` sweep measured the run **43% data-loader-bound**. 8 fixes it; 16 is
+indistinguishable from 8 (12,146 vs 12,140 useful TPS), so there is nothing above 8 to buy.
+"""
 DL_PREFETCH_FACTOR = 2
 DL_PERSISTENT_WORKERS = True
 MAX_CROPS = 8
@@ -114,7 +132,31 @@ PACK_SHORTCUT_MAX_LEN_IMAGES = False
 EST_TOKENS_PER_EXAMPLE = 1500  # packed 16k sequences; tune if batch counts look off
 
 # mm_olmo train_image_video_sft.py (image-only-v9): global 128, microbatch 2 per GPU.
-GLOBAL_BATCH_INSTANCES = 128
+#
+# GLOBAL_BATCH_INSTANCES counts *packs*, not examples, so it does not mean the same thing
+# at every crop budget. At the single-image tier's tuned budget a pack holds ~13.1 examples
+# instead of ~4.1, so 128 packs is ~1,677 examples/step rather than ~524 against an
+# unchanged LR schedule. **Choose the pack count deliberately** -- the validated 8-GPU runs
+# used 32 packs (419 examples/step) and 48 packs (629); no one has run 128 packs at the
+# tuned budget. Constraint: global packs must divide `dp_world_size x
+# RANK_MICROBATCH_INSTANCES` (16 at 8 GPUs, 64 at 32 GPUs), else the trainer aborts with
+# "global batch size must be divisible by micro-batch size x DP world size".
+# See STAGE2_FAST_CONFIG.md.
+#
+# 32 packs = ~419 examples/step at the tuned crop budget, slightly *below* the 524 the old
+# `crops=25` default produced, so adopting this config does not smuggle in a batch-size
+# increase. `crops=80` was measured at 32 packs and still gave +85.6% (vs +87.3% at 48), so
+# the speedup does not depend on a large batch.
+#
+# NOTE this value is only valid up to 16 GPUs: 32 % (2 x 32) != 0, so a 32-GPU run must
+# raise it (64 packs is the smallest valid choice there, 838 examples/step). `launch()`
+# checks this against the requested GPU count and refuses rather than letting the trainer
+# abort after the job has been scheduled.
+GLOBAL_BATCH_INSTANCES = 32
+# Keep at 2. `mb=1` is not a safe fallback, it is a ~19% throughput loss at identical
+# occupancy and examples/step (10,204 vs 12,140 useful TPS at crops=50), and mb=2 at the
+# tuned crop budget does *not* OOM -- an untested assumption that it would once cost half
+# the measured win. `mb=3` does OOM on B300 (~261/268 GiB).
 RANK_MICROBATCH_INSTANCES = 2
 GLOBAL_BATCH_SIZE = GLOBAL_BATCH_INSTANCES * SEQUENCE_LENGTH
 RANK_MICROBATCH_SIZE = RANK_MICROBATCH_INSTANCES * SEQUENCE_LENGTH
@@ -175,9 +217,39 @@ DEFAULT_LOAD_PATH = (
 # radius. A local `train` run under torchrun therefore still gets the in-code defaults,
 # not these ship-stack values - that's intended.
 SHIP_STACK_ENV: Dict[str, str] = {
+    # NOT a tuning knob -- a correctness requirement at the single-image tier's crop
+    # budget. Without it the run OOMs at around step 1,307 AFTER PASSING three separate
+    # 100-step smokes, reporting ~39 GiB reserved-but-unallocated. A 100-step smoke cannot
+    # validate memory stability here; the only evidence that matters is a long run.
+    # The raw-YAML launch path always set this; the Gantry path never did until it was
+    # added here, which is exactly how the ~3-hour tail failure got shipped once already.
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     "VIT_CROP_MICROBATCH": "32",  # +3.0% TPS (20,185 vs 19,594, 8-GPU mb2)
     "MM_FSDP_RESHARD_AFTER_FORWARD": "0",  # +2.4% TPS (13,281 vs 12,973, 8-GPU)
-    "MM_FSDP_IMAGE_ALIGN_HACK": "0",  # redundant since DP max-crop padding landed
+    # MM_FSDP_IMAGE_ALIGN_HACK is deliberately NOT set here (i.e. the align tie stays on).
+    #
+    # Review flagged that disabling it could deadlock: `tulu4` is ~14% of
+    # image-only-v9/v10 and text-only, so a rank can draw an all-text pack, and FSDP2
+    # skips a param group's reduce-scatter when none of its parameters has a gradient.
+    # An asymmetry there hangs the DP group — reproduced on 2 gloo processes, so it needs
+    # neither multiple nodes nor GPUs, only two DP ranks.
+    #
+    # For *this* forward it turns out not to fire: the splice runs unconditionally when
+    # `images is not None` (the collator always supplies a dummy zero crop) and a masked
+    # index_put keeps the autograd edge, so the vision params get present-but-zero
+    # gradients and the collective is issued on every rank. See
+    # `src/test/nn/vision/align_tie_test.py`.
+    #
+    # Turning it off is *safe* — confirmed on 2 GPUs under real FSDP2 + torch.compile
+    # (holmes experiment 01M2622FH6WTMHZAD6A9WT5D7F): tie off with asymmetric batches gave
+    # [10, 10] symmetric collectives and no None gradients.
+    #
+    # It is just not worth anything here. The 8-GPU A/Bs: baseline 12,973 TPS; no-reshard
+    # alone 13,281 (+2.4%); align-hack-off alone 13,299 (+2.5%); **both together 13,106**.
+    # The two do not stack, so on top of MM_FSDP_RESHARD_AFTER_FORWARD=0 (which is shipped)
+    # disabling the tie measured slightly *worse*, not better. Single runs with no repeats,
+    # so read that as "no measured benefit" rather than a real regression — either way
+    # there is no throughput case for turning it off.
 }
 
 # Beaker.
@@ -263,6 +335,56 @@ class ExperimentConfig(Config):
     """ChartGym corpus directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartgym/``."""
     chartgym_max_rows: Optional[int] = None
     """Optional row cap, for exposure-matched ablations against a smaller corpus."""
+    ignore_shuffle_algo_version_mismatch: bool = False
+    """Resume a checkpoint whose mixture shuffle algorithm predates
+    ``MixtureDataLoader.SHUFFLE_ALGO_VERSION``. Off by default: such a resume regenerates a
+    different epoch and skips into it at the old batch offset, silently repeating some
+    examples and omitting others. Set it to accept that for a checkpoint written before
+    the version field existed (the alternative is restarting the run)."""
+
+    def __post_init__(self):
+        # Validate only — never write back into the declared fields. `Config.merge` is
+        # `as_dict()` -> apply overrides -> `from_dict()`, so a `__post_init__` that
+        # mutated its inputs would feed the *already-normalized* values into the next
+        # merge: `--dl_num_workers=0` on a config with `prefetch_workers=4` would see a
+        # prefetch count this hook had already zeroed, and silently drop thread prefetch.
+        # The effective values are derived on demand instead.
+        resolve_loader_strategy(
+            pack=self.pack_sequences,
+            pack_max_crops=self.pack_max_crops if self.pack_sequences else None,
+            prefetch_workers=self.prefetch_workers,
+            dl_num_workers=self.effective_dl_num_workers,
+        )
+
+    @property
+    def effective_dl_num_workers(self) -> int:
+        """``dl_num_workers``, forced to 0 when sequence packing is off.
+
+        The multiprocess loader path runs the packer inside its workers, so
+        ``dl_num_workers > 0`` requires ``pack=True``. Since ``DL_NUM_WORKERS`` defaults
+        to a non-zero value, ``--pack_sequences=false`` on its own would otherwise be an
+        unconditional startup error; fall back to the synchronous loader rather than
+        making callers pass ``--dl_num_workers=0`` too.
+        """
+        if not self.pack_sequences and self.dl_num_workers > 0:
+            log.warning(
+                "pack_sequences=false is incompatible with dl_num_workers=%d "
+                "(multiprocess workers run the packer); using dl_num_workers=0.",
+                self.dl_num_workers,
+            )
+            return 0
+        return self.dl_num_workers
+
+    @property
+    def loader_strategy(self) -> MixtureLoaderStrategy:
+        """Which of the two prefetch mechanisms this config resolves to."""
+        strategy, _, _ = resolve_loader_strategy(
+            pack=self.pack_sequences,
+            pack_max_crops=self.pack_max_crops if self.pack_sequences else None,
+            prefetch_workers=self.prefetch_workers,
+            dl_num_workers=self.effective_dl_num_workers,
+        )
+        return strategy
 
 
 def _build_model_config() -> MultimodalLMConfig:
@@ -283,7 +405,8 @@ def _build_model_config() -> MultimodalLMConfig:
 
 
 def _all_validation_mixtures():
-    return {**VALIDATION_MIXTURES, **VALIDATION_MIXTURES_V10, **VALIDATION_MIXTURES_V11}
+    # v11 tiers live only on this branch; the shared resolver knows v9/v10.
+    return {**all_validation_mixtures(), **VALIDATION_MIXTURES_V11}
 
 
 def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
@@ -295,57 +418,51 @@ def _mixture_dataset_names(mixture: str) -> Optional[Sequence[str]]:
 
 
 def _build_mixture(tokenizer, config: ExperimentConfig):
+    """Build the tier's sources and weights.
+
+    Which registry a tier draws from (v10 vs v9, full vs single-image-only) is decided by
+    ``mixtures.tiers``, not here — the pack profile needs the same answer, and when the
+    two derived it independently they drifted (see ``mixture_pack_profiles``).
+    """
     names_filter = _mixture_dataset_names(config.mixture)
-    # Dispatch is by dict membership, not a name prefix, so v11 must be tested before
-    # v10: a v11 tier would otherwise fall through to the v10 builder and silently
-    # drop every v11-only source.
-    if config.mixture == "single-image-only-v11":
-        datasets, weights, names = build_single_image_only_v11_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
+    single_image_only = config.mixture in (
+        "single-image-only-v9",
+        "single-image-only-v10",
+        "single-image-only-v11",
+    )
+
+    # `Any`: mypy 1.3 rejects assigning a plain function to a `Callable[...]`
+    # variable. The four builders share a signature; the dispatch is the point.
+    build: Any
+    # v11 tiers are branch-local; test them before the shared v10/v9 resolver, or a
+    # v11 tier falls through and silently drops every v11-only source.
+    if config.mixture == "single-image-only-v11" or config.mixture in VALIDATION_MIXTURES_V11:
+        build = (
+            build_single_image_only_v11_mixture
+            if single_image_only
+            else build_image_only_v11_mixture
         )
-    elif config.mixture in VALIDATION_MIXTURES_V11:
-        datasets, weights, names = build_image_only_v11_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
-        )
-    elif config.mixture == "single-image-only-v10":
-        datasets, weights, names = build_single_image_only_v10_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
-        )
-    elif config.mixture in VALIDATION_MIXTURES_V10:
-        datasets, weights, names = build_image_only_v10_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
-        )
-    elif config.mixture == "single-image-only-v9":
-        datasets, weights, names = build_single_image_only_v9_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
+    elif is_v10_mixture(config.mixture):
+        build = (
+            build_single_image_only_v10_mixture
+            if single_image_only
+            else build_image_only_v10_mixture
         )
     else:
-        datasets, weights, names = build_image_only_v9_mixture(
-            tokenizer,
-            seed=config.data_seed,
-            dataset_names=names_filter,
-            max_sequence_length=SEQUENCE_LENGTH,
+        build = (
+            build_single_image_only_v9_mixture if single_image_only else build_image_only_v9_mixture
         )
 
-    # Extra sources apply to whatever base mixture was built above. This call used to sit
-    # inside the `else`, i.e. only on the plain `image-only-v9` path, so `--mmfinereason_rate`
-    # (and now `--caption_rate` / `--chartverse_rate`) silently did nothing on every named
-    # tier -- `single-image-only-v9`, all the v10/v11 tiers, and all 16 ablation tiers.
+    datasets, weights, names = build(
+        tokenizer,
+        seed=config.data_seed,
+        dataset_names=names_filter,
+        max_sequence_length=SEQUENCE_LENGTH,
+    )
+    # Applies to every mixture tier, not just v9: these rates are documented as live
+    # knobs, and wiring them into only one branch meant
+    # `--mixture=single-image-only-v10 --mmfinereason_rate=0.05` started up, logged a
+    # mixture with no MMFineReason in it, and trained the wrong distribution silently.
     datasets, weights, names = _append_extra_sft_sources(
         config, tokenizer, datasets, weights, names
     )
@@ -489,6 +606,23 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         BeakerEnvVar(name=name, value=value) for name, value in SHIP_STACK_ENV.items()
     ]
 
+    # Data roots the container cannot infer. MOLMO_EXPERIMENT_DATA_DIR deliberately has no
+    # default (paths.py: a library default must not point at one person's scratch space),
+    # so without forwarding it a v10/v11 mixture dies building its DynaMath / FineVision
+    # sources *inside* the job, after it has queued for a node and started. Forward
+    # whatever the submitting shell has.
+    for _var in (
+        "MOLMO_DATA_DIR",
+        "MOLMO_EXPERIMENT_DATA_DIR",
+        "MOLMO_CACHE_DIR",
+        "FINEVISION_ROOT",
+    ):
+        _value = os.environ.get(_var)
+        if _value:
+            launch_config.env_vars = list(launch_config.env_vars) + [
+                BeakerEnvVar(name=_var, value=_value)
+            ]
+
     return _apply_mixture_pack_profile(
         ExperimentConfig(
             model=model_config,
@@ -552,7 +686,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
         FineVisionDatasetConfig,
         MMFineReasonDatasetConfig,
     )
-    from olmo_core.data.multimodal import paths as _mm_paths
+    from olmo_core.data.multimodal.paths import require_experiment_data_dir
 
     per_config = config.finevision_rate / max(len(FINEVISION_RATES), 1)
     fv = {
@@ -603,7 +737,9 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
         datasets.append(
             FineVisionDatasetConfig(
                 dataset_path=os.path.join(
-                    _mm_paths.MOLMO_EXPERIMENT_DATA_DIR, "chartgym", config.chartgym_subset
+                    require_experiment_data_dir("the staged ChartGym corpus"),
+                    "chartgym",
+                    config.chartgym_subset,
                 ),
                 # The row-filter index cache is keyed by row count, so a regenerated corpus
                 # with the same count would silently reuse a stale index.
@@ -654,11 +790,41 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 max_crops=MAX_CROPS,
                 max_sequence_length=SEQUENCE_LENGTH,
                 min_visual_dependency=FINEVISION_MIN_VISUAL_DEPENDENCY,
+                # These five configs are documented above as one image per row, and the
+                # v10 registry builder asserts the same for its own subsets. Enforce it
+                # rather than relying on it: sources appended here are invisible to
+                # `get_mixture_pack_profile`, which derives the crop budget from the
+                # tier's *registry* sources — so a multi-image row sneaking in via
+                # `--finevision_rate` would exceed a single-image tier's budget exactly
+                # the way the old hand-maintained profile table did.
+                require_single_image=True,
             ).build(tokenizer)
         )
         weights.append(rate)
         names.append(f"finevision[{cfg_name}]")
     return datasets, weights, names
+
+
+def _warn_if_allocator_unconfigured(config: ExperimentConfig) -> None:
+    """Warn when running a raised crop budget without ``expandable_segments``.
+
+    ``SHIP_STACK_ENV`` only reaches Beaker launches. A ``torchrun`` invocation of this
+    script gets the ambient environment, and without this allocator setting a run at the
+    tuned crop budget OOMs at around step 1,307 -- long after every smoke test has passed.
+    Fail loudly at step 0 instead of silently three hours in.
+    """
+    if config.pack_max_crops <= SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS:
+        return
+    if "expandable_segments:True" in os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""):
+        return
+    log.warning(
+        "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is NOT set, and pack_max_crops=%d "
+        "is above the one-example floor of %d. This configuration has been observed to OOM "
+        "at ~step 1,307 after passing three separate 100-step smokes. Export it before "
+        "training (Beaker launches get it from SHIP_STACK_ENV automatically).",
+        config.pack_max_crops,
+        SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
+    )
 
 
 def train(config: ExperimentConfig):
@@ -691,12 +857,11 @@ def train(config: ExperimentConfig):
         config.pack_sequences,
         config.pack_max_crops,
         config.pack_shortcut_max_len_images,
-        os.environ.get("VIT_CROP_MICROBATCH", "0"),
-        config.dl_num_workers,
+        config.model.vit_crop_microbatch,
+        config.effective_dl_num_workers,
     )
+    _warn_if_allocator_unconfigured(config)
     prefetch_workers = config.prefetch_workers
-    if config.dl_num_workers > 0:
-        prefetch_workers = 0
     data_loader = MixtureDataLoader(
         datasets,
         weights,
@@ -704,12 +869,13 @@ def train(config: ExperimentConfig):
         work_dir=config.trainer.save_folder,
         global_batch_size=config.global_batch_size,
         seed=config.data_seed,
+        ignore_shuffle_algo_version_mismatch=config.ignore_shuffle_algo_version_mismatch,
         pack=config.pack_sequences,
         pack_max_crops=config.pack_max_crops if config.pack_sequences else None,
         pack_shortcut_max_len_images=config.pack_shortcut_max_len_images,
         est_tokens_per_example=EST_TOKENS_PER_EXAMPLE,
         prefetch_workers=prefetch_workers,
-        dl_num_workers=config.dl_num_workers,
+        dl_num_workers=config.effective_dl_num_workers,
         dl_prefetch_factor=config.dl_prefetch_factor,
         dl_persistent_workers=config.dl_persistent_workers,
         dp_world_size=dp_world_size,
@@ -726,6 +892,35 @@ def train(config: ExperimentConfig):
 
 
 def launch(config: ExperimentConfig):
+    # Fail here rather than on an allocated node. MOLMO_EXPERIMENT_DATA_DIR has no default
+    # (paths.py), and the v10/v11 mixtures build DynaMath / FineVision sources from it, so
+    # without it the job queues for a node, starts, installs its dependencies, builds the
+    # model, and only then dies in dataset build. build_config forwards the variable into
+    # the container when it is set.
+    if is_v10_mixture(config.mixture) and not os.environ.get("MOLMO_EXPERIMENT_DATA_DIR"):
+        raise OLMoConfigurationError(
+            f"Mixture {config.mixture!r} includes sources under the experimental-data "
+            "staging root, but MOLMO_EXPERIMENT_DATA_DIR is not set in this shell, so the "
+            "job would fail at dataset build only after being scheduled. Export it before "
+            "launching, e.g. /weka/oe-training-default/donovanc/molmo-experimental-data"
+        )
+
+    # The trainer asserts `global_batch_size % (rank_microbatch_size * dp_world_size) == 0`,
+    # but only once every rank is up -- so a bad pack count costs a scheduling round trip.
+    # Reduce it to packs and check it here, where the fix is free.
+    world = max(1, config.launch.num_nodes) * max(1, config.launch.num_gpus)
+    packs = config.global_batch_size // SEQUENCE_LENGTH
+    per_step = config.train_module.rank_microbatch_size // SEQUENCE_LENGTH
+    stride = per_step * world
+    if stride and packs % stride:
+        valid = [n for n in range(stride, 4 * stride + 1, stride)]
+        raise OLMoConfigurationError(
+            f"global batch of {packs} packs is not divisible by "
+            f"rank_microbatch_instances ({per_step}) x world size ({world}) = {stride}, so "
+            f"the trainer would abort after this job is scheduled. Set --global_batch_size "
+            f"to one of {[v * SEQUENCE_LENGTH for v in valid]} ({valid} packs)."
+        )
+
     config.launch.launch(follow=True)
 
 

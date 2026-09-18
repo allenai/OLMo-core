@@ -140,6 +140,10 @@ class PixMoPointsDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "PixMoPointsDataset":
         return PixMoPointsDataset(self, tokenizer)
@@ -186,7 +190,11 @@ class PixMoPointsDataset:
         row_idx, label_idxs = self._index[i]
         rng = example_rng(self.config.seed, i)
         row = self._data[row_idx]
-        fmt = SftFormatter(seed=self.config.seed)
+        fmt = SftFormatter(
+            seed=self.config.seed,
+            prompt_templates=self.config.prompt_templates,
+            system_prompt=self.config.system_prompt,
+        )
         specs: List[Tuple[str, str, Any]] = []
         for li in label_idxs:
             label = row["label"][li]
@@ -230,6 +238,10 @@ class PixMoCountDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "PixMoCountDataset":
         return PixMoCountDataset(self, tokenizer)
@@ -256,7 +268,11 @@ class PixMoCountDataset:
         pil = _open_image(row["image"])
         pts = row.get("points") or {"x": [], "y": []}
         rng = example_rng(self.config.seed, i)
-        fmt = SftFormatter(seed=self.config.seed)
+        fmt = SftFormatter(
+            seed=self.config.seed,
+            prompt_templates=self.config.prompt_templates,
+            system_prompt=self.config.system_prompt,
+        )
         xy = np.array([pts["x"], pts["y"]], dtype=np.float64).T.reshape(-1, 2)
         sub = {
             "style": style,
@@ -291,6 +307,10 @@ class CoSynPointDatasetConfig(Config):
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    system_prompt: str = "demo_or_style_v2"
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)

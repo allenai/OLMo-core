@@ -151,11 +151,9 @@ def test_chartgym_rate_appends_under_its_own_name(mod, stub_dataset_configs, mon
     append block precisely so the source is called ``chartgym``, which is what the
     double-count guard and every downstream per-source metric key off.
     """
-    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
-    # here would do nothing; patch the resolved constant instead.
-    from olmo_core.data.multimodal import paths as _mm_paths
-
-    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    # The fast-defaults branch made the experiment-data root env-only (the personal-path
+    # default was dropped), resolved at call time via require_experiment_data_dir.
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
     datasets, weights, names = mod._append_extra_sft_sources(
         _config(mod, chartgym_rate=0.25), None, [], list(BASE_WEIGHTS), list(BASE_NAMES)
     )
@@ -171,11 +169,9 @@ def test_chartgym_rate_appends_under_its_own_name(mod, stub_dataset_configs, mon
 
 
 def test_chartgym_subset_reaches_the_loader(mod, stub_dataset_configs, monkeypatch):
-    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
-    # here would do nothing; patch the resolved constant instead.
-    from olmo_core.data.multimodal import paths as _mm_paths
-
-    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    # The fast-defaults branch made the experiment-data root env-only (the personal-path
+    # default was dropped), resolved at call time via require_experiment_data_dir.
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
     datasets, _, _ = mod._append_extra_sft_sources(
         _config(mod, chartgym_rate=0.1, chartgym_subset="train-v2"),
         None, [], list(BASE_WEIGHTS), list(BASE_NAMES),
@@ -186,11 +182,9 @@ def test_chartgym_subset_reaches_the_loader(mod, stub_dataset_configs, monkeypat
 def test_chartgym_counts_toward_the_extra_rate_budget(mod, stub_dataset_configs, monkeypatch):
     """A ChartGym arm is chartgym 25 / omniscience 40 / replay 35 -- the rates must
     compose with the caption knob rather than each rescaling the base independently."""
-    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
-    # here would do nothing; patch the resolved constant instead.
-    from olmo_core.data.multimodal import paths as _mm_paths
-
-    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    # The fast-defaults branch made the experiment-data root env-only (the personal-path
+    # default was dropped), resolved at call time via require_experiment_data_dir.
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
     _, weights, names = mod._append_extra_sft_sources(
         _config(mod, chartgym_rate=0.25, caption_subsets=["omniscience"], caption_rate=0.40),
         None, [], list(BASE_WEIGHTS), list(BASE_NAMES),
@@ -204,11 +198,9 @@ def test_chartgym_counts_toward_the_extra_rate_budget(mod, stub_dataset_configs,
 
 
 def test_chartgym_double_append_is_rejected(mod, stub_dataset_configs, monkeypatch):
-    # `MOLMO_EXPERIMENT_DATA_DIR` is resolved at import time, so setting the env var
-    # here would do nothing; patch the resolved constant instead.
-    from olmo_core.data.multimodal import paths as _mm_paths
-
-    monkeypatch.setattr(_mm_paths, "MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
+    # The fast-defaults branch made the experiment-data root env-only (the personal-path
+    # default was dropped), resolved at call time via require_experiment_data_dir.
+    monkeypatch.setenv("MOLMO_EXPERIMENT_DATA_DIR", "/tmp/fake-experiment-data")
     with pytest.raises(ValueError, match="already in mixture"):
         mod._append_extra_sft_sources(
             _config(mod, chartgym_rate=0.1), None, [],

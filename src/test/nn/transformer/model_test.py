@@ -887,3 +887,40 @@ def test_fsdp_tied_word_embeddings():
         backend="nccl",
         start_method="spawn",
     )
+
+
+def test_apply_fsdp_reshard_after_forward_is_a_parameter_not_an_env_read():
+    """The shared LM FSDP path must not take its resharding policy from the environment.
+
+    ``Transformer.apply_fsdp`` is used by every text-only OLMo2/OLMo3 run. It previously
+    called ``fsdp_reshard_after_forward()``, which honours ``MM_FSDP_RESHARD_AFTER_FORWARD``
+    — so that variable, set in a shell or inherited from a multimodal launch template,
+    would turn off per-block resharding for an unrelated text-only run and roughly double
+    its FSDP parameter memory, with nothing in the run's config to explain it.
+
+    The policy is now an explicit parameter defaulting to ``None`` (standard behaviour);
+    only the multimodal train module passes a tuned value.
+    """
+    import ast
+    import inspect
+
+    from olmo_core.nn.transformer import model as transformer_model
+
+    param = inspect.signature(transformer_model.Transformer.apply_fsdp).parameters[
+        "reshard_after_forward"
+    ]
+    assert param.default is None
+
+    # Parse rather than grep the source: comments explaining *why* the env is not read
+    # are fine, an actual read is not, and comments do not survive into the AST.
+    tree = ast.parse(inspect.getsource(transformer_model))
+    env_names = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert not any(name.startswith("MM_FSDP") for name in env_names)
+    referenced = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
+    assert "fsdp_reshard_after_forward" not in referenced

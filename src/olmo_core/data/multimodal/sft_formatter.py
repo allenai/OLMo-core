@@ -1,4 +1,12 @@
-"""SFT prompt formatting for Molmo2 stage-2 (uber_model_v2 + demo_or_style_v2)."""
+"""SFT prompt formatting for Molmo2.
+
+Defaults to the stage-2 family (``uber_model_v2`` templates + ``demo_or_style_v2`` system
+prompt). Stage 1 uses a different family -- ``prompt_templates="none"`` with
+``system_prompt="style_and_length_v2"`` -- which asks for a point with the bare lowercased
+label behind a ``"<style>:"`` prefix rather than a natural-language template. Both are
+selectable, because the form has to follow the checkpoint: a model trained on one and
+evaluated on the other is out of distribution.
+"""
 
 from __future__ import annotations
 
@@ -115,15 +123,55 @@ def _apply_chain_of_thought_prompt(question: str) -> str:
 
 @dataclass
 class SftFormatter:
-    """Minimal port of mm_olmo DataFormatter for image-only-v9 SFT."""
+    """Minimal port of mm_olmo DataFormatter.
+
+    The prompt family must match the checkpoint. The defaults are the stage-2 family used by
+    ``image_only_v9``; stage 1 passes ``prompt_templates="none"`` and
+    ``system_prompt="style_and_length_v2"`` to match the released ``Molmo2-4B-Pretrain``
+    config, whose ``data_formatter`` records exactly those.
+
+    Getting it wrong is quiet and costly: a stage-1 4B checkpoint trained on the templated
+    form but evaluated on the terse form scored 0.706 f1 on ``pixmo_point_eval_v3_mp`` against
+    0.815 for the released Pretrain checkpoint, losing most of it on abstention (zero-slice f1
+    0.718 vs 0.913) because the "Please say 'There are none.'" instruction lives only in the
+    stage-2 template.
+    """
 
     select_answer: str = "best"
     seed: int = 0
+    prompt_templates: str = "uber_model_v2"
+    """``"uber_model_v2"`` samples a natural-language template; ``"none"`` uses the bare
+    lowercased label (mm_olmo ``data_formatter.py:1759-1779``)."""
+    system_prompt: str = "demo_or_style_v2"
+    """``"demo_or_style_v2"`` adds no style prefix; ``"style_and_length"``/``"_v2"`` prefix the
+    pointing/counting styles with ``"<style>:"``."""
     p_multi_point_all_image: float = 0.5
     """Probability that a multi-image pointing question targets "all images" instead of
     a random image subset (mm_olmo stage-2 sets 0.5)."""
 
+    #: mm_olmo styles taking a ``"<style>:"`` prefix under the ``style_and_length`` families
+    #: (``data_formatter.py:1649-1653``). They are also in :data:`DEMO_STYLES`, which is what
+    #: suppresses the prefix under ``demo_or_style_v*``.
+    STYLE_PREFIX_STYLES = frozenset(
+        {
+            "pointing",
+            "point_count",
+            "point_then_count",
+            "cosyn_point",
+            "text_sft",
+            "aux_pointing",
+            "aux_point_count",
+            "v3det_points",
+        }
+    )
+    #: System-prompt families that prefix the style name.
+    STYLE_AND_LENGTH_FAMILIES = frozenset({"style_and_length", "style_and_length_v2"})
+
     def style_prefix(self, style: str) -> str:
+        if self.system_prompt in self.STYLE_AND_LENGTH_FAMILIES:
+            # Pointing/counting styles are prefixed under this family even though they are
+            # demo styles; captions get their own "<style> <bucket>:" prefix upstream.
+            return f"{style}:" if style in self.STYLE_PREFIX_STYLES else ""
         if not style or style in DEMO_STYLES or style in IMAGE_MC_STYLES:
             return ""
         return f"{style}:"
@@ -160,9 +208,7 @@ class SftFormatter:
         if not is_training or rng.random() < 0.1:
             if labelled:
                 prefixes = string.ascii_uppercase
-                option_text = "\n".join(
-                    f"{p}. {o}" for p, o in zip(prefixes, example["options"])
-                )
+                option_text = "\n".join(f"{p}. {o}" for p, o in zip(prefixes, example["options"]))
                 option_names = list(prefixes[: len(example["options"])])
                 outputs = [f"{n}. {o}" for n, o in zip(option_names, example["options"])]
             else:
@@ -170,9 +216,7 @@ class SftFormatter:
                 option_names = list(example["unlabelled_options"])
                 outputs = list(example["unlabelled_options"])
             question = (
-                example["question"]
-                + "\nOnly return the correct answer option.\n"
-                + option_text
+                example["question"] + "\nOnly return the correct answer option.\n" + option_text
             )
         else:
             question = example["question"]
@@ -218,9 +262,7 @@ class SftFormatter:
         else:
             label = example.get("question", "")
         point_scale = example["point_scale"] if "point_scale" in example else 100
-        norm = normalize_points(
-            xy, point_scale=point_scale, image_size=example.get("image_size")
-        )
+        norm = normalize_points(xy, point_scale=point_scale, image_size=example.get("image_size"))
         style = example.get("style", "pointing")
         # mm_olmo's count is always len(points) (data_formatter.py:1141) — never a
         # dataset-provided "count" field, which its formatter cannot even see.
@@ -304,18 +346,14 @@ class SftFormatter:
 
         if selected_images == "all images":
             valid = [
-                i
-                for i in all_images
-                if norm_labels[i] == selected_norm and len(points[i]) > 0
+                i for i in all_images if norm_labels[i] == selected_norm and len(points[i]) > 0
             ]
         else:
             chosen_idx = [int(s.split("_")[1]) - 1 for s in selected_images.split(", ")]
             valid = [
                 i
                 for i in chosen_idx
-                if i < len(norm_labels)
-                and norm_labels[i] == selected_norm
-                and len(points[i]) > 0
+                if i < len(norm_labels) and norm_labels[i] == selected_norm and len(points[i]) > 0
             ]
         if not valid:
             return question, "There are none."
@@ -323,10 +361,7 @@ class SftFormatter:
         scale = float(example.get("point_scale", 100))
         by_image = []
         for i in valid:
-            xy = [
-                (p["x"], p["y"]) if isinstance(p, dict) else (p[0], p[1])
-                for p in points[i]
-            ]
+            xy = [(p["x"], p["y"]) if isinstance(p, dict) else (p[0], p[1]) for p in points[i]]
             # clip_points clamping is equivalent to the [0, 1] clamp inside
             # _scale_point after normalization.
             by_image.append((i + 1, [(x / scale, y / scale) for x, y in xy]))
@@ -368,10 +403,7 @@ class SftFormatter:
             for msg in example["message_list"]:
                 if "messages" in msg:
                     messages = msg["messages"]
-                    conv = [
-                        (messages[u], messages[u + 1])
-                        for u in range(0, len(messages) - 1, 2)
-                    ]
+                    conv = [(messages[u], messages[u + 1]) for u in range(0, len(messages) - 1, 2)]
                     conv = [(q, a) for q, a in conv if a and str(a).strip()]
                     if conv:
                         # Style prefix on the first user turn of the conversation.
@@ -423,19 +455,24 @@ class SftFormatter:
                         label = label.lower()
                 else:
                     label = example["label_cased"]
-                pool = (
-                    POINT_COUNT_PROMPTS
-                    if style in ("point_count", "point_then_count")
-                    else POINTING_PROMPTS
-                )
-                prompt = pool[rng.randint(len(pool))].format(label=label)
+                if self.prompt_templates == "none":
+                    # mm_olmo data_formatter.py:1770-1779: no templating or instructions,
+                    # just the lowercased label (the "<style>:" prefix is added separately).
+                    prompt = (
+                        example["label"].lower() if "label" in example else example["label_cased"]
+                    )
+                else:
+                    pool = (
+                        POINT_COUNT_PROMPTS
+                        if style in ("point_count", "point_then_count")
+                        else POINTING_PROMPTS
+                    )
+                    prompt = pool[rng.randint(len(pool))].format(label=label)
             if not is_training:
                 output = None
             else:
                 output = self.format_points(example)
-        elif "question" in example and (
-            "options" in example or "unlabelled_options" in example
-        ):
+        elif "question" in example and ("options" in example or "unlabelled_options" in example):
             prompt, output, _ = self.template_options(example, is_training, rng)
         elif "question" in example:
             prompt = example["question"]
@@ -475,7 +512,5 @@ class SftFormatter:
         Kept for callers that treat every turn as an independent branch; use
         :meth:`format_branches` to preserve multi-turn conversations.
         """
-        branches = self.format_branches(
-            example, is_training=is_training, index=index, rng=rng
-        )
+        branches = self.format_branches(example, is_training=is_training, index=index, rng=rng)
         return [turn for branch in branches for turn in branch]
