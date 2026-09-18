@@ -173,11 +173,38 @@ def check_finished(run):
             assert proof["sampled_state_exact"]
 
 
+def ensure_training(controller, template, run, commit):
+    """Resolve existing allowed hosts for new jobs; preserve submitted specs on restart."""
+    name = run.run_id + "-train"
+    spec = training_spec(template, run, commit)
+    intent = controller.automation / "submissions" / f"{name}.json"
+    if intent.exists():
+        # Host inventory may change while jobs run. Reconcile the exact persisted
+        # submission, never turn a changed inventory into a second experiment.
+        saved = json.loads((controller.automation / "specs" / f"{name}.json").read_text())
+        hosts = saved["tasks"][0]["constraints"]["hostname"]
+        assert len(hosts) >= 8 and set(hosts).issubset(spec["tasks"][0]["constraints"]["hostname"])
+        spec["tasks"][0]["constraints"]["hostname"] = hosts
+        assert spec == saved, f"Unexpected training-spec drift for {name}"
+    else:
+        cluster = controller.beaker.cluster.get("ai2/holmes")
+        registered = {n.hostname for n in controller.beaker.node.list(cluster=cluster)}
+        previous = spec["tasks"][0]["constraints"]["hostname"]
+        hosts = [host for host in previous if host in registered]
+        assert len(hosts) >= 8, "Fewer than eight qualified hosts remain registered"
+        spec["tasks"][0]["constraints"]["hostname"] = hosts
+        log("HYBRID_HOSTS_RECONCILED", name=name, removed=sorted(set(previous) - set(hosts)))
+    return controller.ensure(name, spec)
+
+
 def main():
     """Enforce order with an experiment-scoped lock and persistent submission intents."""
     from beaker import Beaker
 
-    commit, gate_id = os.environ["GIT_REF"], os.environ["HYBRID_CONFIG_GATE"]
+    # A controller-only repair need not change the smoke-qualified training code.
+    controller_commit = os.environ["GIT_REF"]
+    commit = os.environ.get("HYBRID_TRAIN_COMMIT", controller_commit)
+    gate_id = os.environ["HYBRID_CONFIG_GATE"]
     AUTOMATION.mkdir(parents=True, exist_ok=True)
     with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -216,7 +243,7 @@ def main():
             phase = [r for r in runs() if r.emo == emo]
             jobs = {}
             for run in phase:
-                w = c.ensure(run.run_id + "-train", training_spec(template, run, commit))
+                w = ensure_training(c, template, run, commit)
                 assert w is not None, "Ambiguous submission requires review"
                 jobs[run.run_id] = w.experiment.id
             atomic_json(AUTOMATION / f"{'emo' if emo else 'non-emo'}-submitted.json", jobs)
@@ -224,7 +251,13 @@ def main():
                 states = {r.run_id: c.report(b.workload.get(jobs[r.run_id])) for r in phase}
                 atomic_json(
                     AUTOMATION / "status.json",
-                    dict(phase="emo" if emo else "non-emo", states=states, jobs=jobs),
+                    dict(
+                        phase="emo" if emo else "non-emo",
+                        states=states,
+                        jobs=jobs,
+                        training_commit=commit,
+                        controller_commit=controller_commit,
+                    ),
                 )
                 if any(s in FAILED for s in states.values()):
                     raise RuntimeError(f"Sweep failure requires review: {states}")
