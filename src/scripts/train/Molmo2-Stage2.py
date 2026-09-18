@@ -80,6 +80,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    ProfilerCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -509,6 +510,29 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 project=WANDB_PROJECT,
                 enabled=WANDB_PROJECT is not None,
                 cancel_check_interval=10,
+            ),
+        )
+        .with_callback(
+            "profiler",
+            # Off by default; enable with
+            #   --trainer.callbacks.profiler.enabled=true
+            # `with_stack=False` because source attribution roughly doubles trace size and
+            # is not needed to rank operators by GPU time. `active=2` keeps the trace small
+            # enough that the summary tables land promptly. If the run hangs after
+            # "Saving chrome trace from profiler...", add
+            #   --trainer.callbacks.profiler.export_chrome_trace=false
+            # -- the key_averages tables are logged before the export, so they survive.
+            ProfilerCallback(
+                enabled=False,
+                # Profile at ~step 23: well past torch.compile warmup, which inflates
+                # the first several steps and would put the trace on an unrepresentative
+                # step.
+                skip_first=20,
+                wait=1,
+                warmup=2,
+                active=2,
+                repeat=1,
+                with_stack=False,
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
