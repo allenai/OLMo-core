@@ -40,6 +40,7 @@ from sft_common import (  # noqa: E402
 )
 
 from olmo_core.config import DType  # noqa: E402
+from olmo_core.train import Duration  # noqa: E402
 from olmo_core.distributed.parallel import DataParallelType  # noqa: E402
 from olmo_core.float8 import Float8Config  # noqa: E402
 from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig  # noqa: E402
@@ -118,8 +119,16 @@ ARMS: Dict[str, dict] = {
 # NOT copied: her context-parallel config (Ulysses degree 4). That exists because she trains at
 # 262144; at 32768 CP only adds communication for no memory benefit.
 LR = 4e-5
-GLOBAL_BATCH_SIZE = 128 * SEQUENCE_LENGTH   # 4,194,304 tokens -- 2x sft_common, for utilisation
+
+# Utilisation and update-count are separate knobs, and conflating them cost us steps once already:
+#   GPU utilisation   <- rank_microbatch_size (work per GPU per forward)
+#   optimizer updates <- global_batch_size    (tokens accumulated per step)
+# The mix is ~163M tokens, so steps/epoch = 163M / global_batch_size. At 128*seq that was only
+# 39/epoch (78 over 2 epochs) -- too few for tasks this update-hungry. 32*seq gives ~155/epoch,
+# and 3 epochs puts us at ~466 updates while keeping 2 sequences per rank for utilisation.
+GLOBAL_BATCH_SIZE = 32 * SEQUENCE_LENGTH    # 1,048,576 tokens -> ~155 steps/epoch
 RANK_MICROBATCH = 2 * SEQUENCE_LENGTH       # 2 sequences per rank per microbatch
+EPOCHS = 3                                  # ~466 optimizer steps total
 
 
 def build_ctc_train_module_config(common, **_) -> TransformerTrainModuleConfig:
@@ -254,6 +263,13 @@ def build_ctc_model_config(
     )
 
 
+def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
+    """``sft_common.build_trainer_config`` hardcodes 2 epochs; this run needs more updates."""
+    cfg = build_trainer_config(common, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", arm])
+    cfg.max_duration = Duration.epochs(EPOCHS)
+    return cfg
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         raise SystemExit(
@@ -285,9 +301,7 @@ if __name__ == "__main__":
         data_config_builder=partial(build_data_components, dataset_path=DATASET_PATH),
         model_config_builder=partial(build_ctc_model_config, arm=arm, attn_backend=attn_backend),
         train_module_config_builder=build_ctc_train_module_config,
-        trainer_config_builder=partial(
-            build_trainer_config, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", arm]
-        ),
+        trainer_config_builder=partial(_trainer_with_epochs, size=size, sft_cfg=sft_cfg, arm=arm),
         include_default_evals=False,
         beaker_workspace="ai2/flex2",
         num_execution_units=1,
