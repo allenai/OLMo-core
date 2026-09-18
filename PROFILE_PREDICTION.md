@@ -137,3 +137,76 @@ should be 3x. The fix (`vision_is_trainable()`) exists on `donovan/perf-deep-div
 At `crops=80` this understates total FLOPs by **10.6% relative**: the proof run's reported
 **41.35% MFU is really ~45.7%**. At `crops=25` the error is only 3.4%, so the bug also
 makes the crop-budget change look slightly worse than it is on the MFU axis. Worth porting.
+
+---
+
+# SECOND CORRECTION (still before the profile returned)
+
+The first correction was right that the ViT is ~14% of *FLOPs*. It was wrong to conclude
+from that that the ViT is a small share of *time*. Separating the LM's dense and attention
+terms and solving for each component's throughput changes the picture again.
+
+## The LM's attention term is mostly charged, not computed
+
+`num_flops_per_token(16384)` decomposes as:
+
+| | FLOPs/token | share |
+|---|---|---|
+| dense (params) | 2.4134e10 | 45.4% |
+| attention (quadratic in S) | 2.8991e10 | **54.6%** |
+
+That attention term assumes **dense causal attention over the whole 16,384-token pack**.
+With packing plus the pad fix, attention only computes within-example causal blocks -- at
+~13 examples of ~1,245 tokens, that is `sum(len_i^2)` against `S^2`, i.e. a small fraction.
+Actually-computed attention is **0.0356 PF/pack against 0.475 PF charged, ~13x less.**
+
+So MFU is **overstated on the attention axis** at the same time as it is understated on the
+ViT axis. Charged FLOPs per pack at crops=80 are ~1.017 PF against ~0.582 PF actually
+computed. This is the "MFU convention reconciliation" item, and it is larger than the
+trainable-ViT fix -- but it is a *convention* question (the standard MFU formula charges
+dense attention), not a bug, so it should be reported alongside the conventional number
+rather than silently replacing it.
+
+## Solving for per-component throughput
+
+Charging only what is computed:
+
+| arm | LM dense | LM attn | ViT | total PF |
+|---|---|---|---|---|
+| crops=25 | 0.3954 | 0.0113 | 0.0457 | 0.4524 |
+| crops=80 | 0.3954 | 0.0356 | 0.1505 | 0.5816 |
+
+Fitting `step_time = LM_flops / r_lm + ViT_flops / r_vit` across the two arms:
+
+- implied **LM throughput 0.960 PF/s**
+- implied **ViT throughput 0.259 PF/s** -- the ViT is **3.7x less FLOP-efficient**
+
+| arm | ViT share of FLOPs | **predicted ViT share of time** |
+|---|---|---|
+| crops=25 | 10.1% | **29.4%** |
+| crops=80 | 25.9% | **56.4%** |
+
+The 29.4% at crops=25 is a genuine check: it reproduces the independently recorded ~28%
+ViT time share, which was not an input to the fit.
+
+**This is a two-parameter model fitted to two measured step times -- zero degrees of
+freedom.** It is a consistency construction, not evidence. It cannot fail to fit. Treat it
+as "what the numbers imply if each component has a characteristic throughput", and let the
+profile decide.
+
+## Where this leaves the prediction
+
+My original 50-60% ViT was **right on the number and wrong on the reason**. It is not that
+the ViT has half the FLOPs (it has ~26% of the computed ones); it is that the ViT converts
+FLOPs to time ~3.7x worse than the LM does. The first correction over-rotated.
+
+**Final prediction: `mm::vision_encode` lands at 45-60% of step time at crops=80.**
+
+The actionable consequence is unchanged and now better supported: the ViT lever is an
+*efficiency* lever, not a FLOP-reduction lever. A 3.7x gap is not something fp8 closes
+(fp8 would cut ViT FLOPs, which are not the problem) -- it points at `_encode_images`
+chunking, small per-crop GEMMs, or launch overhead across 25 small blocks.
+
+Falsifier: `mm::vision_encode` at or near 26% would mean the ViT runs at LM-like
+efficiency, the 3.7x is an artifact of the two-point fit, and the remaining time is
+elsewhere -- most likely comms, which would revive Phase 4.
