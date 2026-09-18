@@ -24,6 +24,7 @@ xabsence) at rungs 2k-32k, dolma2 tokenizer, answer-only loss with the terminati
 See the README beside the shards for provenance and caveats.
 """
 
+import json
 import math
 import os
 import sys
@@ -35,11 +36,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from arch import MODEL_CONFIGS  # noqa: E402
 from sft_common import (  # noqa: E402
     SEQUENCE_LENGTH,
-    build_data_components,
+    SEED,
     build_trainer_config,
 )
 
 from olmo_core.config import DType  # noqa: E402
+from olmo_core.data import NumpyDataLoaderConfig, NumpyPackedFSLDatasetConfig  # noqa: E402
+from olmo_core.data.types import LongDocStrategy  # noqa: E402
+from olmo_core.internal.experiment import DataComponents  # noqa: E402
 from olmo_core.train import Duration  # noqa: E402
 from olmo_core.distributed.parallel import DataParallelType  # noqa: E402
 from olmo_core.float8 import Float8Config  # noqa: E402
@@ -263,6 +267,59 @@ def build_ctc_model_config(
     )
 
 
+def _assert_no_overlong(dataset_path: str, seq_len: int) -> None:
+    """
+    Fail loudly if any instance is longer than the training window.
+
+    ``truncate`` would silently behead such an instance -- prompt kept, answer discarded -- and the
+    only visible symptom is a slightly lower loss. Checked from the shard metadata written at
+    tokenisation, so it costs nothing.
+    """
+    meta_path = os.path.join(dataset_path.rstrip("/"), "metadata.json")
+    if not os.path.exists(meta_path):
+        print(f"[sft_ctc] WARNING: no metadata.json at {meta_path}; cannot verify instance lengths")
+        return
+    with open(meta_path) as f:
+        meta = json.load(f)
+    longest = int((meta.get("token_len") or {}).get("max", 0))
+    if longest > seq_len:
+        raise SystemExit(
+            f"{dataset_path} contains an instance of {longest:,} tokens > sequence_length "
+            f"{seq_len:,}. `truncate` would drop its answer and train on a zero-loss window. "
+            "Re-tokenize with --max-seq-len <= sequence_length."
+        )
+    print(f"[sft_ctc] instance-length check OK: longest {longest:,} <= seq_len {seq_len:,}")
+
+
+def build_ctc_data_components(common, dataset_path: str):
+    """Data config matching prasann's SFT scripts, not ``sft_common``'s default.
+
+    ⚠ Every CTC task puts its answer at the END of the instance, so a TRUNCATED over-length example
+    keeps the prompt and loses the answer -- a window with zero loss tokens that trains on nothing.
+    prasann's SFT scripts use ``LongDocStrategy.exclude`` for exactly this reason, but that member
+    does not exist in this olmo-core lineage (only ``truncate`` and ``fragment``, and ``fragment``
+    is worse: it splits prompt from answer). The shards are therefore capped at tokenisation time so
+    nothing can be over-length, and :func:`_assert_no_overlong` checks that rather than assuming it.
+    """
+    _assert_no_overlong(dataset_path, common.max_sequence_length)
+    clean = dataset_path.rstrip("/")
+    return DataComponents(
+        dataset=NumpyPackedFSLDatasetConfig(
+            tokenizer=common.tokenizer,
+            work_dir=common.work_dir,
+            paths=[f"{clean}/token_ids_part_*.npy"],
+            expand_glob=True,
+            label_mask_paths=[f"{clean}/labels_mask_*.npy"],
+            generate_doc_lengths=True,          # block-diagonal masking -> packing is example-level
+            long_doc_strategy=LongDocStrategy.truncate,
+            sequence_length=common.max_sequence_length,
+        ),
+        data_loader=NumpyDataLoaderConfig(
+            global_batch_size=common.global_batch_size, seed=SEED, num_workers=4
+        ),
+    )
+
+
 def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
     """``sft_common.build_trainer_config`` hardcodes 2 epochs; this run needs more updates."""
     cfg = build_trainer_config(common, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", arm])
@@ -298,7 +355,7 @@ if __name__ == "__main__":
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
         num_nodes=MODEL_CONFIGS[size]["num_nodes"] if size in MODEL_CONFIGS else 1,
-        data_config_builder=partial(build_data_components, dataset_path=DATASET_PATH),
+        data_config_builder=partial(build_ctc_data_components, dataset_path=DATASET_PATH),
         model_config_builder=partial(build_ctc_model_config, arm=arm, attn_backend=attn_backend),
         train_module_config_builder=build_ctc_train_module_config,
         trainer_config_builder=partial(_trainer_with_epochs, size=size, sft_cfg=sft_cfg, arm=arm),
