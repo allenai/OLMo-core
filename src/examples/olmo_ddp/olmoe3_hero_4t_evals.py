@@ -17,7 +17,15 @@ AUTOMATION = CAMPAIGN_ROOT / "eval-pipeline"
 STAGES = ("decay", "mt", "lc", "sft")
 WORKSPACE = "ai2/OLMo-3-moe-experiments"
 PT_MT_LC_EVAL_COMMIT = "ca80837014c92771ca19b4bedafcd8c0dbd082c7"
+SFT_EVAL_COMMIT = "437a369a2c280c06df598346f8989cd42f8b7bdb"
 TEMPERATURES = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+
+
+def minimum_free_bytes():
+    """Read the explicitly configured eval-only admission floor, in decimal bytes."""
+    value = int(os.environ.get("HERO_4T_EVAL_MIN_FREE_BYTES", "12000000000000"))
+    assert value >= 10_000_000_000_000, "Refuse a floor below the approved 10TB minimum"
+    return value
 
 
 def temperature_spec(spec, temperature):
@@ -73,9 +81,8 @@ def record(c, name, spec):
 def tick(stage, b, commit, validate_only=False):
     # Each stage gets a fresh interpreter: older MT/LC adapters have module-level
     # path globals that must never be mixed in a single eval controller process.
-    if stage != "sft":
-        # Existing evals retain their exact specs/receipts; no duplicate attempts.
-        commit = PT_MT_LC_EVAL_COMMIT
+    # Controller-only changes must not alter existing worker specs/receipts.
+    commit = SFT_EVAL_COMMIT if stage == "sft" else PT_MT_LC_EVAL_COMMIT
     c = controller(b, commit, stage)
     result = {}
     if stage == "sft":
@@ -198,6 +205,7 @@ def main():
     p.add_argument("--validate-only", action="store_true")
     args = p.parse_args()
     commit = os.environ["GIT_REF"]
+    admission_floor = minimum_free_bytes()
     if args.tick:
         with Beaker.from_env(check_for_upgrades=False) as b:
             return tick(args.tick, b, commit, args.validate_only)
@@ -211,12 +219,16 @@ def main():
             gpus=0,
             numerical_parity="disabled_by_user_20260916",
             stages=STAGES,
+            minimum_free_bytes=admission_floor,
+            sft_worker_commit=SFT_EVAL_COMMIT,
         )
         previous = {}
         while True:
             free = os.statvfs(MOUNT)
-            if free.f_bavail * free.f_frsize < 12_000_000_000_000:
-                log("FOUR_T_EVAL_WAIT_STORAGE")
+            free_bytes = free.f_bavail * free.f_frsize
+            if free_bytes < admission_floor:
+                log("FOUR_T_EVAL_WAIT_STORAGE", free_bytes=free_bytes,
+                    minimum_free_bytes=admission_floor)
                 time.sleep(60)
                 continue
             for stage in STAGES:

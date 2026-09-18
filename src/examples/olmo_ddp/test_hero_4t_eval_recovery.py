@@ -2,6 +2,7 @@
 
 import copy
 import json
+import os
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,15 @@ import olmoe3_hero_4t_evals as worker
 
 
 class EvalRecoveryTest(unittest.TestCase):
+    def test_approved_storage_floor_only(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(worker.minimum_free_bytes(), 12_000_000_000_000)
+        with patch.dict(os.environ, {"HERO_4T_EVAL_MIN_FREE_BYTES": "10000000000000"}):
+            self.assertEqual(worker.minimum_free_bytes(), 10_000_000_000_000)
+        with patch.dict(os.environ, {"HERO_4T_EVAL_MIN_FREE_BYTES": "0"}):
+            with self.assertRaises(AssertionError):
+                worker.minimum_free_bytes()
+
     def test_timeout_is_contained(self):
         with patch.object(worker.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 300)):
             with patch.object(worker, "log") as log:

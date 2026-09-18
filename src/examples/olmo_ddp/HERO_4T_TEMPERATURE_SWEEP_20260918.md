@@ -34,6 +34,9 @@ Existing PT/MT/LC jobs retain their old commit and canonical tracking receipts.
 The one failed LC code job is retried separately with HTTP/1.1 and bounded
 retry-all-errors for its Cloud SDK download; scoring/inference are unchanged.
 
-The existing 12TB free-storage submission floor remains in place. No checkpoint
-deletion, retention changes, new model copies for temperatures, or hero/PT
-resumptions are part of this work.
+The default admission floor remains12TB. On2026-09-18 the user explicitly
+approved10TB for this evaluator: set `HERO_4T_EVAL_MIN_FREE_BYTES=10000000000000`.
+Worker specs remain pinned to437a369a2c280c06df598346f8989cd42f8b7bdb for SFT,
+so controller-only policy changes do not duplicate evaluations or drift recipes.
+No checkpoint deletion, retention changes, new model copies for temperatures,
+or hero/PT resumptions are part of this work.
