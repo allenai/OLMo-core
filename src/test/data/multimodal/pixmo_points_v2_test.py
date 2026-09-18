@@ -14,12 +14,12 @@ from olmo_core.data.multimodal import (
     PixMoCountV2DatasetConfig,
     PixMoPointsV2DatasetConfig,
 )
-from olmo_core.data.multimodal.grounding import POINT_COUNT_PROMPTS, POINTING_PROMPTS
 from olmo_core.data.multimodal.message_weight import ATTEND_ALL_SUBSEGMENT_ID
+from olmo_core.data.multimodal.pixmo_points_v2 import STAGE1_PROMPT_FAMILY
 from olmo_core.data.multimodal.sft_formatter import SftFormatter, base_pointing_style
 from olmo_core.exceptions import OLMoConfigurationError
 
-STAGE1 = {"prompt_templates": "none", "system_prompt": "style_and_length_v2"}
+STAGE1 = STAGE1_PROMPT_FAMILY
 POINTS = [{"x": 10.5, "y": 20.5}, {"x": 30.0, "y": 40.0}]
 
 
@@ -75,20 +75,6 @@ def test_aux_point_count_answer_counts():
         'Counting the <points coords="1 1 105 205 2 300 400">leather earmuff</points> '
         "shows a total of 2."
     )
-
-
-@pytest.mark.parametrize("style", ["pointing", "point_count"])
-def test_aux_style_keeps_prefix_and_base_pool_under_stage2_family(style):
-    """Not a demo style, so ``demo_or_style_v2`` still prefixes it; the template comes from
-    the base style's pool."""
-    user, _ = _turn(f"aux_{style}", POINTS)
-    assert user.startswith(f"aux_{style}: ")
-    body = user[len(f"aux_{style}: ") :]
-    pool = POINT_COUNT_PROMPTS if style == "point_count" else POINTING_PROMPTS
-    candidates = {
-        t.format(label=lbl) for t in pool for lbl in ("Leather Earmuff", "leather earmuff")
-    }
-    assert body in candidates
 
 
 def test_aux_style_with_no_points_abstains():
@@ -187,12 +173,12 @@ def _write_count_v2(tmp_path):
 
 def _points_cfg(path, **kw):
     kw.setdefault("style", ("pointing",))
-    return PixMoPointsV2DatasetConfig(dataset_path=path, max_crops=1, **STAGE1, **kw)
+    return PixMoPointsV2DatasetConfig(dataset_path=path, max_crops=1, **kw)
 
 
 def _count_cfg(path, **kw):
     kw.setdefault("style", ("pointing",))
-    return PixMoCountV2DatasetConfig(dataset_path=path, max_crops=1, **STAGE1, **kw)
+    return PixMoCountV2DatasetConfig(dataset_path=path, max_crops=1, **kw)
 
 
 def _labels(messages):
@@ -237,6 +223,21 @@ def test_points_v2_config_validation(tmp_path):
         PixMoPointsV2DatasetConfig(style=()).validate()
     with pytest.raises(OLMoConfigurationError):
         PixMoPointsV2DatasetConfig(p_paired_negatives=1.5).validate()
+
+
+@pytest.mark.parametrize("config_cls", [PixMoPointsV2DatasetConfig, PixMoCountV2DatasetConfig])
+@pytest.mark.parametrize("knob", ["prompt_templates", "system_prompt", "p_high_res"])
+def test_v2_configs_are_stage1_only(config_cls, knob):
+    """The prompt family is fixed to the released pretrain's (bare label behind ``"<style>:"``),
+    so a run cannot be pointed at the SFT-stage templates by a default or an override."""
+    assert STAGE1_PROMPT_FAMILY == {
+        "prompt_templates": "none",
+        "system_prompt": "style_and_length_v2",
+    }
+    assert knob not in config_cls.__dataclass_fields__
+    assert config_cls().loss_token_weighting == "none"
+    with pytest.raises(Exception):
+        config_cls().merge([f"{knob}=uber_model_v2"])
 
 
 def test_points_v2_config_tuple_fields_merge_from_cli():

@@ -229,8 +229,10 @@ def test_config_validation(tmp_path):
         OcrCaptionTarsDatasetConfig().validate()  # no dataset_path
     with pytest.raises(OLMoConfigurationError):
         OcrCaptionTarsDatasetConfig(dataset_path="/x", style="").validate()
-    with pytest.raises(OLMoConfigurationError):
-        OcrCaptionTarsDatasetConfig(dataset_path="/x", system_prompt="uber_model_v2").validate()
+    # Pretraining families only: an unknown name and the SFT-stage family are both refused.
+    for family in ("uber_model_v2", "demo_or_style_v2"):
+        with pytest.raises(OLMoConfigurationError):
+            OcrCaptionTarsDatasetConfig(dataset_path="/x", system_prompt=family).validate()
     OcrCaptionTarsDatasetConfig(dataset_path="/x").validate()
 
 

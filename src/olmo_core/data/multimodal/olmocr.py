@@ -192,7 +192,8 @@ class OlmOcrMixDatasetConfig(Config):
     example left without loss tokens is rejected, and the loader skips it). Set it to the
     training sequence length: long pages otherwise overflow it."""
 
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "none"
+    """``"none"`` weights every response token equally, like the stage-1 caption source."""
     message_weight: Optional[float] = None
     """Scalar loss multiplier for this source (mm_olmo's ``ocr_weight``)."""
 
@@ -200,10 +201,9 @@ class OlmOcrMixDatasetConfig(Config):
 
     system_prompt: str = "style_and_length_v3"
     """How the ``olmocr`` style is shown in the user turn. ``style_and_length_v3`` -- mm_olmo's
-    molmo3 stage-1 family, the only one mm_olmo trains this source under -- and
-    ``demo_or_style_v2`` / ``_v3`` give the bare ``"olmocr:"``; ``style_and_length[_v2]`` (the
-    released Molmo2 pretrain family) gives the length-conditioned ``"olmocr <bucket>:"``;
-    ``none`` gives no prefix."""
+    molmo3 stage-1 family, the only one mm_olmo trains this source under -- gives the bare
+    ``"olmocr:"``; ``style_and_length[_v2]`` (the released Molmo2 pretrain family) gives the
+    length-conditioned ``"olmocr <bucket>:"``; ``none`` gives no prefix."""
 
     def validate(self):
         canonical_subset(self.subset)
@@ -323,7 +323,7 @@ class OlmOcrMixDataset(EpochSeededExamples):
         text = self.transcription(row)
         image = render_pdf_page(self.pdf_path(row), target_dim)
         prompt = self.user_prompt(text, rng)
-        # One image, one (tag, transcription) turn: the shared stage-2 encoder builds exactly the
+        # One image, one (tag, transcription) turn: the shared message encoder builds exactly the
         # stage-1 single-branch layout (user header + image block + tag, then the response).
         seq = encode_sft_example(
             self.tokenizer,

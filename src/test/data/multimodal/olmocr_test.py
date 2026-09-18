@@ -156,8 +156,10 @@ def test_config_validation():
         OlmOcrMixDatasetConfig(target_longest_image_dim_range=(2048, 1024)).validate()
     with pytest.raises(OLMoConfigurationError):
         OlmOcrMixDatasetConfig(languages=()).validate()
-    with pytest.raises(OLMoConfigurationError):
-        OlmOcrMixDatasetConfig(system_prompt="uber_model_v2").validate()
+    # Pretraining families only: an unknown name and the SFT-stage family are both refused.
+    for family in ("uber_model_v2", "demo_or_style_v2"):
+        with pytest.raises(OLMoConfigurationError):
+            OlmOcrMixDatasetConfig(system_prompt=family).validate()
     OlmOcrMixDatasetConfig(languages=None, split="validation").validate()
 
 
@@ -234,9 +236,8 @@ def test_user_prompt_per_prompt_family(tmp_path, stub_renderer):
     buckets = sorted(int(p.split()[1][:-1]) for p in prompts if " " in p)
     assert all(0 <= b <= 40 for b in buckets), buckets
     assert abs(buckets[len(buckets) // 2] - 20) <= 3, buckets
-    for family in ("style_and_length_v3", "demo_or_style_v2"):
-        ds = _cfg(root, system_prompt=family).build(_FakeTok())
-        assert ds.user_prompt(text, np.random.RandomState(0)) == f"{OLMOCR_STYLE}:"
+    v3 = _cfg(root, system_prompt="style_and_length_v3").build(_FakeTok())
+    assert v3.user_prompt(text, np.random.RandomState(0)) == f"{OLMOCR_STYLE}:"
     none = _cfg(root, system_prompt="none").build(_FakeTok())
     assert none.user_prompt(text, np.random.RandomState(0)) == ""
 

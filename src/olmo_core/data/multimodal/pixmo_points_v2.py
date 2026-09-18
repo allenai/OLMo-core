@@ -60,6 +60,7 @@ from .sft_common import EpochSeededExamples
 from .sft_formatter import SftFormatter
 
 __all__ = [
+    "STAGE1_PROMPT_FAMILY",
     "FAILED_AUDIT_RESULTS",
     "PixMoPointsV2DatasetConfig",
     "PixMoPointsV2Dataset",
@@ -68,6 +69,14 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+#: The prompt family these sources are formatted with, fixed rather than configurable: the
+#: question is the bare lowercased label behind a ``"<style>:"`` prefix, as recorded in the
+#: released ``Molmo2-4B-Pretrain`` ``data_formatter`` (``prompt_templates: none``,
+#: ``system_prompt: style_and_length_v2``). mm_olmo's molmo3 stage 1 (``style_and_length_v3``)
+#: renders pointing styles identically. These are stage-1 sources, so the natural-language
+#: template family of the SFT stage is deliberately not reachable from here.
+STAGE1_PROMPT_FAMILY = {"prompt_templates": "none", "system_prompt": "style_and_length_v2"}
 
 #: ``audit_result`` values mm_olmo treats as a failed audit (``PixMoPointV2._keep``).
 FAILED_AUDIT_RESULTS = frozenset({"error", "clear_error"})
@@ -174,14 +183,11 @@ class PixMoPointsV2DatasetConfig(Config):
     (mm_olmo ``PixMoPointV2.format_example``)."""
 
     max_crops: int = 8
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "none"
+    """``"none"`` weights every response token equally, as the released Molmo2 pretrain does for
+    its pointing sources (``loss_token_weighting: None``)."""
     message_weight: Optional[float] = None
-    p_high_res: float = 0.0
     seed: int = 0
-    prompt_templates: str = "uber_model_v2"
-    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
-    system_prompt: str = "demo_or_style_v2"
-    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def validate(self):
         if self.kind not in _KIND_TO_SOURCE:
@@ -358,9 +364,7 @@ class PixMoPointsV2Dataset(EpochSeededExamples):
         # Per (row, epoch): the negative sub-sampling in `format_row` has to rotate across epochs.
         rng = self.epoch_rng(i)
         messages, weights = self.format_row(row, rng)
-        fmt = SftFormatter(
-            seed=cfg.seed, prompt_templates=cfg.prompt_templates, system_prompt=cfg.system_prompt
-        )
+        fmt = SftFormatter(seed=cfg.seed, **STAGE1_PROMPT_FAMILY)
         branches = [fmt.format_turns(msg, index=i, rng=rng)[0] for msg in messages]
         return _build_example(
             self.tokenizer,
@@ -369,7 +373,6 @@ class PixMoPointsV2Dataset(EpochSeededExamples):
             max_crops=cfg.max_crops,
             loss_token_weighting=cfg.loss_token_weighting,
             message_weight=cfg.message_weight,
-            p_high_res=cfg.p_high_res,
             shuffle_rng=rng,
             branch_weights=weights,
         )
@@ -404,14 +407,11 @@ class PixMoCountV2DatasetConfig(Config):
     ``("aux_point_count", "aux_pointing")``."""
 
     max_crops: int = 8
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "none"
+    """``"none"`` weights every response token equally, as the released Molmo2 pretrain does for
+    its pointing sources (``loss_token_weighting: None``)."""
     message_weight: Optional[float] = None
-    p_high_res: float = 0.0
     seed: int = 0
-    prompt_templates: str = "uber_model_v2"
-    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
-    system_prompt: str = "demo_or_style_v2"
-    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
 
     def validate(self):
         if not self.style:
@@ -515,9 +515,7 @@ class PixMoCountV2Dataset(EpochSeededExamples):
         rng = self.epoch_rng(i)
         pil = _open_image(row["image"])
         messages = self.format_row(row, rng, pil.size)
-        fmt = SftFormatter(
-            seed=cfg.seed, prompt_templates=cfg.prompt_templates, system_prompt=cfg.system_prompt
-        )
+        fmt = SftFormatter(seed=cfg.seed, **STAGE1_PROMPT_FAMILY)
         branches = [fmt.format_turns(msg, index=i, rng=rng)[0] for msg in messages]
         return _build_example(
             self.tokenizer,
@@ -526,6 +524,5 @@ class PixMoCountV2Dataset(EpochSeededExamples):
             max_crops=cfg.max_crops,
             loss_token_weighting=cfg.loss_token_weighting,
             message_weight=cfg.message_weight,
-            p_high_res=cfg.p_high_res,
             shuffle_rng=rng,
         )

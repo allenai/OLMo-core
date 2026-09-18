@@ -270,7 +270,8 @@ class OcrCaptionTarsDatasetConfig(Config):
     max_crops: int = 8
     max_sequence_length: Optional[int] = None
     """Tail-truncate the built sequence to this many tokens (see :func:`~.sft_common.truncate_example`)."""
-    loss_token_weighting: str = "root_subsegments"
+    loss_token_weighting: str = "none"
+    """``"none"`` weights every response token equally, like the stage-1 caption source."""
     message_weight: Optional[float] = None
     seed: int = 0
     system_prompt: str = "style_and_length_v3"

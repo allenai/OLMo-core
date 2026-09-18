@@ -527,19 +527,22 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
 
     # The v2 pointing sources (mm_olmo `_base_mixture`); only built when `pointing_data == "v2"`.
+    # Unlike the v1 classes, which are shared with the SFT stage and so take their prompt family
+    # from POINTING_DATASET_KWARGS, these are stage-1 sources with the stage-1 family built in:
+    # only the loss weighting is passed through.
     pointing_v2_config = PixMoPointsV2DatasetConfig(
         p_paired_negatives=POINTING_V2_P_PAIRED_NEGATIVES,
         n_easy_samples=POINTING_V2_N_EASY_NEGATIVES,
         audit_style=POINTING_V2_AUDIT_STYLE,
         filter_audit=POINTING_V2_FILTER_AUDIT,
         max_crops=MAX_CROPS,
-        **POINTING_DATASET_KWARGS,
+        loss_token_weighting=POINTING_DATASET_KWARGS["loss_token_weighting"],
     )
     count_v2_config = PixMoCountV2DatasetConfig(
         audit_style=POINTING_V2_AUDIT_STYLE,
         filter_audit=POINTING_V2_FILTER_AUDIT,
         max_crops=MAX_CROPS,
-        **POINTING_DATASET_KWARGS,
+        loss_token_weighting=POINTING_DATASET_KWARGS["loss_token_weighting"],
     )
     # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
     # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user

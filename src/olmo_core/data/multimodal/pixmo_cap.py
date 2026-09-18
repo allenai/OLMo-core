@@ -90,14 +90,14 @@ def style_length_prefix(style: str, text: str, rng: np.random.RandomState) -> st
 
 
 #: mm_olmo ``system_prompt`` families understood by :func:`style_tag_prompt`
-#: (``DataFormatter.get_system_prompt``, data_formatter.py:1690-1756).
+#: (``DataFormatter.get_system_prompt``, data_formatter.py:1690-1756). Pretraining families only:
+#: the sources that use this are stage-1 sources, so the SFT-stage ``demo_or_style`` families
+#: are not accepted.
 STYLE_TAG_FAMILIES = frozenset(
     {
         "style_and_length",
         "style_and_length_v2",
         "style_and_length_v3",
-        "demo_or_style_v2",
-        "demo_or_style_v3",
         "none",
     }
 )
@@ -108,9 +108,8 @@ def style_tag_prompt(style: str, text: str, rng: np.random.RandomState, system_p
     and the caption tars): just the style tag, rendered per mm_olmo's ``system_prompt`` family.
 
     ``style_and_length[_v2]`` gives the length-conditioned ``"<style> <bucket>:"``;
-    ``style_and_length_v3`` (which reserves the bucket for captions / transcripts) and the
-    ``demo_or_style`` families (which prefix every non-demo style) give the bare ``"<style>:"``;
-    ``none`` gives no prefix at all.
+    ``style_and_length_v3`` (which reserves the bucket for captions / transcripts) gives the bare
+    ``"<style>:"``; ``none`` gives no prefix at all.
     """
     if system_prompt not in STYLE_TAG_FAMILIES:
         raise ValueError(
