@@ -699,7 +699,16 @@ class MultimodalLM(nn.Module):
             images = images.to(device)
             pooled_patches_idx = pooled_patches_idx.to(device)
 
-            image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
+            # `record_function` scope so `torch.profiler` can attribute the vision path's
+            # time separately from the LM's. Without it the tables are operator-level only
+            # (`aten::mm`, `aten::_scaled_dot_product_*`), and a GEMM cannot be assigned to
+            # the ViT or the LM -- which is precisely the split that decides where the
+            # remaining throughput work goes. The annotation is a no-op when no profiler is
+            # active.
+            with torch.profiler.record_function("mm::vision_encode"):
+                image_features = self._encode_images(
+                    images, pooled_patches_idx
+                )  # (B, n_pooled, d)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -783,19 +792,20 @@ class MultimodalLM(nn.Module):
         if position_ids is not None:
             position_ids = position_ids.to(device)
 
-        out = self.lm(
-            input_ids,
-            input_embeddings=h,
-            labels=labels,
-            or_mask=or_mask,
-            and_mask=and_mask,
-            flex_attn_block_mask=flex_attn_block_mask,
-            position_ids=position_ids,
-            response_logits_only=response_logits_only,
-            response_mask=response_mask,
-            drop_mask=drop_mask,
-            **kwargs,
-        )
+        with torch.profiler.record_function("mm::lm_forward"):
+            out = self.lm(
+                input_ids,
+                input_embeddings=h,
+                labels=labels,
+                or_mask=or_mask,
+                and_mask=and_mask,
+                flex_attn_block_mask=flex_attn_block_mask,
+                position_ids=position_ids,
+                response_logits_only=response_logits_only,
+                response_mask=response_mask,
+                drop_mask=drop_mask,
+                **kwargs,
+            )
 
         # Mask the logit columns of the inputs-only image-special tokens (see
         # :attr:`MultimodalLMConfig.output_vocab_size`). ``finfo.min`` underflows to
