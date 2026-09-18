@@ -136,8 +136,14 @@ OUTLIER_DATA_ROOT = f"{DATA_ROOT}/outlier"
 # Shared-vector-landmark CPT base (Beaker 01KWJGE5MKACTD5524S76GX0XM, exit 0, final step 2385).
 # The checkpoint already contains the shared-vector params (w_out_vec, weight_landmark, base), so
 # this is a normal STRICT load -- no state_dict_load_opts override. Weights only.
+#
+# NOTE the ``amandab/`` namespace. The CPT script wrote to ``{root}/checkpoints/{run_name}`` (no
+# user segment) and the run directory was moved under ``amandab/`` afterwards, so the path in the
+# CPT job log is stale -- the same correction ``Qwen3-4B-fast-landmark-5task-32k-nocpt-SFT.py``
+# records as its fix (b). Verified 2026-09-18 (Beaker 01M2TQ7PXNN3GD3AN6W3MH2NAF): step1000,
+# step2000 and step2385 are present, each with config.json / model_and_optim / train.
 BASE_CHECKPOINT = (
-    "/weka/oe-training-default/ai2-llm/checkpoints/qwen3-4b-shared-vec-landmark-d3lm15b/"
+    "/weka/oe-training-default/ai2-llm/checkpoints/amandab/qwen3-4b-shared-vec-landmark-d3lm15b/"
     "step2385/model_and_optim"
 )
 
