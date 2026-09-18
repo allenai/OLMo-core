@@ -1,5 +1,34 @@
 # Small 3:1 hybrid pair: configuration and budget
 
+## Approved sweep revision (September 18)
+
+The user authorized only the six tuning points, not2T hero jobs: EMO and
+non-EMO each at1.3e-3,2.6e-3,5.2e-3, centered on the **observed** old10% winner.
+All use6000 total steps,2000 warmup and600-step **in-process** linear decay.
+Save only4200,4800,5400,6000; no step0 or periodic checkpoints. The first three
+preserve future30/20/10% branch points. No20/30% decay is executed now.
+Unexpected graceful interruptions may save an additional recovery checkpoint.
+
+Source entry points: `olmoe3_hybrid_sweep{_plan,_node,_control}.py` and
+`olmoe3_hybrid_sweep.py`. CPU config validation precedes one64GPU matched-arm
+save/restore smoke; then the EMO center/lower/upper runs submit. The CPU-only
+Phobos controller waits for all3EMO runs to succeed before submitting non-EMO.
+Each training job is64B300,urgent/allocated1h,in`ai2/olmo3p5-training`.
+The controller requests no CPU,memory,shared-memory or GPU resources.
+
+Uploader: existing private pilot bucket, distinct campaign prefixes, keep4
+and1hgrace, trainer never deletes. Six production points create24full-state
+snapshots (~3.6TB); the isolated smoke adds4snapshots (~0.6TB).
+Non-EMO hero PT remains unchanged. No conversions/base-eval jobs are added;
+the existing11held-out in-loop evals and training-CE histories provide sweep
+results. Only this controller submits jobs; failures stop fan-out without
+blind retries. Source remains clean and pinned for jobs.
+
+Purpose: check transfer of the7:1 LR optimum to3:1. After reviewing curves,
+the user may retain the existing7:1 hero LR1.1e-3 if sufficiently close. No
+new2T LR or hero run is selected automatically. The sections below are the
+earlier planning budget and options, superseded by this revision where different.
+
 Planning snapshot: September 18, 2026. No 3:1 training, sweep, bucket, uploader
 registration, or controller has been launched. The architecture builder is
 `olmoe3_small_hybrid_3to1.py`; this is not yet an end-to-end training launcher.
