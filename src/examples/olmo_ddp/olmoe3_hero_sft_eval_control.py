@@ -78,6 +78,8 @@ def spec_for(template, stage, run, commit):
     replace_env(task, {"HERO_SFT_RESUME": "1"})
     task["envVars"].append({"name": "HF_TOKEN", "secret": "jacobm_HF_TOKEN"})
     if stage in ("smoke", "humaneval"):
+        # The reused app is in oe-eval, not Modal's default main environment.
+        replace_env(task, {"MODAL_ENVIRONMENT": "oe-eval"})
         task["envVars"] += [
             {"name": "MODAL_TOKEN_ID", "secret": "jacobm_MODAL_TOKEN_ID"},
             {"name": "MODAL_TOKEN_SECRET", "secret": "jacobm_MODAL_TOKEN_SECRET"},

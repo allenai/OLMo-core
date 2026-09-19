@@ -1,5 +1,7 @@
 """Reuse the known-good hero Modal app; preserve independent sandbox isolation."""
 
+import os
+
 APP = "swerex-7ee77286d853"
 _installed = False
 
@@ -9,6 +11,7 @@ def install():
     global _installed
     if _installed:
         return
+    assert os.environ.get("MODAL_ENVIRONMENT") == "oe-eval", "Existing app lives in oe-eval"
     import modal
 
     original = modal.App.lookup
