@@ -10,7 +10,7 @@ import sys
 from olmoe3_hero_decay_plan import inventory
 from olmoe3_hero_decay_plan import validate_checkpoint as validate_parent
 from olmoe3_hero_decay_runtime import verify_runtime
-from olmoe3_hero_sft_plan import BATCH, GPUS, MOUNT, find_run, runs
+from olmoe3_hero_sft_plan import BATCH, GPUS, LEGACY_SOURCE, MOUNT, find_run, runs
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 
@@ -86,6 +86,9 @@ def main():
     start, source = max(choices, key=lambda item: item[0])
     assert 0 <= start <= target
     if start == 0:
+        from olmoe3_integration_sft_repack import validate_copy
+
+        validate_copy(LEGACY_SOURCE, source, GPUS)
         assert source == r.source and source.name == "step45876"
         assert (source / "config.json").is_file()
         assert (source / "model_and_optim/.metadata").is_file()

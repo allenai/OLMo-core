@@ -32,9 +32,10 @@ SEED = 1729
 LRS = {"5em5": 5e-5}
 LC_CAMPAIGNS = {arm: "olmo35-small-4t-lc100b-noemo-20260916" for arm in ("emo", "non-emo")}
 LC_JOBS = {"non-emo": "01M1D1J2ST47VDJESRPDDAP6W2"}
-SOURCE = Path("/weka/oe-training-default/ai2-llm/scaling-ladders/olmoe3/jacobm") / (
+LEGACY_SOURCE = Path("/weka/oe-training-default/ai2-llm/scaling-ladders/olmoe3/jacobm") / (
     "v0.1.0-dev-olmoe3-lc-mt20-dense-rule-fa8e0c182428/810M-Cx8/long-context/step45876"
 )
+SOURCE = ROOT / "source-repacked8" / "step45876"
 TEMPLATE = "01M2RF2SK6K8KS2YJKT9RD6NY8"
 
 
@@ -103,6 +104,7 @@ class SFTRun:
             "lr": self.lr,
             "smoke": self.smoke,
             "source": str(self.source),
+            "original_source": str(LEGACY_SOURCE),
             "source_experiment": LC_JOBS[self.arm],
             "checkpoint_root": str(self.root),
             "bucket": self.bucket,

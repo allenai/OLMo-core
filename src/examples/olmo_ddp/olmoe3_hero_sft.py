@@ -24,9 +24,11 @@ from olmoe3_hero_sft_plan import (
     DATA,
     DATA_PLAN,
     GPUS,
+    LEGACY_SOURCE,
     MOUNT,
     SEED,
     SEQUENCE,
+    SOURCE,
     data_plan,
     find_run,
     runs,
@@ -158,7 +160,8 @@ class SFTAudit(Callback):
         if Path(path) == r.source:
             from olmoe3_integration_sft_audit import verify_source_weights
 
-            verify_source_weights(self.trainer, r.source)
+            # Independently compare to the original, not only the repacked copy.
+            verify_source_weights(self.trainer, LEGACY_SOURCE)
             assert self.step == self.trainer.global_train_tokens_seen == 0
             assert self.trainer.data_loader.tokens_processed == 0
             optim = self.trainer.train_module.optim
@@ -398,6 +401,9 @@ def config_builder():
 def prepare():
     """Prepare packing and verify both two-epoch configs and their restart smokes."""
     assert MOUNT.is_mount() and DATA.is_dir()
+    from olmoe3_integration_sft_repack import repack
+
+    repack(LEGACY_SOURCE, SOURCE, GPUS)
     self_test()
     manifest = json.loads((DATA / "manifest.json").read_text())
     assert manifest["status"] == "complete"
