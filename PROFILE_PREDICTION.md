@@ -210,3 +210,50 @@ chunking, small per-crop GEMMs, or launch overhead across 25 small blocks.
 Falsifier: `mm::vision_encode` at or near 26% would mean the ViT runs at LM-like
 efficiency, the 3.7x is an artifact of the two-point fit, and the remaining time is
 elsewhere -- most likely comms, which would revive Phase 4.
+
+---
+
+# Candidate explanations for the ViT efficiency gap, pre-screened
+
+If the profile confirms `mm::vision_encode` well above its ~26% FLOP share, the next
+question is *why*. Screening the candidates before the data arrives, so the profile is
+read against a fixed list rather than whatever looks suggestive.
+
+**H1 -- activation-checkpoint recompute. Real, ~1.33x, structural.**
+Vision AC is on, so the ViT runs forward + recompute-forward + backward = 4 forward-units,
+while `image_encoder_flops` charges 3 (forward + backward at 2x). The LM has
+`ac_config=null` and genuinely does 3. So ~1.33x of any measured gap is just this, and it
+is not recoverable: turning vision AC off OOMs at every useful crop budget, and the
+activation ratio is ~20x (see the L5 section in PROJECT_CONTEXT).
+**Adjusted: a measured 3.7x gap is a ~2.8x unexplained gap.**
+
+**H2 -- the SigLIP so400m dimensions are not tensor-core aligned. Real, structural.**
+
+| | ViT (so400m) | LM (qwen3-4B-ish) |
+|---|---|---|
+| model dim | 1152 = 9x128 aligned | 2560 = 20x128 aligned |
+| **MLP dim** | **4304 = 33.625x128 NOT aligned** | 9728 = 76x128 aligned |
+| **head dim** | **72, not a multiple of 64** | 128 aligned |
+
+Every ViT MLP GEMM has a ragged tail tile, and `head_dim=72` falls outside the 64/128
+fast paths SDPA kernels are specialized for. These are checkpoint-fixed architecture
+constants -- not tunable without retraining the encoder. **If H2 is the bulk of the gap,
+there is no ViT lever at all**, and the remaining work is comms and scale.
+
+**H3 -- the three `.contiguous()` copies in `ViTAttention.forward`. DEAD, 0.5%.**
+`image_vit.py:114-118` calls `.transpose(1,2).contiguous()` on each of q/k/v. At 160
+crops that is 269 MB per copy, 807 MB per layer, 21.8 GB per forward and 43.6 GB with the
+AC recompute -- which sounds alarming. Costed properly it is not: 87 GB of read+write
+traffic at ~8 TB/s is **10.9 ms**, and at 3 microbatches per rank that is ~33 ms of a
+~6,170 ms step, or **0.53%**. Not worth touching.
+
+**H4 -- cuDNN attention is excluded for the ViT. Untested, and the only actionable one.**
+`vision_sdpa_backends()` (`nn/vision/sdpa.py:20`) restricts the ViT to
+`FLASH_ATTENTION | EFFICIENT_ATTENTION`, excluding `CUDNN_ATTENTION`, with the comment
+"exclude cuDNN math pitfalls" inherited from mm_olmo. cuDNN's fused attention often
+handles awkward head dims like 72 better than flash on Blackwell (B300 is `sm_103a`).
+This is a one-line A/B and the only ViT lever on this list that is not structural.
+Worth running **only if** the profile shows ViT attention (not ViT GEMMs) carrying the gap.
+
+**Reading order once the tables land:** if the ViT time is dominated by MLP/GEMM ops, H2
+owns it and the ViT is closed. If it is dominated by attention ops, H4 is worth one job.
