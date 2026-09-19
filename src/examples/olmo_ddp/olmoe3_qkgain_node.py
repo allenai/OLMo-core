@@ -52,7 +52,8 @@ def main():
                 for k in range(r.gpus):
                     proof=json.loads((r.root/'audit'/f'restore-{r.start+2}-rank{k}.json').read_text())
                     assert proof['passed'] and not proof['fresh_stage']
-            atomic_json(r.root/'audit/success.json',dict(passed=True,step=target,gpus=r.gpus,smoke=r.smoke))
+            atomic_json(r.root/'audit/success.json',dict(passed=True,step=target,gpus=r.gpus,smoke=r.smoke,
+                checkpoint_metadata_sha256=hashlib.sha256((r.root/f'step{target}/.metadata.json').read_bytes()).hexdigest()))
         return
     stops=([r.start+2,target] if r.smoke else [target])
     port=29000+int(hashlib.sha256(exp.encode()).hexdigest()[:8],16)%1000
@@ -74,7 +75,8 @@ def main():
             for k in range(r.gpus):
                 proof=json.loads((r.root/'audit'/f'restore-{r.start+2}-rank{k}.json').read_text())
                 assert proof['passed'] and not proof['fresh_stage']
-        atomic_json(r.root/'audit/success.json',dict(passed=True,step=target,gpus=r.gpus,smoke=r.smoke))
+        atomic_json(r.root/'audit/success.json',dict(passed=True,step=target,gpus=r.gpus,smoke=r.smoke,
+            checkpoint_metadata_sha256=hashlib.sha256((r.root/f'step{target}/.metadata.json').read_bytes()).hexdigest()))
 
 
 if __name__=='__main__':main()

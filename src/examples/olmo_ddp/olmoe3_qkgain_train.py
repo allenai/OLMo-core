@@ -231,7 +231,8 @@ def trainer_config(common):
     cfg.load_optim_state=cfg.load_trainer_state=not fresh
     cp=cfg.callbacks['checkpointer']
     cp.save_interval=None; cp.fixed_steps=r.saves; cp.ephemeral_save_interval=None
-    cp.pre_train_checkpoint=r.start==0; cp.save_async=False; cp.max_checkpoints=None
+    cp.pre_train_checkpoint=r.start==0 and load!=r.root/'step0'
+    cp.save_async=False; cp.max_checkpoints=None
     cfg.callbacks['qkgain_audit']=Audit(run_id=r.run_id)
     # The existing guard only needs the campaign run resolver.
     hero.find_run=find_run

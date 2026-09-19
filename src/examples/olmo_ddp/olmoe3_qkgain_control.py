@@ -3,6 +3,7 @@
 import argparse
 import copy
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -108,6 +109,20 @@ def ensure_saved(c,name,make):
     return w,c.report(w)
 
 
+def verify_native(r):
+    """Use the worker's exhaustive rank audit, bound to the published checkpoint metadata.
+
+    Phobos serves Weka through a slow NFS path. Reading all64 large rank-audit
+    JSONs on every polling cycle stalls other lineages. The GPU worker already
+    checked every rank on the native Weka mount before publishing this proof.
+    """
+    proof=json.loads((r.root/'audit/success.json').read_text())
+    assert proof['passed'] and not proof['smoke'] and proof['step']==r.end and proof['gpus']==r.gpus
+    path=r.root/f'step{r.end}'
+    assert (path/'model_and_optim/.metadata').is_file()
+    assert proof['checkpoint_metadata_sha256']==hashlib.sha256((path/'.metadata.json').read_bytes()).hexdigest()
+
+
 def watch():
     from beaker import Beaker,BeakerExperimentSpec
     from olmo_checkpoint_uploader.models import Registration
@@ -165,14 +180,16 @@ def watch():
                             if stage=='pt':
                                 if ds!='STATUS_SUCCEEDED':
                                     rows[r.run_id]=dict(waiting='archive restore');break
+                                proof=json.loads((AUTOMATION/'download-success.json').read_text())
+                                assert proof['passed'] and proof['path']==str(REFERENCE)
                             else:
                                 parent=Run(arm,STAGES[STAGES.index(stage)-1])
                                 receipt=AUTOMATION/'submissions'/f'{parent.run_id}-train.json'
                                 if not receipt.exists():break
                                 pw=b.workload.get(json.loads(receipt.read_text())['experiment_id'])
                                 if status(pw)!='STATUS_SUCCEEDED':break
-                                assert json.loads((parent.root/'audit/success.json').read_text())['passed']
-                            validate_checkpoint(r.source)
+                                verify_native(parent)
+                            assert (r.source/'.metadata.json').is_file() and (r.source/'model_and_optim/.metadata').is_file()
                         if not admit:
                             rows[r.run_id]=dict(waiting='uploader/storage admission');break
                         sm=Run(arm,stage,True)
@@ -184,8 +201,7 @@ def watch():
                         row=dict(status=ts,id=tw.experiment.id if tw else None)
                         rows[r.run_id]=row
                         if ts!='STATUS_SUCCEEDED':break
-                        assert json.loads((r.root/'audit/success.json').read_text())['passed']
-                        validate_checkpoint(r.root/f'step{r.end}',r.end,r.batch,r.gpus)
+                        verify_native(r)
                         specs=eval_specs(b,r,commit)
                         estate={}
                         for kind,spec in specs.items():
