@@ -8,6 +8,20 @@ from pathlib import Path
 POLICY = "numerical_parity_skipped_by_user_20260916"
 
 
+def portable_attention_backends(config):
+    """Select portable export construction for shared as well as split QK gains."""
+    if isinstance(config, dict):
+        if "qk_norm_per_head_gains" in config:
+            config["backend"] = "torch"
+            config["use_flash"] = False
+        for child in config.values():
+            portable_attention_backends(child)
+    elif isinstance(config, list):
+        for child in config:
+            portable_attention_backends(child)
+    return config
+
+
 def install_conversion(convert):
     """Keep frozen tensor mapping, but do not execute core/HF/cache logit comparisons."""
     import olmo_core.nn.hf.convert_checkpoint as exporter
@@ -19,6 +33,8 @@ def install_conversion(convert):
         return original(*args, **kwargs)
 
     exporter.convert_checkpoint_to_hf = export
+    reference_config = convert.reference_config
+    convert.reference_config = lambda config: portable_attention_backends(reference_config(config))
     convert.qualify = structural_check
 
 
