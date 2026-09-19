@@ -63,14 +63,14 @@ PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
     launch my-run ai2/jupiter-cirrascale-2 --preset 1.4b_7to1 --dataset $DATA
 
 # 2. export the trained step to HF, in the dialect the plugin speaks   (step 5)
+#    run these two where /weka is mounted -- see "Where steps 5-6 run" below
 python src/scripts/convert_checkpoint_to_hf.py --checkpoint-input-dir <step> --huggingface-output-dir <hf>
 python debug/hybridish_sft/redialect_to_mainline.py --src <hf> --ref <released ckpt> --out <ml_hf>
 
 # 3. make it self-contained so any HF consumer loads it correctly     (step 6 — do not skip)
 python debug/hybridish_sft/make_self_contained_ckpt.py --ckpt <ml_hf> --plugin debug/hybridish_sft/plugin_ssmax
 
-# 4. stage + evaluate + harvest                                        (steps 7-8)
-bash debug/hybridish_sft/stage_ckpts_to_s3.sh && bash debug/hybridish_sft/sync_s3_to_weka.sh
+# 4. evaluate + harvest                                                (steps 7-8)
 bash debug/hybridish_sft/run_olmo_eval_ctc.sh <ml_hf name> myrun_nq ctc_nq
 python debug/hybridish_sft/harvest_sweep.py
 ```
@@ -170,17 +170,8 @@ python debug/hybridish_sft/verify_trust_remote_code.py --ckpt <ml_hf>
 
 ## 7. Evaluate
 
-The two published checkpoints are already on weka — go straight to the run:
-
 ```bash
 bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq
-```
-
-Only if you trained your OWN checkpoint, stage it first (Beaker cannot read your disks):
-
-```bash
-bash debug/hybridish_sft/stage_ckpts_to_s3.sh    # your machine -> S3
-bash debug/hybridish_sft/sync_s3_to_weka.sh      # S3 -> weka, via gantry
 ```
 
 Third argument: `smoke` (8 instances, proves the path), `full` (all 39 task × rung runs), or a task
@@ -189,6 +180,27 @@ concurrent.
 
 `CHUNK=8` for long-context tasks. `absence` OOMs at the default batch of 64: a single 20 GiB
 allocation plus ~29 GiB lost to allocator fragmentation.
+
+### Where steps 5-6 run
+
+Training (step 4) and eval (step 7) are Beaker jobs and both read and write weka, so the checkpoint
+never needs copying between them. Steps 5-6 are plain scripts and need `/weka` mounted wherever you
+invoke them — a Beaker session, or a `gantry run --weka oe-training-default:/weka/oe-training-default`
+one-liner wrapping the three commands. **There is no wrapper for them in this directory yet**; the
+reference run did them on a separate cluster and copied the result across, which is the only reason
+the staging scripts below exist.
+
+If you likewise run a step somewhere Beaker cannot read, push the artifact across before the next
+step needs it:
+
+```bash
+bash debug/hybridish_sft/stage_ckpts_to_s3.sh    # your machine -> S3
+bash debug/hybridish_sft/sync_s3_to_weka.sh      # S3 -> weka, via gantry
+```
+
+S3 alone is not enough: a Beaker job reads weka, so skipping the second command surfaces as a
+MISSING path at step 0. The same applies to shards built locally
+(`src/scripts/data/hybridish/stage_shards_to_weka.sh`).
 
 ## 8. Harvest
 
@@ -269,11 +281,13 @@ Emits `token_ids_part_*.npy`, `labels_mask_*.npy`, `metadata.json`, and **`src_i
 Keep `--verify`: it scores each gold target with the evaluator's own parser and refuses to write
 shards whose targets do not parse.
 
-## 3. Stage shards where the trainer can see them
+## 3. Put the shards on weka
+
+Write them to a weka path directly if you build on Beaker, and there is nothing to do here.
+
+If you built them elsewhere, copy them across — S3 first, then a gantry job syncs S3 → weka:
 
 ```bash
 bash src/scripts/data/hybridish/stage_shards_to_weka.sh /path/to/shards_long32k shards_long32k
 ```
-S3 first, then a gantry job syncs S3 → weka. Pushing to S3 alone does nothing for a Beaker job; its
-absence shows up as a MISSING path at step 0.
 
