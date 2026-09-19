@@ -140,7 +140,12 @@ WORLD_SIZE = 4
 GRAD_ACCUM = 1
 RANK_MICROBATCH = SEQUENCE_LENGTH                                # one window per rank
 GLOBAL_BATCH_SIZE = WORLD_SIZE * GRAD_ACCUM * SEQUENCE_LENGTH    # 131,072 tok = 4 windows
-EPOCHS = 1                                  # ~466 optimizer steps total
+EPOCHS = 1
+
+# `sft_common` logs to ai2-llm/hybrid-small-suite, which this account's key cannot reach (404 ->
+# wandb.init raises -> trainer dies after checkpoint load, before step 1).
+WANDB_ENTITY = "prasanns-allen-institute-for-ai"
+WANDB_PROJECT = "memory-networks"                                  # ~466 optimizer steps total
 
 
 def build_ctc_train_module_config(common, **_) -> TransformerTrainModuleConfig:
@@ -329,9 +334,21 @@ def build_ctc_data_components(common, dataset_path: str):
 
 
 def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
-    """``sft_common.build_trainer_config`` hardcodes 2 epochs; this run needs more updates."""
+    """Trainer config with this experiment's duration and a reachable W&B project.
+
+    Two overrides on ``sft_common.build_trainer_config``:
+
+    * ``max_duration`` -- it hardcodes 2 epochs.
+    * W&B ``entity``/``project`` -- it targets ``ai2-llm/hybrid-small-suite``, which 404s for this
+      account's API key. That is not a warning: ``wandb.init()`` raises and the trainer dies before
+      step 1, after loading the checkpoint. Retarget rather than disable, so the loss curve exists.
+    """
     cfg = build_trainer_config(common, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", arm])
     cfg.max_duration = Duration.epochs(EPOCHS)
+    wandb_cb = (cfg.callbacks or {}).get("wandb")
+    if wandb_cb is not None:
+        wandb_cb.entity = WANDB_ENTITY
+        wandb_cb.project = WANDB_PROJECT
     return cfg
 
 
