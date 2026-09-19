@@ -588,6 +588,11 @@ def _validate_config(
     _, token_ids = dataset.build_tokenizer()
     if config.model.image_patch_token_id != token_ids.im_patch_id:
         raise OLMoConfigurationError("Model image token ID must match the alignment tokenizer")
+    if config.trainer.no_checkpoints:
+        raise OLMoConfigurationError(
+            "Mixed midtraining requires checkpoint loading; trainer.no_checkpoints must be false. "
+            "Use trainer.callbacks.checkpointer.enabled=false to disable checkpoint writes."
+        )
     if config.trainer.load_path != recipe.parent_checkpoint:
         raise OLMoConfigurationError("Use recipe.parent_checkpoint to select the initial model")
     if (

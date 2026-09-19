@@ -174,8 +174,10 @@ needs its own measured mean.
 Training saves source and optimizer diagnostics independently of checkpoint writes. Check
 realized example/crop exposure, denominator and active-label weights, finite metrics, skips
 and router drops. These diagnostics do not measure benchmark quality or exact gradient
-allocation. For short performance measurements, disable checkpoint writes only after
-explicitly loading the starting state.
+allocation. For short performance measurements, use
+`--trainer.callbacks.checkpointer.enabled=false` to disable checkpoint writes while preserving
+parent and resume loading. `--trainer.no_checkpoints=true` is rejected because it also disables
+checkpoint loading.
 
 Use `src/scripts/eval/Vision-Align.py` for standalone `fast-text`, `decoded` and `academic`
 evaluation of mixed checkpoints. The

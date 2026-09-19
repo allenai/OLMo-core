@@ -157,6 +157,28 @@ def test_step_zero_resume_does_not_resave_checkpoint(mixed_recipe, monkeypatch, 
     assert callback._checkpoints == [path]
 
 
+@pytest.mark.parametrize("text_loss_share", [0.9, 1.0])
+def test_checkpoint_loading_cannot_be_disabled(mixed_recipe, text_loss_share):
+    with pytest.raises(OLMoConfigurationError, match="trainer.no_checkpoints"):
+        mixed_recipe.build(
+            f"--recipe.text_loss_share={text_loss_share}", "--trainer.no_checkpoints=true"
+        )
+
+
+@pytest.mark.parametrize("text_loss_share", [0.9, 1.0])
+def test_checkpoint_writes_can_be_disabled(mixed_recipe, text_loss_share):
+    config = mixed_recipe.build(
+        f"--recipe.text_loss_share={text_loss_share}",
+        "--trainer.callbacks.checkpointer.enabled=false",
+    )
+    assert config.trainer.callbacks["checkpointer"].enabled is False
+    assert config.trainer.no_checkpoints is False
+    assert config.trainer.load_path == str(mixed_recipe.parent)
+    assert config.trainer.load_strategy == LoadStrategy.always
+    assert config.trainer.load_optim_state is False
+    assert config.trainer.load_trainer_state is False
+
+
 def test_mixed_packing_override_preserves_loss_allocation(mixed_recipe):
     config = mixed_recipe.build()
     smaller_packs = mixed_recipe.build("--data_loader.pack_max_crops=16")
