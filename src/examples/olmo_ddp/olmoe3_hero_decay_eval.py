@@ -49,6 +49,12 @@ def build_spec(template, stage, run, commit):
         f"git -C /tmp/hero-decay-wrapper checkout --quiet {commit}\n"
     )
     if stage == "convert":
+        # uv otherwise copies tens of thousands of Torch files from the shared
+        # Weka cache to /tmp. On a cold node that metadata traffic can take an
+        # hour. Keep the cache and virtualenv on the same node-local filesystem
+        # so wheels are downloaded once per worker and installed with hardlinks.
+        # Dependency versions, model paths, and checkpoint checks are unchanged.
+        replace_env(task, {"UV_CACHE_DIR": "/tmp/hero-conversion-uv-cache", "UV_LINK_MODE": "hardlink"})
         old = (
             "python src/examples/olmo_ddp/hero_hf_stage.py --arm emo --step 75500\n"
             "python src/examples/olmo_ddp/hero_hf_convert.py --arm emo --step 75500 --full --portable-reference --precise"
