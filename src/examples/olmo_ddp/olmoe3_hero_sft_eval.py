@@ -53,7 +53,7 @@ def validate_export(model):
 
     receipt_path = model / "_HERO_CONVERSION_SUCCESS.json"
     receipt = json.loads(receipt_path.read_text())
-    assert receipt["passed"] and receipt["step"] == 1810
+    assert receipt["passed"] and receipt["step"] == int(os.environ.get('QKGAIN_SFT_STEP','1810'))
     for file in (
         "config.json",
         "tokenizer.json",
@@ -150,7 +150,7 @@ def main():
     assert MOUNT.is_mount()
     run = find_run(args.run)
     assert not run.smoke
-    model = export_root(run) / run.arm / "step1810/hf"
+    model = export_root(run) / run.arm / f"step{os.environ.get('QKGAIN_SFT_STEP','1810')}/hf"
     conversion = validate_export(model)
     output = model.parent / "posttrain-evals-r1" / args.bundle
     resume = os.environ.get("HERO_SFT_RESUME") == "1" and (output / "recipe.json").is_file()

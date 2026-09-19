@@ -38,7 +38,19 @@ def structural_check(root, *, full, precise=False):
     config = AutoConfig.from_pretrained(hf)
     saved = load_config(root / "olmo-core")
     assert config.vocab_size == saved["dataset"]["tokenizer"]["vocab_size"]
-    assert config.qk_norm_per_head_gains and config.latent_moe_dim == 512
+    gains = set()
+    def collect(value):
+        if isinstance(value, dict):
+            if 'qk_norm_per_head_gains' in value:
+                gains.add(bool(value['qk_norm_per_head_gains']))
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+    collect(saved['model'])
+    assert gains == {bool(config.qk_norm_per_head_gains)}, (gains, config.qk_norm_per_head_gains)
+    assert config.latent_moe_dim == 512
     assert config.hidden_size == 1024 and config.num_hidden_layers == 16
     AutoTokenizer.from_pretrained(hf)
     with torch.device("meta"):
@@ -66,7 +78,7 @@ def structural_check(root, *, full, precise=False):
         full=False,
         tensors=len(observed),
         source_vocabulary_verified=True,
-        checks=["exact_hf_keys_and_shapes", "finite_weights", "tokenizer_vocab", "per_head_qknorm"],
+        checks=["exact_hf_keys_and_shapes", "finite_weights", "tokenizer_vocab", "source_qknorm_gain_policy"],
     )
 
 
