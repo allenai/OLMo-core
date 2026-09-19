@@ -45,18 +45,27 @@ CKPTS=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft  
 
 ## Quickstart
 
-Two scripts. Both launch on Beaker and pin the branch they need, so there is no checkout to get
-right.
+Three scripts, each one Beaker job that pins the branch it needs — no checkout to get right.
+
+**Score a checkpoint that is already prepared:**
 
 ```bash
-# score an existing checkpoint
-bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf smoke7to1 smoke   # ~3 min, proves the path
-bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf 7to1_nq  ctc_nq   # one task, rungs to 32k
-python debug/hybridish_sft/harvest_sweep.py                                  # the table
+H=src/scripts/train/hybrid-small-suite
+bash $H/launch_eval.sh sft_7to1_ml_hf smoke smoke      # ~3 min, proves the path end to end
+bash $H/launch_eval.sh sft_7to1_ml_hf 7to1 full        # all 39 task x rung runs
+python debug/hybridish_sft/harvest_sweep.py            # the comparison table
+```
 
-# finetune YOUR base checkpoint on this data, then score it
-bash src/scripts/train/hybrid-small-suite/launch_sft.sh my-run --model $W/path/to/your/checkpoint/step1234/
-#   ... then export + self-contain (steps 2-3), then launch_eval.sh as above
+**Finetune your own base checkpoint and score it** — the whole loop:
+
+```bash
+H=src/scripts/train/hybrid-small-suite
+W=/weka/oe-training-default/ai2-llm
+
+bash $H/launch_sft.sh     my-run --model $W/path/to/your/checkpoint/step1234/
+bash $H/prepare_ckpt.sh   $W/checkpoints/<you>/my-run/step1244  my_run_hf
+bash $H/launch_eval.sh    my_run_hf  myrun  full
+python debug/hybridish_sft/harvest_sweep.py
 ```
 
 `--model` is an olmo-core checkpoint step directory on weka. **That is the only thing you specify.**
@@ -96,46 +105,41 @@ Everything else — optimizer, schedule, FSDP, activation checkpointing, packing
 repo's standard SFT machinery. Packing uses block-diagonal masking, so packed training matches
 example-level.
 
-## 2. Export to HF, in the dialect the plugin speaks
+## 2. Prepare the checkpoint for eval
 
 ```bash
-python src/scripts/convert_checkpoint_to_hf.py --checkpoint-input-dir <step> --huggingface-output-dir <hf>
-python debug/hybridish_sft/redialect_to_mainline.py --src <hf> --ref <released mainline ckpt> --out <ml_hf>
+bash src/scripts/train/hybrid-small-suite/prepare_ckpt.sh <olmo-core step dir> <output name>
 ```
 
-The converter emits `olmo3_5_hybrid`; the plugin and every released hybridish checkpoint use
-`mainline_ladder`. Same weights, different key spellings and `model_type`.
+One Beaker job with weka mounted, doing all three prep stages in place so nothing is copied between
+machines:
 
-## 3. Make the checkpoint self-contained ← **do not skip**
+1. **export** olmo-core → HF (`examples/huggingface/convert_checkpoint_to_hf.py`)
+2. **re-dialect** `olmo3_5_hybrid` → `mainline_ladder` — same weights, different key spellings and
+   `model_type`; the plugin and every released hybrid checkpoint use the latter
+3. **make self-contained** — copy the SSMax-patched modeling code into the checkpoint and set
+   `auto_map`, so `trust_remote_code=True` is the entire integration for any consumer
+
+Writes to `$W/checkpoints/prasanns/ctc_hybridish_sft/<output name>`; override with `OUT=`. The
+re-dialect needs a released `mainline_ladder` checkpoint as a naming/config donor — a 1.4B one is
+the default, override with `--ref`.
+
+> ⚠ Stage 3 is not optional. The stock `mainline_ladder` plugin has **no Scalable-Softmax at all**:
+> a checkpoint's `ssmax_scale` loads as UNEXPECTED and is silently ignored, so the model loads
+> clean and scores while missing a trained component. The patched plugin also adds the
+> `transformers>=5.13` cache shim the stock one lacks, without which any cached forward dies with
+> `AttributeError`, and it takes decode positions from `cache_position` — a forward-hook
+> reconstruction reads the current forward's length and scales the query **13x too small** at an 8k
+> prompt, on exactly the tokens being graded.
+
+Verify independently, with the plugin deliberately *not* importable:
 
 ```bash
-python debug/hybridish_sft/apply_ssmax_to_plugin.py --src <upstream plugin> --out debug/hybridish_sft/plugin_ssmax
-python debug/hybridish_sft/make_self_contained_ckpt.py --ckpt <ml_hf> --plugin debug/hybridish_sft/plugin_ssmax
+python debug/hybridish_sft/test_plugin_ssmax.py                      # formula + cached-decode equivalence
+python debug/hybridish_sft/verify_trust_remote_code.py --ckpt <ckpt>
 ```
 
-> ⚠ **The stock `mainline_ladder` plugin has no Scalable-Softmax at all.** A checkpoint's
-> `ssmax_scale` loads as UNEXPECTED and is silently ignored — the model loads clean and scores, just
-> without a trained component. `apply_ssmax_to_plugin.py` adds it (plus the `transformers>=5.13`
-> cache shim the plugin lacks, without which any cached forward dies with `AttributeError`).
->
-> Unlike olmo-core's version — which *raises* on KV caching — the port takes positions from
-> `cache_position`, so decoding is correct. A forward-hook reconstruction that reads the current
-> forward's sequence length computes `log(2)` per decode step where the truth is
-> `log(prompt_len + step)`: at an 8k prompt that scales the query **13× too small** on every SSMax
-> layer, during exactly the tokens being graded.
-
-`make_self_contained_ckpt.py` copies the patched modules into the checkpoint and sets `auto_map`, so
-`trust_remote_code=True` becomes the entire integration — for olmo-eval or any other consumer.
-`scalable_softmax` is derived from the weights, never a flag, so a non-SSMax model cannot be
-mislabelled.
-
-Verify (with the plugin deliberately *not* importable):
-```bash
-python debug/hybridish_sft/test_plugin_ssmax.py            # formula + cached-decode equivalence
-python debug/hybridish_sft/verify_trust_remote_code.py --ckpt <ml_hf>
-```
-
-## 4. Evaluate
+## 3. Evaluate
 
 ```bash
 bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf 7to1_nq ctc_nq
@@ -148,7 +152,7 @@ concurrent.
 `CHUNK=8` for long-context tasks. `absence` OOMs at the default batch of 64: a single 20 GiB
 allocation plus ~29 GiB lost to allocator fragmentation.
 
-## 5. Harvest
+## 4. Harvest
 
 ```bash
 python debug/hybridish_sft/harvest_sweep.py
@@ -161,17 +165,12 @@ so — a table quietly covering 13 of 16 arms reads as complete.
 
 ---
 
-## Running a step off Beaker
+## Bringing in artifacts from elsewhere
 
-Training (step 1) and eval (step 4) are Beaker jobs and both read and write weka, so the checkpoint
-never needs copying between them. Steps 2-3 are plain scripts and need `/weka` mounted wherever you
-invoke them — a Beaker session, or a `gantry run --weka oe-training-default:/weka/oe-training-default`
-one-liner wrapping the three commands. **There is no wrapper for them in this directory yet**; the
-reference run did them on a separate cluster and copied the result across, which is the only reason
-the staging scripts below exist.
+All four steps are Beaker jobs reading and writing weka, so nothing is copied between them.
 
-If you likewise run a step somewhere Beaker cannot read, push the artifact across before the next
-step needs it:
+You only need the staging scripts in `debug/hybridish_sft/` if you produce an artifact somewhere
+Beaker cannot read — a checkpoint trained on another cluster, or shards built locally:
 
 ```bash
 bash debug/hybridish_sft/stage_ckpts_to_s3.sh    # your machine -> S3
@@ -179,8 +178,8 @@ bash debug/hybridish_sft/sync_s3_to_weka.sh      # S3 -> weka, via gantry
 ```
 
 S3 alone is not enough: a Beaker job reads weka, so skipping the second command surfaces as a
-MISSING path at step 0. The same applies to shards built locally
-(`src/scripts/data/hybridish/stage_shards_to_weka.sh`).
+MISSING path at step 0. Same for shards (`src/scripts/data/hybridish/stage_shards_to_weka.sh` on
+`prasann/landmark`).
 
 ## Reading the output
 
