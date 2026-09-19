@@ -321,5 +321,9 @@ Smoke test (8 instances/task) passed end to end: `ctc_nq:r2k` f1 **1.0000**, `ct
 f1 **0.5417** -- against 0.0020 for contradiction on the old in-house harness, which was grading
 train data on the wrong ladder with SSMax broken under decode.
 
+## Reference recipe
+
+The runnable end-to-end path (mix -> shards -> SFT -> export -> self-contained ckpt -> olmo-eval -> harvest), with each trap named at the step that avoids it: **`debug/hybridish_sft/RECIPE.md`**.
+
 Related: [[ctc-final-suite-22-tasks]], [[olmo3-vs-hybrid-wave2]], [[ctc-rung-labels-not-tokens]],
 [[eval-size-and-error-bars]].

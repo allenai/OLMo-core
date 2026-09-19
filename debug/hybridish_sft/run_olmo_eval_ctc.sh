@@ -20,6 +20,9 @@ MODE="${3:-full}"      # 'smoke', 'full', or a single task name to shard by
 OE=/accounts/projects/berkeleynlp/prasann/projects/olmo-eval
 WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft
 GANTRY="${GANTRY:-/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/gantry}"
+# Default 64 OOMs on the long-context tasks: a single 20 GiB activation on top of ~29 GiB lost to
+# allocator fragmentation. CHUNK shrinks the batch; expandable_segments reclaims the fragmentation.
+CHUNK="${CHUNK:-64}"
 
 SPECS=/tmp/claude-3018/-accounts-projects-berkeleynlp-prasann-projects-OLMo-core/7919ea25-3230-4b77-8a18-91d843d1c793/scratchpad/ctc_specs.txt
 if [ "$MODE" = "smoke" ]; then
@@ -46,12 +49,14 @@ exec "$GANTRY" run --name "ctceval-$TAG" -w ai2/flex2 -b ai2/oe-other \
   --branch prasann/ctc-suite-grader-fixes \
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 \
   --install 'pip install ".[hf]" && pip install -U "transformers>=5.13" && python -c "import olmo_eval.cli,torch,transformers;print(\"olmo_eval\",olmo_eval.__file__);print(\"torch\",torch.__version__,torch.cuda.device_count(),\"gpu\");print(\"transformers\",transformers.__version__);assert torch.cuda.device_count()>0"' \
+  --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   --timeout 0 --allow-dirty --yes \
   -- olmo-eval run \
        --harness default \
        -o provider.kind=hf \
        -o provider.trust_remote_code=true \
        -o provider.dtype=bfloat16 \
+       -o batching.chunk_size=$CHUNK \
        -m "$WEKA/$CKPT" \
        $TASKS \
        --output-dir "/results/$TAG" \

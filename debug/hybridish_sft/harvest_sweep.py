@@ -15,13 +15,13 @@ REPO = "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core"
 IDS = f"{REPO}/debug/hybridish_sft/sweep_ids.txt"
 OUT = f"{REPO}/debug/hybridish_sft/results/ctc_suite_sweep.json"
 CACHE = f"{REPO}/debug/hybridish_sft/results/_raw"
-BK = "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/beaker"
+BK = "/accounts/projects/berkeleynlp/prasann/.local/bin/beaker"
 
 def sh(*a):
     return subprocess.run(a, capture_output=True, text=True).stdout
 
 os.makedirs(CACHE, exist_ok=True)
-rows, failed, missing = defaultdict(dict), [], []
+rows, failed, missing, running = defaultdict(dict), [], [], []
 for line in open(IDS):
     if not line.strip():
         continue
@@ -32,13 +32,20 @@ for line in open(IDS):
         j = json.loads(info)[0]["jobs"][-1]
     except Exception:
         missing.append(tag); continue
-    code = j.get("status", {}).get("exitCode")
-    if code != 0:
-        failed.append((tag, code)); continue
+    st = j.get("status", {})
+    if "exitCode" not in st:
+        # Still in flight. Reporting it as FAILED would be a lie, and reporting nothing would make
+        # a partial table look complete -- so it gets its own bucket.
+        running.append(tag); continue
+    if st["exitCode"] != 0:
+        failed.append((tag, st["exitCode"])); continue
     ds = j.get("result", {}).get("beaker") or j.get("resultDatasetId")
+    # Fetch ONLY metrics.json. The full result dataset is ~130 MB of saved predictions apiece;
+    # sixteen of those exhausted the /accounts quota, after which beaker's mkdir failed and the
+    # harvester's own json.dump left a 0-byte file -- a silent loss that looked like a parse bug.
     dest = f"{CACHE}/{tag}"
     if not os.path.exists(f"{dest}/{tag}/metrics.json"):
-        sh(BK, "dataset", "fetch", ds, "-o", dest)
+        sh(BK, "dataset", "fetch", ds, "--prefix", f"{tag}/metrics.json", "-o", dest)
     mp = None
     for root, _, files in os.walk(dest):
         if "metrics.json" in files:
@@ -46,27 +53,25 @@ for line in open(IDS):
     if not mp:
         missing.append(tag); continue
     m = json.load(open(mp))
-    entries = m if isinstance(m, list) else m.get("results", m.get("metrics", []))
-    if isinstance(entries, dict):
-        entries = [dict(v, task=k) for k, v in entries.items()]
-    for e in entries:
-        name = str(e.get("task") or e.get("task_name") or "")
+    for e in m.get("tasks", []):
+        name = e.get("task", "")            # e.g. "ctc_strmatch:r16k"
         if ":" not in name:
             continue
-        t, rung = name.split(":")[-2:] if name.count(":") > 1 else name.split(":")
-        score = next((e[k] for k in ("primary_score", "score", "f1:ctc", "metric_value")
-                      if k in e and isinstance(e[k], (int, float))), None)
-        if score is None:
-            mets = e.get("metrics", {})
-            score = next((v for k, v in mets.items() if isinstance(v, (int, float))
-                          and "parse" not in k), None)
-            parse = next((v for k, v in mets.items() if "parse" in k), None)
-        else:
-            parse = e.get("ctc_parse_ok", e.get("parse_rate"))
-        rows[(t.replace("ctc_", ""), rung)][arm] = (score, parse,
-                                                    e.get("num_instances", e.get("n")))
+        tname, rung = name.rsplit(":", 1)
+        mets = e.get("metrics", {})
+        # primary_metric is "<family>:<scorer>", e.g. "f1:ctc" -- index rather than guess
+        fam, _, scorer = e.get("primary_metric", "").partition(":")
+        score = mets.get(fam, {}).get(scorer)
+        parse = mets.get("parse_rate", {}).get("ctc_parse_ok")
+        rows[(tname.replace("ctc_", ""), rung)][arm] = (score, parse, e.get("num_instances"))
 
-json.dump({f"{t}|{r}": v for (t, r), v in rows.items()}, open(OUT, "w"), indent=2, default=str)
+payload = json.dumps({f"{t}|{r}": v for (t, r), v in rows.items()}, indent=2, default=str)
+with open(OUT + ".tmp", "w") as f:
+    f.write(payload)
+    f.flush()
+    os.fsync(f.fileno())          # a truncated write on a full disk must fail here, not silently
+os.replace(OUT + ".tmp", OUT)
+assert os.path.getsize(OUT) > 2, "results file is empty -- refusing to report from it"
 
 RUNGS = ["r2k", "r4k", "r8k", "r16k", "r32k"]
 tasks = sorted({t for t, _ in rows})
@@ -89,6 +94,10 @@ if failed:
     print(f"\n⚠ FAILED jobs ({len(failed)}): " + ", ".join(f"{t}(exit {c})" for t, c in failed))
 if missing:
     print(f"⚠ NO METRICS ({len(missing)}): " + ", ".join(missing))
-if not failed and not missing:
+if running:
+    print(f"\n… STILL RUNNING ({len(running)}): " + ", ".join(running))
+if not failed and not missing and not running:
     print("all 16 jobs produced metrics")
+else:
+    print(f"\nTABLE IS PARTIAL: {16-len(failed)-len(missing)-len(running)}/16 arms present")
 print(f"\nwrote {OUT}")

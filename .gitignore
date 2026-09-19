@@ -90,3 +90,6 @@ core
 # raw logs with `beaker experiment logs <id>` using the ids in debug/ctc_purechunk/LAUNCH_LEDGER.tsv.
 debug/ctc_purechunk/trainlogs/
 debug/ctc_purechunk/tablerender/
+debug/hybridish_sft/*.log
+debug/hybridish_sft/results/_raw/
+debug/hybridish_sft/results/_metrics/
