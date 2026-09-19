@@ -1,0 +1,169 @@
+{
+  "tag": "sft7to1_fixed",
+  "ckpt": "/data/prasann/hybridish/sft_7to1_ml_hf",
+  "train_n": 0,
+  "steps": 0,
+  "base": {},
+  "final": {
+    "absence": {
+      "score": 0.011333333015441895,
+      "parse": 0.102,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.00819672131147541,
+          "eval_size": 244
+        },
+        "<=4k": {
+          "score": 0.027568922903304708,
+          "eval_size": 133
+        },
+        ">16k": {
+          "score": 0.0,
+          "eval_size": 123
+        }
+      }
+    },
+    "contradiction": {
+      "score": 0.020399999618530274,
+      "parse": 0.996,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.0031007752862087516,
+          "eval_size": 215
+        },
+        "<=4k": {
+          "score": 0.05296296013726128,
+          "eval_size": 180
+        },
+        ">16k": {
+          "score": 0.0,
+          "eval_size": 105
+        }
+      }
+    },
+    "nq": {
+      "score": 0.972,
+      "parse": 1.0,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.9712918660287081,
+          "eval_size": 209
+        },
+        "<=4k": {
+          "score": 0.9890710382513661,
+          "eval_size": 183
+        },
+        ">16k": {
+          "score": 0.9444444444444444,
+          "eval_size": 108
+        }
+      }
+    },
+    "oolong": {
+      "score": 0.43,
+      "parse": 1.0,
+      "eval_size": 500,
+      "metric": "score",
+      "by_band": {
+        "<=16k": {
+          "score": 0.3223684210526316,
+          "eval_size": 152
+        },
+        "<=4k": {
+          "score": 0.5048231511254019,
+          "eval_size": 311
+        },
+        ">16k": {
+          "score": 0.24324324324324326,
+          "eval_size": 37
+        }
+      }
+    },
+    "outlier": {
+      "score": 0.14939999389648437,
+      "parse": 1.0,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.1198618300838174,
+          "eval_size": 193
+        },
+        "<=4k": {
+          "score": 0.3155555470784505,
+          "eval_size": 150
+        },
+        ">16k": {
+          "score": 0.026963905164390612,
+          "eval_size": 157
+        }
+      }
+    },
+    "qdmatch_nq": {
+      "score": 0.11479999542236329,
+      "parse": 1.0,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.03206349327450707,
+          "eval_size": 210
+        },
+        "<=4k": {
+          "score": 0.2709447483327937,
+          "eval_size": 187
+        },
+        ">16k": {
+          "score": 0.0,
+          "eval_size": 103
+        }
+      }
+    },
+    "strmatch": {
+      "score": 0.018,
+      "parse": 0.988,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.0,
+          "eval_size": 192
+        },
+        "<=4k": {
+          "score": 0.043478260869565216,
+          "eval_size": 207
+        },
+        ">16k": {
+          "score": 0.0,
+          "eval_size": 101
+        }
+      }
+    },
+    "xabsence": {
+      "score": 0.008,
+      "parse": 0.256,
+      "eval_size": 500,
+      "metric": "f1",
+      "by_band": {
+        "<=16k": {
+          "score": 0.001355013590518052,
+          "eval_size": 246
+        },
+        "<=4k": {
+          "score": 0.009592326424962326,
+          "eval_size": 139
+        },
+        ">16k": {
+          "score": 0.02028985645460046,
+          "eval_size": 115
+        }
+      }
+    }
+  }
+}
