@@ -17,9 +17,9 @@ from olmoe3_hero_decay_runtime import verify_runtime
 def main():
     from beaker import Beaker
     verify_runtime()
-    r=find_run(sys.argv[1]); rank=int(os.environ['BEAKER_REPLICA_RANK'])
+    r=find_run(sys.argv[1]); rank=int(os.environ.get('BEAKER_REPLICA_RANK','0'))
     local=r.gpus//r.nodes
-    assert int(os.environ['BEAKER_REPLICA_COUNT'])==r.nodes
+    assert int(os.environ.get('BEAKER_REPLICA_COUNT','1'))==r.nodes
     assert int(os.environ['BEAKER_ASSIGNED_GPU_COUNT'])==local
     exp,job=os.environ['BEAKER_EXPERIMENT_ID'],os.environ['BEAKER_JOB_ID']
     # nvidia-smi may show all eight physical GPUs even for a six-GPU allocation.
@@ -30,14 +30,16 @@ def main():
     atomic_json(ROOT/'topology'/exp/f'{job}.json',validate_topology(topo,n))
     ready=ROOT/'rendezvous'/exp
     atomic_json(ready/f'{job}.json',dict(job=job,rank=rank))
-    with Beaker.from_env(check_for_upgrades=False) as b:
-        deadline=time.monotonic()+900
-        while time.monotonic()<deadline:
-            leader=resolve_ready_leader(b,b.workload.get(exp),ready,r.nodes)
-            if leader:break
-            print('WAIT_CURRENT_REPLICAS',rank,flush=True);time.sleep(10)
-        else:raise TimeoutError('Current replica rendezvous')
-    _,host=leader
+    host='127.0.0.1'
+    if r.nodes>1:
+        with Beaker.from_env(check_for_upgrades=False) as b:
+            deadline=time.monotonic()+900
+            while time.monotonic()<deadline:
+                leader=resolve_ready_leader(b,b.workload.get(exp),ready,r.nodes)
+                if leader:break
+                print('WAIT_CURRENT_REPLICAS',rank,flush=True);time.sleep(10)
+            else:raise TimeoutError('Current replica rendezvous')
+        _,host=leader
     existing=sorted((int(p.name[4:]) for p in r.root.glob('step*')
                      if re.fullmatch(r'step\d+',p.name) and (p/'.metadata.json').is_file()))
     start=existing[-1] if existing else r.start

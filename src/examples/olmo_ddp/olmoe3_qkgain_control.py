@@ -89,6 +89,8 @@ def control(b,commit,path=AUTOMATION,workspace=WORKSPACE):
 def download():
     from huggingface_hub import HfApi
     import olmoe3_hero_bucket_download as d
+    import logging
+    logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     assert MOUNT.is_mount()
     d.SCRATCH=DOWNLOAD_ROOT
     d.prepare_scratch()
@@ -138,13 +140,17 @@ def watch():
         plan=dict(commit=commit,runs=[r.as_dict() for r in runs()],
                   numerical_parity='standing user waiver; structural and runtime checks retained')
         path=AUTOMATION/'plan.json'
-        if path.exists():assert json.loads(path.read_text())==plan
+        if path.exists():
+            saved=json.loads(path.read_text())
+            assert {k:v for k,v in saved.items() if k!='commit'}=={k:v for k,v in plan.items() if k!='commit'}
         else:atomic_json(path,plan)
+        # Retain the first plan and all submitted specs; code-only repairs get a new audit.
+        atomic_json(AUTOMATION/'deployments'/f'{commit}.json',plan)
         log('QKGAIN_CAMPAIGN_ARMED',**plan)
         previous=None
         while True:
             rows={}
-            gate,gs=ensure_saved(c,CAMPAIGN+'-config',lambda:cpu_spec(cpu,commit,'config',templates))
+            gate,gs=ensure_saved(c,CAMPAIGN+'-config-'+commit[:8],lambda:cpu_spec(cpu,commit,'config',templates))
             dl,ds=ensure_saved(c,CAMPAIGN+'-download',lambda:cpu_spec(cpu,commit,'download'))
             rows['config']=dict(status=gs,id=gate.experiment.id if gate else None)
             rows['download']=dict(status=ds,id=dl.experiment.id if dl else None)

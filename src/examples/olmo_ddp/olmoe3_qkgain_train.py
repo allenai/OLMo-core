@@ -87,6 +87,7 @@ def data_components(common):
     if r.stage == "mt":
         import olmoe3_hero_mt as mt
         mt.BATCH = r.batch
+        mt.REQUESTED_TOKENS = 35641421562
         return mt.data_components(common)
     if r.stage == "lc":
         import olmoe3_hero_lc as lc
@@ -185,6 +186,9 @@ class Audit(Callback):
         r=find_run(self.run_id)
         row=dict(step=self.step,input_sha256=hashlib.sha256(batch['input_ids'].cpu().numpy().tobytes()).hexdigest())
         if r.stage=='sft':
+            plan=sft_adapter().data_plan()
+            assert plan['passed'] and plan['steps_per_epoch']==1680 and plan['total_steps']==3360
+            assert self.trainer.data_loader.total_batches==1680
             mask=batch['label_mask']; ids=batch['input_ids']
             assert 'doc_lens' in batch and mask.dtype==torch.bool and mask.any() and (~mask).any()
             assert not mask[ids==100277].any() and not mask[:,0].any()
