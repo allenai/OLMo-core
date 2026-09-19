@@ -22,23 +22,28 @@ Eval data is the **public** HF dataset `PrasannSinghal/ctc-suite-eval` — no to
 
 ---
 
-## Prebuilt artifacts on weka
+## The dataset
 
-Everything below `WEKA` already exists — you do not need to build data.
+One path. This is the exact SFT set both published checkpoints were trained on — **15,183
+instances**, 8 CTC tasks, 2k–32k, dolma2 tokenizer, one epoch.
 
 ```bash
-WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft
+DATA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k
 ```
 
-| path | what |
-|---|---|
-| `$WEKA/shards_long32k/` | **the SFT shards** — 15,183 instances, 8 tasks, 2k–32k, dolma2 tokenizer |
-| `$WEKA/shards_long32k/src_index.json` | instance → source-row map (**required by any grader**) |
-| `$WEKA/mix_long.jsonl` | the source mix the shards were built from (16,000 rows) |
-| `$WEKA/sft_4to1_ml_hf/`, `$WEKA/sft_7to1_ml_hf/` | the two finetuned checkpoints, ready to evaluate |
+It contains `token_ids_part_*.npy`, `labels_mask_*.npy`, `metadata.json`, and `src_index.json`
+(instance → source-row map; **any grader needs it** — see step 2 of the appendix for why).
 
-The checkpoints are already self-contained (SSMax-patched modeling code + `auto_map` inside the
-checkpoint), so `trust_remote_code=True` is the whole integration.
+Other shard directories exist alongside it on weka from earlier iterations. They are not this
+dataset and are not what anything here was trained or scored on — use the path above.
+
+The two finetuned checkpoints sit next to it and are ready to evaluate as-is (SSMax-patched
+modeling code and `auto_map` live inside each checkpoint, so `trust_remote_code=True` is the whole
+integration):
+
+```bash
+CKPTS=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft   # sft_4to1_ml_hf, sft_7to1_ml_hf
+```
 
 ## Quickstart
 
@@ -50,9 +55,8 @@ bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq    #
 python debug/hybridish_sft/harvest_sweep.py                                    # the comparison table
 ```
 
-**Want to retrain from the prebuilt shards** — start at step 4, pointing the trainer at
-`$WEKA/shards_long32k`. Steps 1–3 (building the mix and shards) are the appendix; you only need them
-to change the task roster, the length band, or the tokenizer.
+**Want to retrain** — start at step 4, pointing the trainer at `$DATA`. Building the mix and shards
+is the appendix; you only need it to change the task roster, the length band, or the tokenizer.
 
 ---
 
@@ -169,7 +173,7 @@ example — must be 1.0, needs no generation) before grading.
 # Appendix: rebuilding the SFT data
 
 Only needed to change the roster, the length band, or the tokenizer. Otherwise use
-`$WEKA/shards_long32k` above.
+`$DATA` above.
 
 ## 1. Build the SFT mix
 
