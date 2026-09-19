@@ -30,7 +30,7 @@ def training_spec(template,r,commit,hosts):
     t['resources']['gpuCount']=r.gpus//r.nodes
     t['arguments']=['python','src/examples/olmo_ddp/olmoe3_qkgain_node.py',r.run_id]
     t['context'].update(priority='urgent',minRuntime='6h',autoResume=True)
-    t['constraints']={'cluster':['ai2/holmes'],'hostname':hosts}
+    t['constraints']={'hostname':hosts}
     t['result']={'path':'/noop-results'}
     replace_env(t,dict(GIT_REF=commit,GIT_BRANCH=BRANCH,NUM_NODES=r.nodes,
         GANTRY_TASK_NAME='train',GANTRY_INSTALL_CMD='true',
@@ -176,7 +176,7 @@ def watch():
                         if not admit:
                             rows[r.run_id]=dict(waiting='uploader/storage admission');break
                         sm=Run(arm,stage,True)
-                        sw,ss=ensure_saved(c,sm.run_id,lambda:training_spec(templates,sm,commit,hosts))
+                        sw,ss=ensure_saved(c,sm.run_id+'-r2',lambda:training_spec(templates,sm,commit,hosts))
                         if ss!='STATUS_SUCCEEDED':
                             rows[r.run_id]=dict(smoke_status=ss,smoke=sw.experiment.id if sw else None);break
                         assert json.loads((sm.root/'audit/success.json').read_text())['passed']
