@@ -9,9 +9,17 @@ POLICY = "numerical_parity_skipped_by_user_20260916"
 
 
 def portable_attention_backends(config):
-    """Select portable export construction for shared as well as split QK gains."""
+    """Select portable construction, including legacy configs without a gain flag.
+
+    Backend selection is an offline implementation choice, not a model change.
+    Preserve absent/false/true QK-gain settings and leave KDA configs untouched.
+    """
     if isinstance(config, dict):
-        if "qk_norm_per_head_gains" in config:
+        if (
+            config.get("type") == "attention"
+            or config.get("_CLASS_") == "olmo_core.nn.attention.AttentionConfig"
+            or "qk_norm_per_head_gains" in config
+        ):
             config["backend"] = "torch"
             config["use_flash"] = False
         for child in config.values():
