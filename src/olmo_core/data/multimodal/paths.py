@@ -19,6 +19,13 @@ OLMOCR_MIX = os.path.join(TORCH_DATASETS, "olmocr_mix_1025")
 # sample), used for the OCR sources in :mod:`.mixtures.ocr`. Another project's directory, so
 # it is overridable with the OE_ENCODER_DATA_DIR env var.
 OE_ENCODER_DATA = os.environ.get("OE_ENCODER_DATA_DIR", "/weka/oe-training-default/oe-encoder")
+# mm_olmo's ``text_rich_caption`` build: one HF ``DatasetDict`` per category under
+# ``hf/<category>`` with a ``train`` split and a held-out ``validation`` split. The
+# ``text_rich_caption_v6_tars`` are the same images with no split applied, so this build's
+# ``validation`` ids are what the tar sources must exclude (see :mod:`.mixtures.ocr`).
+TEXT_RICH_CAPTION = os.environ.get(
+    "TEXT_RICH_CAPTION_DIR", os.path.join(MOLMO_DATA_DIR, "molmo3_datasets", "text_rich_caption")
+)
 
 # HARDCODED personal dataset (chrisc's audited, image-grouped PixMo-Points build on weka).
 # mm_olmo's ``PixMoPointV2.PATH`` reads this same directory, so it is the canonical location
@@ -37,4 +44,5 @@ __all__ = [
     "ACADEMIC_DATASETS",
     "OLMOCR_MIX",
     "OE_ENCODER_DATA",
+    "TEXT_RICH_CAPTION",
 ]

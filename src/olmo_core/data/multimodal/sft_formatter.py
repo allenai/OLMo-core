@@ -136,7 +136,9 @@ SHORT_CAPTION_PROMPTS = (
     "How would you describe this image in a sentence or two?",
 )
 
-CHAIN_OF_THOUGHT_PROMPTS = ("{question} Provide reasoning steps and then give the short answer.",)
+CHAIN_OF_THOUGHT_PROMPTS = (
+    "{question} Provide reasoning steps and then give the short answer.",
+)
 
 
 def _apply_chain_of_thought_prompt(question: str) -> str:

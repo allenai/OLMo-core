@@ -173,12 +173,27 @@ def _write_count_v2(tmp_path):
 
 def _points_cfg(path, **kw):
     kw.setdefault("style", ("pointing",))
+    kw.setdefault("heldout_paths", ())  # the defaults are weka paths
     return PixMoPointsV2DatasetConfig(dataset_path=path, max_crops=1, **kw)
 
 
 def _count_cfg(path, **kw):
     kw.setdefault("style", ("pointing",))
+    kw.setdefault("heldout_paths", ())  # the defaults are weka paths
     return PixMoCountV2DatasetConfig(dataset_path=path, max_crops=1, **kw)
+
+
+def _write_heldout(tmp_path, name, column, *, train=(), validation=(), test=(), flat=None):
+    """A held-out dataset fixture: a ``DatasetDict`` of id-only splits, or a flat eval set."""
+    path = tmp_path / name
+    if flat is not None:
+        Dataset.from_dict({column: list(flat)}).save_to_disk(str(path))
+    else:
+        splits = {"train": train, "validation": validation, "test": test}
+        DatasetDict(
+            {k: Dataset.from_dict({column: list(v)}) for k, v in splits.items() if v}
+        ).save_to_disk(str(path))
+    return str(path)
 
 
 def _labels(messages):
@@ -247,6 +262,66 @@ def test_points_v2_config_tuple_fields_merge_from_cli():
     assert cfg.audit_style == ("aux_point_count", "aux_pointing")
     assert cfg.style == ("pointing",)
     assert cfg.filter_audit is True
+
+
+# ---------------------------------------------------------------------------
+# Train-only guard: no image of a held-out set is ever trained on
+# ---------------------------------------------------------------------------
+
+
+def test_points_v2_drops_images_of_heldout_sets(tmp_path):
+    path = _write_points_v2(tmp_path)
+    tok = _FakeTok()
+    # `u0` is another source's validation image, `u3` is in a flat eval set. A held-out
+    # dataset's own `train` split is not held out, so `u1` stays.
+    v1 = _write_heldout(tmp_path, "v1", "image_url", train=["u1"], validation=["u0"])
+    ev = _write_heldout(tmp_path, "eval", "image_url", flat=["u3", "elsewhere"])
+    ds = _points_cfg(path, heldout_paths=(v1, ev)).build(tok)
+    assert [ds._data[int(i)]["image_url"] for i in ds._index] == ["u1"]
+    assert ds.n_heldout_dropped == 2
+    assert len(_points_cfg(path).build(tok)) == 3  # unguarded: the same build keeps all three
+
+
+def test_count_v2_drops_images_of_heldout_sets(tmp_path):
+    path = _write_count_v2(tmp_path)
+    tok = _FakeTok()
+    heldout = _write_heldout(
+        tmp_path, "count", "image_sha256", train=["s1"], validation=["s0"], test=["s2"]
+    )
+    ds = _count_cfg(path, heldout_paths=(heldout,)).build(tok)
+    assert [ds._data[int(i)]["image_sha256"] for i in ds._index] == ["s1"]
+    assert ds.n_heldout_dropped == 2
+
+
+def test_count_v2_reads_only_the_train_split(tmp_path):
+    """`count-v2` ships `validation` / `test` splits that are copies of `train`; there is no
+    knob to read them."""
+    assert "split" not in PixMoCountV2DatasetConfig.__dataclass_fields__
+
+
+@pytest.mark.parametrize("config_cls", [PixMoPointsV2DatasetConfig, PixMoCountV2DatasetConfig])
+def test_heldout_guard_cannot_be_skipped_by_a_bad_path(tmp_path, config_cls):
+    """A guard that cannot be checked fails the build instead of passing silently."""
+    writer = _write_points_v2 if config_cls is PixMoPointsV2DatasetConfig else _write_count_v2
+    cfg = config_cls(dataset_path=writer(tmp_path), heldout_paths=(str(tmp_path / "missing"),))
+    with pytest.raises(OLMoConfigurationError, match="held-out set"):
+        cfg.build(_FakeTok())
+
+
+def test_heldout_guard_requires_the_id_column(tmp_path):
+    path = _write_count_v2(tmp_path)
+    wrong = _write_heldout(tmp_path, "count", "image_url", validation=["u0"])
+    with pytest.raises(OLMoConfigurationError, match="image_sha256"):
+        _count_cfg(path, heldout_paths=(wrong,)).build(_FakeTok())
+
+
+def test_default_heldout_sets_are_the_real_validation_and_eval_sets():
+    assert [p.rsplit("/", 1)[1] for p in PixMoPointsV2DatasetConfig().heldout_paths] == [
+        "points-pointing",
+        "points-counting",
+        "pixmo-points-eval",
+    ]
+    assert [p.rsplit("/", 1)[1] for p in PixMoCountV2DatasetConfig().heldout_paths] == ["count"]
 
 
 # ---------------------------------------------------------------------------

@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -56,11 +56,13 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .paths import PIXMO_DATASETS, PIXMO_POINTS_V2
 from .pixmo_points import _build_example, _load_split, _open_image
-from .sft_common import EpochSeededExamples
+from .sft_common import EpochSeededExamples, heldout_ids
 from .sft_formatter import SftFormatter
 
 __all__ = [
     "STAGE1_PROMPT_FAMILY",
+    "POINTS_V2_HELDOUT_PATHS",
+    "COUNT_V2_HELDOUT_PATHS",
     "FAILED_AUDIT_RESULTS",
     "PixMoPointsV2DatasetConfig",
     "PixMoPointsV2Dataset",
@@ -77,6 +79,19 @@ log = logging.getLogger(__name__)
 #: renders pointing styles identically. These are stage-1 sources, so the natural-language
 #: template family of the SFT stage is deliberately not reachable from here.
 STAGE1_PROMPT_FAMILY = {"prompt_templates": "none", "system_prompt": "style_and_length_v2"}
+
+#: Held-out sets the v2 points source must share no image with: the validation splits of the
+#: two v1 PixMo-Points builds it was regrouped from, and the pointing eval set. See
+#: :func:`~.sft_common.heldout_ids` for how a path is read.
+POINTS_V2_HELDOUT_PATHS: Tuple[str, ...] = (
+    f"{PIXMO_DATASETS}/points-pointing",
+    f"{PIXMO_DATASETS}/points-counting",
+    f"{PIXMO_DATASETS}/pixmo-points-eval",
+)
+#: Held-out sets for the v2 count source: PixMo-Count's validation and test splits. The
+#: ``validation`` / ``test`` splits shipped *inside* ``count-v2`` are copies of its train split,
+#: not held-out data, so they are neither read nor usable as a guard.
+COUNT_V2_HELDOUT_PATHS: Tuple[str, ...] = (f"{PIXMO_DATASETS}/count",)
 
 #: ``audit_result`` values mm_olmo treats as a failed audit (``PixMoPointV2._keep``).
 FAILED_AUDIT_RESULTS = frozenset({"error", "clear_error"})
@@ -116,6 +131,16 @@ def _rows_with_any(column, keep_fn) -> np.ndarray:
     return np.concatenate(out) if out else np.zeros(0, dtype=bool)
 
 
+def _not_heldout(table, column: str, heldout: Set[str]) -> np.ndarray:
+    """Per-row mask that is False where ``column``'s value is a held-out identifier."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    if not heldout:
+        return np.ones(table.num_rows, dtype=bool)
+    return ~_bool_np(pc.is_in(table.column(column), value_set=pa.array(sorted(heldout))))
+
+
 def _bool_np(arr) -> np.ndarray:
     """Arrow boolean array -> numpy bool, nulls as False."""
     import pyarrow.compute as pc
@@ -139,8 +164,15 @@ class PixMoPointsV2DatasetConfig(Config):
     """
 
     dataset_path: str = PIXMO_POINTS_V2
-    """A flat HF ``Dataset`` saved with ``save_to_disk`` (columns ``image``, ``source``,
-    ``annotations``, ``easy_negatives``, ``paired_negatives``, ``paired_negatives_v2``)."""
+    """A flat HF ``Dataset`` saved with ``save_to_disk`` (columns ``image``, ``image_url``,
+    ``source``, ``annotations``, ``easy_negatives``, ``paired_negatives``,
+    ``paired_negatives_v2``). The build has no splits: it is the regrouped *train* rows of the
+    two v1 PixMo-Points sources."""
+
+    heldout_paths: Tuple[str, ...] = POINTS_V2_HELDOUT_PATHS
+    """Held-out sets (see :func:`~.sft_common.heldout_ids`); a row whose ``image_url`` appears in
+    one is never trained on. The build overlaps them by a single image today, but it is rebuilt
+    independently of them, so this is checked on every build."""
 
     kind: str = "both"
     """``"basic"`` keeps the PixMo-Points rows (``source == "pointing"``), ``"high_frequency"``
@@ -220,10 +252,12 @@ class PixMoPointsV2Dataset(EpochSeededExamples):
         self._data = _load_split(config.dataset_path, "train")
         self._index = self._build_index()
         log.info(
-            "PixMoPointsV2 (%s): %d of %d images have a trainable annotation",
+            "PixMoPointsV2 (%s): %d of %d images have a trainable annotation "
+            "(%d dropped for appearing in a held-out set)",
             config.dataset_path,
             len(self._index),
             len(self._data),
+            self.n_heldout_dropped,
         )
 
     # -- selection -------------------------------------------------------------------------
@@ -279,7 +313,11 @@ class PixMoPointsV2Dataset(EpochSeededExamples):
         source = _KIND_TO_SOURCE[cfg.kind]
         if source is not None:
             rows &= _bool_np(pc.equal(table.column("source"), source))
-        return np.flatnonzero(rows)
+        train_only = _not_heldout(
+            table, "image_url", heldout_ids(cfg.heldout_paths, "image_url")
+        )
+        self.n_heldout_dropped = int((rows & ~train_only).sum())
+        return np.flatnonzero(rows & train_only)
 
     def __len__(self) -> int:
         return len(self._index)
@@ -392,9 +430,14 @@ class PixMoCountV2DatasetConfig(Config):
     """
 
     dataset_path: str = f"{PIXMO_DATASETS}/count-v2"
-    """HF ``DatasetDict`` saved with ``save_to_disk`` (``train`` / ``validation`` / ``test``)."""
+    """HF ``DatasetDict`` saved with ``save_to_disk``. Only its ``train`` split is ever read:
+    this is a training source, and the build's ``validation`` / ``test`` splits are copies of
+    ``train`` rather than held-out data."""
 
-    split: str = "train"
+    heldout_paths: Tuple[str, ...] = COUNT_V2_HELDOUT_PATHS
+    """Held-out sets (see :func:`~.sft_common.heldout_ids`); a row whose ``image_sha256`` appears
+    in one is never trained on. PixMo-Count's own train split shares 15 images with its test
+    split, and this build inherits them."""
 
     style: Tuple[str, ...] = ("point_count", "pointing")
     """Styles drawn uniformly per annotation (mm_olmo ``style="both"``)."""
@@ -431,14 +474,15 @@ class PixMoCountV2Dataset(EpochSeededExamples):
     def __init__(self, config: PixMoCountV2DatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(config.dataset_path, config.split)
+        self._data = _load_split(config.dataset_path, "train")
         self._index = self._build_index()
         log.info(
-            "PixMoCountV2 (%s/%s): %d of %d images have a trainable point set",
+            "PixMoCountV2 (%s/train): %d of %d images have a trainable point set "
+            "(%d dropped for appearing in a held-out set)",
             config.dataset_path,
-            config.split,
             len(self._index),
             len(self._data),
+            self.n_heldout_dropped,
         )
 
     def keep(self, anno: Dict[str, Any]) -> bool:
@@ -477,7 +521,15 @@ class PixMoCountV2Dataset(EpochSeededExamples):
                 )
             return keep
 
-        return np.flatnonzero(_rows_with_any(self._data.data.column("points"), _keep_flat))
+        table = self._data.data
+        rows = _rows_with_any(table.column("points"), _keep_flat)
+        train_only = _not_heldout(
+            table,
+            "image_sha256",
+            heldout_ids(self.config.heldout_paths, "image_sha256"),
+        )
+        self.n_heldout_dropped = int((rows & ~train_only).sum())
+        return np.flatnonzero(rows & train_only)
 
     def __len__(self) -> int:
         return len(self._index)

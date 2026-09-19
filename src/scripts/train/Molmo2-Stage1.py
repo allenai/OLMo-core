@@ -24,10 +24,11 @@ knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2
 
 ``--ocr_rate`` (default 0) adds the OCR group: olmOCR-mix page transcription (rendered from PDFs,
 needs ``pypdfium2``) plus the oe-encoder caption tars (text-rich captions, Cambrian OCR subsets,
-TextCaps, scene text), paid for by the caption group. ``--ocr_sources=[...]`` picks the sources
-(see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` config fields
-are the two source templates, e.g. ``--olmocr.languages=null``, and ``--ocr_data_root`` relocates
-the tar tree.
+TextCaps, TextOCR), paid for by the caption group. Every default source is a train split only;
+the scene-text tars whose split cannot be verified are selectable but not default.
+``--ocr_sources=[...]`` picks the sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`);
+the ``olmocr`` / ``ocr_tars`` config fields are the two source templates, e.g.
+``--olmocr.languages=null``, and ``--ocr_data_root`` relocates the tar tree.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -66,8 +67,10 @@ from olmo_core.data.multimodal.mixtures.ocr import (
     DEFAULT_OCR_SOURCES,
     DUPLICATE_OLMOCR_SOURCES,
     OCR_SOURCE_NAMES,
+    SPLIT_UNVERIFIED_SOURCES,
     build_ocr_source,
 )
+from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
@@ -280,13 +283,14 @@ POINTING_RATE = 0.30
 NLP_RATE = 0.10
 # The OCR group (`olmo_core.data.multimodal.mixtures.ocr`): olmOCR-mix page transcription
 # (mm_olmo train_molmo3_stage1 `_base_mixture`, 0.075 there) plus the oe-encoder caption tars
-# (text-rich captions, Cambrian OCR subsets, TextCaps, scene text), one dataset per source and
+# (text-rich captions, Cambrian OCR subsets, TextCaps, TextOCR), one dataset per source and
 # the group's rate split by sqrt(size) like mm_olmo's default `root_size_factor`. Paid for out of
 # the caption group. Off by default so the default run stays the released Molmo2 pretrain
 # mixture; `--ocr_rate=0.15` enables it (mm_olmo spends 0.075 + 0.075 on its two OCR groups).
-# `DEFAULT_OCR_SOURCES` leaves out the `s2pdf` / `iabooks` tars, which are the same pages as
-# olmOCR-mix documents / books. olmOCR-mix pages are rendered from PDFs at load time, which needs
-# `pypdfium2` (installed by the launch `post_setup` below).
+# `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
+# are the same pages as olmOCR-mix documents / books, and the HierText / COCO-Text / UberText
+# tars, whose split cannot be verified. olmOCR-mix pages are rendered from PDFs at load time,
+# which needs `pypdfium2` (installed by the launch `post_setup` below).
 OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
 # The OCR user turn is the bare `<style>:` tag (`olmocr:` / `ocr_caption:` / `scene_text:`),
@@ -485,6 +489,71 @@ def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
     if init_from not in INIT_FROM_CHOICES:
         raise OLMoConfigurationError(f"init_from={init_from!r} is not one of {INIT_FROM_CHOICES}")
     return model_size, init_from
+
+
+def validate_data_config(config) -> None:
+    """Check the data-mixture fields of a merged config.
+
+    Separate from :func:`build_config`, which also resolves the Beaker launch and so cannot run
+    without cluster access: this only reads ``pointing_data``, the three rates, ``ocr_sources``,
+    ``olmocr`` and ``ocr_tars``.
+
+    :raises OLMoConfigurationError: If a field is invalid, or an override would be silently
+        ignored, or a source would read anything but its train split.
+    """
+    if config.pointing_data not in POINTING_DATA_CHOICES:
+        raise OLMoConfigurationError(
+            f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
+        )
+    if config.ocr_rate > 0 and not config.ocr_sources:
+        raise OLMoConfigurationError("ocr_rate > 0 needs at least one entry in ocr_sources")
+    # This script only trains, so a source may only ever read its train split. olmOCR-mix ships
+    # a held-out `eval` parquet per subset that the dataset class can read for evaluation; it
+    # must not be reachable from a training run by an override.
+    if canonical_split(config.olmocr.split) != "train":
+        raise OLMoConfigurationError(
+            f"olmocr.split={config.olmocr.split!r}: a training run reads only the train split "
+            "(the olmOCR-mix `eval` parquets are held-out data)"
+        )
+    unknown = [n for n in config.ocr_sources if n not in OCR_SOURCE_NAMES]
+    if unknown:
+        raise OLMoConfigurationError(
+            f"Unknown ocr_sources {unknown}; expected names from {OCR_SOURCE_NAMES}"
+        )
+    if len(set(config.ocr_sources)) != len(config.ocr_sources):
+        raise OLMoConfigurationError(f"ocr_sources has duplicates: {config.ocr_sources}")
+    # `build_ocr_source` sets these per source, so a value here would be accepted, saved into the
+    # run config and then ignored. Fail instead of pretending it took effect.
+    per_source = OcrCaptionTarsDatasetConfig()
+    for field, hint in (
+        ("dataset_path", "use --ocr_data_root to relocate the whole tar tree"),
+        ("style", "the style is fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
+        ("strip_text_tags", "set per source by mixtures.ocr.OCR_TAR_SOURCES"),
+        ("heldout_paths", "the held-out sets are fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
+    ):
+        if getattr(config.ocr_tars, field) != getattr(per_source, field):
+            raise OLMoConfigurationError(
+                f"--ocr_tars.{field} is set per OCR source and would be ignored here; {hint}"
+            )
+    unverified = [n for n in config.ocr_sources if n in SPLIT_UNVERIFIED_SOURCES]
+    if unverified and config.ocr_rate > 0:
+        log.warning(
+            "ocr_sources includes %s, whose tars cannot be shown to hold only a training split "
+            "(see mixtures.ocr); they are not in the default group for that reason.",
+            unverified,
+        )
+    for tar_name, mix_name in DUPLICATE_OLMOCR_SOURCES.items():
+        if tar_name in config.ocr_sources and mix_name in config.ocr_sources:
+            log.warning(
+                "ocr_sources has both %s and %s, which are the same pages rendered by two "
+                "pipelines: those pages will be sampled twice.",
+                tar_name,
+                mix_name,
+            )
+    if config.pointing_rate + config.nlp_rate + config.ocr_rate > 1.0:
+        raise OLMoConfigurationError(
+            "pointing_rate + nlp_rate + ocr_rate exceeds 1: nothing is left for the caption source"
+        )
 
 
 def build_config(script: str, run_name: str, overrides: List[str]) -> ExperimentConfig:
@@ -710,43 +779,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ocr_tars=ocr_tars_config,
     ).merge(overrides)
 
-    if config.pointing_data not in POINTING_DATA_CHOICES:
-        raise OLMoConfigurationError(
-            f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
-        )
-    if config.ocr_rate > 0 and not config.ocr_sources:
-        raise OLMoConfigurationError("ocr_rate > 0 needs at least one entry in ocr_sources")
-    unknown = [n for n in config.ocr_sources if n not in OCR_SOURCE_NAMES]
-    if unknown:
-        raise OLMoConfigurationError(
-            f"Unknown ocr_sources {unknown}; expected names from {OCR_SOURCE_NAMES}"
-        )
-    if len(set(config.ocr_sources)) != len(config.ocr_sources):
-        raise OLMoConfigurationError(f"ocr_sources has duplicates: {config.ocr_sources}")
-    # `build_ocr_source` sets these per source, so a value here would be accepted, saved into the
-    # run config and then ignored. Fail instead of pretending it took effect.
-    per_source = OcrCaptionTarsDatasetConfig()
-    for field, hint in (
-        ("dataset_path", "use --ocr_data_root to relocate the whole tar tree"),
-        ("style", "the style is fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
-        ("strip_text_tags", "set per source by mixtures.ocr.OCR_TAR_SOURCES"),
-    ):
-        if getattr(config.ocr_tars, field) != getattr(per_source, field):
-            raise OLMoConfigurationError(
-                f"--ocr_tars.{field} is set per OCR source and would be ignored here; {hint}"
-            )
-    for tar_name, mix_name in DUPLICATE_OLMOCR_SOURCES.items():
-        if tar_name in config.ocr_sources and mix_name in config.ocr_sources:
-            log.warning(
-                "ocr_sources has both %s and %s, which are the same pages rendered by two "
-                "pipelines: those pages will be sampled twice.",
-                tar_name,
-                mix_name,
-            )
-    if config.pointing_rate + config.nlp_rate + config.ocr_rate > 1.0:
-        raise OLMoConfigurationError(
-            "pointing_rate + nlp_rate + ocr_rate exceeds 1: nothing is left for the caption source"
-        )
+    validate_data_config(config)
 
     # `_resolve_model_spec` already validated the pre-merge values; re-check the merged
     # config so a stray `--model_size`/`--init_from`/`--train_vit` cannot slip through, and
@@ -1118,7 +1151,7 @@ Print the config:
 Audited (v2) pointing sources, dropping audit-failed points instead of marking them:
 › python {sys.argv[0]} launch molmo2-stage1-v2pts --pointing_data=v2 --pointing_v2.filter_audit=true
 
-OCR group at 15% (olmOCR-mix + text-rich / Cambrian / TextCaps captions + scene text):
+OCR group at 15% (olmOCR-mix + text-rich / Cambrian / TextCaps captions + TextOCR):
 › python {sys.argv[0]} launch molmo2-stage1-ocr --ocr_rate=0.15
 Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \

@@ -36,7 +36,12 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
 from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
-from .sft_common import EpochSeededExamples, get_example_with_skip, truncate_example
+from .sft_common import (
+    EpochSeededExamples,
+    get_example_with_skip,
+    heldout_ids,
+    truncate_example,
+)
 
 __all__ = [
     "TarShardIndex",
@@ -262,6 +267,14 @@ class OcrCaptionTarsDatasetConfig(Config):
     """Drop the ``<text>...</text>`` wrapper of OCR-type sources so the target is the bare text,
     like olmOCR-mix's ``natural_text``."""
 
+    heldout_paths: Tuple[str, ...] = ()
+    """Held-out sets (see :func:`~.sft_common.heldout_ids`). Tar shards have no splits, so a
+    source built from a corpus that *does* hold rows out ships them all; a sample whose key
+    appears in one of these sets is never trained on."""
+
+    heldout_column: str = "id"
+    """The column of the held-out sets that holds the identifier a tar key is compared to."""
+
     shard_glob: str = "*.tar"
     index_cache_dir: Optional[str] = None
     """Where the shard index is cached; ``None`` -> :func:`default_index_cache_dir`."""
@@ -311,20 +324,29 @@ class OcrCaptionTarsDataset(EpochSeededExamples):
         )
         self._lock = threading.Lock()
         self._warned = 0
+        # Positions in the shard index that may be trained on: everything but the held-out keys.
+        heldout = heldout_ids(config.heldout_paths, config.heldout_column)
+        keep = np.ones(len(self.index), dtype=bool)
+        if heldout:
+            keep = ~np.isin(self.index.keys, sorted(heldout))
+        self._positions = np.flatnonzero(keep)
+        self.n_heldout_dropped = len(self.index) - len(self._positions)
         log.info(
-            "caption tars %s (style=%s): %d samples in %d shards",
+            "caption tars %s (style=%s): %d samples in %d shards "
+            "(%d dropped for appearing in a held-out set)",
             config.dataset_path,
             config.style,
-            len(self.index),
+            len(self._positions),
             len(self.index.shards),
+            self.n_heldout_dropped,
         )
 
     def __len__(self) -> int:
-        return len(self.index)
+        return len(self._positions)
 
     def key(self, i: int) -> str:
         """This sample's tar member stem (provenance; not used to build the example)."""
-        return str(self.index.keys[i])
+        return str(self.index.keys[self._positions[i]])
 
     def text(self, meta: Dict) -> str:
         """The target text of a decoded JSON record."""
@@ -354,7 +376,7 @@ class OcrCaptionTarsDataset(EpochSeededExamples):
         from PIL import Image
 
         cfg = self.config
-        image_bytes, json_bytes = self.index.read_sample(i)
+        image_bytes, json_bytes = self.index.read_sample(int(self._positions[i]))
         text = self.text(json.loads(json_bytes))
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         rng = self.epoch_rng(i)

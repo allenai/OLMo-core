@@ -250,7 +250,11 @@ def build_branched_sequence(
 
     def _as_segments(branch):
         """Normalize a branch to a list of (context, response) turn segments."""
-        if len(branch) == 2 and len(branch[0]) > 0 and isinstance(branch[0][0], (int, np.integer)):
+        if (
+            len(branch) == 2
+            and len(branch[0]) > 0
+            and isinstance(branch[0][0], (int, np.integer))
+        ):
             return [branch]
         return list(branch)
 

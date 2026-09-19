@@ -29,13 +29,14 @@ import glob as _glob
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
 
 from .sequence_builder import example_rng
 
 __all__ = [
+    "heldout_ids",
     "IMAGE_PLACEHOLDER",
     "MAX_ROW_SKIP",
     "EpochSeededExamples",
@@ -51,6 +52,46 @@ log = logging.getLogger(__name__)
 
 MAX_ROW_SKIP = 32
 """How many following rows :func:`get_example_with_skip` tries before giving up."""
+
+
+def heldout_ids(paths: Sequence[str], column: str) -> Set[str]:
+    """The identifiers (image urls / hashes, row ids) a training source must not contain.
+
+    Each path is a ``save_to_disk`` dataset. For a ``DatasetDict`` every split except ``train`` is
+    held out; a flat ``Dataset`` (an eval set) is held out entirely.
+
+    :param paths: Held-out dataset directories.
+    :param column: The identifier column to read from each (``image_url`` / ``image_sha256`` /
+        ``id``).
+
+    :returns: The union of the held-out identifiers.
+
+    :raises OLMoConfigurationError: If a path is missing or lacks ``column``. A guard that cannot
+        be checked fails the build rather than passing silently; pass no paths to skip it on
+        purpose.
+    """
+    import os
+
+    from olmo_core.exceptions import OLMoConfigurationError
+
+    from .dataset_compat import load_from_disk_compat
+
+    ids: Set[str] = set()
+    for path in paths:
+        if not os.path.isdir(path):
+            raise OLMoConfigurationError(
+                f"held-out set {path!r} not found, so train/eval image overlap cannot be checked; "
+                "fix the path, or pass heldout_paths=() to skip the check deliberately"
+            )
+        ds = load_from_disk_compat(path)
+        splits = [ds[k] for k in ds.keys() if k != "train"] if hasattr(ds, "keys") else [ds]
+        for split in splits:
+            if column not in split.column_names:
+                raise OLMoConfigurationError(
+                    f"held-out set {path!r} has no {column!r} column (it has {split.column_names})"
+                )
+            ids.update(x for x in split.data.column(column).to_pylist() if x)
+    return ids
 
 
 class EpochSeededExamples:

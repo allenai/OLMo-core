@@ -1,6 +1,6 @@
 """The OCR source group for Molmo2 stage-1 (``Molmo2-Stage1.py --ocr_rate``).
 
-Twenty-one image -> free-text sources of three kinds (19 of them in
+Twenty-one image -> free-text sources of three kinds (16 of them in
 :data:`DEFAULT_OCR_SOURCES`), each a separate dataset sharing the group's rate (split by
 sqrt(size), mm_olmo's default ``root_size_factor``):
 
@@ -17,6 +17,21 @@ sqrt(size), mm_olmo's default ``root_size_factor``):
 (97.4% / 99.4% of their page ids, and every one of their documents; none of the eval pages), only
 rendered and transcribed by a different pipeline. They are registered so either rendering can be
 chosen, but :data:`DEFAULT_OCR_SOURCES` leaves them out so a page is not counted twice.
+
+**Train splits only.** A source is in :data:`DEFAULT_OCR_SOURCES` only if it is known to hold
+training data and nothing else:
+
+* olmOCR-mix reads ``<subset>_train.parquet``; the training script refuses any other split.
+* The ``text_rich_*`` tars hold every image of mm_olmo's build, including the 2,048 per category
+  that build holds out as ``validation`` (4 of 1,000 sampled ``chart`` keys are validation ids,
+  the 0.58% base rate). Those keys are excluded at build time (:attr:`OcrTarSource.heldout`).
+* TextCaps and TextOCR keys are OpenImages ids: 1,200 sampled from the first, middle and last
+  shard of each are all TextVQA *train* images, none of its 3,166 val or 3,289 test images.
+* The Cambrian subsets come from Cambrian-10M, a training corpus with no held-out split.
+* HierText, COCO-Text and UberText have official val / test splits, but their tar keys are
+  synthetic (``cocotext_0000000``) and the JSON carries no split, so which splits the tars hold
+  cannot be established from the data. They are registered but not default
+  (:data:`SPLIT_UNVERIFIED_SOURCES`).
 
 TextCaps' ``caption`` is its five reference captions concatenated into one string (``n_refs``),
 which is what the tars ship; it stays in the default group as a caption source but is the one to
@@ -46,7 +61,7 @@ from typing import Dict, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
 from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
-from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
+from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, TEXT_RICH_CAPTION
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = [
@@ -55,6 +70,7 @@ __all__ = [
     "OLMOCR_MIX_SOURCES",
     "OCR_SOURCE_NAMES",
     "DUPLICATE_OLMOCR_SOURCES",
+    "SPLIT_UNVERIFIED_SOURCES",
     "DEFAULT_OCR_SOURCES",
     "OLMOCR_STYLE",
     "OCR_CAPTION_STYLE",
@@ -76,19 +92,29 @@ class OcrTarSource:
     style: str
     strip_text_tags: bool
     """Whether the tars wrap the text in ``<text>...</text>`` (transcription-type sources)."""
+    heldout: Tuple[str, ...] = ()
+    """Held-out sets whose ``id`` column names tar keys that must not be trained on (see
+    :func:`~olmo_core.data.multimodal.sft_common.heldout_ids`). Tars carry no split, so this
+    is how a source built from a corpus with a validation split stays train-only."""
+
+
+def _text_rich(category: str) -> OcrTarSource:
+    """A ``text_rich_caption_v6_tars`` category, minus mm_olmo's held-out rows of it."""
+    return OcrTarSource(
+        f"text_rich_caption_v6_tars/{category}",
+        OCR_CAPTION_STYLE,
+        False,
+        heldout=(os.path.join(TEXT_RICH_CAPTION, "hf", category),),
+    )
 
 
 OCR_TAR_SOURCES: Dict[str, OcrTarSource] = {
     # Synthetic text-rich images, one dense caption each (~800 chars).
-    "text_rich_chart": OcrTarSource("text_rich_caption_v6_tars/chart", OCR_CAPTION_STYLE, False),
-    "text_rich_diagram": OcrTarSource(
-        "text_rich_caption_v6_tars/diagram", OCR_CAPTION_STYLE, False
-    ),
-    "text_rich_doc": OcrTarSource("text_rich_caption_v6_tars/doc", OCR_CAPTION_STYLE, False),
-    "text_rich_graphic": OcrTarSource(
-        "text_rich_caption_v6_tars/graphic", OCR_CAPTION_STYLE, False
-    ),
-    "text_rich_table": OcrTarSource("text_rich_caption_v6_tars/table", OCR_CAPTION_STYLE, False),
+    "text_rich_chart": _text_rich("chart"),
+    "text_rich_diagram": _text_rich("diagram"),
+    "text_rich_doc": _text_rich("doc"),
+    "text_rich_graphic": _text_rich("graphic"),
+    "text_rich_table": _text_rich("table"),
     # Cambrian's OCR-heavy subsets, re-captioned.
     "cambrian_arxivqa": OcrTarSource("cambrian_v6_tars/cambrian_arxivqa", OCR_CAPTION_STYLE, False),
     "cambrian_ocr_vqa": OcrTarSource("cambrian_v6_tars/cambrian_ocr_vqa", OCR_CAPTION_STYLE, False),
@@ -121,8 +147,14 @@ OCR_SOURCE_NAMES: Tuple[str, ...] = tuple(OLMOCR_MIX_SOURCES) + tuple(OCR_TAR_SO
 #: Tar sources whose pages are already in an olmOCR-mix train subset (see module doc).
 DUPLICATE_OLMOCR_SOURCES: Dict[str, str] = {"s2pdf": "olmocr_documents", "iabooks": "olmocr_books"}
 
+#: Sources whose tars cannot be shown to hold only a training split (see module doc). Usable
+#: through ``--ocr_sources``, but a default run never reads them.
+SPLIT_UNVERIFIED_SOURCES: Tuple[str, ...] = ("hiertext", "cocotext", "ubertext")
+
 DEFAULT_OCR_SOURCES: Tuple[str, ...] = tuple(
-    n for n in OCR_SOURCE_NAMES if n not in DUPLICATE_OLMOCR_SOURCES
+    n
+    for n in OCR_SOURCE_NAMES
+    if n not in DUPLICATE_OLMOCR_SOURCES and n not in SPLIT_UNVERIFIED_SOURCES
 )
 
 
@@ -137,8 +169,8 @@ def build_ocr_source(
     """Build one OCR source by name from the two template configs.
 
     :param olmocr: template for the olmOCR-mix sources; its ``subset`` is overridden.
-    :param tars: template for the caption-tars sources; ``dataset_path``, ``style`` and
-        ``strip_text_tags`` are overridden from :data:`OCR_TAR_SOURCES`.
+    :param tars: template for the caption-tars sources; ``dataset_path``, ``style``,
+        ``strip_text_tags`` and ``heldout_paths`` are overridden from :data:`OCR_TAR_SOURCES`.
     :param data_root: where the oe-encoder tar directories live.
     """
     if name in OLMOCR_MIX_SOURCES:
@@ -149,5 +181,6 @@ def build_ocr_source(
             dataset_path=os.path.join(data_root, src.relpath),
             style=src.style,
             strip_text_tags=src.strip_text_tags,
+            heldout_paths=src.heldout,
         ).build(tokenizer)
     raise OLMoConfigurationError(f"Unknown OCR source {name!r}; expected one of {OCR_SOURCE_NAMES}")
