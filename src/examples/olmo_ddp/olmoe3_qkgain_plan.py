@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CAMPAIGN = "olmo35-qkgain-20260919"
-BRANCH = "codex/hybrid-qknorm-ladder-20260919"
+BRANCH = "codex/qkgain-lc4mi-sft2mi-20260919"
 MOUNT = Path("/weka/olmo-3p5-checkpoints")
 ROOT = MOUNT / "production-qkgain" / CAMPAIGN
 ORIGINAL_AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 AUTOMATION = ORIGINAL_AUTOMATION / "mt16mi-linear0"
+POSTTRAIN_AUTOMATION = ORIGINAL_AUTOMATION / "lc4mi-sft2mi"
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
 DOWNLOAD_ROOT = ORIGINAL_AUTOMATION / "sources"
 REFERENCE = DOWNLOAD_ROOT / "emo/step6000/olmo-core"
@@ -38,7 +39,7 @@ class Run:
 
     @property
     def run_id(self):
-        revision = "-16mi-linear0" if self.stage == "mt" else ""
+        revision = dict(pt="", mt="-16mi-linear0", lc="-4mi-w400", sft="-2mi-ep2")[self.stage]
         return f"{CAMPAIGN}-{self.arm}-{self.stage}{revision}" + ("-smoke" if self.smoke else "")
 
     @property
@@ -47,7 +48,7 @@ class Run:
 
     @property
     def prefix(self):
-        revision = "/16mi-linear0" if self.stage == "mt" else ""
+        revision = dict(pt="", mt="/16mi-linear0", lc="/4mi-w400", sft="/2mi-ep2")[self.stage]
         return f"{CAMPAIGN}/{self.arm}/{self.stage}{revision}" + ("/smoke" if self.smoke else "")
 
     @property
@@ -56,7 +57,7 @@ class Run:
 
     @property
     def batch(self):
-        return dict(pt=16777216, mt=16777216, lc=786432, sft=524288)[self.stage]
+        return dict(pt=16777216, mt=16777216, lc=4194304, sft=2097152)[self.stage]
 
     @property
     def sequence(self):
@@ -64,11 +65,11 @@ class Run:
 
     @property
     def gpus(self):
-        return dict(pt=64, mt=64, lc=12, sft=8)[self.stage]
+        return dict(pt=64, mt=64, lc=64, sft=8)[self.stage]
 
     @property
     def nodes(self):
-        return dict(pt=8, mt=8, lc=2, sft=1)[self.stage]
+        return dict(pt=8, mt=8, lc=8, sft=1)[self.stage]
 
     @property
     def microbatch(self):
@@ -76,7 +77,7 @@ class Run:
 
     @property
     def end(self):
-        return dict(pt=6667, mt=2125, lc=45321, sft=3360)[self.stage]
+        return dict(pt=6667, mt=2125, lc=8498, sft=840)[self.stage]
 
     @property
     def start(self):
@@ -84,7 +85,7 @@ class Run:
 
     @property
     def lr(self):
-        return dict(pt=1.1e-3, mt=2.2e-4, lc=4e-5, sft=5e-5)[self.stage]
+        return dict(pt=1.1e-3, mt=2.2e-4, lc=5.5e-5, sft=5e-5)[self.stage]
 
     @property
     def emo(self):
@@ -114,11 +115,11 @@ class Run:
             # Entire short run is below 200B; keep the undecayed step6000 too.
             return list(range(100, self.end, 100)) + [self.end]
         if self.stage == "sft":
-            return [1680, 3360]
+            return [2, 4, self.end // 2, self.end]
         if self.stage == "mt":
             # In-allocation save/resume gate, then approximately the old token cadence.
             return [2, 4] + list(range(250, self.end, 250)) + [self.end]
-        return list(range(5000, self.end, 5000)) + [self.end]
+        return [2, 4] + list(range(1000, self.end, 1000)) + [self.end]
 
     def as_dict(self):
         return dict(run_id=self.run_id, arm=self.arm, stage=self.stage, smoke=self.smoke,
@@ -165,8 +166,10 @@ def self_test():
     for r in runs():
         assert r.batch % (r.gpus*r.microbatch) == 0
         assert r.gpus % r.nodes == 0 and r.end in r.saves
-        assert len(r.saves)+1 == dict(pt=68,mt=12,lc=11,sft=3)[r.stage]
-    assert sum(1+len(r.saves) for r in runs() if r.stage!='pt') == 78
+        assert len(r.saves)+1 == dict(pt=68,mt=12,lc=12,sft=5)[r.stage]
+    assert Run('7to1-split','lc').end == math.ceil(budget/4194304)
+    assert Run('7to1-split','sft').end * 2097152 == 3360 * 524288
+    assert sum(1+len(r.saves) for r in runs() if r.stage!='pt') == 87
 
 
 if __name__ == "__main__":

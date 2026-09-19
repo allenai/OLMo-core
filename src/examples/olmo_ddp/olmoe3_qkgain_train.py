@@ -32,7 +32,7 @@ def current():
 def scheduler(r):
     return WSD(warmup=2000, decay=667, decay_fraction=None) if r.stage == "pt" else (
         LinearWithWarmup(warmup_fraction=.03, alpha_f=0) if r.stage == "sft" else
-        LinearWithWarmup(warmup=0 if r.stage == "mt" else 2000, alpha_f=0))
+        LinearWithWarmup(warmup=0 if r.stage == "mt" else 400, alpha_f=0))
 
 
 def source_for(r):
@@ -71,12 +71,25 @@ def model_config(common):
     return model
 
 
-def sft_adapter():
+def sft_data_plan(r):
+    """Derive optimizer steps from the unchanged packed examples at this run's batch."""
+    original = json.loads(SFT_DATA_PLAN.read_text())
+    assert original['passed'] and original['sequence_length'] == r.sequence
+    per_batch = r.batch // r.sequence
+    steps = original['packed_instances']['train'] // per_batch
+    assert 2 * steps == r.end
+    return dict(original, batch_tokens=r.batch, steps_per_epoch=steps, total_steps=r.end,
+                total_steps_by_epochs={'2': r.end},
+                dropped_packed_instances_per_epoch=original['packed_instances']['train'] % per_batch)
+
+
+def sft_adapter(r):
+    """Bind batch-aware loader and validation settings without retokenizing data."""
     import olmoe3_hero_sft as sft
     sft.DATA, sft.CACHE = SFT_DATA, SFT_CACHE
     sft.ROOT_WORK = ROOT / "data-work/sft"
-    sft.find_run, sft.GPUS = find_run, 8
-    sft.data_plan = lambda: json.loads(SFT_DATA_PLAN.read_text())
+    sft.find_run, sft.GPUS, sft.BATCH = find_run, r.gpus, r.batch
+    sft.data_plan = lambda: sft_data_plan(r)
     return sft
 
 
@@ -94,7 +107,7 @@ def data_components(common):
         lc.BATCH = r.batch
         lc.DATA_WORK = ROOT / "data-work/lc"
         return lc.data_components(common)
-    return sft_adapter().data_components(common)
+    return sft_adapter(r).data_components(common)
 
 
 def train_module_config(common):
@@ -186,9 +199,9 @@ class Audit(Callback):
         r=find_run(self.run_id)
         row=dict(step=self.step,input_sha256=hashlib.sha256(batch['input_ids'].cpu().numpy().tobytes()).hexdigest())
         if r.stage=='sft':
-            plan=sft_adapter().data_plan()
-            assert plan['passed'] and plan['steps_per_epoch']==1680 and plan['total_steps']==3360
-            assert self.trainer.data_loader.total_batches==1680
+            plan=sft_adapter(r).data_plan()
+            assert plan['passed'] and plan['total_steps']==r.end
+            assert self.trainer.data_loader.total_batches==plan['steps_per_epoch']
             mask=batch['label_mask']; ids=batch['input_ids']
             assert 'doc_lens' in batch and mask.dtype==torch.bool and mask.any() and (~mask).any()
             assert not mask[ids==100277].any() and not mask[:,0].any()
@@ -241,7 +254,7 @@ def trainer_config(common):
     cfg.callbacks['checkpoint_ready']=CheckpointReadyNotifierCallback(inbox_dir=str(CONTROL/'inbox'),run_id=r.run_id,lineage_id=r.run_id)
     if r.stage=='sft':
         cfg.callbacks.pop('lm_evaluator',None)
-        cfg.callbacks['sft_validation']=sft_adapter().SFTValidation(run_id=r.run_id)
+        cfg.callbacks['sft_validation']=sft_adapter(r).SFTValidation(run_id=r.run_id)
     if r.smoke:
         cfg.no_evals=True; cfg.metrics_collect_interval=1
     wb=cfg.callbacks['wandb']; wb.project='olmo3p5-hero'; wb.group=CAMPAIGN
