@@ -12,21 +12,21 @@ released hybrid checkpoints are trained with.
 
 Usage::
 
-    # reproduce a published arm (geometry comes from --preset)
-    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter \
-        --preset 1.4b_7to1 --dataset /weka/.../shards_long32k
+    W=/weka/oe-training-default/ai2-llm
 
-    # any other checkpoint: give its geometry explicitly
-    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter \
-        --model /weka/.../step1234 --dataset /weka/.../my_shards \
-        --n-layers 32 --d-model 1280 --n-heads 16 --attn-every 8
+    # a published arm
+    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter-cirrascale-2 \
+        --preset 1.4b_7to1 \
+        --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k
 
-``--attn-every N`` is the full-attention period: layers where ``idx % N == N-1`` become attention
-layers, so 5 -> {4,9,14,19} and 8 -> {7,15,23,31}.
+    # any other checkpoint -- nothing else to specify
+    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter-cirrascale-2 \
+        --model $W/path/to/your/checkpoint/step44124/ \
+        --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k
 
-⚠ The geometry flags must match the checkpoint being loaded. This script BUILDS the architecture
-from them; it does not read it back from the checkpoint. A mismatch either fails at load or quietly
-trains a different model against the right weights.
+Architecture -- depth, width, where the full-attention layers sit, whether they use Scalable-Softmax
+-- is read from the checkpoint's own ``config.json``. There are no geometry flags, so there is
+nothing to get wrong.
 
 Data
 ----
@@ -90,22 +90,15 @@ DEFAULT_DATASET = (
 
 MAINLINE = "/weka/oe-training-default/ai2-llm/scaling-ladders/mainline"
 
-#: Geometry + checkpoint for the two published arms, so they can be reproduced without retyping.
-#: Any other model is specified with --model plus the geometry flags; these are a convenience, not
-#: the supported surface.
+#: Shorthand for the two published base checkpoints. Geometry is NOT listed: it is read from each
+#: checkpoint's own config.json, so this is only here to save typing a weka path.
 #:
 #: ⚠ The two arms are NOT parameter-matched (1.42B vs 2.15B, +51%): they hold the number of
 #: full-attention layers fixed at 4 and differ only by 12 extra gated-delta-net layers. Quote that
 #: with any result -- a 7:1 win is not an attention-ratio effect.
-PRESETS: Dict[str, dict] = {
-    "1.4b_4to1": dict(
-        n_layers=20, attn_every=5, d_model=1280, n_heads=16,
-        model=f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/1.4B-Cx8/long-context/step34156/",
-    ),
-    "1.4b_7to1": dict(
-        n_layers=32, attn_every=8, d_model=1280, n_heads=16,
-        model=f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/1.4B-Cx8/long-context/step44124/",
-    ),
+PRESETS: Dict[str, str] = {
+    "1.4b_4to1": f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/1.4B-Cx8/long-context/step34156/",
+    "1.4b_7to1": f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/1.4B-Cx8/long-context/step44124/",
 }
 
 # ── optimization: matched to amandab's validated SFT runs ────────────────────────────────────────
@@ -176,79 +169,53 @@ def build_ctc_train_module_config(common, **_) -> TransformerTrainModuleConfig:
 
 def build_ctc_model_config(
     common: CommonComponents,
-    geom: dict,
+    model_path: str,
     attn_backend: AttentionBackendName = AttentionBackendName.flash_3,
 ) -> TransformerConfig:
     """
-    Build the arm's architecture.
+    Rebuild the architecture from the checkpoint that is about to be loaded into it.
 
-    Mirrors :func:`arch.build_model_config` but takes the geometry from ``geom`` rather than the
-    per-size table (which encodes 4:1 only), and enables ``scalable_softmax`` on the attention
-    layers. SSMax adds a learned per-head ``ssmax_scale`` parameter; the released hybrid
-    checkpoints carry it, so omitting it would leave those weights unloaded and run a different
-    model.
+    olmo-core checkpoints carry their own ``config.json``, so depth, width, head count, where the
+    full-attention layers sit and whether they use Scalable-Softmax all come from the checkpoint
+    itself. Restating any of that by hand is how you train a different model against the right
+    weights -- it either fails at load or, worse, does not.
 
-    :param geom: ``n_layers``, ``d_model``, ``n_heads``, ``attn_every``.
+    The only thing overridden is the attention backend, which is a property of the cluster you are
+    running on, not of the checkpoint.
+
+    :param model_path: Checkpoint step directory holding ``config.json``.
+    :param attn_backend: Backend for the full-attention layers.
+
+    :returns: The checkpoint's own :class:`TransformerConfig`.
+
+    :raises SystemExit: If there is no ``config.json`` -- there is no safe geometry to guess.
     """
-    d_model, n_heads = geom["d_model"], geom["n_heads"]
-    n_layers, interval = geom["n_layers"], geom["attn_every"]
-    n_kv_heads, head_dim, dtype, expand_v = 8, 128, DType.float32, 2.0
+    cfg_path = os.path.join(model_path.rstrip("/"), "config.json")
+    if not os.path.exists(cfg_path):
+        raise SystemExit(
+            f"no config.json at {cfg_path}.\n"
+            "Expected an olmo-core checkpoint step directory (the one holding model_and_optim/). "
+            "The architecture is read from it; there is no safe default to fall back to."
+        )
+    with open(cfg_path) as f:
+        raw = json.load(f)
+    model_cfg = TransformerConfig.from_dict(raw["model"] if "model" in raw else raw)
 
-    layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
-    feed_forward = FeedForwardConfig(
-        hidden_size=d_model * 8, bias=False, dtype=dtype, activation=ActivationFunction.silu
+    n_attn = 0
+    for block in list((model_cfg.block_overrides or {}).values()) + [model_cfg.block]:
+        mixer = getattr(block, "sequence_mixer", None)
+        if isinstance(mixer, AttentionConfig):
+            mixer.backend = attn_backend
+            n_attn += 1
+    print(
+        f"[sft_ctc] architecture from checkpoint: n_layers={model_cfg.n_layers} "
+        f"d_model={model_cfg.d_model} "
+        f"attention layers at {sorted(model_cfg.block_overrides or {})} "
+        f"(ssmax={getattr(next(iter((model_cfg.block_overrides or {}).values()), None), 'sequence_mixer', None) and getattr(next(iter((model_cfg.block_overrides or {}).values())).sequence_mixer, 'scalable_softmax', None)})"
     )
-
-    block = TransformerBlockConfig(
-        name=TransformerBlockType.peri_norm,
-        sequence_mixer=GatedDeltaNetConfig(
-            n_heads=n_heads, n_v_heads=n_heads, head_dim=head_dim, expand_v=expand_v, dtype=dtype
-        ),
-        feed_forward=feed_forward,
-        layer_norm=layer_norm,
-    )
-
-    block_overrides: Dict[int, TransformerBlockConfig] = {}
-    for layer_idx in range(n_layers):
-        if layer_idx % interval == (interval - 1):
-            block_overrides[layer_idx] = TransformerBlockConfig(
-                name=TransformerBlockType.peri_norm,
-                sequence_mixer=AttentionConfig(
-                    name=AttentionType.default,
-                    n_heads=n_heads,
-                    n_kv_heads=n_kv_heads,
-                    head_dim=head_dim,
-                    bias=False,
-                    rope=None,  # NoPE on the global layers
-                    gate=GateConfig(
-                        granularity=GateGranularity.elementwise, full_precision=True
-                    ),
-                    qk_norm=layer_norm,
-                    use_head_qk_norm=True,
-                    scalable_softmax=True,
-                    backend=attn_backend,
-                    dtype=dtype,
-                ),
-                feed_forward=feed_forward,
-                layer_norm=layer_norm,
-            )
-
-    return TransformerConfig(
-        d_model=d_model,
-        vocab_size=common.tokenizer.padded_vocab_size(),
-        n_layers=n_layers,
-        block=block,
-        lm_head=LMHeadConfig(
-            loss_implementation=LMLossImplementation.default,
-            layer_norm=layer_norm,
-            bias=False,
-            dtype=dtype,
-        ),
-        dtype=dtype,
-        block_overrides=block_overrides or None,
-        embed_scale=math.sqrt(d_model),
-        embedding_norm=LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False),
-    )
+    if n_attn == 0:
+        print("[sft_ctc] WARNING: no attention layers found in the checkpoint config")
+    return model_cfg
 
 
 def _assert_no_overlong(dataset_path: str, seq_len: int) -> None:
@@ -331,66 +298,46 @@ def _parse_cli(argv):
 
     :param argv: Full ``sys.argv``.
 
-    :returns: ``(args, remaining_argv, geom, model_path)``.
+    :returns: ``(args, remaining_argv, model_path)``.
 
-    :raises SystemExit: If the geometry is under-specified -- guessing it would train a different
-        architecture against the given weights.
+    :raises SystemExit: If no base checkpoint was given.
     """
     import argparse
 
     ap = argparse.ArgumentParser(add_help=False)
-    ap.add_argument("--preset", choices=sorted(PRESETS))
-    ap.add_argument("--model", help="base checkpoint to finetune from (olmo-core load_path)")
-    ap.add_argument("--dataset", default=DEFAULT_DATASET, help="olmo-core SFT shard dir")
-    ap.add_argument("--n-layers", type=int)
-    ap.add_argument("--d-model", type=int)
-    ap.add_argument("--n-heads", type=int)
-    ap.add_argument("--attn-every", type=int,
-                    help="full-attention period: layers where idx %% N == N-1 (5 -> 4,9,14,19)")
+    ap.add_argument("--model", help="base checkpoint to finetune (olmo-core step dir, weka path)")
+    ap.add_argument("--preset", choices=sorted(PRESETS), help=f"shorthand for a published checkpoint")
+    ap.add_argument("--dataset", default=DEFAULT_DATASET, help="olmo-core SFT shard dir (weka path)")
     ap.add_argument("--lr", type=float, default=LR)
     ap.add_argument("--epochs", type=int, default=EPOCHS)
     args, rest = ap.parse_known_args(argv[4:])
 
-    geom = dict(PRESETS[args.preset]) if args.preset else {}
-    model_path = geom.pop("model", None)
-    for k in ("n_layers", "d_model", "n_heads", "attn_every"):
-        v = getattr(args, k)
-        if v is not None:
-            geom[k] = v
-    if args.model:
-        model_path = args.model
-
-    missing = [k for k in ("n_layers", "d_model", "n_heads", "attn_every") if k not in geom]
-    if missing or not model_path:
+    model_path = args.model or (PRESETS[args.preset] if args.preset else None)
+    if not model_path:
         raise SystemExit(
-            "under-specified model.\n"
-            f"  missing geometry: {missing or 'none'}\n"
-            f"  base checkpoint : {model_path or 'MISSING (--model)'}\n"
-            "Give --preset for a published arm, or --model plus "
-            "--n-layers/--d-model/--n-heads/--attn-every. The geometry must match the checkpoint: "
-            "this script builds the architecture from it and does not read it back."
+            "no base checkpoint. Pass --model <olmo-core step dir> (or --preset "
+            f"{'|'.join(sorted(PRESETS))}).\n"
+            "Architecture is read from the checkpoint's own config.json -- nothing to specify."
         )
-    return args, argv[:4] + rest, geom, model_path
+    return args, argv[:4] + rest, model_path
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         raise SystemExit(
             f"Usage: {sys.argv[0]} <dry_run|launch|train> <run_name> <cluster> "
-            "(--preset ARM | --model PATH --n-layers N --d-model N --n-heads N --attn-every N) "
-            f"[--dataset DIR] [--lr F] [--epochs N] [overrides...]\n"
-            f"Presets: {sorted(PRESETS)}"
+            "--model PATH [--dataset DIR] [--lr F] [--epochs N] [overrides...]\n"
+            f"       --preset {'|'.join(sorted(PRESETS))} substitutes a published checkpoint.\n"
+            "Architecture comes from the checkpoint's config.json; there are no geometry flags."
         )
 
-    args, argv, GEOM, MODEL_PATH = _parse_cli(sys.argv)
+    args, argv, MODEL_PATH = _parse_cli(sys.argv)
     sys.argv = argv
 
-    size = args.preset.split("_")[0] if args.preset else "custom"
+    size = args.preset or "custom"
     sft_cfg = {size: dict(lr=args.lr, global_batch_size=GLOBAL_BATCH_SIZE, load_path=MODEL_PATH)}
     print(f"[sft_ctc] base checkpoint : {MODEL_PATH}")
     print(f"[sft_ctc] dataset         : {args.dataset}")
-    print(f"[sft_ctc] geometry        : {GEOM}  (attention layers at "
-          f"{[i for i in range(GEOM['n_layers']) if i % GEOM['attn_every'] == GEOM['attn_every'] - 1]})")
     print(f"[sft_ctc] lr {args.lr}  epochs {args.epochs}  seq_len {SEQUENCE_LENGTH}")
 
     CLUSTER_ATTN_BACKENDS = {
@@ -409,13 +356,14 @@ if __name__ == "__main__":
         build_config,
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
-        num_nodes=MODEL_CONFIGS[size]["num_nodes"] if size in MODEL_CONFIGS else 1,
+        num_nodes=1,
         data_config_builder=partial(build_ctc_data_components, dataset_path=args.dataset),
-        model_config_builder=partial(build_ctc_model_config, geom=GEOM, attn_backend=attn_backend),
+        model_config_builder=partial(
+            build_ctc_model_config, model_path=MODEL_PATH, attn_backend=attn_backend
+        ),
         train_module_config_builder=build_ctc_train_module_config,
         trainer_config_builder=partial(
-            _trainer_with_epochs, size=size, sft_cfg=sft_cfg,
-            tag=args.preset or "custom", epochs=args.epochs,
+            _trainer_with_epochs, size=size, sft_cfg=sft_cfg, tag=size, epochs=args.epochs,
         ),
         include_default_evals=False,
         beaker_workspace="ai2/flex2",

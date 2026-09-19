@@ -45,82 +45,52 @@ CKPTS=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft  
 
 ## Quickstart
 
-**Just want the numbers** — both checkpoints are already trained:
+Two scripts. Both launch on Beaker and pin the branch they need, so there is no checkout to get
+right.
 
 ```bash
-bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf smoke7to1 smoke   # ~3 min, proves the path
-bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq    # one task, 5 rungs
-python debug/hybridish_sft/harvest_sweep.py                                    # the comparison table
+# score an existing checkpoint
+bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf smoke7to1 smoke   # ~3 min, proves the path
+bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf 7to1_nq  ctc_nq   # one task, rungs to 32k
+python debug/hybridish_sft/harvest_sweep.py                                  # the table
+
+# finetune YOUR base checkpoint on this data, then score it
+bash src/scripts/train/hybrid-small-suite/launch_sft.sh my-run --model $W/path/to/your/checkpoint/step1234/
+#   ... then export + self-contain (steps 2-3), then launch_eval.sh as above
 ```
 
-**Train your own model on this data, then score it** — the whole loop:
-
-```bash
-# 1. SFT on Beaker -- --model and --dataset are weka paths
-PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
-    launch my-run ai2/jupiter-cirrascale-2 --preset 1.4b_7to1 --dataset $DATA
-
-# 2. export the trained step to HF, in the dialect the plugin speaks
-python src/scripts/convert_checkpoint_to_hf.py --checkpoint-input-dir <step> --huggingface-output-dir <hf>
-python debug/hybridish_sft/redialect_to_mainline.py --src <hf> --ref <released ckpt> --out <ml_hf>
-
-# 3. make it self-contained so any HF consumer loads it correctly -- do not skip
-python debug/hybridish_sft/make_self_contained_ckpt.py --ckpt <ml_hf> --plugin debug/hybridish_sft/plugin_ssmax
-
-# 4. evaluate + harvest
-bash debug/hybridish_sft/run_olmo_eval_ctc.sh <ml_hf name> myrun_nq ctc_nq
-python debug/hybridish_sft/harvest_sweep.py
-```
+`--model` is an olmo-core checkpoint step directory on weka. **That is the only thing you specify.**
+Depth, width, head count, where the full-attention layers sit and whether they use Scalable-Softmax
+all come from the checkpoint's own `config.json`, so there is no geometry to get wrong. Add
+`--dataset` to train on something other than the set below; `--preset 1.4b_4to1|1.4b_7to1`
+substitutes a published checkpoint.
 
 ---
 
 ## 1. SFT
 
-Run from a checkout of `prasann/ctc-sft-hybridish` (that branch carries the Scalable-Softmax
-implementation these checkpoints need; `prasann/landmark` does not, and training there would
-silently drop it). It launches on Beaker and reads both inputs from **weka**.
-
 ```bash
 W=/weka/oe-training-default/ai2-llm
-
-PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
-    launch my-run ai2/jupiter-cirrascale-2 \
-    --preset 1.4b_7to1 \
-    --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k
+bash src/scripts/train/hybrid-small-suite/launch_sft.sh my-run --preset 1.4b_7to1 --dataset $DATA
+bash src/scripts/train/hybrid-small-suite/launch_sft.sh my-run --model $W/path/to/your/checkpoint/step1234/
 ```
-
-**The two inputs are flags**, so any hybrid checkpoint works — nothing to edit:
 
 | flag | what |
 |---|---|
+| `--model` | weka path to the base checkpoint (olmo-core step dir, the one holding `model_and_optim/`) |
+| `--preset` | shorthand for a published checkpoint (`1.4b_4to1`, `1.4b_7to1`) |
 | `--dataset` | weka path to the shard dir (defaults to `$DATA`) |
-| `--model` | weka path to the base checkpoint to finetune from |
-| `--n-layers`, `--d-model`, `--n-heads`, `--attn-every` | its geometry |
-| `--preset` | shorthand for a published arm's checkpoint + geometry (`1.4b_4to1`, `1.4b_7to1`) |
 | `--lr`, `--epochs` | defaults 4e-5, 1 |
 
-`--attn-every N` is the full-attention period: layers where `idx % N == N-1` become attention
-layers, so 5 → {4,9,14,19} and 8 → {7,15,23,31}.
+**No architecture flags.** `build_ctc_model_config` reads the checkpoint's `config.json` and
+rebuilds its `TransformerConfig` exactly — including `block_overrides`, which is where the
+full-attention layers and their Scalable-Softmax setting live. The only thing overridden is the
+attention backend, which is a property of the cluster, not the checkpoint. The resolved geometry is
+printed before launch.
 
-A different model, without a preset:
-
-```bash
-PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
-    launch my-run ai2/jupiter-cirrascale-2 \
-    --model $W/scaling-ladders/mainline/<org>/<run>/<size>/long-context/step44124/ \
-    --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k \
-    --n-layers 32 --d-model 1280 --n-heads 16 --attn-every 8
-```
-
-> ⚠ The geometry flags must match the checkpoint. The script **builds** the architecture from them
-> and does not read it back, so a mismatch either fails at load or quietly trains a different model
-> against the right weights. It prints the resolved checkpoint, dataset, geometry and the derived
-> attention-layer indices before launching — check those against the base checkpoint's own config.
-> An under-specified model is refused, naming what is missing, rather than guessed.
-
-The weka bucket mounts automatically when the run's root dir resolves to `/weka/...` (true on
-clusters tagged `storage:weka`, e.g. jupiter). Elsewhere a `/weka` path is simply absent in the job
-and surfaces as a MISSING path at step 0.
+`launch_sft.sh` refuses to run from the wrong branch, and refuses if HEAD is unpushed — gantry ships
+the remote commit, so both would otherwise be silently wrong. Weka mounts automatically on clusters
+tagged `storage:weka` (e.g. jupiter).
 
 Everything else — optimizer, schedule, FSDP, activation checkpointing, packing — comes from the
 repo's standard SFT machinery. Packing uses block-diagonal masking, so packed training matches
@@ -168,7 +138,7 @@ python debug/hybridish_sft/verify_trust_remote_code.py --ckpt <ml_hf>
 ## 4. Evaluate
 
 ```bash
-bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq
+bash src/scripts/train/hybrid-small-suite/launch_eval.sh sft_7to1_ml_hf 7to1_nq ctc_nq
 ```
 
 Third argument: `smoke` (8 instances, proves the path), `full` (all 39 task × rung runs), or a task
