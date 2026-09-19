@@ -323,7 +323,7 @@ train data on the wrong ladder with SSMax broken under decode.
 
 ## Reference recipe
 
-The runnable end-to-end path (mix -> shards -> SFT -> export -> self-contained ckpt -> olmo-eval -> harvest), with each trap named at the step that avoids it: **`debug/hybridish_sft/RECIPE.md`**.
+The runnable end-to-end path (mix -> shards -> SFT -> export -> self-contained ckpt -> olmo-eval -> harvest), with each trap named at the step that avoids it: **`src/scripts/train/hybrid-small-suite/README.md` on branch `prasann/ctc-sft-hybridish`** (that branch is self-contained: recipe, SFT script and tooling).
 
 Related: [[ctc-final-suite-22-tasks]], [[olmo3-vs-hybrid-wave2]], [[ctc-rung-labels-not-tokens]],
 [[eval-size-and-error-bars]].
