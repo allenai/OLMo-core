@@ -205,14 +205,16 @@ def main():
                     ]
                     from olmoe3_hero_sft_convert import advance_conversions
 
-                    previous_workspace = control.workspace
+                    previous_workspace, previous_commit = control.workspace, control.commit
                     try:
                         control.workspace = b.workspace.get("ai2/OLMo-3-moe-experiments")
+                        control.commit = os.environ.get("SFT_EVAL_COMMIT", commit)
                         row["conversions"] = advance_conversions(
-                            b, control, r, os.environ.get("SFT_EVAL_COMMIT", commit)
+                            b, control, r, control.commit
                         )
                     finally:
                         control.workspace = previous_workspace
+                        control.commit = previous_commit
                 snapshot[r.run_id] = row
             atomic_json(AUTOMATION / "status.json", {"updated_at": time.time(), "runs": snapshot})
             if snapshot != previous:
