@@ -123,7 +123,7 @@ def watch():
         # Only remove hosts from the qualified allowlist; never widen node eligibility.
         hosts_path=AUTOMATION/'hosts.json'
         if not hosts_path.exists():
-            registered={n.name for n in b.node.list()}
+            registered={n.hostname for n in b.node.list()}
             prior=templates['tasks'][0]['constraints']['hostname']
             hosts=[h for h in prior if h in registered]
             assert len(hosts)>=8
