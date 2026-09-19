@@ -63,7 +63,6 @@ PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
     launch my-run ai2/jupiter-cirrascale-2 --preset 1.4b_7to1 --dataset $DATA
 
 # 2. export the trained step to HF, in the dialect the plugin speaks   (step 5)
-#    run these two where /weka is mounted -- see "Where steps 5-6 run" below
 python src/scripts/convert_checkpoint_to_hf.py --checkpoint-input-dir <step> --huggingface-output-dir <hf>
 python debug/hybridish_sft/redialect_to_mainline.py --src <hf> --ref <released ckpt> --out <ml_hf>
 
@@ -181,7 +180,20 @@ concurrent.
 `CHUNK=8` for long-context tasks. `absence` OOMs at the default batch of 64: a single 20 GiB
 allocation plus ~29 GiB lost to allocator fragmentation.
 
-### Where steps 5-6 run
+## 8. Harvest
+
+```bash
+python debug/hybridish_sft/harvest_sweep.py
+```
+Reads `sweep_ids.txt`, fetches **only** `metrics.json` from each result dataset (the full datasets
+are ~130 MB of predictions apiece; sixteen of them exhausted our disk quota, after which the
+harvester's own write left a 0-byte file while reporting success), and prints the arm comparison
+per task × rung. Running, failed and missing jobs are reported separately and a partial table says
+so — a table quietly covering 13 of 16 arms reads as complete.
+
+---
+
+## Running a step off Beaker
 
 Training (step 4) and eval (step 7) are Beaker jobs and both read and write weka, so the checkpoint
 never needs copying between them. Steps 5-6 are plain scripts and need `/weka` mounted wherever you
@@ -201,19 +213,6 @@ bash debug/hybridish_sft/sync_s3_to_weka.sh      # S3 -> weka, via gantry
 S3 alone is not enough: a Beaker job reads weka, so skipping the second command surfaces as a
 MISSING path at step 0. The same applies to shards built locally
 (`src/scripts/data/hybridish/stage_shards_to_weka.sh`).
-
-## 8. Harvest
-
-```bash
-python debug/hybridish_sft/harvest_sweep.py
-```
-Reads `sweep_ids.txt`, fetches **only** `metrics.json` from each result dataset (the full datasets
-are ~130 MB of predictions apiece; sixteen of them exhausted our disk quota, after which the
-harvester's own write left a 0-byte file while reporting success), and prints the arm comparison
-per task × rung. Running, failed and missing jobs are reported separately and a partial table says
-so — a table quietly covering 13 of 16 arms reads as complete.
-
----
 
 ## Reading the output
 
