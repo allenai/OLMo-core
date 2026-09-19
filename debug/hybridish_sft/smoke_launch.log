@@ -1,0 +1,19 @@
+
+                                             o=======[]   
+   __ _                    _               _ |_      []   
+  / _` |  __ _    _ _     | |_      _ _   | || |     []   
+  \__, | / _` |  | ' \    |  _|    | '_|   \_, |   _/ ]_  
+  |___/  \__,_|  |_||_|   _\__|   _|_|_   _|__/   |_____| 
+_|"""""|_|"""""|_|"""""|_|"""""|_|"""""|_| """"| 
+ `---------------------------------------------' 
+
+Attempted to use the GitHub CLI to validate that the commit exists on the 
+remote, however it appears that it's not installed. Please ensure the GitHub CLI
+is installed to avoid this warning message.
+Experiment: prasanns/ctceval-smoke4to1-8c86 → 
+https://beaker.org/ex/01M2WE8QWSFP623R9N1S19WV11
+Workspace: ai2/flex2 → https://beaker.org/ws/ai2/flex2
+Commit: 69729fa ctc-suite: stop rules were discarding correct ans… → 
+https://github.com/allenai/olmo-eval/commit/69729fa
+Branch: prasann/ctc-suite-grader-fixes → 
+https://github.com/allenai/olmo-eval/tree/prasann/ctc-suite-grader-fixes

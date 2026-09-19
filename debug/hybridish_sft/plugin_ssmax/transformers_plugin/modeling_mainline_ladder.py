@@ -134,6 +134,21 @@ class MainlineLadderDynamicCache:
         self.conv_states_k = [None for _ in range(config.num_hidden_layers)]
         self.conv_states_v = [None for _ in range(config.num_hidden_layers)]
 
+    def get_query_offset(self, layer_idx: int = 0) -> int:
+        """Number of tokens already cached for ``layer_idx`` -- the offset of the incoming query.
+
+        transformers >= 5.13 calls this from ``masking_utils._preprocess_mask_arguments``; this
+        cache predates it, so without it any cached forward dies with AttributeError. Required for
+        generation, and also for SSMax, which needs each query's absolute position.
+        """
+        k = self.key_cache[layer_idx] if layer_idx < len(self.key_cache) else None
+        return 0 if k is None else k.shape[2]
+
+    def get_mask_sizes(self, cache_position, layer_idx: int):
+        """``(kv_length, kv_offset)`` for the mask builder, per transformers >= 5.13."""
+        offset = self.get_query_offset(layer_idx)
+        return (offset + cache_position.shape[0], offset)
+
     def __len__(self):
         return len(self.layer_types)
 

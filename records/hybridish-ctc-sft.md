@@ -291,5 +291,35 @@ Use olmo-eval branch `prasann/ctc-suite` — 22 tasks, held-out, **500 per rung*
 IID realistic ladder. All 8 mix tasks map to roster rows. Blockers: the SSMax port above, and the
 two checkpoints are node-local on horton (~2.8GB + 4.3GB, needs the S3->weka two-step).
 
+## The real suite on Beaker (2026-09-19) — how it was wired
+
+olmo-eval branch `prasann/ctc-suite-grader-fixes` (pushed, `69729fa`), 8 tasks x 2k-32k, 500/rung,
+held-out, against the PUBLIC HF dataset `PrasannSinghal/ctc-suite-eval` (no weka needed for data).
+39 task x rung runs per arm, sharded one Beaker job per (arm, task) = 16 jobs; serial would not
+have been an overnight job. Launcher `debug/hybridish_sft/run_olmo_eval_ctc.sh`, harvest
+`harvest_sweep.py`.
+
+**The checkpoints are self-contained.** `make_self_contained_ckpt.py` copies the SSMax-patched
+config+modeling into the checkpoint and sets `auto_map`, so `trust_remote_code=True` is the entire
+integration -- no plugin install, for olmo-eval or anyone else. `scalable_softmax` is set from the
+WEIGHTS, never a flag, so a non-SSMax model cannot be mislabelled. Verified loading with
+`transformers_plugin` NOT importable, ssmax_scale live, and real generation.
+
+Five failure modes, each now a comment in the launcher that hit it:
+
+1. `pip install -e ".[hf]"` -> `ModuleNotFoundError: olmo_eval.cli`. Use a NON-editable install.
+2. A torch-less base image -> `Not enough GPUs. Need 1 ... but only 0 available` **even though
+   Beaker allocated one**: olmo-eval sizes its plan from `torch.cuda.device_count()`, and `.[hf]`
+   pulls only transformers. Use a torch image and assert the count at install time.
+3. gantry pins the job to a PUSHED commit; a fresh local commit fails `not our ref`. `--ref`.
+4. No AWS credentials in the container -> `Unable to locate credentials`, after a clean setup.
+   `--env-secret` pair + writing `~/.aws`.
+5. Nested `bash -c` loop quoting shipped a literal `$c` and synced into a directory of that name.
+   Unroll the loop.
+
+Smoke test (8 instances/task) passed end to end: `ctc_nq:r2k` f1 **1.0000**, `ctc_contradiction:r2k`
+f1 **0.5417** -- against 0.0020 for contradiction on the old in-house harness, which was grading
+train data on the wrong ladder with SSMax broken under decode.
+
 Related: [[ctc-final-suite-22-tasks]], [[olmo3-vs-hybrid-wave2]], [[ctc-rung-labels-not-tokens]],
 [[eval-size-and-error-bars]].
