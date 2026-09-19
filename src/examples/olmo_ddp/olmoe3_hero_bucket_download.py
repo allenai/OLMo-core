@@ -95,7 +95,7 @@ def relative_path(prefix: str, remote: str) -> str:
     return suffix
 
 
-def download(api, arm: str, step: int) -> Path:
+def download(api, arm: str, step: int, *, lineage_id: str | None = None) -> Path:
     """Download all files, verify inventories/critical hashes, and atomically publish."""
     from huggingface_hub import BucketFile
 
@@ -109,7 +109,7 @@ def download(api, arm: str, step: int) -> Path:
         "bucket_id": BUCKET,
         "step": step,
         "remote_checkpoint_prefix": prefix,
-        "lineage_id": f"olmo35-small-hero-20260907-{arm}",
+        "lineage_id": lineage_id or f"olmo35-small-hero-20260907-{arm}",
         "verification": "exact-path-size-xet-inventory-plus-critical-readback",
     }
     if any(receipt.get(k) != v for k, v in expected_identity.items()):

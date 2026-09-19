@@ -41,8 +41,9 @@ def watcher_spec(template, commit, gate):
 def validate_data():
     """Verify the actual cached packed data and batch-aware loaders before GPU admission."""
     from olmo_core.data import TokenizerConfig
-    from olmoe3_qkgain_train import sft_adapter, sft_data_plan, validate
+    from olmoe3_qkgain_train import hero, sft_adapter, sft_data_plan, validate
 
+    hero.qualified.apply_policy()
     validate()
     assert MOUNT.is_mount()
     for r in items():

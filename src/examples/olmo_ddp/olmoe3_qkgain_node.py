@@ -69,7 +69,8 @@ def main():
             f'--nproc-per-node={local}',f'--node-rank={rank}','--rdzv-backend=static',
             f'--rdzv-endpoint={host}:{port+i}',f'--rdzv-id={exp}-{i}',
             '--rdzv-conf=read_timeout=900','--max-restarts=0',
-            'src/examples/olmo_ddp/olmoe3_qkgain_train.py','train',r.run_id,'ai2/holmes'],env=env,check=True)
+            os.environ.get('QKGAIN_TRAIN_SCRIPT','src/examples/olmo_ddp/olmoe3_qkgain_train.py'),
+            'train',r.run_id,'ai2/holmes'],env=env,check=True)
         source=r.root/f'step{stop}';start=stop
         validate_checkpoint(source,stop,r.batch,r.gpus)
     if rank==0:
