@@ -528,11 +528,18 @@ HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
     "feed_forward.w1.weight": "mlp.gate_proj.weight",
     "feed_forward.w2.weight": "mlp.down_proj.weight",
     "feed_forward.w3.weight": "mlp.up_proj.weight",
+    "attention.ssmax_scale": "self_attn.ssmax_scale",
 }
 
 #: Peri-norm attention layers: 4 norms (pre + post for attention and FF).
 HYBRID_ATTN_PERI_NORM_LAYER_KEY_MAP: Dict[str, str] = {
     **HYBRID_ATTN_LAYER_KEY_MAP,
+    # Scalable-Softmax: a learned per-head scale on each full-attention layer. Without this entry
+    # the converter raises "Unmapped block suffix" -- correctly, since dropping it would export a
+    # model that is NOT the one trained (the released HF checkpoints carry
+    # `model.layers.N.self_attn.ssmax_scale`, and it is a TRAINED parameter, so it cannot be copied
+    # back from the base checkpoint after finetuning).
+    "attention.ssmax_scale": "self_attn.ssmax_scale",
     # Override: attention_norm is now the pre-norm, not post-norm
     "attention_norm.weight": "pre_attention_norm.weight",
     "feed_forward_norm.weight": "pre_feedforward_norm.weight",
