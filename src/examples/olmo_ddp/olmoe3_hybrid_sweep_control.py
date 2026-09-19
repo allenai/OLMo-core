@@ -34,6 +34,11 @@ BAD_HOSTS = EXCLUDED_HOSTNAMES | {"holmes-cs-aus-527.reviz.ai2.in"}
 FAILED = {"STATUS_FAILED", "STATUS_CANCELED", "STATUS_STOPPED"}
 
 
+def active_runs():
+    """An operator pause excludes non-EMO submissions and monitoring, not their history."""
+    return [r for r in runs() if r.emo or os.environ.get("HYBRID_PAUSE_NONEMO") != "1"]
+
+
 def training_spec(template, run, commit):
     """Clone qualified hero runtime; isolate all run, checkpoint and W&B identity."""
     spec = copy.deepcopy(template)
@@ -46,7 +51,9 @@ def training_spec(template, run, commit):
         run.run_id,
         "ai2/holmes",
     ]
-    t["constraints"]["hostname"] = [h for h in t["constraints"]["hostname"] if h not in BAD_HOSTS]
+    t["constraints"]["hostname"] = [
+        h for h in t["constraints"]["hostname"] if h not in BAD_HOSTS
+    ]
     assert len(t["constraints"]["hostname"]) >= 8
     t["context"].update(priority="urgent", minRuntime="1h", autoResume=True)
     t["result"] = {"path": "/noop-results"}
@@ -101,7 +108,11 @@ def validation_spec(template, commit):
     t.pop("resources", None)
     t.pop("synchronizedStartTimeout", None)
     t["context"] = dict(priority="urgent", minRuntime="0s", autoResume=False)
-    t["arguments"] = ["python", "src/examples/olmo_ddp/olmoe3_hybrid_sweep.py", "--validate-only"]
+    t["arguments"] = [
+        "python",
+        "src/examples/olmo_ddp/olmoe3_hybrid_sweep.py",
+        "--validate-only",
+    ]
     setup = (
         'gh auth setup-git && uv pip install --python "$(command -v python)" --no-deps '
         ". 'flash-linear-attention==0.5.2' 'fla-core==0.5.2' 'nvidia-nccl-cu13==2.28.9' "
@@ -118,7 +129,9 @@ def validation_spec(template, commit):
             OLMO_SYMM_VDEV2D_AUTO_BUILD="0",
         ),
     )
-    spec["description"] = "CPU-only full-config validation for six3:1 LR runs and two smoke arms"
+    spec["description"] = (
+        "CPU-only full-config validation for six3:1 LR runs and two smoke arms"
+    )
     return spec
 
 
@@ -130,7 +143,9 @@ def register(beaker):
 
     assert MOUNT.is_mount() and DOLMA_MOUNT.is_mount() and COMPLETE.is_file()
     fs = os.statvfs(MOUNT)
-    assert fs.f_bavail * fs.f_frsize >= 12_000_000_000_000, "Need12TB free before launching"
+    assert (
+        fs.f_bavail * fs.f_frsize >= 12_000_000_000_000
+    ), "Need12TB free before launching"
     assert status(beaker.workload.get(UPLOADER)) == "STATUS_RUNNING"
     HuggingFaceBucketBackend().assert_private(BUCKET)
     store = StateStore(CONTROL, STATE)
@@ -156,7 +171,9 @@ def check_finished(run):
     """Never treat a graceful early stop as successful completion of this budget."""
     final = run.root / f"step{run.end}"
     assert checkpoint_complete(final), f"Incomplete final checkpoint: {final}"
-    audit = json.loads((run.root / "audit" / f"completed-step{run.end}.json").read_text())
+    audit = json.loads(
+        (run.root / "audit" / f"completed-step{run.end}.json").read_text()
+    )
     assert audit["step"] == run.end and audit["tokens"] == run.end * BATCH
     assert not (run.root / "STORAGE_PAUSED.json").exists()
     for rank in range(64):
@@ -169,7 +186,9 @@ def check_finished(run):
         )
         assert (final / "train" / f"rank{rank}.pt").is_file()
         if run.smoke:
-            proof = json.loads((run.root / "audit" / f"restore-step4-rank{rank}.json").read_text())
+            proof = json.loads(
+                (run.root / "audit" / f"restore-step4-rank{rank}.json").read_text()
+            )
             assert proof["sampled_state_exact"]
 
 
@@ -181,9 +200,13 @@ def ensure_training(controller, template, run, commit):
     if intent.exists():
         # Host inventory may change while jobs run. Reconcile the exact persisted
         # submission, never turn a changed inventory into a second experiment.
-        saved = json.loads((controller.automation / "specs" / f"{name}.json").read_text())
+        saved = json.loads(
+            (controller.automation / "specs" / f"{name}.json").read_text()
+        )
         hosts = saved["tasks"][0]["constraints"]["hostname"]
-        assert len(hosts) >= 8 and set(hosts).issubset(spec["tasks"][0]["constraints"]["hostname"])
+        assert len(hosts) >= 8 and set(hosts).issubset(
+            spec["tasks"][0]["constraints"]["hostname"]
+        )
         spec["tasks"][0]["constraints"]["hostname"] = hosts
         assert spec == saved, f"Unexpected training-spec drift for {name}"
     else:
@@ -193,7 +216,11 @@ def ensure_training(controller, template, run, commit):
         hosts = [host for host in previous if host in registered]
         assert len(hosts) >= 8, "Fewer than eight qualified hosts remain registered"
         spec["tasks"][0]["constraints"]["hostname"] = hosts
-        log("HYBRID_HOSTS_RECONCILED", name=name, removed=sorted(set(previous) - set(hosts)))
+        log(
+            "HYBRID_HOSTS_RECONCILED",
+            name=name,
+            removed=sorted(set(previous) - set(hosts)),
+        )
     return controller.ensure(name, spec)
 
 
@@ -202,12 +229,15 @@ def submit_points(controller, template, commit):
     jobs = {}
     for emo in (True, False):
         arm_jobs = {}
-        for run in (r for r in runs() if r.emo == emo):
+        if not emo and os.environ.get("HYBRID_PAUSE_NONEMO") == "1":
+            continue
+        for run in (r for r in active_runs() if r.emo == emo):
             workload = ensure_training(controller, template, run, commit)
             assert workload is not None, "Ambiguous submission requires review"
             arm_jobs[run.run_id] = workload.experiment.id
         atomic_json(
-            controller.automation / f"{'emo' if emo else 'non-emo'}-submitted.json", arm_jobs
+            controller.automation / f"{'emo' if emo else 'non-emo'}-submitted.json",
+            arm_jobs,
         )
         jobs.update(arm_jobs)
     return jobs
@@ -222,7 +252,9 @@ def main():
     commit = os.environ.get("HYBRID_TRAIN_COMMIT", controller_commit)
     gate_id = os.environ["HYBRID_CONFIG_GATE"]
     AUTOMATION.mkdir(parents=True, exist_ok=True)
-    with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
+    with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(
+        check_for_upgrades=False
+    ) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         c = object.__new__(Controller)
         c.beaker, c.workspace, c.commit = b, b.workspace.get(WORKSPACE), commit
@@ -257,11 +289,14 @@ def main():
             time.sleep(30)
         jobs = submit_points(c, template, commit)
         while True:
-            states = {r.run_id: c.report(b.workload.get(jobs[r.run_id])) for r in runs()}
+            states = {
+                r.run_id: c.report(b.workload.get(jobs[r.run_id]))
+                for r in active_runs()
+            }
             atomic_json(
                 AUTOMATION / "status.json",
                 dict(
-                    phase="all",
+                    phase="emo-only-nonemo-paused" if len(active_runs()) < 6 else "all",
                     states=states,
                     jobs=jobs,
                     training_commit=commit,
@@ -271,12 +306,19 @@ def main():
             if any(s in FAILED for s in states.values()):
                 raise RuntimeError(f"Sweep failure requires review: {states}")
             if all(s == "STATUS_SUCCEEDED" for s in states.values()):
-                for run in runs():
+                for run in active_runs():
                     check_finished(run)
                 break
             time.sleep(30)
-        atomic_json(AUTOMATION / "COMPLETE.json", dict(commit=commit, points=6))
-        log("HYBRID_SWEEP_COMPLETE", points=6)
+        completion = (
+            "EMO_COMPLETE_NONEMO_PAUSED.json"
+            if len(active_runs()) < 6
+            else "COMPLETE.json"
+        )
+        atomic_json(
+            AUTOMATION / completion, dict(commit=commit, points=len(active_runs()))
+        )
+        log("HYBRID_ACTIVE_POINTS_COMPLETE", points=len(active_runs()))
 
 
 if __name__ == "__main__":
