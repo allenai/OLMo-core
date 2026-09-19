@@ -22,51 +22,39 @@ Eval data is the **public** HF dataset `PrasannSinghal/ctc-suite-eval` — no to
 
 ---
 
-## 1. Build the SFT mix
+## Prebuilt artifacts on weka
 
-`ctc-data build` writes `<root>/<task>/train.jsonl` per task. Combine them into one tagged,
-shuffled mix:
-
-```bash
-python src/scripts/data/hybridish/build_ctc_sft_mix.py \
-  --root /path/to/ctc_builds --band 2k-32k --per-task 2000 \
-  --tasks msmarco qdmatch_nq contradiction outlier oolong xabsence absence strmatch \
-  --out /path/to/mix_long.jsonl
-```
-
-The roster is enforced, not advisory: held-out ladders (`fiqa`, `scifact`, `outlier_review`,
-`contra_fever`, `redundancy`) are refused, and a grading spec may be drawn from only one source
-(retrieval → msmarco, qdmatch → qdmatch_nq) so the rest stay clean generalisation probes.
-
-## 2. Tokenize to shards
+Everything below `WEKA` already exists — you do not need to build data.
 
 ```bash
-python src/scripts/data/hybridish/convert_ctc_to_sft_completion.py \
-  --input-jsonl /path/to/mix_long.jsonl \
-  --out-dir /path/to/shards_long32k \
-  --tokenizer allenai/dolma2-tokenizer --max-seq-len 32768 --verify
+WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft
 ```
 
-Emits `token_ids_part_*.npy`, `labels_mask_*.npy`, `metadata.json`, and **`src_index.json`**.
+| path | what |
+|---|---|
+| `$WEKA/shards_long32k/` | **the SFT shards** — 15,183 instances, 8 tasks, 2k–32k, dolma2 tokenizer |
+| `$WEKA/shards_long32k/src_index.json` | instance → source-row map (**required by any grader**) |
+| `$WEKA/mix_long.jsonl` | the source mix the shards were built from (16,000 rows) |
+| `$WEKA/sft_4to1_ml_hf/`, `$WEKA/sft_7to1_ml_hf/` | the two finetuned checkpoints, ready to evaluate |
 
-> ⚠ **`src_index.json` is load-bearing.** Rows over `--max-seq-len` are dropped, so the shards are a
-> *subsequence* of the source JSONL — not a copy. Any grader that pairs shard instance `i` with
-> source row `i` scores each generation against a **different example's gold** from the first drop
-> onward. On our 32k mix that was 817 of 16,000 rows (5.1%), first drop at row 11, and it produced a
-> complete 8-task × 2-arm results table that was pure noise. For shards built before the sidecar
-> existed, reconstruct it with `debug/hybridish_sft/build_src_index.py` (verified exact by
-> element-wise token-length match).
+The checkpoints are already self-contained (SSMax-patched modeling code + `auto_map` inside the
+checkpoint), so `trust_remote_code=True` is the whole integration.
 
-Keep `--verify`: it scores each gold target with the evaluator's own parser and refuses to write
-shards whose targets do not parse.
+## Quickstart
 
-## 3. Stage shards where the trainer can see them
+**Already have the checkpoints and only want the numbers** — skip to step 7:
 
 ```bash
-bash src/scripts/data/hybridish/stage_shards_to_weka.sh /path/to/shards_long32k shards_long32k
+bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf smoke7to1 smoke   # ~3 min, proves the path
+bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq    # one task, 5 rungs
+python debug/hybridish_sft/harvest_sweep.py                                    # the comparison table
 ```
-S3 first, then a gantry job syncs S3 → weka. Pushing to S3 alone does nothing for a Beaker job; its
-absence shows up as a MISSING path at step 0.
+
+**Want to retrain from the prebuilt shards** — start at step 4, pointing the trainer at
+`$WEKA/shards_long32k`. Steps 1–3 (building the mix and shards) are the appendix; you only need them
+to change the task roster, the length band, or the tokenizer.
+
+---
 
 ## 4. SFT
 
@@ -120,12 +108,19 @@ python debug/hybridish_sft/test_plugin_ssmax.py            # formula + cached-de
 python debug/hybridish_sft/verify_trust_remote_code.py --ckpt <ml_hf>
 ```
 
-## 7. Stage the checkpoints, then evaluate
+## 7. Evaluate
+
+The two published checkpoints are already on weka — go straight to the run:
 
 ```bash
-bash debug/hybridish_sft/stage_ckpts_to_s3.sh
-bash debug/hybridish_sft/sync_s3_to_weka.sh
 bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq
+```
+
+Only if you trained your OWN checkpoint, stage it first (Beaker cannot read your disks):
+
+```bash
+bash debug/hybridish_sft/stage_ckpts_to_s3.sh    # your machine -> S3
+bash debug/hybridish_sft/sync_s3_to_weka.sh      # S3 -> weka, via gantry
 ```
 
 Third argument: `smoke` (8 instances, proves the path), `full` (all 39 task × rung runs), or a task
@@ -168,3 +163,57 @@ substitute for the suite: it grades train data, uses a continuous length mix rat
 its SSMax is a reconstruction. Use it to check a pipeline runs; use olmo-eval for numbers. It
 requires `src_index.json` and runs a gold self-check (score each shard's own gold against its mapped
 example — must be 1.0, needs no generation) before grading.
+
+---
+
+# Appendix: rebuilding the SFT data
+
+Only needed to change the roster, the length band, or the tokenizer. Otherwise use
+`$WEKA/shards_long32k` above.
+
+## 1. Build the SFT mix
+
+`ctc-data build` writes `<root>/<task>/train.jsonl` per task. Combine them into one tagged,
+shuffled mix:
+
+```bash
+python src/scripts/data/hybridish/build_ctc_sft_mix.py \
+  --root /path/to/ctc_builds --band 2k-32k --per-task 2000 \
+  --tasks msmarco qdmatch_nq contradiction outlier oolong xabsence absence strmatch \
+  --out /path/to/mix_long.jsonl
+```
+
+The roster is enforced, not advisory: held-out ladders (`fiqa`, `scifact`, `outlier_review`,
+`contra_fever`, `redundancy`) are refused, and a grading spec may be drawn from only one source
+(retrieval → msmarco, qdmatch → qdmatch_nq) so the rest stay clean generalisation probes.
+
+## 2. Tokenize to shards
+
+```bash
+python src/scripts/data/hybridish/convert_ctc_to_sft_completion.py \
+  --input-jsonl /path/to/mix_long.jsonl \
+  --out-dir /path/to/shards_long32k \
+  --tokenizer allenai/dolma2-tokenizer --max-seq-len 32768 --verify
+```
+
+Emits `token_ids_part_*.npy`, `labels_mask_*.npy`, `metadata.json`, and **`src_index.json`**.
+
+> ⚠ **`src_index.json` is load-bearing.** Rows over `--max-seq-len` are dropped, so the shards are a
+> *subsequence* of the source JSONL — not a copy. Any grader that pairs shard instance `i` with
+> source row `i` scores each generation against a **different example's gold** from the first drop
+> onward. On our 32k mix that was 817 of 16,000 rows (5.1%), first drop at row 11, and it produced a
+> complete 8-task × 2-arm results table that was pure noise. For shards built before the sidecar
+> existed, reconstruct it with `debug/hybridish_sft/build_src_index.py` (verified exact by
+> element-wise token-length match).
+
+Keep `--verify`: it scores each gold target with the evaluator's own parser and refuses to write
+shards whose targets do not parse.
+
+## 3. Stage shards where the trainer can see them
+
+```bash
+bash src/scripts/data/hybridish/stage_shards_to_weka.sh /path/to/shards_long32k shards_long32k
+```
+S3 first, then a gantry job syncs S3 → weka. Pushing to S3 alone does nothing for a Beaker job; its
+absence shows up as a MISSING path at step 0.
+
