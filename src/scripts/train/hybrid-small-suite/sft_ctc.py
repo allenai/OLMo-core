@@ -124,15 +124,23 @@ ARMS: Dict[str, dict] = {
 # 262144; at 32768 CP only adds communication for no memory benefit.
 LR = 4e-5
 
-# Utilisation and update-count are separate knobs, and conflating them cost us steps once already:
-#   GPU utilisation   <- rank_microbatch_size (work per GPU per forward)
-#   optimizer updates <- global_batch_size    (tokens accumulated per step)
-# The mix is ~163M tokens, so steps/epoch = 163M / global_batch_size. At 128*seq that was only
-# 39/epoch (78 over 2 epochs) -- too few for tasks this update-hungry. 32*seq gives ~155/epoch,
-# and 3 epochs puts us at ~466 updates while keeping 2 sequences per rank for utilisation.
-GLOBAL_BATCH_SIZE = 32 * SEQUENCE_LENGTH    # 1,048,576 tokens -> ~155 steps/epoch
-RANK_MICROBATCH = 2 * SEQUENCE_LENGTH       # 2 sequences per rank per microbatch
-EPOCHS = 3                                  # ~466 optimizer steps total
+# Packed (OBFD) with block-diagonal masking, on 4 GPUs.
+#
+#   a packed 32k window holds 3.05 examples on average (p50 2, p90 5)
+#   4 GPUs x 1 window/rank x accum 1  ->  4 windows  ->  ~12.2 examples/step
+#   1 epoch = 4,974 windows / 4       ->  ~1,244 optimizer steps
+#
+# Why not 8 examples/step exactly: each rank must consume a whole window, so on N GPUs the floor is
+# N * 3.05 examples. 8 GPUs bottoms out at ~24/step; 4 GPUs at ~12; only an UNPACKED (padded) run
+# can hit 8 exactly, and that spends ~67% of every forward on padding.
+#
+# Packing is safe here because `generate_doc_lengths=True` gives block-diagonal masking -- examples
+# in one window cannot attend to each other, so gradients match one-example-per-forward.
+WORLD_SIZE = 4
+GRAD_ACCUM = 1
+RANK_MICROBATCH = SEQUENCE_LENGTH                                # one window per rank
+GLOBAL_BATCH_SIZE = WORLD_SIZE * GRAD_ACCUM * SEQUENCE_LENGTH    # 131,072 tok = 4 windows
+EPOCHS = 1                                  # ~466 optimizer steps total
 
 
 def build_ctc_train_module_config(common, **_) -> TransformerTrainModuleConfig:
@@ -294,12 +302,12 @@ def _assert_no_overlong(dataset_path: str, seq_len: int) -> None:
 def build_ctc_data_components(common, dataset_path: str):
     """Data config matching prasann's SFT scripts, not ``sft_common``'s default.
 
-    ⚠ Every CTC task puts its answer at the END of the instance, so a TRUNCATED over-length example
-    keeps the prompt and loses the answer -- a window with zero loss tokens that trains on nothing.
-    prasann's SFT scripts use ``LongDocStrategy.exclude`` for exactly this reason, but that member
-    does not exist in this olmo-core lineage (only ``truncate`` and ``fragment``, and ``fragment``
-    is worse: it splits prompt from answer). The shards are therefore capped at tokenisation time so
-    nothing can be over-length, and :func:`_assert_no_overlong` checks that rather than assuming it.
+    Packed via OBFD; ``generate_doc_lengths`` gives block-diagonal (varlen) masking, so examples
+    sharing a window cannot attend to one another.
+
+    ⚠ Every CTC task puts its answer at the END, so an over-length example must never be cut: that
+    keeps the prompt and drops the answer, leaving a zero-loss instance. The shards are capped at
+    tokenisation, and :func:`_assert_no_overlong` enforces it rather than assuming it.
     """
     _assert_no_overlong(dataset_path, common.max_sequence_length)
     clean = dataset_path.rstrip("/")
@@ -310,8 +318,8 @@ def build_ctc_data_components(common, dataset_path: str):
             paths=[f"{clean}/token_ids_part_*.npy"],
             expand_glob=True,
             label_mask_paths=[f"{clean}/labels_mask_*.npy"],
-            generate_doc_lengths=True,          # block-diagonal masking -> packing is example-level
-            long_doc_strategy=LongDocStrategy.truncate,
+            generate_doc_lengths=True,     # block-diagonal masking -> packed == example-level
+            long_doc_strategy=LongDocStrategy.truncate,   # can never fire; see _assert_no_overlong
             sequence_length=common.max_sequence_length,
         ),
         data_loader=NumpyDataLoaderConfig(
