@@ -48,14 +48,16 @@ def main():
     if start==target:
         validate_checkpoint(r.root/f'step{target}',target,r.batch,r.gpus)
         if rank==0:
-            if r.smoke:
+            if r.smoke or r.stage=='mt':
                 for k in range(r.gpus):
                     proof=json.loads((r.root/'audit'/f'restore-{r.start+2}-rank{k}.json').read_text())
                     assert proof['passed'] and not proof['fresh_stage']
             atomic_json(r.root/'audit/success.json',dict(passed=True,step=target,gpus=r.gpus,smoke=r.smoke,
                 checkpoint_metadata_sha256=hashlib.sha256((r.root/f'step{target}/.metadata.json').read_bytes()).hexdigest()))
         return
-    stops=([r.start+2,target] if r.smoke else [target])
+    # New MT branches validate save/resume within their own allocation, then
+    # continue automatically. No second GPU queue or discarded smoke training.
+    stops=([r.start+2,target] if r.smoke else ([2,4,target] if r.stage=='mt' else [target]))
     port=29000+int(hashlib.sha256(exp.encode()).hexdigest()[:8],16)%1000
     for i,stop in enumerate(stops):
         if start>=stop:continue
@@ -71,7 +73,7 @@ def main():
         source=r.root/f'step{stop}';start=stop
         validate_checkpoint(source,stop,r.batch,r.gpus)
     if rank==0:
-        if r.smoke:
+        if r.smoke or r.stage=='mt':
             for k in range(r.gpus):
                 proof=json.loads((r.root/'audit'/f'restore-{r.start+2}-rank{k}.json').read_text())
                 assert proof['passed'] and not proof['fresh_stage']

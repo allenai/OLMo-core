@@ -174,6 +174,9 @@ def watch():
                 for stage in STAGES:
                     r=Run(arm,stage)
                     try:
+                        if stage in ('lc','sft'):
+                            rows[r.run_id]=dict(waiting='explicit user approval after MT evaluation')
+                            break
                         if gs!='STATUS_SUCCEEDED':
                             rows[r.run_id]=dict(waiting='config gate');break
                         if r.source:
@@ -192,11 +195,12 @@ def watch():
                             assert (r.source/'.metadata.json').is_file() and (r.source/'model_and_optim/.metadata').is_file()
                         if not admit:
                             rows[r.run_id]=dict(waiting='uploader/storage admission');break
-                        sm=Run(arm,stage,True)
-                        sw,ss=ensure_saved(c,sm.run_id+'-r2',lambda:training_spec(templates,sm,commit,hosts))
-                        if ss!='STATUS_SUCCEEDED':
-                            rows[r.run_id]=dict(smoke_status=ss,smoke=sw.experiment.id if sw else None);break
-                        assert json.loads((sm.root/'audit/success.json').read_text())['passed']
+                        if stage!='mt':
+                            sm=Run(arm,stage,True)
+                            sw,ss=ensure_saved(c,sm.run_id+'-r2',lambda:training_spec(templates,sm,commit,hosts))
+                            if ss!='STATUS_SUCCEEDED':
+                                rows[r.run_id]=dict(smoke_status=ss,smoke=sw.experiment.id if sw else None);break
+                            assert json.loads((sm.root/'audit/success.json').read_text())['passed']
                         tw,ts=ensure_saved(c,r.run_id+'-train',lambda:training_spec(templates,r,commit,hosts))
                         row=dict(status=ts,id=tw.experiment.id if tw else None)
                         rows[r.run_id]=row
@@ -206,7 +210,9 @@ def watch():
                         estate={}
                         for kind,spec in specs.items():
                             BeakerExperimentSpec.from_json(copy.deepcopy(spec))
-                            ew,es=ensure_saved(ec,r.run_id+'-'+kind,lambda spec=spec:spec)
+                            # Explicit one-time repair, not unbounded failed-job retries.
+                            suffix='-portable-r2' if kind=='convert' and r.arm=='3to1-shared' and r.stage=='pt' else ''
+                            ew,es=ensure_saved(ec,r.run_id+'-'+kind+suffix,lambda spec=spec:spec)
                             estate[kind]=dict(status=es,id=ew.experiment.id if ew else None)
                             if es=='STATUS_SUCCEEDED':validate_result(r,kind)
                             if kind=='convert' and es!='STATUS_SUCCEEDED':break

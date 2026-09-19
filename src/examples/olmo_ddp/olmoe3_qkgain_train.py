@@ -32,7 +32,7 @@ def current():
 def scheduler(r):
     return WSD(warmup=2000, decay=667, decay_fraction=None) if r.stage == "pt" else (
         LinearWithWarmup(warmup_fraction=.03, alpha_f=0) if r.stage == "sft" else
-        LinearWithWarmup(warmup=2000, alpha_f=0))
+        LinearWithWarmup(warmup=0 if r.stage == "mt" else 2000, alpha_f=0))
 
 
 def source_for(r):
@@ -44,7 +44,7 @@ def common_components(ctx, **kwargs):
     common = hero.qualified.common_components(ctx, **kwargs)
     common.save_folder = str(r.root)
     if r.stage != "pt":
-        common.work_dir = str(ROOT / "data-work" / r.stage)
+        common.work_dir = str(ROOT / "data-work" / ("mt16mi-linear0" if r.stage == "mt" else r.stage))
     return common
 
 

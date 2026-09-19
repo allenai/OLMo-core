@@ -7,9 +7,10 @@ CAMPAIGN = "olmo35-qkgain-20260919"
 BRANCH = "codex/hybrid-qknorm-ladder-20260919"
 MOUNT = Path("/weka/olmo-3p5-checkpoints")
 ROOT = MOUNT / "production-qkgain" / CAMPAIGN
-AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
+ORIGINAL_AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
+AUTOMATION = ORIGINAL_AUTOMATION / "mt16mi-linear0"
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
-DOWNLOAD_ROOT = AUTOMATION / "sources"
+DOWNLOAD_ROOT = ORIGINAL_AUTOMATION / "sources"
 REFERENCE = DOWNLOAD_ROOT / "emo/step6000/olmo-core"
 CONTROL = MOUNT / "uploader/control"
 STATE = MOUNT / "uploader/state"
@@ -37,7 +38,8 @@ class Run:
 
     @property
     def run_id(self):
-        return f"{CAMPAIGN}-{self.arm}-{self.stage}" + ("-smoke" if self.smoke else "")
+        revision = "-16mi-linear0" if self.stage == "mt" else ""
+        return f"{CAMPAIGN}-{self.arm}-{self.stage}{revision}" + ("-smoke" if self.smoke else "")
 
     @property
     def root(self):
@@ -45,7 +47,8 @@ class Run:
 
     @property
     def prefix(self):
-        return f"{CAMPAIGN}/{self.arm}/{self.stage}" + ("/smoke" if self.smoke else "")
+        revision = "/16mi-linear0" if self.stage == "mt" else ""
+        return f"{CAMPAIGN}/{self.arm}/{self.stage}{revision}" + ("/smoke" if self.smoke else "")
 
     @property
     def bucket(self):
@@ -53,7 +56,7 @@ class Run:
 
     @property
     def batch(self):
-        return dict(pt=16777216, mt=786432, lc=786432, sft=524288)[self.stage]
+        return dict(pt=16777216, mt=16777216, lc=786432, sft=524288)[self.stage]
 
     @property
     def sequence(self):
@@ -61,19 +64,19 @@ class Run:
 
     @property
     def gpus(self):
-        return dict(pt=64, mt=16, lc=12, sft=8)[self.stage]
+        return dict(pt=64, mt=64, lc=12, sft=8)[self.stage]
 
     @property
     def nodes(self):
-        return dict(pt=8, mt=2, lc=2, sft=1)[self.stage]
+        return dict(pt=8, mt=8, lc=2, sft=1)[self.stage]
 
     @property
     def microbatch(self):
-        return dict(pt=4, mt=3, lc=1, sft=1)[self.stage] * self.sequence
+        return dict(pt=4, mt=4, lc=1, sft=1)[self.stage] * self.sequence
 
     @property
     def end(self):
-        return dict(pt=6667, mt=45321, lc=45321, sft=3360)[self.stage]
+        return dict(pt=6667, mt=2125, lc=45321, sft=3360)[self.stage]
 
     @property
     def start(self):
@@ -81,7 +84,7 @@ class Run:
 
     @property
     def lr(self):
-        return dict(pt=1.1e-3, mt=8e-5, lc=4e-5, sft=5e-5)[self.stage]
+        return dict(pt=1.1e-3, mt=2.2e-4, lc=4e-5, sft=5e-5)[self.stage]
 
     @property
     def emo(self):
@@ -112,6 +115,9 @@ class Run:
             return list(range(100, self.end, 100)) + [self.end]
         if self.stage == "sft":
             return [1680, 3360]
+        if self.stage == "mt":
+            # In-allocation save/resume gate, then approximately the old token cadence.
+            return [2, 4] + list(range(250, self.end, 250)) + [self.end]
         return list(range(5000, self.end, 5000)) + [self.end]
 
     def as_dict(self):
@@ -153,13 +159,14 @@ def self_test():
     span=math.log(1e12/4e9); pos=math.log(pt/4e9)/span
     budget=round(pt*(.5+(-1.2+.1*span)*pos**2+(.8-.1*span)*pos**3))
     assert budget == 35641421562 and math.ceil(budget/786432) == 45321
+    assert math.ceil(budget/16777216) == 2125
     assert pt == 111853699072
     assert len({r.run_id for r in runs()+runs(True)}) == 24
     for r in runs():
         assert r.batch % (r.gpus*r.microbatch) == 0
         assert r.gpus % r.nodes == 0 and r.end in r.saves
-        assert len(r.saves)+1 == dict(pt=68,mt=11,lc=11,sft=3)[r.stage]
-    assert sum(1+len(r.saves) for r in runs() if r.stage!='pt') == 75
+        assert len(r.saves)+1 == dict(pt=68,mt=12,lc=11,sft=3)[r.stage]
+    assert sum(1+len(r.saves) for r in runs() if r.stage!='pt') == 78
 
 
 if __name__ == "__main__":
