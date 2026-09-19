@@ -30,16 +30,17 @@ def main():
     commit = os.environ["GIT_REF"]
     assert MOUNT.is_mount()
     AUTOMATION.mkdir(parents=True, exist_ok=True)
-    with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(
-        check_for_upgrades=False
-    ) as b:
+    with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        while status(b.workload.get(os.environ["LC4MI_CONFIG_GATE"])) != "STATUS_SUCCEEDED":
+            state = status(b.workload.get(os.environ["LC4MI_CONFIG_GATE"]))
+            if state in {"STATUS_FAILED", "STATUS_CANCELED", "STATUS_STOPPED"}:
+                raise RuntimeError(f"CPU config/data gate failed: {state}")
+            time.sleep(30)
         (run,) = runs()
         validate_checkpoint(run.source, 5961, 16_777_216)
         proof = json.loads(run.source.with_name("step5961-copy.json").read_text())
-        assert proof["all_file_hashes_verified"] and proof["destination"] == str(
-            run.source
-        )
+        assert proof["all_file_hashes_verified"] and proof["destination"] == str(run.source)
         free = os.statvfs(MOUNT)
         assert free.f_bavail * free.f_frsize >= 10_000_000_000_000
         StateStore(CONTROL, STATE).register(
@@ -58,9 +59,7 @@ def main():
         c = object.__new__(Controller)
         c.beaker, c.workspace, c.commit = b, b.workspace.get(WORKSPACE), commit
         c.automation, c.last_status = AUTOMATION, {}
-        spec = b.experiment.get_spec(
-            b.workload.get("01M2RF2SK6K8KS2YJKT9RD6NY8")
-        ).to_json()
+        spec = b.experiment.get_spec(b.workload.get("01M2RF2SK6K8KS2YJKT9RD6NY8")).to_json()
         task = copy.deepcopy(spec["tasks"][0])
         refs = {v["name"]: v.get("value") for v in task["envVars"]}
         assert refs["GIT_REF"] == "d031ab975c0dd11e986b3f017e0aac2e3608b521"
@@ -78,9 +77,7 @@ def main():
             # Adopt exactly the persisted submission across inventory changes.
             spec = json.loads(saved.read_text())
         else:
-            registered = {
-                n.hostname for n in b.node.list(cluster=b.cluster.get("ai2/holmes"))
-            }
+            registered = {n.hostname for n in b.node.list(cluster=b.cluster.get("ai2/holmes"))}
             task["constraints"]["hostname"] = [
                 h
                 for h in task["constraints"]["hostname"]
