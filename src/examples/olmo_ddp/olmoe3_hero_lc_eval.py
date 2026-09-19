@@ -7,8 +7,11 @@ import sys
 from pathlib import Path
 
 import olmoe3_hero_decay_eval as worker
+import olmoe3_hero_decay_plan as checkpoint_plan
 from olmoe3_hero_decay_plan import CORE_REF, HELPER_REF, ready, verified_copy
 from olmoe3_hero_lc_plan import BATCH, CAMPAIGN, END, EVAL_ROOT, MOUNT, LCRun
+
+checkpoint_plan.BATCH = BATCH  # LC completion/copy audits, not the parent MT audit.
 from olmoe3_lr_sweep_watch import atomic_json, status
 
 worker.EVAL_ROOT = EVAL_ROOT
@@ -39,7 +42,9 @@ def ruler_spec(beaker, run, commit):
     try:
         control.model_path = model_path
         spec = control.worker_spec(
-            beaker.experiment.get_spec(beaker.workload.get(control.WORKER_TEMPLATE)).to_json(),
+            beaker.experiment.get_spec(
+                beaker.workload.get(control.WORKER_TEMPLATE)
+            ).to_json(),
             "lc100b",
             run.arm,
             commit,
@@ -52,7 +57,9 @@ def ruler_spec(beaker, run, commit):
     task["arguments"][0] = task["arguments"][0].replace(
         old, "src/examples/olmo_ddp/olmoe3_hero_lc_ruler.py"
     )
-    spec["description"] = json.dumps(dict(stage="ruler", campaign=CAMPAIGN, **run.as_dict()))
+    spec["description"] = json.dumps(
+        dict(stage="ruler", campaign=CAMPAIGN, **run.as_dict())
+    )
     return spec
 
 
@@ -170,7 +177,9 @@ def main():
 
         install_runtime(runtime)
 
-        runtime.FAST_MODELS = {EVAL_ROOT / arm / f"step{END}/hf" for arm in ("emo", "non-emo")}
+        runtime.FAST_MODELS = {
+            EVAL_ROOT / arm / f"step{END}/hf" for arm in ("emo", "non-emo")
+        }
         sys.argv = [
             runtime.__file__,
             args.stage,

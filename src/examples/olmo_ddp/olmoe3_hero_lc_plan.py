@@ -5,7 +5,6 @@ from pathlib import Path
 
 from olmoe3_hero_mt_plan import MTRun
 from olmoe3_small_hero_plan import (
-    BATCH,
     BUCKET,
     CONTROL,
     MOUNT,
@@ -14,8 +13,11 @@ from olmoe3_small_hero_plan import (
     WORKSPACE,
 )
 
-CAMPAIGN = "olmo35-small-4t-lc100b-noemo-20260916"
-BRANCH = "codex/hero-4t-pipeline-20260916"
+CAMPAIGN = "olmo35-small-4t-lc4mi-20260919"
+BRANCH = "codex/hero-lc4mi-20260919"
+BATCH = 4_194_304
+PARENT_BATCH = 16_777_216
+SOURCE_AUTOMATION = MOUNT / "uploader/automation/olmo35-small-4t-lc100b-noemo-20260916"
 ROOT = MOUNT / "production-hero-small-lc" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 # Retain the failed deployment's immutable plans and submissions for audit.
@@ -33,15 +35,15 @@ DATA_GLOB = str(
 )
 SOURCE_STEP = 5961
 SEQUENCE_LENGTH = 65536
-LR = 1.1e-3 * 0.2 * 0.5
+LR = 5.5e-5
 WARMUP = 2000
-REQUESTED_TOKENS = 100_000_000_000
+REQUESTED_TOKENS = 100_008_984_576
 END = (REQUESTED_TOKENS + BATCH - 1) // BATCH
 SMOKE_END = 2
 GATE_END = 4
 SEED = 119_105_108_108 % (2**31 - 1)
 # An owner-qualified immutable submission name avoids a second commit just to bind an ID.
-MT_JOBS = {arm: "jacobm/" + MTRun(arm).run_id + "-train" for arm in ("emo", "non-emo")}
+MT_JOBS = {"emo": "jacobm/" + MTRun("emo").run_id + "-train"}
 MT_TEMPLATE = "01M2BASTQ94J6CKAA0EG4R7J90"
 
 
@@ -73,7 +75,7 @@ class LCRun:
 
     @property
     def source(self):
-        return AUTOMATION / "sources" / self.arm / f"step{SOURCE_STEP}"
+        return SOURCE_AUTOMATION / "sources" / self.arm / f"step{SOURCE_STEP}"
 
     @property
     def bucket(self):
@@ -81,7 +83,7 @@ class LCRun:
 
     @property
     def prefix(self):
-        return f"posttrain-noemo-4t-20260916/lc100b/{self.arm}"
+        return f"{CAMPAIGN}/{self.arm}"
 
     def as_dict(self):
         return dict(
@@ -93,7 +95,7 @@ class LCRun:
             parent=self.parent.run_id,
             parent_experiment=MT_JOBS[self.arm],
             parent_step=SOURCE_STEP,
-            parent_mt_tokens=SOURCE_STEP * BATCH,
+            parent_mt_tokens=SOURCE_STEP * PARENT_BATCH,
             copied_source=str(self.source),
             bucket_id=self.bucket,
             remote_prefix=self.prefix,
@@ -102,7 +104,7 @@ class LCRun:
             nodes=8,
             sequence_length=SEQUENCE_LENGTH,
             microbatch_sequences=1,
-            gradient_accumulation=4,
+            gradient_accumulation=1,
             ep=1,
             pp=1,
             cp=1,
@@ -113,7 +115,7 @@ class LCRun:
             requested_lc_tokens=REQUESTED_TOKENS,
             lc_steps=END,
             lc_tokens=END * BATCH,
-            total_seen_tokens=(240000 + SOURCE_STEP + END) * BATCH,
+            total_seen_tokens=(240000 + SOURCE_STEP) * PARENT_BATCH + END * BATCH,
             optimizer_reset_at_lc_start=True,
             data_seed=SEED,
             data_glob=DATA_GLOB,

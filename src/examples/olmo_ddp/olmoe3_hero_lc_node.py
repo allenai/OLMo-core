@@ -8,13 +8,15 @@ import subprocess
 import sys
 import time
 
-from olmoe3_hero_decay_plan import validate_checkpoint
+from olmoe3_hero_decay_plan import validate_checkpoint as validate_parent_checkpoint
 from olmoe3_hero_decay_runtime import verify_runtime
 from olmoe3_hero_lc_cache import validate_cache
 from olmoe3_hero_lc_plan import (
     AUTOMATION,
+    BATCH,
     END,
     GATE_END,
+    PARENT_BATCH,
     SMOKE_END,
     SOURCE_STEP,
     find_run,
@@ -22,6 +24,12 @@ from olmoe3_hero_lc_plan import (
 from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 from olmoe3_profile_node import resolve_ready_leader
+
+
+def validate_checkpoint(root, step):
+    """Use the parent batch only for the immutable MT source."""
+    is_parent = any(root == r.source for r in __import__("olmoe3_hero_lc_plan").runs())
+    validate_parent_checkpoint(root, step, PARENT_BATCH if is_parent else BATCH)
 
 
 def verify_gpu_gate(run):
@@ -32,22 +40,34 @@ def verify_gpu_gate(run):
             (run.root / "audit" / f"initial-lc-transfer-rank{gpu}.json").read_text()
         )
         restore = json.loads(
-            (run.root / "audit" / f"lc-restore-step{SMOKE_END}-rank{gpu}.json").read_text()
+            (
+                run.root / "audit" / f"lc-restore-step{SMOKE_END}-rank{gpu}.json"
+            ).read_text()
         )
         assert all(
             transfer[k]
-            for k in ("weights_and_buffers_sampled_exact", "optimizer_reset", "data_reset")
+            for k in (
+                "weights_and_buffers_sampled_exact",
+                "optimizer_reset",
+                "data_reset",
+            )
         )
-        assert all(restore[k] for k in ("sampled_state_exact", "rng_exact", "data_state_exact"))
+        assert all(
+            restore[k] for k in ("sampled_state_exact", "rng_exact", "data_state_exact")
+        )
     metrics = [
-        json.loads(line) for line in (run.root / "audit/metrics.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (run.root / "audit/metrics.jsonl").read_text().splitlines()
     ]
     for step in range(1, GATE_END + 1):
         rows = [v for v in metrics if v["step"] == step and "train/CE loss" in v]
         assert rows, f"No measured loss for LC gate step{step}"
         for row in rows:
             assert math.isfinite(row["train/CE loss"])
-            assert math.isfinite(row["optim/total grad norm"]) and row["optim/total grad norm"] > 0
+            assert (
+                math.isfinite(row["optim/total grad norm"])
+                and row["optim/total grad norm"] > 0
+            )
     return dict(finite_updates=GATE_END, weights_reset_and_resume_verified=True)
 
 
@@ -58,7 +78,7 @@ def main():
     verify_runtime()
     r = find_run(sys.argv[1])
     phase = os.environ["OLMO35_LC_PHASE"]
-    assert phase in ("smoke", "train")
+    assert phase in ("smoke", "train", "full")
     target = GATE_END if phase == "smoke" else END
     exp, job = os.environ["BEAKER_EXPERIMENT_ID"], os.environ["BEAKER_JOB_ID"]
     rank = int(os.environ["BEAKER_REPLICA_RANK"])
@@ -67,7 +87,8 @@ def main():
         int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]),
     ) == (8, 8)
     subprocess.run(
-        [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_lc.py", "--validate-only"], check=True
+        [sys.executable, "src/examples/olmo_ddp/olmoe3_hero_lc.py", "--validate-only"],
+        check=True,
     )
     rendezvous = AUTOMATION / "rendezvous" / exp
     atomic_json(rendezvous / f"{job}.json", dict(job=job, rank=rank))
@@ -89,7 +110,7 @@ def main():
                 choices.append((int(p.name[4:]), p))
         start, source = max(choices, key=lambda x: x[0])
         assert 0 <= start <= target
-        if phase == "train":
+        if phase == "train" or (phase == "full" and start > GATE_END):
             gate = json.loads((r.root / "audit/lc-gate-success.json").read_text())
             assert gate["step"] == GATE_END and gate["all_64_ranks_verified"]
             assert start >= GATE_END
@@ -101,7 +122,7 @@ def main():
         time.sleep(2)
     initial = json.loads(selection.read_text())
     start, source = initial["step"], initial["source"]
-    if phase == "smoke" and start == GATE_END:
+    if phase in ("smoke", "full") and start == GATE_END:
         proof = verify_gpu_gate(r)
         if rank == 0:
             atomic_json(
@@ -120,13 +141,21 @@ def main():
     if rank == 0 and start >= SMOKE_END and not smoke.exists():
         validate_checkpoint(r.root / f"step{SMOKE_END}", SMOKE_END)
         for gpu in range(64):
-            row = json.loads((r.root / "audit" / f"initial-lc-transfer-rank{gpu}.json").read_text())
+            row = json.loads(
+                (r.root / "audit" / f"initial-lc-transfer-rank{gpu}.json").read_text()
+            )
             assert all(
                 row[k]
-                for k in ("weights_and_buffers_sampled_exact", "optimizer_reset", "data_reset")
+                for k in (
+                    "weights_and_buffers_sampled_exact",
+                    "optimizer_reset",
+                    "data_reset",
+                )
             )
-        atomic_json(smoke, dict(step=SMOKE_END, reconciled=True, all_64_ranks_verified=True))
-    stages = ([SMOKE_END] if start < SMOKE_END else []) + ([target] if start < target else [])
+        atomic_json(
+            smoke, dict(step=SMOKE_END, reconciled=True, all_64_ranks_verified=True)
+        )
+    stages = sorted({s for s in (SMOKE_END, GATE_END, target) if start < s <= target})
     port = 29000 + int(hashlib.sha256(exp.encode()).hexdigest()[:8], 16) % 900
     for i, stop in enumerate(stages):
         if stop > SMOKE_END:
@@ -143,7 +172,14 @@ def main():
             "WANDB_RUN_ID": hashlib.sha256(r.run_id.encode()).hexdigest()[:8],
             "WANDB_RESUME": "allow",
         }
-        log("LC_PASS_START", run=r.run_id, node=rank, start=start, stop=stop, source=source)
+        log(
+            "LC_PASS_START",
+            run=r.run_id,
+            node=rank,
+            start=start,
+            stop=stop,
+            source=source,
+        )
         subprocess.run(
             [
                 sys.executable,
@@ -169,21 +205,31 @@ def main():
             smoke
             if stop == SMOKE_END
             else r.root
-            / ("audit/lc-gate-success.json" if phase == "smoke" else "audit/lc-success.json")
+            / (
+                "audit/lc-gate-success.json"
+                if stop == GATE_END
+                else "audit/lc-success.json"
+            )
         )
         if rank == 0:
             validate_checkpoint(r.root / f"step{stop}", stop)
             for gpu in range(64):
                 row = json.loads(
-                    (r.root / "audit" / f"lc-restore-step{start}-rank{gpu}.json").read_text()
+                    (
+                        r.root / "audit" / f"lc-restore-step{start}-rank{gpu}.json"
+                    ).read_text()
                 )
                 fields = (
-                    ("weights_and_buffers_sampled_exact", "optimizer_reset", "data_reset")
+                    (
+                        "weights_and_buffers_sampled_exact",
+                        "optimizer_reset",
+                        "data_reset",
+                    )
                     if source == str(r.source)
                     else ("sampled_state_exact", "rng_exact", "data_state_exact")
                 )
                 assert all(row[k] for k in fields)
-            proof = verify_gpu_gate(r) if phase == "smoke" and stop == GATE_END else {}
+            proof = verify_gpu_gate(r) if stop == GATE_END else {}
             atomic_json(
                 marker,
                 dict(

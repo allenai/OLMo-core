@@ -48,6 +48,7 @@ from olmo_core.train import Duration
 from olmo_core.train.common import LoadStrategy
 
 hero.find_run = find_run
+hero.BATCH = BATCH  # Inherited resume/token audits must use the LC batch, not PT's.
 
 
 def common_components(context, **kwargs):
@@ -92,19 +93,27 @@ class LCAudit(hero.HeroAudit):
         if Path(path) == r.source:
             assert self.step == self.trainer.global_train_tokens_seen == 0
             assert self.trainer.data_loader.tokens_processed == 0
-            saved = json.loads((r.source / "resume_audit" / f"rank{get_rank()}.json").read_text())
+            saved = json.loads(
+                (r.source / "resume_audit" / f"rank{get_rank()}.json").read_text()
+            )
             current = hero.state_sample(self.trainer)
             keys = {
-                k for k in saved["tensors"] if k.startswith("model_param/") or k.endswith(".main")
+                k
+                for k in saved["tensors"]
+                if k.startswith("model_param/") or k.endswith(".main")
             }
             keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
-            assert keys and all(current["tensors"][k] == saved["tensors"][k] for k in keys)
+            assert keys and all(
+                current["tensors"][k] == saved["tensors"][k] for k in keys
+            )
             optim = self.trainer.train_module.optim
             assert not optim._losses and not optim._grad_norms
             moments = 0
             for name, tensor in optim.states.items():
                 if name.endswith((".exp_avg", ".exp_avg_sq", ".step")):
-                    tensor = tensor.to_local() if hasattr(tensor, "to_local") else tensor
+                    tensor = (
+                        tensor.to_local() if hasattr(tensor, "to_local") else tensor
+                    )
                     assert not torch.count_nonzero(tensor).item(), name
                     moments += 1
             assert moments > 0
@@ -114,7 +123,10 @@ class LCAudit(hero.HeroAudit):
                 data_reset=True,
                 source_step=SOURCE_STEP,
             )
-            atomic_json(Path(self.output_dir) / f"initial-lc-transfer-rank{get_rank()}.json", proof)
+            atomic_json(
+                Path(self.output_dir) / f"initial-lc-transfer-rank{get_rank()}.json",
+                proof,
+            )
         else:
             assert Path(path).parent == r.root
             super().post_checkpoint_loaded(path)
@@ -145,7 +157,9 @@ class LCAudit(hero.HeroAudit):
 
             assert equal(saved["rng"], EnvRngStates.current_state().as_dict())
             assert equal(saved["data_loader"], self.trainer.data_loader.state_dict())
-            proof = dict(sampled_state_exact=True, rng_exact=True, data_state_exact=True)
+            proof = dict(
+                sampled_state_exact=True, rng_exact=True, data_state_exact=True
+            )
         atomic_json(
             Path(self.output_dir) / f"lc-restore-step{self.step}-rank{get_rank()}.json",
             dict(source=str(path), step=self.step, **proof),
@@ -155,13 +169,18 @@ class LCAudit(hero.HeroAudit):
         super().log_metrics(step, metrics)
         for key, value in metrics.items():
             if key.startswith("optim/LR ("):
-                expected = LinearWithWarmup(warmup=WARMUP, alpha_f=0.0).get_lr(LR, step, END)
+                expected = LinearWithWarmup(warmup=WARMUP, alpha_f=0.0).get_lr(
+                    LR, step, END
+                )
                 assert math.isclose(float(value), expected, rel_tol=1e-6, abs_tol=1e-10)
 
     def post_train(self):
         stop = int(os.environ["OLMO35_HERO_STOP"])
         if not (find_run(self.run_id).root / "STORAGE_PAUSED.json").exists():
-            assert self.step == stop and self.trainer.global_train_tokens_seen == stop * BATCH
+            assert (
+                self.step == stop
+                and self.trainer.global_train_tokens_seen == stop * BATCH
+            )
 
 
 def train_module_config(common):
@@ -195,18 +214,20 @@ def trainer_config(common):
     config.load_trainer_state = not fresh
     cp = config.callbacks["checkpointer"]
     cp.fixed_steps = [SMOKE_END, GATE_END]
-    cp.save_interval = 500
-    config.callbacks["hero_audit"] = LCAudit(output_dir=str(r.root / "audit"), run_id=r.run_id)
+    cp.save_interval = 2000  # Preserve the original 8.389B-token save cadence.
+    config.callbacks["hero_audit"] = LCAudit(
+        output_dir=str(r.root / "audit"), run_id=r.run_id
+    )
     wb = config.callbacks["wandb"]
     wb.group = CAMPAIGN
     wb.tags = [
         r.arm,
         "long-context",
         "100b-mt-after-decayed-4t-source",
-        "lc-half-mt-lr",
+        "lc-sqrt-batch-scaled-lr",
         "linear",
         "64g",
-        "16mi",
+        "4mi",
         "mb1-64k",
         "block-recomputation",
         "sync-checkpoints",
@@ -250,25 +271,42 @@ def config_builder():
 
 def validate():
     """Validate both fresh starts and LC resumes without materializing model/data."""
-    assert END == 5961 and END * BATCH == 100_008_984_576
+    assert END == 23844 and END * BATCH == 100_008_984_576
     for start in (0, 2):
         os.environ["OLMO35_HERO_EXPECTED_START"] = str(start)
         for r in runs():
-            os.environ["OLMO35_LC_LOAD"] = str(r.source if start == 0 else r.root / f"step{start}")
-            c = config_builder()(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
+            os.environ["OLMO35_LC_LOAD"] = str(
+                r.source if start == 0 else r.root / f"step{start}"
+            )
+            c = config_builder()(
+                CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", [])
+            )
             c.as_dict(json_safe=True)
             tm, tr = c.train_module, c.trainer
-            assert (c.model.num_active_params, c.model.num_params) == (794_233_472, 12_496_341_632)
+            assert (c.model.num_active_params, c.model.num_params) == (
+                794_233_472,
+                12_496_341_632,
+            )
             assert (
                 c.data_loader.global_batch_size == BATCH
                 and tm.rank_microbatch_size == SEQUENCE_LENGTH
             )
             assert c.dataset.sequence_length == SEQUENCE_LENGTH
-            assert c.dataset.source_group_size == 8 and c.dataset.source_permutation_seed == 123
-            assert c.model.recompute_each_block and not c.model.recompute_all_blocks_by_chunk
+            assert (
+                c.dataset.source_group_size == 8
+                and c.dataset.source_permutation_seed == 123
+            )
+            assert (
+                c.model.recompute_each_block
+                and not c.model.recompute_all_blocks_by_chunk
+            )
             assert Path(c.data_loader.work_dir).is_relative_to(DATA_WORK)
             assert c.data_loader.seed == SEED
-            assert tm.ep_config is None and tm.pp_config is None and tm.dp_config.use_reduce_scatter
+            assert (
+                tm.ep_config is None
+                and tm.pp_config is None
+                and tm.dp_config.use_reduce_scatter
+            )
             assert tm.ac_config is None and tm.float8_config is None
             assert tr.load_optim_state == tr.load_trainer_state == (start > 0)
             assert tm.reset_optimizer_states_on_load == (start == 0)
@@ -277,7 +315,9 @@ def validate():
             assert tm.scheduler.get_lr(LR, WARMUP, END) == LR
             assert tm.scheduler.get_lr(LR, END, END) == 0.0
             print(
-                "HERO_LC_CONFIG_VALIDATED", json.dumps(dict(start=start, **r.as_dict())), flush=True
+                "HERO_LC_CONFIG_VALIDATED",
+                json.dumps(dict(start=start, **r.as_dict())),
+                flush=True,
             )
 
 

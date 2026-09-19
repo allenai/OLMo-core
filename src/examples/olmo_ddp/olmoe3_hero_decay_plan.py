@@ -111,12 +111,13 @@ def inventory(root):
     return result
 
 
-def validate_checkpoint(root, step):
+def validate_checkpoint(root, step, batch=None):
     """Require full-state metadata and immutable per-rank save audits for all 64 ranks."""
     inventory(root)
+    batch = BATCH if batch is None else batch
     for rank in range(64):
         row = json.loads((root / "resume_audit" / f"rank{rank}.json").read_text())
-        if (row["step"], row["tokens"], row["rank"], row["gpus"]) != (step, step * BATCH, rank, 64):
+        if (row["step"], row["tokens"], row["rank"], row["gpus"]) != (step, step * batch, rank, 64):
             raise ValueError(f"Wrong checkpoint audit: {root}, rank {rank}")
         if not (root / "train" / f"rank{rank}.pt").is_file():
             raise ValueError(f"Missing trainer state: rank{rank}")

@@ -30,7 +30,7 @@ def validate_cache():
     assert METADATA_CACHE.resolve() == METADATA_CACHE
     METADATA_CACHE.mkdir(parents=True, exist_ok=True)
     fs = os.statvfs(MOUNT)
-    assert fs.f_bavail * fs.f_frsize >= 12_000_000_000_000
+    assert fs.f_bavail * fs.f_frsize >= 10_000_000_000_000
     config = NumpyPackedFSLDatasetConfig.glob(
         DATA_GLOB,
         tokenizer=TokenizerConfig.dolma2(),
