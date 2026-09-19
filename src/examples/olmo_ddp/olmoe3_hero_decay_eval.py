@@ -85,6 +85,19 @@ def build_spec(template, stage, run, commit):
                 "hero_code_sandbox_preflight.py" in command
                 and "google-cloud-cli-583.0.0" in command
             )
+            # Avoid the account's deployed-app quota; keep isolated sandboxes.
+            wrapper = "/tmp/hero-code-reuse"
+            setup = (
+                f"git init --quiet {wrapper}\n"
+                f"git -C {wrapper} remote add origin https://github.com/allenai/OLMo-core.git\n"
+                f"git -C {wrapper} fetch --quiet --depth=1 origin {commit}\n"
+                f"git -C {wrapper} checkout --quiet {commit}\n"
+            )
+            adapter = f"{wrapper}/src/examples/olmo_ddp/olmoe3_hero_code_reuse.py"
+            preflight = "python ladders/olmoe3/workloads/hero_code_sandbox_preflight.py"
+            assert command.count(preflight) == 1
+            command = command.replace(preflight, setup + f"python {adapter} " + preflight[7:])
+            command = command.replace(f"python {WRAPPER} code", f"python {adapter} {WRAPPER} code")
     task["arguments"] = [command]
     task["context"].update(priority="urgent", minRuntime="6h", autoResume=True)
     task["timeout"] = "24h"
