@@ -1,0 +1,9 @@
+{
+  "transformers_version": "5.12.1",
+  "modular_source": "src/transformers_plugin/modular_mainline_ladder.py",
+  "modular_source_sha256": "1c7b04fe2766d0fc84fbf4ba058cf30868f2f21c0a2c5254b3c593589418c81e",
+  "generated_files": [
+    "configuration_mainline_ladder.py",
+    "modeling_mainline_ladder.py"
+  ]
+}

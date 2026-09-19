@@ -1,0 +1,20 @@
+[project]
+name = "transformers-plugin"
+version = "0.0.0"
+description = "HuggingFace transformers plugin (config + modeling + weight converter) for the mainline ladder's MainlineLadder model"
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "torch>=2.6.0",
+    "transformers>=5.12",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/transformers_plugin"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/transformers_plugin/_generated.json" = "transformers_plugin/_generated.json"

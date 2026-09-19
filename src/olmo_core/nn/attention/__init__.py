@@ -1309,6 +1309,15 @@ class Attention(SequenceMixer):
                 position_ids = build_local_packed_position_ids(
                     cu_doc_lens, B, T, get_rank(cp_pg), get_world_size(cp_pg)
                 )
+            # Explicit ``position_ids`` always win for RoPE and the two are mutually exclusive in
+            # RotaryEmbedding, so drop ``cu_doc_lens`` from the RoPE call whenever positions were
+            # given -- by the CP branch above, or by a caller that already knows each token's
+            # intra-document position. The compacted block-skip path
+            # (:func:`olmo_core.nn.block_skip._compact_kwargs`) is the second kind: it gathers the
+            # kept tokens, so their positions are no longer implied by the (re-derived)
+            # ``cu_doc_lens``, which still describes the compacted document boundaries the BACKEND
+            # masks with.
+            if position_ids is not None:
                 rope_cu_doc_lens = None
 
             # Explicit per-token ``position_ids`` (e.g. ragged right-padded landmark decode, where each
@@ -1468,8 +1477,17 @@ class Attention(SequenceMixer):
             from .kv_route import kv_route_attention
 
             att = kv_route_attention(
-                self, x, q, k, v, cu_doc_lens=cu_doc_lens, cache_leftpad=cache_leftpad,
-                block_keep=block_keep, kv_route_p=kv_route_p, kv_route_keep=kv_route_keep,
+                self,
+                x,
+                q,
+                k,
+                v,
+                cu_doc_lens=cu_doc_lens,
+                max_doc_len=max_doc_len,
+                cache_leftpad=cache_leftpad,
+                block_keep=block_keep,
+                kv_route_p=kv_route_p,
+                kv_route_keep=kv_route_keep,
             )
         elif attn_bias is not None:
             # Soft-token aux path: position-causal + shadow-blocked masked SDPA.
