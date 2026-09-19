@@ -138,6 +138,25 @@ def test_mixed_recipe_defaults_and_roundtrip(mixed_recipe):
     assert not config.trainer.save_overwrite
 
 
+@pytest.mark.parametrize("text_loss_share", [0.9, 1.0])
+def test_step_zero_resume_does_not_resave_checkpoint(mixed_recipe, monkeypatch, text_loss_share):
+    config = mixed_recipe.build(f"--recipe.text_loss_share={text_loss_share}")
+    callback = config.trainer.callbacks["checkpointer"]
+    trainer = Mock(global_step=0, checkpoint_loaded=True, save_folder=config.trainer.save_folder)
+    path = f"{trainer.save_folder}/step0"
+    trainer.checkpointer.find_checkpoints.return_value = [(0, path)]
+    callback.trainer = trainer
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.is_distributed", lambda: False)
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.get_rank", lambda: 0)
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.broadcast_object", lambda x: x)
+
+    callback.pre_train()
+
+    trainer.save_checkpoint.assert_not_called()
+    trainer.save_checkpoint_async.assert_not_called()
+    assert callback._checkpoints == [path]
+
+
 def test_mixed_packing_override_preserves_loss_allocation(mixed_recipe):
     config = mixed_recipe.build()
     smaller_packs = mixed_recipe.build("--data_loader.pack_max_crops=16")
@@ -356,6 +375,7 @@ def test_only_native_config_classes_are_serialized(mixed_recipe):
     assert checkpointer.save_interval == 10000
     assert checkpointer.ephemeral_save_interval == 500
     assert checkpointer.max_checkpoints == 2
+    assert checkpointer.pre_train_checkpoint is None
     assert not config.train_module.reset_optimizer_states_on_load
     assert not config.train_module.reset_optimizer_states_on_resume
     assert config.trainer.callbacks["wandb"].auto_resume

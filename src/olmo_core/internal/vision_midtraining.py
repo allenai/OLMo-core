@@ -384,7 +384,6 @@ def _build_trainer(
                 save_interval=10_000,
                 ephemeral_save_interval=500,
                 save_async=False,
-                pre_train_checkpoint=True,
                 max_checkpoints=2,
             ),
         )
