@@ -279,12 +279,17 @@ def main():
             if state in FAILED:
                 raise RuntimeError(f"Smoke failed: {smoke.experiment.id}, {state}")
             if state == "STATUS_SUCCEEDED":
-                for run in smoke_runs():
-                    check_finished(run)
-                atomic_json(
-                    AUTOMATION / "smoke-passed.json",
-                    dict(experiment=smoke.experiment.id, commit=commit),
-                )
+                proof_path = AUTOMATION / "smoke-passed.json"
+                expected_proof = dict(experiment=smoke.experiment.id, commit=commit)
+                if proof_path.is_file():
+                    # A controller-only restart reuses the immutable qualification
+                    # of this exact smoke and training pin, not another workload.
+                    assert json.loads(proof_path.read_text()) == expected_proof
+                    log("HYBRID_EXISTING_SMOKE_QUALIFICATION_REUSED", **expected_proof)
+                else:
+                    for run in smoke_runs():
+                        check_finished(run)
+                    atomic_json(proof_path, expected_proof)
                 break
             time.sleep(30)
         jobs = submit_points(c, template, commit)
