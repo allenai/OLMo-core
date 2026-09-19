@@ -47,7 +47,7 @@ CKPTS=/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft  
 
 ## Quickstart
 
-**Already have the checkpoints and only want the numbers** — skip to step 7:
+**Just want the numbers** — both checkpoints are already trained:
 
 ```bash
 bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf smoke7to1 smoke   # ~3 min, proves the path
@@ -55,23 +55,79 @@ bash debug/hybridish_sft/run_olmo_eval_ctc.sh sft_7to1_ml_hf 7to1_nq ctc_nq    #
 python debug/hybridish_sft/harvest_sweep.py                                    # the comparison table
 ```
 
-**Want to retrain** — start at step 4, pointing the trainer at `$DATA`. Building the mix and shards
-is the appendix; you only need it to change the task roster, the length band, or the tokenizer.
+**Train your own model on this data, then score it** — the whole loop:
+
+```bash
+# 1. SFT on Beaker: --model and --dataset are weka paths        (step 4)
+PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
+    launch my-run ai2/jupiter-cirrascale-2 --preset 1.4b_7to1 --dataset $DATA
+
+# 2. export the trained step to HF, in the dialect the plugin speaks   (step 5)
+python src/scripts/convert_checkpoint_to_hf.py --checkpoint-input-dir <step> --huggingface-output-dir <hf>
+python debug/hybridish_sft/redialect_to_mainline.py --src <hf> --ref <released ckpt> --out <ml_hf>
+
+# 3. make it self-contained so any HF consumer loads it correctly     (step 6 — do not skip)
+python debug/hybridish_sft/make_self_contained_ckpt.py --ckpt <ml_hf> --plugin debug/hybridish_sft/plugin_ssmax
+
+# 4. stage + evaluate + harvest                                        (steps 7-8)
+bash debug/hybridish_sft/stage_ckpts_to_s3.sh && bash debug/hybridish_sft/sync_s3_to_weka.sh
+bash debug/hybridish_sft/run_olmo_eval_ctc.sh <ml_hf name> myrun_nq ctc_nq
+python debug/hybridish_sft/harvest_sweep.py
+```
 
 ---
 
 ## 4. SFT
 
-From a checkout of `prasann/ctc-sft-hybridish`:
+Run from a checkout of `prasann/ctc-sft-hybridish` (that branch carries the Scalable-Softmax
+implementation these checkpoints need; `prasann/landmark` does not, and training there would
+silently drop it). It launches on Beaker and reads both inputs from **weka**.
+
+```bash
+W=/weka/oe-training-default/ai2-llm
+
+PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
+    launch my-run ai2/jupiter-cirrascale-2 \
+    --preset 1.4b_7to1 \
+    --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k
+```
+
+**The two inputs are flags**, so any hybrid checkpoint works — nothing to edit:
+
+| flag | what |
+|---|---|
+| `--dataset` | weka path to the shard dir (defaults to `$DATA`) |
+| `--model` | weka path to the base checkpoint to finetune from |
+| `--n-layers`, `--d-model`, `--n-heads`, `--attn-every` | its geometry |
+| `--preset` | shorthand for a published arm's checkpoint + geometry (`1.4b_4to1`, `1.4b_7to1`) |
+| `--lr`, `--epochs` | defaults 4e-5, 1 |
+
+`--attn-every N` is the full-attention period: layers where `idx % N == N-1` become attention
+layers, so 5 → {4,9,14,19} and 8 → {7,15,23,31}.
+
+A different model, without a preset:
 
 ```bash
 PYTHONPATH=src python src/scripts/train/hybrid-small-suite/sft_ctc.py \
-  launch hyb-7to1-1p4b ai2/jupiter-cirrascale-2 --arm 1.4b_7to1
+    launch my-run ai2/jupiter-cirrascale-2 \
+    --model $W/scaling-ladders/mainline/<org>/<run>/<size>/long-context/step44124/ \
+    --dataset $W/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k \
+    --n-layers 32 --d-model 1280 --n-heads 16 --attn-every 8
 ```
 
-Model geometry is read from the base checkpoint's own `config.json` — never restate it. These are
-custom architectures whose depth and attention-override layers differ per arm; a hand-copied
-geometry that disagrees with the checkpoint silently trains a different model.
+> ⚠ The geometry flags must match the checkpoint. The script **builds** the architecture from them
+> and does not read it back, so a mismatch either fails at load or quietly trains a different model
+> against the right weights. It prints the resolved checkpoint, dataset, geometry and the derived
+> attention-layer indices before launching — check those against the base checkpoint's own config.
+> An under-specified model is refused, naming what is missing, rather than guessed.
+
+The weka bucket mounts automatically when the run's root dir resolves to `/weka/...` (true on
+clusters tagged `storage:weka`, e.g. jupiter). Elsewhere a `/weka` path is simply absent in the job
+and surfaces as a MISSING path at step 0.
+
+Everything else — optimizer, schedule, FSDP, activation checkpointing, packing — comes from the
+repo's standard SFT machinery. Packing uses block-diagonal masking, so packed training matches
+example-level.
 
 ## 5. Export to HF, in the dialect the plugin speaks
 
