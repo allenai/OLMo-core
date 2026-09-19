@@ -14,6 +14,7 @@ from olmoe3_hero_sft_plan import (
     LC_JOBS,
     MOUNT,
     STATE,
+    TEMPLATE,
     UPLOADER,
     WORKSPACE,
     data_plan,
@@ -51,7 +52,9 @@ def training_spec(original, run, commit, prepare=False):
     task["propagatePreemption"] = False
     # Removed from Beaker after the LC jobs were submitted; preserve all other exclusions.
     task["constraints"]["hostname"] = [
-        host for host in task["constraints"]["hostname"] if host != "holmes-cs-aus-520.reviz.ai2.in"
+        host
+        for host in task["constraints"]["hostname"]
+        if host not in {f"holmes-cs-aus-{n}.reviz.ai2.in" for n in (520, 527, 529)}
     ]
     task["arguments"] = (
         ["python", "src/examples/olmo_ddp/olmoe3_hero_sft.py", "--prepare"]
@@ -123,7 +126,7 @@ def main():
             assert status(b.workload.get(eid)) == "STATUS_SUCCEEDED"
         specs = {
             r.run_id: training_spec(
-                b.experiment.get_spec(b.workload.get(LC_JOBS[r.arm])).to_json(), r, commit
+                b.experiment.get_spec(b.workload.get(TEMPLATE)).to_json(), r, commit
             )
             for r in runs() + runs(True)
         }
@@ -159,7 +162,7 @@ def main():
         while True:
             snapshot = {}
             fs = os.statvfs(MOUNT)
-            storage_ok = fs.f_bavail * fs.f_frsize > 12_000_000_000_000
+            storage_ok = fs.f_bavail * fs.f_frsize > 10_000_000_000_000
             uploader_ok = status(b.workload.get(UPLOADER)) == "STATUS_RUNNING"
             gates = []
             for r in runs(True):

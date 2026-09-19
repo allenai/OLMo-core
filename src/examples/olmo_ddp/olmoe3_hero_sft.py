@@ -36,7 +36,13 @@ from olmoe3_lr_sweep_watch import atomic_json, log
 from olmo_core.data import NumpyDataLoaderConfig, TokenizerConfig
 from olmo_core.data.utils import get_labels
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.internal.experiment import CliContext, DataComponents, SubCmd, build_config, main
+from olmo_core.internal.experiment import (
+    CliContext,
+    DataComponents,
+    SubCmd,
+    build_config,
+    main,
+)
 from olmo_core.optim.scheduler import LinearWithWarmup
 from olmo_core.train import Duration
 from olmo_core.train.callbacks import Callback
@@ -88,7 +94,12 @@ def data_components(common):
 
 
 def model_config(common):
-    config = hero.model_config(common)
+    # Preserve the integration checkpoint's exact architecture, including shared
+    # QK gains, 15 layers and 4:1 hybridization. Do not substitute the hero model.
+    from olmo_core.nn.transformer.config import OLMoDDPModelConfig
+
+    source = find_run(common.run_name).source
+    config = OLMoDDPModelConfig.from_dict(json.loads((source / "config.json").read_text())["model"])
     config.recompute_each_block = True
     config.recompute_all_blocks_by_chunk = False
     for block in [config.block, *config.block_overrides.values()]:
@@ -145,10 +156,9 @@ class SFTAudit(Callback):
         r = find_run(self.run_id)
         actual = hero.state_sample(self.trainer)
         if Path(path) == r.source:
-            saved = json.loads((r.source / "resume_audit/rank0.json").read_text())
-            keys = {k for k in actual["tensors"] if k.startswith("model_param/")}
-            keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
-            assert keys and all(actual["tensors"][k] == saved["tensors"][k] for k in keys)
+            from olmoe3_integration_sft_audit import verify_source_weights
+
+            verify_source_weights(self.trainer, r.source)
             assert self.step == self.trainer.global_train_tokens_seen == 0
             assert self.trainer.data_loader.tokens_processed == 0
             optim = self.trainer.train_module.optim
@@ -424,9 +434,7 @@ def prepare():
     assert manifest["template"] == "olmo_thinker_no_think_sft_tokenization"
     for r in runs() + runs(True):
         config = config_builder()(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
-        assert (
-            config.model.num_active_params == 794233472 and config.model.num_params == 12496341632
-        )
+        assert config.model.n_layers == 15 and config.model.d_model == 1024
         assert config.data_loader.global_batch_size == BATCH
         assert config.train_module.rank_microbatch_size == SEQUENCE
         assert config.dataset.generate_doc_lengths and config.dataset.label_mask_paths
@@ -438,24 +446,7 @@ def prepare():
         current = json.loads(json.dumps(config.as_dict(json_safe=True)))
         old_name = f"{BASELINE_CAMPAIGN}-{'smoke-' if r.smoke else ''}{r.arm}-lr{r.lr_label}"
         baseline = json.loads((baseline_automation / "configs" / f"{old_name}.json").read_text())
-        old_model = baseline["model"]
-        old_emo = []
-
-        def disable_emo(value):
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    if key == "emo":
-                        old_emo.append(child)
-                        value[key] = None
-                    else:
-                        disable_emo(child)
-            elif isinstance(value, list):
-                for child in value:
-                    disable_emo(child)
-
-        disable_emo(old_model)
-        assert old_emo
-        assert current["model"] == old_model, "Model differs beyond disabling EMO"
+        assert current["model"]["n_layers"] == 15
         assert current["train_module"] == baseline["train_module"], "Changed training recipe"
         assert current["data_loader"]["seed"] == SEED
         assert current["trainer"]["max_duration"]["value"] == r.epochs

@@ -85,7 +85,12 @@ def main():
     ]
     start, source = max(choices, key=lambda item: item[0])
     assert 0 <= start <= target
-    (validate_parent(source, 5961) if start == 0 else validate_checkpoint(source, start))
+    if start == 0:
+        assert source == r.source and source.name == "step45876"
+        assert (source / "config.json").is_file()
+        assert (source / "model_and_optim/.metadata").is_file()
+    else:
+        validate_checkpoint(source, start)
     stops = ([2] if r.smoke and start < 2 else []) + ([target] if start < target else [])
     for stop in stops:
         env = {

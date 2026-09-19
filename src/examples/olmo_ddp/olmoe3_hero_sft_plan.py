@@ -15,8 +15,8 @@ from olmoe3_small_hero_plan import (  # noqa: F401 -- public campaign constants
 )
 
 BASELINE_CAMPAIGN = "olmo35-small-gptoss-sft-20260914"
-CAMPAIGN = "olmo35-small-4t-gptoss-high-sft-20260917"
-BRANCH = "codex/hero-4t-high-sft-20260917"
+CAMPAIGN = "olmoe3-integration810m-cx8-high-sft-20260919"
+BRANCH = "codex/integration-810m-high-sft-20260919"
 ROOT = MOUNT / "production-hero-small-sft" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 DATA = (
@@ -31,9 +31,11 @@ GPUS = 8
 SEED = 1729
 LRS = {"5em5": 5e-5}
 LC_CAMPAIGNS = {arm: "olmo35-small-4t-lc100b-noemo-20260916" for arm in ("emo", "non-emo")}
-LC_JOBS = {
-    arm: "jacobm/" + campaign + "-" + arm + "-train" for arm, campaign in LC_CAMPAIGNS.items()
-}
+LC_JOBS = {"non-emo": "01M1D1J2ST47VDJESRPDDAP6W2"}
+SOURCE = Path("/weka/oe-training-default/ai2-llm/scaling-ladders/olmoe3/jacobm") / (
+    "v0.1.0-dev-olmoe3-lc-mt20-dense-rule-fa8e0c182428/810M-Cx8/long-context/step45876"
+)
+TEMPLATE = "01M2RF2SK6K8KS2YJKT9RD6NY8"
 
 
 @dataclass(frozen=True)
@@ -69,13 +71,7 @@ class SFTRun:
 
     @property
     def source(self):
-        return (
-            MOUNT
-            / "production-hero-small-lc"
-            / LC_CAMPAIGNS[self.arm]
-            / f"{LC_CAMPAIGNS[self.arm]}-{self.arm}"
-            / "step5961"
-        )
+        return SOURCE
 
     @property
     def bucket(self):
