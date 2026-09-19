@@ -20,6 +20,9 @@ install_resume_cache()
 
 def code_preflight():
     """Verify correct and incorrect code in a credential-free, mount-free Modal sandbox."""
+    from olmoe3_sft_modal_reuse import install
+
+    install()
     from dataclasses import replace
 
     from olmo_eval.harness import get_harness_preset
@@ -130,9 +133,13 @@ def judge_alpaca(output):
 
 def execute(receipt_path):
     """Load custom task adapters before the unchanged frozen evaluator CLI."""
+    receipt = json.loads(Path(receipt_path).read_text())
+    if "hero_sft_humaneval" in receipt["tasks"]:
+        from olmoe3_sft_modal_reuse import install
+
+        install()
     from olmo_eval.cli import main as cli_main
 
-    receipt = json.loads(Path(receipt_path).read_text())
     os.environ["HERO_SFT_RESPONSE_AUDIT"] = str(Path(receipt["output"]) / "responses")
     sys.argv = receipt["command"]
     cli_main()
