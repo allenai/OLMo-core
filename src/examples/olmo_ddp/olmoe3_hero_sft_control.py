@@ -108,7 +108,7 @@ def main():
     from olmo_checkpoint_uploader.state import StateStore
 
     assert MOUNT.is_mount()
-    commit = os.environ["GIT_REF"]
+    commit = os.environ.get("SFT_TRAIN_COMMIT", os.environ["GIT_REF"])
     AUTOMATION.mkdir(parents=True, exist_ok=True)
     with (AUTOMATION / "LOCK").open("a") as lock, Beaker.from_env(check_for_upgrades=False) as b:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -208,7 +208,9 @@ def main():
                     previous_workspace = control.workspace
                     try:
                         control.workspace = b.workspace.get("ai2/OLMo-3-moe-experiments")
-                        row["conversions"] = advance_conversions(b, control, r, commit)
+                        row["conversions"] = advance_conversions(
+                            b, control, r, os.environ.get("SFT_EVAL_COMMIT", commit)
+                        )
                     finally:
                         control.workspace = previous_workspace
                 snapshot[r.run_id] = row

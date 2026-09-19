@@ -38,8 +38,10 @@ def structural_check(root, *, full, precise=False):
     config = AutoConfig.from_pretrained(hf)
     saved = load_config(root / "olmo-core")
     assert config.vocab_size == saved["dataset"]["tokenizer"]["vocab_size"]
-    assert config.qk_norm_per_head_gains and config.latent_moe_dim == 512
-    assert config.hidden_size == 1024 and config.num_hidden_layers == 16
+    # This branch exports the integration architecture, not a resized hero model.
+    assert not config.qk_norm_per_head_gains and config.latent_moe_dim == 512
+    assert config.hidden_size == 1024 and config.num_hidden_layers == 15
+    assert saved["model"]["n_layers"] == 15
     AutoTokenizer.from_pretrained(hf)
     with torch.device("meta"):
         model = AutoModelForCausalLM.from_config(config)
