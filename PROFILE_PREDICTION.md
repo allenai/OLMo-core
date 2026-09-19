@@ -257,3 +257,58 @@ Worth running **only if** the profile shows ViT attention (not ViT GEMMs) carryi
 
 **Reading order once the tables land:** if the ViT time is dominated by MLP/GEMM ops, H2
 owns it and the ViT is closed. If it is dominated by attention ops, H4 is worth one job.
+
+---
+
+# MEASURED (8xB300, crops=80, 32 packs, step 25, rank 0)
+
+Beaker `01M2V8SBJBKTFV5PJMAA872KQM`. Self CUDA time total 9.580 s over 2 profiled steps.
+
+| kernel group | self CUDA | calls |
+|---|---|---|
+| GEMMs (`nvjet_sm103_*`) | **21.85%** | 6,396 |
+| **LM flex-attention BACKWARD** | **19.56%** | 144 |
+| Collectives (`ncclDevKernel_*`) | **18.44%** | 726 |
+| Flash-attention kernels (ViT) | 9.36% | 900 |
+| LM flex-attention forward | 5.26% | 144 |
+| Efficient-attention kernels | 2.82% | 12 |
+| LayerNorm | 1.01% | 600 |
+| *accounted (top-32 kernels)* | *78.30%* | |
+
+Scope-level: `mm::vision_encode` forward CUDA total **995.578 ms** + its backward node
+**824.202 ms** = **1.820 s = 19.0%** of total CUDA time.
+
+## Scorecard
+
+| prediction | result |
+|---|---|
+| Original: ViT 50-60% of time | **REFUTED** -- 19.0% |
+| 1st correction: ViT ~14.4% charged / ~26% computed FLOPs | **This was the right one** |
+| 2nd correction: ViT 45-60% of time, 3.7x less efficient | **REFUTED** |
+| Comms well below the recorded ~45% | **CONFIRMED** -- 18.4-18.9% |
+| fp32 reduce-scatter ~15% (was 26.8%) | **CONFIRMED** -- 9.71% |
+
+**The ViT runs at roughly LM-like efficiency.** Its 19.0% of time sits between its 14.4%
+charged-FLOP and 25.9% computed-FLOP shares. There is no efficiency gap, so H1/H2/H4 are
+all moot and **the ViT is closed as a lever** -- fp8 on the ViT would buy at most a slice
+of 19%, and the alignment issue (H2) is not costing what the fit implied.
+
+The zero-degrees-of-freedom fit in the second correction was exactly as unreliable as
+flagged, and it fired the falsifier written with it ("ViT at or near 26% would mean the
+3.7x is an artifact of the two-point fit"). The lesson is narrow and worth keeping: a
+model with as many parameters as data points reproduced a known independent value (~28% at
+crops=25) and was still wrong. That reproduction felt like validation and was not.
+
+## What is actually left, in measured order
+
+1. **LM flex-attention backward, 19.56%** -- the largest single kernel, and **3.7x its own
+   forward** (19.56% vs 5.26%). A well-tuned attention backward runs ~2-2.5x forward. This
+   was not predicted by anything above and is the best new lead. At 98.8% occupancy the LM's
+   attention is finally doing real work, which is what made it visible.
+2. **Collectives, 18.44%** -- Phase 4 is **revived, not demoted**. My "this demotes Phase 4"
+   call was wrong: the share fell from ~45% as predicted, but 18.4% of a step is a large
+   lever, and `reduce_scatter` alone is **9.71% still in fp32**. `reduce_dtype=bfloat16`
+   plausibly halves that (~4.9% of the step) -- and the 8-GPU regression that killed it
+   before was measured at crops=25, a different operating point.
+3. **GEMMs, 21.85%** -- this is the actual arithmetic. Irreducible without fp8 on the LM.
+4. ViT -- **closed**.
