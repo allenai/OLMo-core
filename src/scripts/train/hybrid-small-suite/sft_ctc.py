@@ -1,27 +1,37 @@
 """
-CTC-suite SFT for the hybrid-ratio ladder: 4:1 vs 7:1, at matched size.
+CTC-suite SFT for hybrid (gated-delta-net + periodic full-attention) checkpoints.
 
-Runs entirely on this repo's standard SFT machinery (``sft_common.run_sft``) -- same optimizer,
-schedule, FSDP, activation checkpointing, packing and Beaker plumbing as ``sft_think.py``. The only
-additions are (a) architectures for the 7:1 ratio and (b) Scalable-Softmax, which both released
-arms of this comparison were trained with.
+Takes a **base checkpoint** and a **dataset** and finetunes one against the other, so this script is
+not specific to the 4:1 / 7:1 comparison it was written for -- point it at any `mainline_ladder`-style
+hybrid checkpoint and any olmo-core SFT shard dir.
+
+Runs on this repo's standard SFT machinery (``sft_common.run_sft``) -- same optimizer, schedule,
+FSDP, activation checkpointing, packing and Beaker plumbing as ``sft_think.py``. The additions are
+(a) an arbitrary attention period rather than a fixed 4:1, and (b) Scalable-Softmax, which the
+released hybrid checkpoints are trained with.
 
 Usage::
 
-    python src/scripts/train/hybrid-small-suite/sft_ctc.py dry_run  ctc-sft-1.4b-4to1 ai2/jupiter
-    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch   ctc-sft-1.4b-7to1 ai2/jupiter \\
-        --launch.num_nodes=1 --launch.priority=urgent --launch.budget=ai2/oe-other
+    # reproduce a published arm (geometry comes from --preset)
+    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter \
+        --preset 1.4b_7to1 --dataset /weka/.../shards_long32k
 
-The run name selects the arm: it must contain a size (``275m``/``450m``/``810m``/``1.4b``) and a
-ratio (``4to1`` or ``7to1``).
+    # any other checkpoint: give its geometry explicitly
+    python src/scripts/train/hybrid-small-suite/sft_ctc.py launch my-run ai2/jupiter \
+        --model /weka/.../step1234 --dataset /weka/.../my_shards \
+        --n-layers 32 --d-model 1280 --n-heads 16 --attn-every 8
+
+``--attn-every N`` is the full-attention period: layers where ``idx % N == N-1`` become attention
+layers, so 5 -> {4,9,14,19} and 8 -> {7,15,23,31}.
+
+⚠ The geometry flags must match the checkpoint being loaded. This script BUILDS the architecture
+from them; it does not read it back from the checkpoint. A mismatch either fails at load or quietly
+trains a different model against the right weights.
 
 Data
 ----
-``DATASET_PATH`` holds pre-tokenized olmo-core SFT shards, so nothing about CTC prompt construction
-is needed here -- the training side only reads ``token_ids_part_*.npy`` + ``labels_mask_*.npy``.
-The mix is 8 CTC tasks (absence, contradiction, nq, oolong, outlier, qdmatch_nq, strmatch,
-xabsence) at rungs 2k-32k, dolma2 tokenizer, answer-only loss with the terminating EOS included.
-See the README beside the shards for provenance and caveats.
+``--dataset`` holds pre-tokenized olmo-core SFT shards, so nothing about prompt construction is
+needed here -- training reads ``token_ids_part_*.npy`` + ``labels_mask_*.npy`` only.
 """
 
 import json
@@ -73,44 +83,28 @@ from olmo_core.nn.transformer import (  # noqa: E402
     TransformerConfig,
 )
 
-DATASET_PATH = (
+#: Default --dataset: the shard set the published checkpoints were trained on (15,183 instances).
+DEFAULT_DATASET = (
     "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_hybridish_sft/shards_long32k"
 )
 
 MAINLINE = "/weka/oe-training-default/ai2-llm/scaling-ladders/mainline"
 
-#: The two arms hold the number of FULL-ATTENTION layers fixed and vary how many gated-delta-net
-#: layers sit between them: 4:1 is `LLLLF` repeated, 7:1 is `LLLLLLLF`. Both use Scalable-Softmax.
-#: ``interval`` reproduces the checkpoints' own override indices exactly -- 5 -> {4,9,14,19},
-#: 8 -> {7,15,23,31} -- because ``build_model_config`` overrides where
-#: ``layer_idx % interval == interval - 1``.
+#: Geometry + checkpoint for the two published arms, so they can be reproduced without retyping.
+#: Any other model is specified with --model plus the geometry flags; these are a convenience, not
+#: the supported surface.
 #:
-#: ⚠ The arms are NOT parameter-matched (1.4b: 1.42B vs 2.15B, +51%). That is inherent to the
-#: design, not a flaw in this script, and must be quoted with any result.
-ARMS: Dict[str, dict] = {
+#: ⚠ The two arms are NOT parameter-matched (1.42B vs 2.15B, +51%): they hold the number of
+#: full-attention layers fixed at 4 and differ only by 12 extra gated-delta-net layers. Quote that
+#: with any result -- a 7:1 win is not an attention-ratio effect.
+PRESETS: Dict[str, dict] = {
     "1.4b_4to1": dict(
-        n_layers=20, interval=5, d_model=1280, n_heads=16,
-        load_path=f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/1.4B-Cx8/long-context/step34156/",
+        n_layers=20, attn_every=5, d_model=1280, n_heads=16,
+        model=f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/1.4B-Cx8/long-context/step34156/",
     ),
     "1.4b_7to1": dict(
-        n_layers=32, interval=8, d_model=1280, n_heads=16,
-        load_path=f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/1.4B-Cx8/long-context/step44124/",
-    ),
-    "275m_4to1": dict(
-        n_layers=10, interval=5, d_model=640, n_heads=8,
-        load_path=f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/275M-Cx8/long-context/step53839/",
-    ),
-    "275m_7to1": dict(
-        n_layers=16, interval=8, d_model=640, n_heads=8,
-        load_path=f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/275M-Cx8/long-context/step72023/",
-    ),
-    "450m_4to1": dict(
-        n_layers=15, interval=5, d_model=768, n_heads=8,
-        load_path=f"{MAINLINE}/yashasbls/v0.0.1-ssmax-a04f0e8e7236/450M-Cx8/long-context/step42919/",
-    ),
-    "450m_7to1": dict(
-        n_layers=24, interval=8, d_model=768, n_heads=8,
-        load_path=f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/450M-Cx8/long-context/step58015/",
+        n_layers=32, attn_every=8, d_model=1280, n_heads=16,
+        model=f"{MAINLINE}/tanushy/v0.0.1-seven_to_one_hybrid_ratio-c6e480e336d5/1.4B-Cx8/long-context/step44124/",
     ),
 }
 
@@ -180,47 +174,24 @@ def build_ctc_train_module_config(common, **_) -> TransformerTrainModuleConfig:
     )
 
 
-def parse_arm(run_name: str) -> str:
-    """
-    Resolve the arm key from a run name.
-
-    :param run_name: e.g. ``ctc-sft-1.4b-7to1``.
-
-    :returns: A key of :data:`ARMS`.
-
-    :raises SystemExit: If the name does not name exactly one size and one ratio. Guessing here
-        would silently train the wrong architecture against the right checkpoint.
-    """
-    name = run_name.lower().replace("-", "_")
-    sizes = [s for s in ("1.4b", "810m", "450m", "275m") if s in name]
-    ratios = [r for r in ("4to1", "7to1") if r in name]
-    if len(sizes) != 1 or len(ratios) != 1:
-        raise SystemExit(
-            f"run name {run_name!r} must contain exactly one size and one ratio; "
-            f"valid arms: {sorted(ARMS)}"
-        )
-    key = f"{sizes[0]}_{ratios[0]}"
-    if key not in ARMS:
-        raise SystemExit(f"no checkpoint registered for {key}; have {sorted(ARMS)}")
-    return key
-
-
 def build_ctc_model_config(
     common: CommonComponents,
-    arm: str,
+    geom: dict,
     attn_backend: AttentionBackendName = AttentionBackendName.flash_3,
 ) -> TransformerConfig:
     """
     Build the arm's architecture.
 
-    Mirrors :func:`arch.build_model_config` but takes ``n_layers``/``interval`` from :data:`ARMS`
-    rather than the per-size table (which encodes 4:1 only), and enables ``scalable_softmax`` on the
-    attention layers. SSMax adds a learned per-head ``ssmax_scale`` parameter; these checkpoints
-    carry it, so omitting it would leave those weights unloaded and run a different model.
+    Mirrors :func:`arch.build_model_config` but takes the geometry from ``geom`` rather than the
+    per-size table (which encodes 4:1 only), and enables ``scalable_softmax`` on the attention
+    layers. SSMax adds a learned per-head ``ssmax_scale`` parameter; the released hybrid
+    checkpoints carry it, so omitting it would leave those weights unloaded and run a different
+    model.
+
+    :param geom: ``n_layers``, ``d_model``, ``n_heads``, ``attn_every``.
     """
-    cfg = ARMS[arm]
-    d_model, n_heads = cfg["d_model"], cfg["n_heads"]
-    n_layers, interval = cfg["n_layers"], cfg["interval"]
+    d_model, n_heads = geom["d_model"], geom["n_heads"]
+    n_layers, interval = geom["n_layers"], geom["attn_every"]
     n_kv_heads, head_dim, dtype, expand_v = 8, 128, DType.float32, 2.0
 
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
@@ -333,7 +304,7 @@ def build_ctc_data_components(common, dataset_path: str):
     )
 
 
-def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
+def _trainer_with_epochs(common, size: str, sft_cfg: dict, tag: str, epochs: int):
     """Trainer config with this experiment's duration and a reachable W&B project.
 
     Two overrides on ``sft_common.build_trainer_config``:
@@ -343,8 +314,8 @@ def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
       account's API key. That is not a warning: ``wandb.init()`` raises and the trainer dies before
       step 1, after loading the checkpoint. Retarget rather than disable, so the loss curve exists.
     """
-    cfg = build_trainer_config(common, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", arm])
-    cfg.max_duration = Duration.epochs(EPOCHS)
+    cfg = build_trainer_config(common, model_size=size, sft_configs=sft_cfg, tags=["ctc-sft", tag])
+    cfg.max_duration = Duration.epochs(epochs)
     wandb_cb = (cfg.callbacks or {}).get("wandb")
     if wandb_cb is not None:
         wandb_cb.entity = WANDB_ENTITY
@@ -352,16 +323,75 @@ def _trainer_with_epochs(common, size: str, sft_cfg: dict, arm: str):
     return cfg
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
+def _parse_cli(argv):
+    """Pull this script's own flags out of argv, leaving olmo-core's dotlist overrides behind.
+
+    ``main()`` consumes ``sys.argv`` itself and rejects anything it does not recognise, so these
+    have to be removed rather than merely read.
+
+    :param argv: Full ``sys.argv``.
+
+    :returns: ``(args, remaining_argv, geom, model_path)``.
+
+    :raises SystemExit: If the geometry is under-specified -- guessing it would train a different
+        architecture against the given weights.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--preset", choices=sorted(PRESETS))
+    ap.add_argument("--model", help="base checkpoint to finetune from (olmo-core load_path)")
+    ap.add_argument("--dataset", default=DEFAULT_DATASET, help="olmo-core SFT shard dir")
+    ap.add_argument("--n-layers", type=int)
+    ap.add_argument("--d-model", type=int)
+    ap.add_argument("--n-heads", type=int)
+    ap.add_argument("--attn-every", type=int,
+                    help="full-attention period: layers where idx %% N == N-1 (5 -> 4,9,14,19)")
+    ap.add_argument("--lr", type=float, default=LR)
+    ap.add_argument("--epochs", type=int, default=EPOCHS)
+    args, rest = ap.parse_known_args(argv[4:])
+
+    geom = dict(PRESETS[args.preset]) if args.preset else {}
+    model_path = geom.pop("model", None)
+    for k in ("n_layers", "d_model", "n_heads", "attn_every"):
+        v = getattr(args, k)
+        if v is not None:
+            geom[k] = v
+    if args.model:
+        model_path = args.model
+
+    missing = [k for k in ("n_layers", "d_model", "n_heads", "attn_every") if k not in geom]
+    if missing or not model_path:
         raise SystemExit(
-            f"Usage: {sys.argv[0]} <dry_run|launch|train> <run_name> <cluster> [overrides...]\n"
-            f"Run name must name a size and a ratio, e.g. ctc-sft-1.4b-7to1. Arms: {sorted(ARMS)}"
+            "under-specified model.\n"
+            f"  missing geometry: {missing or 'none'}\n"
+            f"  base checkpoint : {model_path or 'MISSING (--model)'}\n"
+            "Give --preset for a published arm, or --model plus "
+            "--n-layers/--d-model/--n-heads/--attn-every. The geometry must match the checkpoint: "
+            "this script builds the architecture from it and does not read it back."
+        )
+    return args, argv[:4] + rest, geom, model_path
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        raise SystemExit(
+            f"Usage: {sys.argv[0]} <dry_run|launch|train> <run_name> <cluster> "
+            "(--preset ARM | --model PATH --n-layers N --d-model N --n-heads N --attn-every N) "
+            f"[--dataset DIR] [--lr F] [--epochs N] [overrides...]\n"
+            f"Presets: {sorted(PRESETS)}"
         )
 
-    arm = parse_arm(sys.argv[2])
-    size = arm.split("_")[0]
-    sft_cfg = {size: dict(lr=LR, global_batch_size=GLOBAL_BATCH_SIZE, load_path=ARMS[arm]["load_path"])}
+    args, argv, GEOM, MODEL_PATH = _parse_cli(sys.argv)
+    sys.argv = argv
+
+    size = args.preset.split("_")[0] if args.preset else "custom"
+    sft_cfg = {size: dict(lr=args.lr, global_batch_size=GLOBAL_BATCH_SIZE, load_path=MODEL_PATH)}
+    print(f"[sft_ctc] base checkpoint : {MODEL_PATH}")
+    print(f"[sft_ctc] dataset         : {args.dataset}")
+    print(f"[sft_ctc] geometry        : {GEOM}  (attention layers at "
+          f"{[i for i in range(GEOM['n_layers']) if i % GEOM['attn_every'] == GEOM['attn_every'] - 1]})")
+    print(f"[sft_ctc] lr {args.lr}  epochs {args.epochs}  seq_len {SEQUENCE_LENGTH}")
 
     CLUSTER_ATTN_BACKENDS = {
         "saturn": AttentionBackendName.flash_2,
@@ -380,10 +410,13 @@ if __name__ == "__main__":
         global_batch_size=GLOBAL_BATCH_SIZE,
         max_sequence_length=SEQUENCE_LENGTH,
         num_nodes=MODEL_CONFIGS[size]["num_nodes"] if size in MODEL_CONFIGS else 1,
-        data_config_builder=partial(build_ctc_data_components, dataset_path=DATASET_PATH),
-        model_config_builder=partial(build_ctc_model_config, arm=arm, attn_backend=attn_backend),
+        data_config_builder=partial(build_ctc_data_components, dataset_path=args.dataset),
+        model_config_builder=partial(build_ctc_model_config, geom=GEOM, attn_backend=attn_backend),
         train_module_config_builder=build_ctc_train_module_config,
-        trainer_config_builder=partial(_trainer_with_epochs, size=size, sft_cfg=sft_cfg, arm=arm),
+        trainer_config_builder=partial(
+            _trainer_with_epochs, size=size, sft_cfg=sft_cfg,
+            tag=args.preset or "custom", epochs=args.epochs,
+        ),
         include_default_evals=False,
         beaker_workspace="ai2/flex2",
         num_execution_units=1,
