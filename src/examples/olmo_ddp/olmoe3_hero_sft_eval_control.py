@@ -29,6 +29,9 @@ def spec_for(template, stage, run, commit):
     assert stage in (*BUNDLES, "qualify", "smoke")
     spec = copy.deepcopy(template)
     task = spec["tasks"][0]
+    # Do not inherit the shared Weka wheel cache from the frozen eval template.
+    # The virtualenv is node-local too, so uv can install Torch with hardlinks.
+    replace_env(task, {"UV_CACHE_DIR": "/tmp/hero-eval-uv-cache", "UV_LINK_MODE": "hardlink"})
     command = task["arguments"][0]
     model = str(model_path(run))
     if stage == "qualify":
