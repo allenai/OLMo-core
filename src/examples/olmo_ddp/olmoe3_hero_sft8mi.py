@@ -237,6 +237,17 @@ def watch():
             time.sleep(60)
 
 
+def train():
+    """Keep callback classes importable during config serialization and reconstruction."""
+    # Running the adapter as ``__main__`` with runpy leaves this wrapper in
+    # sys.modules['__main__']. Config.merge() then cannot resolve the adapter's
+    # __main__.Audit / __main__.Finish class names. Import it under its real name.
+    import olmoe3_qkgain_train as adapter
+
+    adapter.hero.qualified.apply_policy()
+    adapter.main(config_builder=adapter.builder(adapter.current()))
+
+
 if __name__ == '__main__':
     install_plan()
     mode = sys.argv[1]
@@ -258,6 +269,6 @@ if __name__ == '__main__':
         sys.argv.pop(1)
         runpy.run_module('olmoe3_qkgain_eval', run_name='__main__')
     elif mode == 'train':
-        runpy.run_module('olmoe3_qkgain_train', run_name='__main__')
+        train()
     else:
         raise ValueError(mode)

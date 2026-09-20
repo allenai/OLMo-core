@@ -28,6 +28,11 @@ def add_mounts(t):
 def training_spec(template,r,commit,hosts):
     s=copy.deepcopy(template);t=s['tasks'][0];s['tasks']=[t]
     t.update(name='train',replicas=r.nodes,leaderSelection=True,timeout='720h')
+    if r.nodes == 1:
+        # This field belongs to the multi-node template and Beaker rejects it
+        # for a single replica, even when that replica has eight GPUs.
+        t.pop('synchronizedStartTimeout', None)
+        t['leaderSelection'] = False
     t['resources']['gpuCount']=r.gpus//r.nodes
     t['arguments']=['python','src/examples/olmo_ddp/olmoe3_qkgain_node.py',r.run_id]
     t['context'].update(priority='urgent',minRuntime='6h',autoResume=True)
