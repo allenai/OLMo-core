@@ -77,9 +77,10 @@ def sft_data_plan(r):
     assert original['passed'] and original['sequence_length'] == r.sequence
     per_batch = r.batch // r.sequence
     steps = original['packed_instances']['train'] // per_batch
-    assert 2 * steps == r.end
+    epochs = getattr(r, 'epochs', 2)
+    assert isinstance(epochs, int) and epochs > 0 and epochs * steps == r.end
     return dict(original, batch_tokens=r.batch, steps_per_epoch=steps, total_steps=r.end,
-                total_steps_by_epochs={'2': r.end},
+                total_steps_by_epochs={str(epochs): r.end},
                 dropped_packed_instances_per_epoch=original['packed_instances']['train'] % per_batch)
 
 
