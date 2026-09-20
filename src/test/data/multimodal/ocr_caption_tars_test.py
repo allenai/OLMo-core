@@ -12,7 +12,11 @@ import tarfile
 import numpy as np
 import pytest
 
-from olmo_core.data.multimodal import OcrCaptionTarsDatasetConfig, TarShardIndex
+from olmo_core.data.multimodal import (
+    OcrCaptionTarsDatasetConfig,
+    TarShardIndex,
+    TextRichCaptionDatasetConfig,
+)
 from olmo_core.data.multimodal import ocr_caption_tars as ct
 from olmo_core.data.multimodal.mixtures import ocr as ocr_mix
 from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
@@ -332,86 +336,34 @@ def test_message_weight_and_truncation(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Train-only guard: tars have no splits, so held-out keys are dropped by name
-# ---------------------------------------------------------------------------
-
-
-def _write_heldout(tmp_path, train, validation):
-    from datasets import Dataset, DatasetDict
-
-    path = tmp_path / "hf_build"
-    DatasetDict(
-        {
-            "train": Dataset.from_dict({"id": train}),
-            "validation": Dataset.from_dict({"id": validation}),
-        }
-    ).save_to_disk(str(path))
-    return str(path)
-
-
-def test_heldout_keys_are_never_served(tmp_path):
-    root = _write_tars(tmp_path)
-    # `a_001` and `b_001` are the corpus's validation rows; its train rows are not held out.
-    heldout = _write_heldout(tmp_path, train=["a_000", "a_002"], validation=["a_001", "b_001"])
-    ds = _cfg(root, tmp_path, heldout_paths=(heldout,)).build(_FakeTok())
-    assert ds.n_heldout_dropped == 2
-    assert [ds.key(i) for i in range(len(ds))] == ["a_000", "a_002", "b_000"]
-    unguarded = _cfg(root, tmp_path).build(_FakeTok())
-    assert [unguarded.key(i) for i in range(len(unguarded))] == [k for _, k, _, _ in SAMPLES]
-
-
-def test_heldout_position_mapping_reads_the_right_sample(tmp_path):
-    """Dropping keys shifts positions; row i must still build from its own tar members."""
-    root = _write_tars(tmp_path)
-    heldout = _write_heldout(tmp_path, train=["x"], validation=["a_000"])
-    ds = _cfg(root, tmp_path, heldout_paths=(heldout,), strip_text_tags=False).build(_FakeTok())
-    assert ds.key(0) == "a_001"
-    _, json_bytes = ds.index.read_sample(int(ds._positions[0]))
-    assert json.loads(json_bytes)["caption"] == "A chart with three bars."
-
-
-def test_text_rich_sources_exclude_the_corpus_validation_rows():
-    for category in ("chart", "diagram", "doc", "graphic", "table"):
-        src = ocr_mix.OCR_TAR_SOURCES[f"text_rich_{category}"]
-        assert src.heldout and src.heldout[0].endswith(f"text_rich_caption/hf/{category}")
-    for name, src in ocr_mix.OCR_TAR_SOURCES.items():
-        if not name.startswith("text_rich_"):
-            assert src.heldout == (), name
-
-
-def test_unreadable_heldout_set_fails_the_build(tmp_path):
-    root = _write_tars(tmp_path)
-    with pytest.raises(OLMoConfigurationError, match="held-out set"):
-        _cfg(root, tmp_path, heldout_paths=(str(tmp_path / "missing"),)).build(_FakeTok())
-
-
-# ---------------------------------------------------------------------------
 # OCR registry + Molmo2-Stage1 wiring
 # ---------------------------------------------------------------------------
 
 
 def test_ocr_registry_shape():
     names = ocr_mix.OCR_SOURCE_NAMES
-    assert len(names) == len(set(names)) == 4 + 17
+    assert len(names) == len(set(names)) == 4 + 5 + 6
     assert set(ocr_mix.OLMOCR_MIX_SOURCES) <= set(names)
+    assert set(ocr_mix.TEXT_RICH_SOURCES) == {
+        f"text_rich_{c}" for c in ("chart", "diagram", "doc", "graphic", "table")
+    }
     assert set(ocr_mix.DUPLICATE_OLMOCR_SOURCES) == {"s2pdf", "iabooks"}
     # Default = train splits only: no re-rendered duplicates, no source of unverifiable split.
     assert set(ocr_mix.SPLIT_UNVERIFIED_SOURCES) == {"hiertext", "cocotext", "ubertext"}
-    assert set(ocr_mix.DEFAULT_OCR_SOURCES) == set(names) - {
-        "s2pdf",
-        "iabooks",
-        "hiertext",
-        "cocotext",
-        "ubertext",
-    }
+    assert set(ocr_mix.DEFAULT_OCR_SOURCES) == (
+        set(ocr_mix.OLMOCR_MIX_SOURCES) | set(ocr_mix.TEXT_RICH_SOURCES) | {"textocr"}
+    )
+    # Every tar source is a transcription source: <text>-wrapped text under one of two styles.
     styles = {src.style for src in ocr_mix.OCR_TAR_SOURCES.values()}
-    assert styles == {ocr_mix.OLMOCR_STYLE, ocr_mix.OCR_CAPTION_STYLE, ocr_mix.SCENE_TEXT_STYLE}
-    for name, src in ocr_mix.OCR_TAR_SOURCES.items():
-        # Transcription-type sources ship <text>-wrapped text; caption-type ones do not.
-        assert src.strip_text_tags == (src.style != ocr_mix.OCR_CAPTION_STYLE), name
+    assert styles == {ocr_mix.OLMOCR_STYLE, ocr_mix.SCENE_TEXT_STYLE}
+    assert all(src.strip_text_tags for src in ocr_mix.OCR_TAR_SOURCES.values())
     with pytest.raises(OLMoConfigurationError):
         ocr_mix.build_ocr_source(
-            "nope", _FakeTok(), olmocr=OlmOcrMixDatasetConfig(), tars=OcrCaptionTarsDatasetConfig()
+            "nope",
+            _FakeTok(),
+            olmocr=OlmOcrMixDatasetConfig(),
+            tars=OcrCaptionTarsDatasetConfig(),
+            text_rich=TextRichCaptionDatasetConfig(),
         )
 
 
@@ -423,7 +375,12 @@ def test_build_ocr_source_fills_tar_template(tmp_path):
         max_crops=1, index_cache_dir=str(tmp_path / "cache"), system_prompt="style_and_length_v3"
     )
     ds = ocr_mix.build_ocr_source(
-        "cocotext", _FakeTok(), olmocr=OlmOcrMixDatasetConfig(), tars=tars, data_root=str(root)
+        "cocotext",
+        _FakeTok(),
+        olmocr=OlmOcrMixDatasetConfig(),
+        tars=tars,
+        text_rich=TextRichCaptionDatasetConfig(),
+        data_root=str(root),
     )
     assert ds.config.style == "scene_text" and ds.config.strip_text_tags is True
     assert ds.config.dataset_path == str(root / "scene_text_tars" / "cocotext_v6_tars")
@@ -457,6 +414,44 @@ def test_stage1_ocr_group_wiring():
     assert {"ocr_rate", "ocr_sources", "olmocr", "ocr_tars", "ocr_data_root"} <= fields
 
 
+def test_ocr_group_is_general_ocr_only():
+    """Images from VQA datasets (the Cambrian subsets) and caption-target sources (TextCaps) are
+    left for a later stage; so is the single-caption build the three-level one supersedes."""
+    for name in ocr_mix.OCR_SOURCE_NAMES:
+        assert not name.startswith("cambrian_") and name != "textcaps", name
+    assert not any(src.relpath.startswith("text_rich") for src in ocr_mix.OCR_TAR_SOURCES.values())
+
+
+def test_ocr_rate_is_split_by_task_before_size():
+    names = ["olmocr_documents", "olmocr_books", "text_rich_chart", "textocr"]
+    assert [ocr_mix.ocr_task(n) for n in names] == [
+        ocr_mix.TRANSCRIPTION,
+        ocr_mix.TRANSCRIPTION,
+        ocr_mix.FIGURE_CAPTION,
+        ocr_mix.TRANSCRIPTION,
+    ]
+    assert ocr_mix.ocr_task_shares(names) == [0.5, 0.5, 0.5, 0.5]
+    # A single task takes the whole rate.
+    assert ocr_mix.ocr_task_shares(["olmocr_books", "textocr"]) == [1.0, 1.0]
+    assert ocr_mix.ocr_task_shares(["text_rich_doc"]) == [1.0]
+    with pytest.raises(OLMoConfigurationError):
+        ocr_mix.ocr_task("cambrian_ocr_vqa")
+
+
+def test_stage1_ocr_fractions_give_each_task_half():
+    mod = _load_stage1_module()
+    names = ["olmocr_documents", "olmocr_books", "text_rich_chart", "text_rich_doc", "textocr"]
+    sizes = [400, 100, 90_000, 10_000, 100]
+    frac = mod._ocr_fractions(names, sizes)
+    np.testing.assert_allclose(frac.sum(), 1.0)
+    np.testing.assert_allclose(frac[[0, 1, 4]].sum(), 0.5)  # transcription
+    np.testing.assert_allclose(frac[[2, 3]].sum(), 0.5)  # figure captions, however large
+    np.testing.assert_allclose(frac[[0, 1, 4]], 0.5 * np.array([20, 10, 10]) / 40)  # sqrt inside
+    np.testing.assert_allclose(frac[[2, 3]], 0.5 * np.array([300, 100]) / 400)
+    with pytest.raises(OLMoConfigurationError, match="text_rich_doc"):
+        mod._ocr_fractions(names, [400, 100, 90_000, 0, 100])  # an empty source is named
+
+
 def _data_config(**kw):
     """The data-mixture fields `validate_data_config` reads, without the Beaker launch that the
     full `build_config` resolves (which needs cluster access and a pushed commit)."""
@@ -470,6 +465,7 @@ def _data_config(**kw):
         ocr_sources=ocr_mix.DEFAULT_OCR_SOURCES,
         olmocr=OlmOcrMixDatasetConfig(),
         ocr_tars=OcrCaptionTarsDatasetConfig(),
+        text_rich=TextRichCaptionDatasetConfig(),
     )
     fields.update(kw)
     return SimpleNamespace(**fields)
@@ -483,10 +479,16 @@ def test_stage1_refuses_per_source_ocr_tar_overrides():
         {"dataset_path": "/somewhere/else"},
         {"style": "long_caption"},
         {"strip_text_tags": False},
-        {"heldout_paths": ("/some/heldout/set",)},
     ):
         with pytest.raises(OLMoConfigurationError, match="per OCR source"):
             mod.validate_data_config(_data_config(ocr_tars=OcrCaptionTarsDatasetConfig(**override)))
+    # The same holds for the other two templates' per-source fields.
+    for kw in (
+        {"olmocr": OlmOcrMixDatasetConfig(subset="books")},
+        {"text_rich": TextRichCaptionDatasetConfig(category="doc")},
+    ):
+        with pytest.raises(OLMoConfigurationError, match="per OCR source"):
+            mod.validate_data_config(_data_config(**kw))
     mod.validate_data_config(_data_config())  # the untouched template passes
     # The supported way to relocate the tree is a top-level field, and it reaches the sources.
     assert "ocr_data_root" in mod.ExperimentConfig.__dataclass_fields__

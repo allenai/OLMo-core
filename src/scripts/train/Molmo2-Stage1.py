@@ -22,13 +22,15 @@ sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, 
 PixMo-Points build with sub-sampled absence queries, plus the audited PixMo-Count build). The v2
 knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2.filter_audit=true``.
 
-``--ocr_rate`` (default 0) adds the OCR group: olmOCR-mix page transcription (rendered from PDFs,
-needs ``pypdfium2``) plus the oe-encoder caption tars (text-rich captions, Cambrian OCR subsets,
-TextCaps, TextOCR), paid for by the caption group. Every default source is a train split only;
-the scene-text tars whose split cannot be verified are selectable but not default.
-``--ocr_sources=[...]`` picks the sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`);
-the ``olmocr`` / ``ocr_tars`` config fields are the two source templates, e.g.
-``--olmocr.languages=null``, and ``--ocr_data_root`` relocates the tar tree.
+``--ocr_rate`` (default 0) adds the OCR group, paid for by the caption group: olmOCR-mix page
+transcription (rendered from PDFs, needs ``pypdfium2``), TextOCR scene text, and mm_olmo's
+three-level captions of text-rich figures. The user turn of every OCR source is a style tag with
+no question. The rate is split evenly between transcription and figure captions, then by
+sqrt(size) within each. Every default source is a train split only; the scene-text tars whose
+split cannot be verified are selectable but not default. ``--ocr_sources=[...]`` picks the
+sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` /
+``text_rich`` config fields are the three source templates, e.g. ``--olmocr.languages=null``,
+and ``--ocr_data_root`` relocates the tar tree.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -61,6 +63,7 @@ from olmo_core.data.multimodal import (
     PixMoCountV2DatasetConfig,
     PixMoPointsDatasetConfig,
     PixMoPointsV2DatasetConfig,
+    TextRichCaptionDatasetConfig,
     Tulu4DatasetConfig,
 )
 from olmo_core.data.multimodal.mixtures.ocr import (
@@ -69,6 +72,8 @@ from olmo_core.data.multimodal.mixtures.ocr import (
     OCR_SOURCE_NAMES,
     SPLIT_UNVERIFIED_SOURCES,
     build_ocr_source,
+    ocr_task,
+    ocr_task_shares,
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
@@ -281,19 +286,22 @@ POINTING_DATASET_KWARGS = {
 # remainder (1 - POINTING_RATE - NLP_RATE - OCR_RATE). Set all three to 0.0 for a caption-only run.
 POINTING_RATE = 0.30
 NLP_RATE = 0.10
-# The OCR group (`olmo_core.data.multimodal.mixtures.ocr`): olmOCR-mix page transcription
-# (mm_olmo train_molmo3_stage1 `_base_mixture`, 0.075 there) plus the oe-encoder caption tars
-# (text-rich captions, Cambrian OCR subsets, TextCaps, TextOCR), one dataset per source and
-# the group's rate split by sqrt(size) like mm_olmo's default `root_size_factor`. Paid for out of
-# the caption group. Off by default so the default run stays the released Molmo2 pretrain
-# mixture; `--ocr_rate=0.15` enables it (mm_olmo spends 0.075 + 0.075 on its two OCR groups).
+# The OCR group (`olmo_core.data.multimodal.mixtures.ocr`): general OCR data only, i.e. an image
+# in and its text (or a description of a text-rich figure) out, with no question in the prompt.
+# It is mm_olmo's two molmo3 stage-1 OCR groups (`train_molmo3_stage1._base_mixture`, 0.075 each)
+# -- olmOCR-mix page transcription and the three-level figure captions -- plus TextOCR scene
+# text. The rate is split evenly between the two tasks, transcription and figure captions, as
+# mm_olmo's two groups are, then by sqrt(size) within a task (mm_olmo's `root_size_factor`).
+# Paid for out of the caption group. Off by default so the default run stays the released
+# Molmo2 pretrain mixture; `--ocr_rate=0.15` enables it at mm_olmo's total.
 # `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
 # are the same pages as olmOCR-mix documents / books, and the HierText / COCO-Text / UberText
 # tars, whose split cannot be verified. olmOCR-mix pages are rendered from PDFs at load time,
 # which needs `pypdfium2` (installed by the launch `post_setup` below).
 OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
-# The OCR user turn is the bare `<style>:` tag (`olmocr:` / `ocr_caption:` / `scene_text:`),
+# The OCR user turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
+# `ocr_caption_{high,mid,low}_level:`),
 # mm_olmo's molmo3 stage-1 `style_and_length_v3` family (v3 reserves the length bucket for
 # captions / transcripts). This deliberately differs from the `style_and_length_v2` family the
 # caption and pointing sources use: mm_olmo never trains olmOCR-mix under v2, so v3 is the form
@@ -365,6 +373,9 @@ class ExperimentConfig(Config):
     serves every tar source, so ``dataset_path`` / ``style`` / ``strip_text_tags`` are set per
     source from the registry and setting them here is refused -- relocate the whole tree with
     ``--ocr_data_root`` instead."""
+    text_rich: TextRichCaptionDatasetConfig
+    """Template for the figure-caption OCR sources (``category`` is set per source); used when
+    ``ocr_rate > 0``."""
     model_size: str = MODEL_SIZE
     """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
     the released checkpoint used by ``--init_from=molmo2``."""
@@ -524,17 +535,28 @@ def validate_data_config(config) -> None:
         raise OLMoConfigurationError(f"ocr_sources has duplicates: {config.ocr_sources}")
     # `build_ocr_source` sets these per source, so a value here would be accepted, saved into the
     # run config and then ignored. Fail instead of pretending it took effect.
-    per_source = OcrCaptionTarsDatasetConfig()
-    for field, hint in (
-        ("dataset_path", "use --ocr_data_root to relocate the whole tar tree"),
-        ("style", "the style is fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
-        ("strip_text_tags", "set per source by mixtures.ocr.OCR_TAR_SOURCES"),
-        ("heldout_paths", "the held-out sets are fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
+    for template, default, fields in (
+        (
+            "ocr_tars",
+            OcrCaptionTarsDatasetConfig(),
+            (
+                ("dataset_path", "use --ocr_data_root to relocate the whole tar tree"),
+                ("style", "the style is fixed per source by mixtures.ocr.OCR_TAR_SOURCES"),
+                ("strip_text_tags", "set per source by mixtures.ocr.OCR_TAR_SOURCES"),
+            ),
+        ),
+        ("olmocr", OlmOcrMixDatasetConfig(), (("subset", "pick subsets with --ocr_sources"),)),
+        (
+            "text_rich",
+            TextRichCaptionDatasetConfig(),
+            (("category", "pick categories with --ocr_sources"),),
+        ),
     ):
-        if getattr(config.ocr_tars, field) != getattr(per_source, field):
-            raise OLMoConfigurationError(
-                f"--ocr_tars.{field} is set per OCR source and would be ignored here; {hint}"
-            )
+        for field, hint in fields:
+            if getattr(getattr(config, template), field) != getattr(default, field):
+                raise OLMoConfigurationError(
+                    f"--{template}.{field} is set per OCR source and would be ignored here; {hint}"
+                )
     unverified = [n for n in config.ocr_sources if n in SPLIT_UNVERIFIED_SOURCES]
     if unverified and config.ocr_rate > 0:
         log.warning(
@@ -624,6 +646,13 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         system_prompt=OCR_SYSTEM_PROMPT,
     )
     ocr_tars_config = OcrCaptionTarsDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+        system_prompt=OCR_SYSTEM_PROMPT,
+    )
+    # mm_olmo's `figure_ocr` group: three captions per image, as three branches.
+    text_rich_config = TextRichCaptionDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="none",
@@ -777,6 +806,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         count_v2=count_v2_config,
         olmocr=olmocr_config,
         ocr_tars=ocr_tars_config,
+        text_rich=text_rich_config,
     ).merge(overrides)
 
     validate_data_config(config)
@@ -959,6 +989,27 @@ def _size_fractions(sizes: Sequence[int], rule: str, names: Optional[Sequence[st
     return frac / frac.sum()
 
 
+def _ocr_fractions(names: Sequence[str], sizes: Sequence[int]):
+    """How the OCR group's rate is split among its sources.
+
+    Two levels, like mm_olmo's two OCR groups. The rate is first divided between the tasks,
+    transcription and figure captions (``mixtures.ocr.OCR_TASK_SHARES``); each task's share is
+    then divided among its sources by sqrt(size). A single flat split would be decided by the
+    figure captions' much larger row counts.
+    """
+    import numpy as np
+
+    shares = ocr_task_shares(names)
+    tasks = [ocr_task(n) for n in names]
+    out = np.zeros(len(names), dtype=np.float64)
+    for task in dict.fromkeys(tasks):
+        idx = [i for i, t in enumerate(tasks) if t == task]
+        within = _size_fractions([sizes[i] for i in idx], "sqrt", [names[i] for i in idx])
+        for i, f in zip(idx, within):
+            out[i] = shares[i] * float(f)
+    return out
+
+
 def _pointing_group_fractions(
     sizes: Sequence[int], pointing_data: str, names: Optional[Sequence[str]] = None
 ):
@@ -1047,11 +1098,12 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                 tokenizer,
                 olmocr=config.olmocr,
                 tars=config.ocr_tars,
+                text_rich=config.text_rich,
                 data_root=config.ocr_data_root,
             )
             for name in config.ocr_sources
         ]
-        frac = _size_fractions([len(d) for d in ocr], "sqrt", list(config.ocr_sources))
+        frac = _ocr_fractions(list(config.ocr_sources), [len(d) for d in ocr])
         datasets += ocr
         weights += [o * float(f) for f in frac]
         names += list(config.ocr_sources)
@@ -1151,7 +1203,7 @@ Print the config:
 Audited (v2) pointing sources, dropping audit-failed points instead of marking them:
 › python {sys.argv[0]} launch molmo2-stage1-v2pts --pointing_data=v2 --pointing_v2.filter_audit=true
 
-OCR group at 15% (olmOCR-mix + text-rich / Cambrian / TextCaps captions + TextOCR):
+OCR group at 15% (olmOCR-mix + TextOCR transcription, and three-level figure captions):
 › python {sys.argv[0]} launch molmo2-stage1-ocr --ocr_rate=0.15
 Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \

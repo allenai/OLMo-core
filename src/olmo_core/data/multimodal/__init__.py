@@ -73,6 +73,7 @@ from .pixmo_cap_qa import PixMoCapQaDataset, PixMoCapQaDatasetConfig
 from .message_weight import MessageWeight, apply_message_weight_to_loss_masks
 from .mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
 from .sft_formatter import SftFormatter
+from .text_rich_caption import TextRichCaptionDataset, TextRichCaptionDatasetConfig
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
@@ -99,6 +100,8 @@ __all__ = [
     "OlmOcrMixDataset",
     "OlmOcrMixDatasetConfig",
     "OcrCaptionTarsDataset",
+    "TextRichCaptionDataset",
+    "TextRichCaptionDatasetConfig",
     "OcrCaptionTarsDatasetConfig",
     "TarShardIndex",
     "Tulu4Dataset",

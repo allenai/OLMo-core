@@ -1,85 +1,81 @@
 """The OCR source group for Molmo2 stage-1 (``Molmo2-Stage1.py --ocr_rate``).
 
-Twenty-one image -> free-text sources of three kinds (16 of them in
-:data:`DEFAULT_OCR_SOURCES`), each a separate dataset sharing the group's rate (split by
-sqrt(size), mm_olmo's default ``root_size_factor``):
+Every source is an image -> free-text task whose user turn is a style tag and nothing else: no
+question, no instruction. There are two tasks, and the group's rate is divided between them
+before it is divided among sources (:data:`OCR_TASK_SHARES`):
 
-* **page transcription** (style ``olmocr``): the four olmOCR-mix-1025 subsets
-  (:class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`, rendered from PDFs), plus
-  the oe-encoder ``olmocr_v6_tars`` ``s2pdf`` / ``iabooks`` (pre-rendered JPEGs, re-transcribed).
-* **text-rich captions** (style ``ocr_caption``): synthetic charts / diagrams / documents /
-  graphics / tables, the Cambrian OCR-heavy subsets (arxivqa, ocr_vqa, screen_qa, llavar, oodvqa)
-  and TextCaps -- one dense natural-language caption per image.
-* **scene text** (style ``scene_text``): TextOCR, HierText, COCO-Text and UberText, whose target
-  is the text visible in the photo.
+* **transcription** -- write out the text in the image.
+  The four olmOCR-mix-1025 subsets (style ``olmocr``; PDF pages rendered at load time, see
+  :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), and the scene-text tars
+  (style ``scene_text``; TextOCR, plus HierText / COCO-Text / UberText).
+* **figure captions** -- describe a text-rich figure at three altitudes.
+  The five ``text_rich_*`` categories (styles ``ocr_caption_{high,mid,low}_level``; see
+  :class:`~olmo_core.data.multimodal.text_rich_caption.TextRichCaptionDatasetConfig`).
 
-``s2pdf`` and ``iabooks`` are the SAME pages as olmOCR-mix ``documents`` / ``books`` train
-(97.4% / 99.4% of their page ids, and every one of their documents; none of the eval pages), only
-rendered and transcribed by a different pipeline. They are registered so either rendering can be
-chosen, but :data:`DEFAULT_OCR_SOURCES` leaves them out so a page is not counted twice.
+olmOCR-mix and the figure captions are mm_olmo's two molmo3 stage-1 OCR groups
+(``train_molmo3_stage1._base_mixture``: ``olmo_ocr`` and ``figure_ocr``, 0.075 each), which is why
+the two tasks split the rate evenly. Within a task the split is by sqrt(size), mm_olmo's default
+``root_size_factor``. A single flat sqrt(size) split would instead hand the figure captions 73%
+of the rate, because their five categories are each larger than all of olmOCR-mix.
+
+**What is deliberately not here.** Sources whose images come from VQA datasets (the Cambrian
+subsets) or whose target is a caption rather than the image's text (TextCaps) are not general OCR
+data and are left for a later stage. The single-caption ``text_rich_caption_v6_tars`` build is
+superseded by the three-level build above, which holds the same images.
 
 **Train splits only.** A source is in :data:`DEFAULT_OCR_SOURCES` only if it is known to hold
 training data and nothing else:
 
 * olmOCR-mix reads ``<subset>_train.parquet``; the training script refuses any other split.
-* The ``text_rich_*`` tars hold every image of mm_olmo's build, including the 2,048 per category
-  that build holds out as ``validation`` (4 of 1,000 sampled ``chart`` keys are validation ids,
-  the 0.58% base rate). Those keys are excluded at build time (:attr:`OcrTarSource.heldout`).
-* TextCaps and TextOCR keys are OpenImages ids: 1,200 sampled from the first, middle and last
-  shard of each are all TextVQA *train* images, none of its 3,166 val or 3,289 test images.
-* The Cambrian subsets come from Cambrian-10M, a training corpus with no held-out split.
+* The figure captions read the ``train`` split of mm_olmo's build, which holds 2,048 rows per
+  category out as ``validation``; the dataset has no option to read them.
+* TextOCR keys are OpenImages ids: 1,200 sampled from the first, middle and last shard are all
+  TextVQA *train* images, none of its 3,166 val or 3,289 test images.
 * HierText, COCO-Text and UberText have official val / test splits, but their tar keys are
   synthetic (``cocotext_0000000``) and the JSON carries no split, so which splits the tars hold
-  cannot be established from the data. They are registered but not default
+  cannot be established from the data. Registered, not default
   (:data:`SPLIT_UNVERIFIED_SOURCES`).
 
-TextCaps' ``caption`` is its five reference captions concatenated into one string (``n_refs``),
-which is what the tars ship; it stays in the default group as a caption source but is the one to
-drop first if that target form is unwanted.
-
-**The ``text_rich_*`` sources are one third of mm_olmo's ``figure_ocr`` group, by design of the
-tar build, not of this port.** They are the same images as mm_olmo's ``TextRichCaptionConfig``
-(``molmo3_datasets/text_rich_caption``), which captions each image at three granularities and
-emits all three as branches (``text_rich_caption_datasets.py:173-183``). The ``*_v6_tars`` build
-carries a single ``caption`` field, and it is byte-identical to that build's ``mid_level``:
-verified on ``chart/HTMLChartPipeline_area_0-0``, where high / mid / low are 145 / 645 / 2262
-chars. The missing ``low_level`` -- consistently 2-4k chars, the dense read-out of everything on
-the page -- is the most OCR-relevant part of the group, so this group's caption mass is roughly a
-fifth of mm_olmo's. Reading all three levels needs the HF build rather than these tars; that is a
-separate loader and is left to a follow-on.
-
-So ``--ocr_rate`` with :data:`DEFAULT_OCR_SOURCES` is NOT mm_olmo's OCR mixture. It is olmOCR-mix,
-plus the mid-level slice of ``figure_ocr``, plus the Cambrian / TextCaps / scene-text sources that
-mm_olmo's stage 1 does not carry at all.
+``s2pdf`` and ``iabooks`` are the SAME pages as olmOCR-mix ``documents`` / ``books`` train (97.4%
+/ 99.4% of their page ids, and every one of their documents; none of the eval pages), rendered
+and transcribed by a different pipeline. Registered so either rendering can be chosen, but not
+default, so a page is not counted twice.
 """
 
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
-from olmo_core.data.multimodal.olmocr import OlmOcrMixDatasetConfig
-from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, TEXT_RICH_CAPTION
+from olmo_core.data.multimodal.olmocr import OLMOCR_STYLE, OlmOcrMixDatasetConfig
+from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
+from olmo_core.data.multimodal.text_rich_caption import (
+    CATEGORIES as TEXT_RICH_CATEGORIES,
+)
+from olmo_core.data.multimodal.text_rich_caption import TextRichCaptionDatasetConfig
 from olmo_core.exceptions import OLMoConfigurationError
 
 __all__ = [
     "OcrTarSource",
     "OCR_TAR_SOURCES",
     "OLMOCR_MIX_SOURCES",
+    "TEXT_RICH_SOURCES",
     "OCR_SOURCE_NAMES",
     "DUPLICATE_OLMOCR_SOURCES",
     "SPLIT_UNVERIFIED_SOURCES",
     "DEFAULT_OCR_SOURCES",
+    "TRANSCRIPTION",
+    "FIGURE_CAPTION",
+    "OCR_TASK_SHARES",
+    "ocr_task",
+    "ocr_task_shares",
     "OLMOCR_STYLE",
-    "OCR_CAPTION_STYLE",
     "SCENE_TEXT_STYLE",
     "build_ocr_source",
 ]
 
-OLMOCR_STYLE = "olmocr"
-OCR_CAPTION_STYLE = "ocr_caption"
 SCENE_TEXT_STYLE = "scene_text"
 
 
@@ -92,43 +88,15 @@ class OcrTarSource:
     style: str
     strip_text_tags: bool
     """Whether the tars wrap the text in ``<text>...</text>`` (transcription-type sources)."""
-    heldout: Tuple[str, ...] = ()
-    """Held-out sets whose ``id`` column names tar keys that must not be trained on (see
-    :func:`~olmo_core.data.multimodal.sft_common.heldout_ids`). Tars carry no split, so this
-    is how a source built from a corpus with a validation split stays train-only."""
 
 
-def _text_rich(category: str) -> OcrTarSource:
-    """A ``text_rich_caption_v6_tars`` category, minus mm_olmo's held-out rows of it."""
-    return OcrTarSource(
-        f"text_rich_caption_v6_tars/{category}",
-        OCR_CAPTION_STYLE,
-        False,
-        heldout=(os.path.join(TEXT_RICH_CAPTION, "hf", category),),
-    )
-
-
+#: Transcription tars: the target is the text visible in the image, ``<text>``-wrapped.
 OCR_TAR_SOURCES: Dict[str, OcrTarSource] = {
-    # Synthetic text-rich images, one dense caption each (~800 chars).
-    "text_rich_chart": _text_rich("chart"),
-    "text_rich_diagram": _text_rich("diagram"),
-    "text_rich_doc": _text_rich("doc"),
-    "text_rich_graphic": _text_rich("graphic"),
-    "text_rich_table": _text_rich("table"),
-    # Cambrian's OCR-heavy subsets, re-captioned.
-    "cambrian_arxivqa": OcrTarSource("cambrian_v6_tars/cambrian_arxivqa", OCR_CAPTION_STYLE, False),
-    "cambrian_ocr_vqa": OcrTarSource("cambrian_v6_tars/cambrian_ocr_vqa", OCR_CAPTION_STYLE, False),
-    "cambrian_screen_qa": OcrTarSource(
-        "cambrian_v6_tars/cambrian_screen_qa", OCR_CAPTION_STYLE, False
-    ),
-    "cambrian_llavar": OcrTarSource("cambrian_v6_tars/cambrian_llavar", OCR_CAPTION_STYLE, False),
-    "cambrian_oodvqa": OcrTarSource("cambrian_v6_tars/cambrian_oodvqa", OCR_CAPTION_STYLE, False),
     # olmOCR pages, pre-rendered; duplicates of olmOCR-mix documents / books (see module doc).
     "s2pdf": OcrTarSource("olmocr_v6_tars/s2pdf", OLMOCR_STYLE, True),
     "iabooks": OcrTarSource("olmocr_v6_tars/iabooks", OLMOCR_STYLE, True),
     # Scene text.
     "textocr": OcrTarSource("textocr_v6_tars", SCENE_TEXT_STYLE, True),
-    "textcaps": OcrTarSource("textcaps_v6_tars", OCR_CAPTION_STYLE, False),
     "hiertext": OcrTarSource("scene_text_tars/hiertext_v6_tars", SCENE_TEXT_STYLE, True),
     "cocotext": OcrTarSource("scene_text_tars/cocotext_v6_tars", SCENE_TEXT_STYLE, True),
     "ubertext": OcrTarSource("scene_text_tars/ubertext_v6_tars", SCENE_TEXT_STYLE, True),
@@ -142,7 +110,12 @@ OLMOCR_MIX_SOURCES: Dict[str, str] = {
     "olmocr_national_archives": "national_archives",
 }
 
-OCR_SOURCE_NAMES: Tuple[str, ...] = tuple(OLMOCR_MIX_SOURCES) + tuple(OCR_TAR_SOURCES)
+#: Figure-caption sources: group name -> ``TextRichCaptionDatasetConfig.category``.
+TEXT_RICH_SOURCES: Dict[str, str] = {f"text_rich_{c}": c for c in TEXT_RICH_CATEGORIES}
+
+OCR_SOURCE_NAMES: Tuple[str, ...] = (
+    tuple(OLMOCR_MIX_SOURCES) + tuple(TEXT_RICH_SOURCES) + tuple(OCR_TAR_SOURCES)
+)
 
 #: Tar sources whose pages are already in an olmOCR-mix train subset (see module doc).
 DUPLICATE_OLMOCR_SOURCES: Dict[str, str] = {"s2pdf": "olmocr_documents", "iabooks": "olmocr_books"}
@@ -157,6 +130,38 @@ DEFAULT_OCR_SOURCES: Tuple[str, ...] = tuple(
     if n not in DUPLICATE_OLMOCR_SOURCES and n not in SPLIT_UNVERIFIED_SOURCES
 )
 
+TRANSCRIPTION = "transcription"
+FIGURE_CAPTION = "figure_caption"
+
+#: How the group's rate is divided between the two tasks before any source sees it: mm_olmo's
+#: ``olmo_ocr`` / ``figure_ocr`` groups at 0.075 each. Renormalised over the tasks a run selects.
+OCR_TASK_SHARES: Dict[str, float] = {TRANSCRIPTION: 0.5, FIGURE_CAPTION: 0.5}
+
+
+def ocr_task(name: str) -> str:
+    """The task (:data:`TRANSCRIPTION` or :data:`FIGURE_CAPTION`) of an OCR source."""
+    if name in TEXT_RICH_SOURCES:
+        return FIGURE_CAPTION
+    if name in OLMOCR_MIX_SOURCES or name in OCR_TAR_SOURCES:
+        return TRANSCRIPTION
+    raise OLMoConfigurationError(f"Unknown OCR source {name!r}; expected one of {OCR_SOURCE_NAMES}")
+
+
+def ocr_task_shares(names: Sequence[str]) -> List[float]:
+    """For each source in ``names``, the share of the OCR rate that its *task* receives.
+
+    The shares of the tasks present are renormalised to sum to 1, so selecting sources of a single
+    task gives that task the whole rate. Dividing a task's share among its own sources (by size)
+    is the caller's job.
+
+    :param names: OCR source names.
+
+    :returns: One task share per name, in order. Sources of the same task repeat the same value.
+    """
+    tasks = [ocr_task(n) for n in names]
+    total = sum(OCR_TASK_SHARES[t] for t in set(tasks))
+    return [OCR_TASK_SHARES[t] / total for t in tasks]
+
 
 def build_ocr_source(
     name: str,
@@ -164,23 +169,26 @@ def build_ocr_source(
     *,
     olmocr: OlmOcrMixDatasetConfig,
     tars: OcrCaptionTarsDatasetConfig,
+    text_rich: TextRichCaptionDatasetConfig,
     data_root: str = OE_ENCODER_DATA,
 ):
-    """Build one OCR source by name from the two template configs.
+    """Build one OCR source by name from the three template configs.
 
     :param olmocr: template for the olmOCR-mix sources; its ``subset`` is overridden.
-    :param tars: template for the caption-tars sources; ``dataset_path``, ``style``,
-        ``strip_text_tags`` and ``heldout_paths`` are overridden from :data:`OCR_TAR_SOURCES`.
+    :param tars: template for the caption-tars sources; ``dataset_path``, ``style`` and
+        ``strip_text_tags`` are overridden from :data:`OCR_TAR_SOURCES`.
+    :param text_rich: template for the figure-caption sources; its ``category`` is overridden.
     :param data_root: where the oe-encoder tar directories live.
     """
     if name in OLMOCR_MIX_SOURCES:
         return olmocr.replace(subset=OLMOCR_MIX_SOURCES[name]).build(tokenizer)
+    if name in TEXT_RICH_SOURCES:
+        return text_rich.replace(category=TEXT_RICH_SOURCES[name]).build(tokenizer)
     if name in OCR_TAR_SOURCES:
         src = OCR_TAR_SOURCES[name]
         return tars.replace(
             dataset_path=os.path.join(data_root, src.relpath),
             style=src.style,
             strip_text_tags=src.strip_text_tags,
-            heldout_paths=src.heldout,
         ).build(tokenizer)
     raise OLMoConfigurationError(f"Unknown OCR source {name!r}; expected one of {OCR_SOURCE_NAMES}")

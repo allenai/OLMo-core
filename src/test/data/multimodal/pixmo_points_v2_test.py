@@ -325,6 +325,47 @@ def test_default_heldout_sets_are_the_real_validation_and_eval_sets():
 
 
 # ---------------------------------------------------------------------------
+# No segmentation: masks in the data never turn into anything
+# ---------------------------------------------------------------------------
+
+
+def test_masks_in_the_data_never_become_segmentation(tmp_path):
+    """The v17 build ships masks; this port has no segmentation path. mm_olmo keeps an
+    annotation that is over ``max_points`` when it carries masks and renders it as ``pixmo_seg``.
+    Here a mask changes nothing: that annotation is dropped and every branch is a pointing one."""
+    mask = "rle-string-the-loader-must-never-decode"
+    rows = {
+        "image": [_image(tmp_path)],
+        "image_url": ["u0"],
+        "source": ["pointing"],
+        "annotations": [
+            [
+                dict(_anno("Cup", [[10.0, 20.0, 1.0]], "correct"), masks=[mask]),
+                dict(_anno("Crowd", [[1.0, 1.0, 0.0]] * 3, "correct"), masks=[mask] * 3),
+            ]
+        ],
+        "min_points": [1],
+        "max_points": [3],
+        "min_masks": [1],
+        "paired_negatives": [[]],
+        "negatives": [[]],
+        "easy_negatives": [[]],
+        "rare_negatives": [[]],
+        "paired_negatives_v2": [[]],
+    }
+    path = tmp_path / "with-masks"
+    Dataset.from_dict(rows).save_to_disk(str(path))
+    ds = _points_cfg(str(path), max_points=2, style=("point_count", "pointing")).build(_FakeTok())
+    messages, _ = ds.format_row(_row0(ds), np.random.RandomState(0))
+    assert _labels(messages) == ["Cup"]  # "Crowd" is over max_points; its masks do not rescue it
+    assert {m["style"] for m in messages} <= {"pointing", "point_count"}
+    assert "masks" not in messages[0] and "segmentations" not in messages[0]
+    for config_cls in (PixMoPointsV2DatasetConfig, PixMoCountV2DatasetConfig):
+        fields = set(config_cls.__dataclass_fields__)
+        assert not fields & {"include_masks", "include_pointing", "zero_points_as_segmentation"}
+
+
+# ---------------------------------------------------------------------------
 # PixMoPointsV2: message assembly (mm_olmo PixMoPointV2.format_example)
 # ---------------------------------------------------------------------------
 

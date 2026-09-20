@@ -344,7 +344,10 @@ def test_stage1_refuses_the_olmocr_eval_split():
     """The training script reads train splits only; the held-out `eval` parquets stay held out."""
     from types import SimpleNamespace
 
-    from olmo_core.data.multimodal import OcrCaptionTarsDatasetConfig
+    from olmo_core.data.multimodal import (
+        OcrCaptionTarsDatasetConfig,
+        TextRichCaptionDatasetConfig,
+    )
     from olmo_core.data.multimodal.mixtures.ocr import DEFAULT_OCR_SOURCES
 
     mod = _load_stage1_module()
@@ -358,6 +361,7 @@ def test_stage1_refuses_the_olmocr_eval_split():
             ocr_sources=DEFAULT_OCR_SOURCES,
             olmocr=OlmOcrMixDatasetConfig(split=split),
             ocr_tars=OcrCaptionTarsDatasetConfig(),
+            text_rich=TextRichCaptionDatasetConfig(),
         )
 
     for split in ("eval", "validation"):
