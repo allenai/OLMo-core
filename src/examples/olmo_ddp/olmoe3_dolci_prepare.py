@@ -5,10 +5,42 @@ import hashlib
 import json
 import os
 import shutil
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from olmoe3_dolci_hero_plan import AUTO, DATA, INPUT
 from olmoe3_lr_sweep_watch import atomic_json
+
+
+def ordered_chunks(paths, workers=8, chunk_bytes=128 * 1024 * 1024):
+    """Prefetch bounded ranges, preserving exact source-file and byte order."""
+    ranges = iter(
+        (path, offset, min(chunk_bytes, path.stat().st_size - offset))
+        for path in paths
+        for offset in range(0, path.stat().st_size, chunk_bytes)
+    )
+
+    def read_range(item):
+        path, offset, size = item
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            data = handle.read(size)
+        assert len(data) == size, (path, offset, size, len(data))
+        return data
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        pending = deque()
+        for _ in range(workers):
+            item = next(ranges, None)
+            if item is not None:
+                pending.append(pool.submit(read_range, item))
+        while pending:
+            data = pending.popleft().result()
+            item = next(ranges, None)
+            if item is not None:
+                pending.append(pool.submit(read_range, item))
+            yield data
 
 
 def prepare():
@@ -60,14 +92,14 @@ def prepare():
             a.with_suffix(".partial").open("wb") as out,
             b.with_suffix(".partial").open("wb") as val,
         ):
-            for source in sorted(INPUT.glob(name + "_part_*.npy")):
-                with source.open("rb") as f:
-                    while chunk := f.read(32 * 1024 * 1024):
-                        n = min(len(chunk), max(0, split * itemsize - at))
-                        val.write(chunk[:n])
-                        out.write(chunk[n:])
-                        digest.update(chunk)
-                        at += len(chunk)
+            for chunk in ordered_chunks(sorted(INPUT.glob(name + "_part_*.npy"))):
+                n = min(len(chunk), max(0, split * itemsize - at))
+                val.write(chunk[:n])
+                out.write(chunk[n:])
+                digest.update(chunk)
+                at += len(chunk)
+                if at // (4 * 1024**3) != (at - len(chunk)) // (4 * 1024**3):
+                    print("DOLCI_COPY_PROGRESS", name, at, offset * itemsize, flush=True)
             out.flush()
             val.flush()
             os.fsync(out.fileno())
