@@ -6,9 +6,11 @@ example produces a shared prefix (qwen3 user header + image block) that branches
 one or more ``(user turn, assistant response)`` annotations (a long caption and/or a
 spoken transcript), assembled by
 :func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Following
-mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn is prefixed with
-a ``"<style>[ <length-bucket>]:"`` tag derived from that branch's response length, so the
-model learns to condition output length on the prompt (see :data:`CAPTION_STYLE`).
+mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn **is** a
+``"<style>[ <length-bucket>]:"`` tag derived from that branch's response length, so the
+model learns to condition output length on the prompt (see :data:`CAPTION_STYLE`). The tag is
+the whole user turn, with no instruction after it: that is what mm_olmo's stage 1 trains on and
+what the stage-1 caption eval sends (``long_caption 65:``), so train and test share one form.
 
 Three data sources are supported via ``dataset_path``:
 
@@ -41,8 +43,12 @@ __all__ = [
     "STYLE_TAG_FAMILIES",
 ]
 
-# Prompt pools mirroring mm_olmo's ``GENERAL_PROMPTS_V1`` (data_formatter.py); one is
-# sampled per example (seeded) so the user turn matches the caption-pretraining mix.
+# Natural-language prompt pools mirroring mm_olmo's ``GENERAL_PROMPTS_V1`` (data_formatter.py).
+# Only the un-conditioned form (``style_length_conditioning=False``) samples from them. The
+# conditioned form that stage 1 trains on does NOT: mm_olmo's stage-1 formatter runs with
+# ``prompt_templates="none"``, under which a caption's question is the empty string
+# (data_formatter.py, the ``"none"`` branch of ``get_user_prompt``), so its user turn is the
+# style tag alone.
 CAPTION_PROMPTS = (
     "Describe this image.",
     "Describe this image",
@@ -149,8 +155,11 @@ class PixMoCapDatasetConfig(Config):
     Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
 
     style_length_conditioning: bool = True
-    """Prepend mm_olmo's ``style_and_length_v2`` ``"<style>[ <bucket>]:"`` prefix to each
-    branch's user turn (see :data:`CAPTION_STYLE`). Ignored when ``fixed_prompt`` is set."""
+    """Use mm_olmo's ``style_and_length_v2`` ``"<style>[ <bucket>]:"`` tag as each branch's
+    whole user turn, e.g. ``"long_caption 63:"`` (see :data:`CAPTION_STYLE`). This is the
+    stage-1 form, at training and at test time. When False the user turn is instead a
+    natural-language prompt sampled from :data:`CAPTION_PROMPTS` / :data:`TRANSCRIPT_PROMPTS`,
+    with no tag. Ignored when ``fixed_prompt`` is set."""
 
     seed: int = 0
     synthetic_size: int = 64
@@ -308,12 +317,13 @@ class PixMoCapDataset:
         for style, text in self._select_branches(row, rng):
             if cfg.fixed_prompt is not None:
                 prompt = cfg.fixed_prompt
+            elif cfg.style_length_conditioning:
+                # The tag is the entire user turn. A sampled instruction used to follow it
+                # ("long_caption 63: Describe this image."), a form that neither mm_olmo's
+                # stage 1 trains on nor the stage-1 caption eval sends.
+                prompt = self._style_length_prefix(style, text, rng)
             else:
-                base_prompt = self._sample_prompt(style, rng)
-                if cfg.style_length_conditioning:
-                    prompt = f"{self._style_length_prefix(style, text, rng)} {base_prompt}"
-                else:
-                    prompt = base_prompt
+                prompt = self._sample_prompt(style, rng)
             response_ids = self.tokenizer.encode(text, add_special_tokens=False)
             branch_specs.append((prompt, response_ids))
 
