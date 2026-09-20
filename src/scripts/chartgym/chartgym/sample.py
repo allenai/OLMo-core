@@ -171,6 +171,8 @@ def sample_figure(figure_id: str, seed: int, difficulty: str, *, eval_split: boo
         # A distinct label pool per figure, so one legend does not mix registers.
         label_pool = list(rng.permutation(d["labels"]))
         show_legend = rng.random() >= NA_RATES["no_legend"] and n_series >= 1
+        # Single-entry legends are kept (not suppressed as trivial): "1 entry" vs "no
+        # legend" is exactly the discrimination the model failed on CharXiv t12.
         for s in range(n_series):
             shape = SHAPES[int(rng.integers(len(SHAPES)))]
             if kind == "bar":

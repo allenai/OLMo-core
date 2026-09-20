@@ -252,7 +252,8 @@ def test_procedure_traces_are_correct_and_selective():
     """
     import re
 
-    TRACE_FAMILIES = {"cnt.ticks_total", "cnt.ticks_axis", "cnt.legend_entries"}
+    TRACE_FAMILIES = {"cnt.ticks_total", "cnt.ticks_axis", "cnt.legend_entries",
+                      "ocr.legend_names"}
     seen_traced = set()
     for spec, audit in _figures(n=30):
         for q in emit_all(spec, audit, np.random.default_rng(9), include_held_out=False):
@@ -265,7 +266,17 @@ def test_procedure_traces_are_correct_and_selective():
                 assert q["target"].lower().startswith("checking"), q
             else:
                 assert q["family"] in TRACE_FAMILIES, f"trace leaked onto {q['family']}"
-                # enumeration trace: the LAST number must be the answer
-                nums = re.findall(r"-?\d+(?:\.\d+)?", q["target"].replace(",", ""))
-                assert nums and float(nums[-1]) == float(q["answer"]), q
+                if q["answer_type"] == "list":
+                    # verification trace on a list answer must end with the names verbatim
+                    assert q["target"].endswith(q["answer"]), q
+                else:
+                    # enumeration/verification trace: the LAST number must be the answer
+                    nums = re.findall(r"-?\d+(?:\.\d+)?", q["target"].replace(",", ""))
+                    assert nums and float(nums[-1]) == float(q["answer"]), q
+                # v4 symmetry requirement: any family that trains an absence check must
+                # show the SAME check concluding presence. A check that only ever precedes
+                # "absent" teaches that checking implies absence -- measured on CharXiv t12
+                # as 23/42 errors being false "no legend" declarations.
+                if q["family"] in ("cnt.legend_entries", "ocr.legend_names"):
+                    assert q["target"].lower().startswith("checking"), q
     assert TRACE_FAMILIES <= seen_traced, f"missing traces for {TRACE_FAMILIES - seen_traced}"

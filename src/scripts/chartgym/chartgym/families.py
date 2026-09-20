@@ -169,15 +169,20 @@ def _legend_entries(spec, audit, rng):
         ])
         q = q[0].upper() + q[1:] if not ref else q
         if not panel.has_legend:
-            out.append(_qa("cnt.legend_entries", q,
-                           "There is no legend on this chart.", na=True,
-                           target="Checking for a key inside and beside the axes: none is "
-                                  "drawn. There is no legend on this chart."))
+            # Halved, matching ocr.legend_names: v3's asymmetry (names halved, count at
+            # full rate) tilted the count family's prior toward absence -- t12 fell -9.34
+            # with 23/42 errors being false "no legend" declarations.
+            if rng.random() < 0.5:
+                out.append(_qa("cnt.legend_entries", q,
+                               "There is no legend on this chart.", na=True,
+                               target="Checking for a key inside and beside the axes: none "
+                                      "is drawn. There is no legend on this chart."))
         else:
             names = ", ".join(panel.legend_entries)
-            out.append(_qa("cnt.legend_entries", q, len(panel.legend_entries),
-                           target=f"The key lists: {names} - "
-                                  f"{len(panel.legend_entries)} entries."))
+            n_e = len(panel.legend_entries)
+            out.append(_qa("cnt.legend_entries", q, n_e,
+                           target=f"Checking for a key inside and beside the axes: one is "
+                                  f"drawn, listing {names} - {n_e} entries."))
     return out
 
 
@@ -262,7 +267,10 @@ def _legend_names(spec, audit, rng):
         ])
         q = q[0].upper() + q[1:] if not ref else q
         if panel.has_legend and panel.legend_entries:
-            out.append(_qa("ocr.legend_names", q, ", ".join(panel.legend_entries)))
+            names = ", ".join(panel.legend_entries)
+            out.append(_qa("ocr.legend_names", q, names,
+                           target=f"Checking for a key inside and beside the axes: one is "
+                                  f"drawn. It lists: {names}"))
         elif rng.random() < 0.5:
             # NA recall on legend names was already 85-94% before any training; these
             # examples buy little and push the prior toward over-declaring absence

@@ -133,9 +133,11 @@ def render(spec: FigureSpec) -> tuple[bytes, RenderAudit]:
                     # inside the panel -> no legend", which shows up as NA over-declaration
                     # (t12 precision 74.5% after the first training run).
                     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
-                              fontsize=spec.style.font_size * 0.85)
+                              fontsize=spec.style.font_size * 0.70)
                 else:
-                    ax.legend(loc=panel.legend_loc, fontsize=spec.style.font_size * 0.85)
+                    # 0.70, was 0.85: subtle-but-present legends are the hard positives the
+                    # false-absence errors call for; CharXiv legends are routinely tiny.
+                    ax.legend(loc=panel.legend_loc, fontsize=spec.style.font_size * 0.70)
         if spec.suptitle:
             fig.suptitle(spec.suptitle)
 
