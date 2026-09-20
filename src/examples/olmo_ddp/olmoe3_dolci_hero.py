@@ -273,6 +273,8 @@ def classify_failure(text):
             "ncclsystemerror",
             "preempt",
             "unhealthy node",
+            "uncorrectable ecc",
+            "gpu has fallen off",
         )
     ):
         return "infra"
@@ -400,6 +402,7 @@ def watch():
                         and not (r.root / "STORAGE_PAUSED.json").exists()
                     ):
                         parts = []
+                        faulty_hosts = []
                         for task in w.experiment.tasks:
                             job = b.workload.get_latest_job(w, task=task)
                             lines = []
@@ -409,12 +412,29 @@ def watch():
                                     if isinstance(line.message, bytes)
                                     else line.message
                                 )
-                            parts.append("\n".join(lines))
+                            text = "\n".join(lines)
+                            parts.append(text)
+                            if any(
+                                marker in text.lower()
+                                for marker in (
+                                    "uncorrectable ecc",
+                                    "gpu has fallen off",
+                                    "unhealthy node",
+                                )
+                            ):
+                                from google.protobuf.json_format import MessageToDict
+
+                                assigned = MessageToDict(job).get("assignmentDetails", {})
+                                for entry in assigned.get("assignedEnvironmentVariables", []):
+                                    if entry["name"] == "BEAKER_NODE_HOSTNAME":
+                                        faulty_hosts.append(entry["literal"])
                         why = classify_failure("\n".join(parts))
                         allow = (why == "oom" and recovery["mb"] == 4) or (
                             why == "infra" and recovery["attempt"] < 2
                         )
                         if allow:
+                            recovery["excluded"] = sorted(set(recovery["excluded"] + faulty_hosts))
+                            assert len(set(hosts) - set(recovery["excluded"])) >= r.nodes
                             recovery.update(
                                 attempt=recovery["attempt"] + 1,
                                 mb=2 if why == "oom" else recovery["mb"],
