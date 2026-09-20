@@ -66,9 +66,7 @@ class Run(base.Run):
     @property
     def gpus(self):
         return (
-            128
-            if self.kind in ("hero", "decay")
-            else (64 if self.kind.startswith("dolci") else super().gpus)
+            128 if self.kind == "hero" else (64 if self.kind.startswith("dolci") else super().gpus)
         )
 
     @property
@@ -168,6 +166,10 @@ def install():
 
 def self_test():
     assert run("hero").batch // (128 * 32768) == 4
+    assert all(run(kind).gpus == 64 for kind in ("decay", "mt", "lc"))
+    assert run("decay").batch // (run("decay").gpus * run("decay").microbatch) == (
+        8 if int(os.environ.get("CAMPAIGN_PT_MB", "4")) == 4 else 16
+    )
     assert run("hero").end * 16777216 >= 14_000_000_000_000
     assert run("decay").end == 6667 and run("decay").start == 6000
     assert run("mt").end == 2125 and run("lc").end == 8498 and run("sft").end == 840
