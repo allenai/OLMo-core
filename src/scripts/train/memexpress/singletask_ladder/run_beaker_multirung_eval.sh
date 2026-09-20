@@ -171,6 +171,10 @@ echo "    BUNDLE=$BUNDLE"
 echo "    EVAL500=$EVAL500"
 nvidia-smi -L 2>/dev/null | head -8 || true
 
+# Pin both distributions after Gantry environment setup and verify the kernel source.
+python -m pip install --quiet --no-deps 'flash-linear-attention==0.4.2' 'fla-core==0.4.2'
+python src/scripts/ctc_eval/preflight/verify_fla.py
+
 # ---- resolve the checkpoint step dir (CKPT override > STEP pin > latest complete step) ----
 if [ -n "${CKPT:-}" ]; then
   :  # explicit absolute step dir (e.g. for a one-off validation against any weka checkpoint)

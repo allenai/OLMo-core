@@ -628,3 +628,58 @@ def test_kernel_packing_head_dim_matches_eager():
     main_eager = m._main_dense(q, k, v, cu_doc_lens=cu_doc_lens)
 
     torch.testing.assert_close(main_kernel, main_eager, rtol=1e-2, atol=1e-2)
+
+
+@pytest.mark.parametrize("n_kv_heads", [1, 2, 4])
+@pytest.mark.parametrize("tail_length", [1, 7, 16])
+@torch.no_grad()
+def test_chunked_prefill_and_decode_match_one_shot(n_kv_heads, tail_length):
+    import copy
+
+    torch.manual_seed(19)
+    m = _build(n_kv_heads=n_kv_heads)
+    ref = copy.deepcopy(m)
+    stride = m.block_size
+    length = 4 * stride + tail_length
+    x = torch.randn(1, length + 3, m.d_model)
+    for model in (m, ref):
+        model.init_kv_cache_manager(batch_size=1, max_seq_len=length + 3)
+    expected = ref(x[:, :length])
+    chunks = [
+        m(x[:, start : min(start + 2 * stride, length)]) for start in range(0, length, 2 * stride)
+    ]
+    torch.testing.assert_close(torch.cat(chunks, dim=1), expected, atol=1e-5, rtol=1e-4)
+    # Exercise the eval's extended local section and hard block retrieval too.
+    for model in (m, ref):
+        model.set_landmark_eval_decode(length, "extend_last_block", top_k=1)
+    for pos in range(length, length + 3):
+        torch.testing.assert_close(
+            m(x[:, pos : pos + 1]), ref(x[:, pos : pos + 1]), atol=1e-5, rtol=1e-4
+        )
+    assert not m._supports_ragged_decode
+
+
+@requires_gpu
+@torch.no_grad()
+def test_kernel_chunked_prefill_matches_eager_shared_vector():
+    import copy
+
+    torch.manual_seed(19)
+    reference = _build(n_kv_heads=2).cuda()
+    kernel = copy.deepcopy(reference)
+    kernel.use_kernel = True
+    length = 4 * kernel.block_size + 7
+    x = torch.randn(1, length + 2, kernel.d_model, device="cuda")
+    for model in (reference, kernel):
+        model.init_kv_cache_manager(batch_size=1, max_seq_len=length + 2)
+    expected = reference(x[:, :length])
+    stride = 2 * kernel.block_size
+    actual = torch.cat(
+        [kernel(x[:, start : min(start + stride, length)]) for start in range(0, length, stride)],
+        dim=1,
+    )
+    torch.testing.assert_close(actual, expected, atol=2e-4, rtol=2e-4)
+    for pos in range(length, length + 2):
+        torch.testing.assert_close(
+            kernel(x[:, pos : pos + 1]), reference(x[:, pos : pos + 1]), atol=2e-4, rtol=2e-4
+        )
