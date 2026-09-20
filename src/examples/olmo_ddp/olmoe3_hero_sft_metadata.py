@@ -25,6 +25,9 @@ def inference_template(training_template):
     old = "{% if loop.last and add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}"
     # Saved Jinja contains an actual newline in the quoted string.
     old = old.replace("\\n", "\n")
+    if training_template.count(old) != 1:
+        # Dolci's open-instruct template uses whitespace-trimmed Jinja tags.
+        old = "{%- if loop.last and add_generation_prompt -%}{{- '<|im_start|>assistant\n' -}}"
     assert training_template.count(old) == 1
     return training_template.replace(old, old.replace("assistant\n'", "assistant\n<think>'"))
 
