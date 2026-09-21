@@ -381,7 +381,19 @@ def convert_checkpoint_to_hf(
     huggingface_config.pad_token_id = tokenizer_config.pad_token_id
     huggingface_config.bos_token_id = tokenizer_config.bos_token_id
     huggingface_config.eos_token_id = tokenizer_config.eos_token_id
+    if huggingface_config.model_type == "olmo3moe" and not huggingface_config.use_rope:
+        # Do not let a consumer interpret missing/null RoPE parameters as default RoPE.
+        huggingface_config.rope_theta = None
+        huggingface_config.rope_parameters = {"rope_theta": None}
     huggingface_config.save_pretrained(output_path)
+    if huggingface_config.model_type == "olmo3moe" and not huggingface_config.use_rope:
+        # save_pretrained may standardize the dictionary again. Write the canonical
+        # explicit-NoPE sentinel to disk, rather than relying on version-specific defaults.
+        config_path = Path(output_path) / "config.json"
+        serialized_config = json.loads(config_path.read_text())
+        serialized_config["rope_theta"] = None
+        serialized_config["rope_parameters"] = {"rope_theta": None}
+        config_path.write_text(json.dumps(serialized_config, indent=2) + "\n")
     log.info(
         "Successfully fixed config using updated config from tokenizer config data and script arguments"
     )

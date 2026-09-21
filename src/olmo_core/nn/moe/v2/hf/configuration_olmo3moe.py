@@ -151,9 +151,16 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         # Newer transformers validates nested per-layer RoPE configs against ``self.layer_types``,
         # so layer metadata must be set before assigning/validating RoPE.
-        self.rope_theta = rope_theta
-        self.rope_scaling = rope_parameters
-        self._rope_scaling_validation()
+        if use_rope:
+            self.rope_theta = rope_theta
+            self.rope_scaling = rope_parameters
+            self._rope_scaling_validation()
+        else:
+            # An explicit null theta is distinct from missing RoPE metadata: some
+            # Transformers consumers fill missing/null parameters with RoPE defaults.
+            # Keep NoPE explicit through from_pretrained/save_pretrained roundtrips.
+            self.rope_theta = None
+            self.rope_parameters = {"rope_theta": None}
         self.attention_bias = attention_bias
         self.attention_dropout = attention_dropout
 
