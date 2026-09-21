@@ -42,7 +42,12 @@ wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${UBU_TAG}/x86
 # compat libs (no bin/nvcc), and every pip toolkit in this stack is incoherent, so without this
 # there is nothing for flashinfer's GDN kernels to compile with. Installing nvcc and the cudart
 # headers as a matched apt pair is what makes __CUDACC_VER__ and cuda.h agree by construction.
-apt-get install -y -qq cuda-nvcc-13-0 cuda-cudart-dev-13-0 2>&1 | tail -3
+# The FULL toolkit, not a hand-picked subset. Installing nvcc + cudart-dev alone got the GDN
+# kernels compiling and then died on `curand.h: No such file` from flashinfer's sampling kernels --
+# and behind curand sit cublas, cusolver and the rest, each a separate apt package and a separate
+# failed job to discover. The metapackage is a couple of GB and about two minutes; guessing the
+# closure is neither.
+apt-get install -y -qq cuda-toolkit-13-0 2>&1 | tail -3
 COMPAT_DIR=$(dpkg -L cuda-compat-13-0 2>/dev/null | grep 'libcuda\.so' | head -1 | xargs -r dirname)
 [ -n "$COMPAT_DIR" ] && export LD_LIBRARY_PATH="$COMPAT_DIR:${LD_LIBRARY_PATH:-}"
 echo "COMPAT_DIR=${COMPAT_DIR:-none}"
