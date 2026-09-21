@@ -180,7 +180,14 @@ def do_run() -> None:
     log.info("device: %s", torch.cuda.get_device_name(0))
     log.info(
         "geometry: B=%d S=%d heads=%d/%d head_dim=%d, %d examples x %d tokens (%d image)",
-        B, S, N_HEADS, N_KV_HEADS, HEAD_DIM, N_EXAMPLES, EX_LEN, IMAGE_TOKENS_PER_EX,
+        B,
+        S,
+        N_HEADS,
+        N_KV_HEADS,
+        HEAD_DIM,
+        N_EXAMPLES,
+        EX_LEN,
+        IMAGE_TOKENS_PER_EX,
     )
 
     is_image, example_id = build_mask_vectors(device)
@@ -199,7 +206,10 @@ def do_run() -> None:
             results[arm.name] = r
             log.info(
                 "    fwd %.2f ms | bwd %.2f ms | total %.2f ms | bwd/fwd %.2fx",
-                r["fwd"], r["bwd"], r["total"], r["ratio"],
+                r["fwd"],
+                r["bwd"],
+                r["total"],
+                r["ratio"],
             )
 
     base = results.get("A-baseline")
@@ -215,9 +225,11 @@ def do_run() -> None:
         print(
             "\nbest: %s at %.2f ms total (%+.1f%% vs baseline), bwd/fwd %.2fx vs %.2fx"
             % (
-                best[0], best[1]["total"],
+                best[0],
+                best[1]["total"],
                 100 * (best[1]["total"] / base["total"] - 1),
-                best[1]["ratio"], base["ratio"],
+                best[1]["ratio"],
+                base["ratio"],
             )
         )
         # Pre-registered gate from the plan: <10% improvement means the gap is inherent to

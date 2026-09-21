@@ -496,11 +496,19 @@ class TorchAttentionBackend(AttentionBackend):
 
 _compiled_flex_attention = None
 
-# Backward block sizes for the LM's packed, ~93%-sparse attention. BLOCK_M1/N1 drive the
-# dkv kernel and BLOCK_M2/N2 the dq kernel. Measured on B300 at Stage-2 geometry with
-# src/scripts/perf/flex_attention_bench.py: these took fwd+bwd from 11.93 ms to 8.98 ms
-# (-24.8%), bwd/fwd 3.82x -> 2.62x. Architecture-specific; re-run the benchmark before
-# assuming they transfer.
+# Triton block sizes for the FlexAttention backward. BLOCK_M1/N1 drive the dkv kernel and
+# BLOCK_M2/N2 the dq kernel; Inductor's defaults are not tuned for the packed, ~93%-sparse
+# masks multimodal training produces, and the backward was the largest single kernel in a
+# Stage-2 profile (19.56% of GPU time, 3.8x its own forward against a ~2.5x FLOP ratio).
+#
+# Derived with ``src/scripts/perf/flex_attention_bench.py`` on B300 at Stage-2 geometry
+# (B=2, 32 q / 8 kv heads, S=16384, head_dim 128, bf16): fwd+bwd 11.93 -> 8.98 ms, -24.8%.
+# End to end on 8xB300 this is **+12-15% useful TPS** (two runs: 17,185 and 17,612 against
+# a control of 15,314 and 15,660).
+#
+# These are architecture- and shape-specific. Re-run the benchmark before assuming they
+# transfer to another GPU or a different sequence length; a bad choice is a slowdown, not a
+# correctness problem, and some combinations fail to compile outright.
 _FLEX_KERNEL_OPTIONS = {"BLOCK_M1": 32, "BLOCK_N1": 128, "BLOCK_M2": 128, "BLOCK_N2": 32}
 
 
@@ -509,12 +517,16 @@ def _get_flex_attention(device: torch.device):
     eager on CPU (compiling FlexAttention on CPU is slow / unnecessary — used only for
     correctness tests).
 
-    EXPERIMENT BRANCH: the ``mode="max-autotune-no-cudagraphs"`` on this inner compile is
-    reverted here so the arm isolates ``_FLEX_KERNEL_OPTIONS`` against the original control.
-    Evidence it was inert in training: the 8-GPU job that set it logged **zero** AUTOTUNE
-    blocks across 458 k chars, while the 1-GPU benchmark that set the same mode logged four
-    -- consistent with dynamo inlining this call into the outer compiled LM block and
-    dropping the inner compile's mode.
+    .. note::
+        Do not try to tune the kernels by passing ``mode=`` here. This call sits inside the
+        outer compiled LM block (``model.lm.apply_compile()`` compiles per block) and dynamo
+        inlines it, dropping the inner compile's mode. Measured:
+        ``mode="max-autotune-no-cudagraphs"`` was worth -38.1% on the kernel in isolation
+        but only +3.05% end to end -- inside the run-to-run noise band -- and the training
+        job logged **zero** ``AUTOTUNE`` blocks across 458 k chars of output where the
+        equivalent 1-GPU benchmark logged four. Tune with ``kernel_options`` instead
+        (see :data:`_FLEX_KERNEL_OPTIONS`); it is an argument to ``flex_attention``, so it
+        survives inlining.
     """
     from torch.nn.attention.flex_attention import flex_attention
 
@@ -773,7 +785,11 @@ class FlexAttentionBackend(AttentionBackend):
         # reaches Inductor's flex lowering even when this call is inlined into the outer
         # compiled LM block -- which a `mode=` on the inner torch.compile is not.
         att = flex(
-            q, k, v, block_mask=block_mask, scale=self.scale,
+            q,
+            k,
+            v,
+            block_mask=block_mask,
+            scale=self.scale,
             kernel_options=_FLEX_KERNEL_OPTIONS,
         )
 
