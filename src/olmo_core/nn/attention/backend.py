@@ -500,14 +500,36 @@ _compiled_flex_attention = None
 def _get_flex_attention(device: torch.device):
     """Return ``flex_attention``, compiled on CUDA (where the fused kernel lives) and
     eager on CPU (compiling FlexAttention on CPU is slow / unnecessary — used only for
-    correctness tests)."""
+    correctness tests).
+
+    ``max-autotune-no-cudagraphs`` lets Inductor search the Triton template configs for the
+    backward kernel, which default mode does not do. Measured on 8xB300 at Stage-2 geometry
+    (B=2, 32 q / 8 kv heads, S=16384, head_dim 128, bf16, 93%-sparse packed mask;
+    ``src/scripts/perf/flex_attention_bench.py``):
+
+    ===========================  ========  ========  =========  ========
+    mode                         fwd (ms)  bwd (ms)  bwd/fwd    vs default
+    ===========================  ========  ========  =========  ========
+    default (was shipped)            2.48      9.45      3.82x       —
+    ``max-autotune-no-cudagraphs``   2.34      5.05      2.16x   **-38.1%**
+    ===========================  ========  ========  =========  ========
+
+    The backward was the single largest kernel in a Stage-2 profile at 19.56% of GPU time,
+    and 3.82x its own forward against a ~2.5x FLOP ratio (5 matmuls to 2) — i.e. it was
+    mistuned, not merely expensive. Autotuning costs a one-off search at first compile,
+    which a training run amortises immediately.
+
+    ``dynamic=False`` was measured alongside and made no difference (0.0%), so it is not set.
+    """
     from torch.nn.attention.flex_attention import flex_attention
 
     if device.type != "cuda":
         return flex_attention
     global _compiled_flex_attention
     if _compiled_flex_attention is None:
-        _compiled_flex_attention = torch.compile(flex_attention)
+        _compiled_flex_attention = torch.compile(
+            flex_attention, mode="max-autotune-no-cudagraphs"
+        )
     return _compiled_flex_attention
 
 
@@ -710,6 +732,14 @@ class FlexAttentionBackend(AttentionBackend):
 
         q, k, v = qkv
         # PyTorch SDPA-style GQA expansion + (B, S, H, D) -> (B, H, S, D).
+        #
+        # `_repeat_kv` materialises k/v at `n_rep` x size (its .expand().reshape() cannot be
+        # a view), so the kernel reads 32 kv heads where 8 would do. `flex_attention` can
+        # broadcast in-register instead via `enable_gqa=True`, which looks strictly better.
+        # It is not: measured at Stage-2 geometry on B300 it made the backward *slower*
+        # (10.83 ms against 9.45) for +10.7% on fwd+bwd. Don't re-derive it from first
+        # principles -- the expansion is cheap (~0.2% of a step) and the expanded-head
+        # kernel is better tuned.
         n_rep = self.n_heads // self.n_kv_heads
         k = _repeat_kv(k, n_rep)
         v = _repeat_kv(v, n_rep)
