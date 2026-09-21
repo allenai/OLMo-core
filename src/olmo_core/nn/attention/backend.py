@@ -496,11 +496,38 @@ class TorchAttentionBackend(AttentionBackend):
 
 _compiled_flex_attention = None
 
+# Triton block sizes for the FlexAttention backward. BLOCK_M1/N1 drive the dkv kernel and
+# BLOCK_M2/N2 the dq kernel; Inductor's defaults are not tuned for the packed, ~93%-sparse
+# masks multimodal training produces, and the backward was the largest single kernel in a
+# Stage-2 profile (19.56% of GPU time, 3.8x its own forward against a ~2.5x FLOP ratio).
+#
+# Derived with ``src/scripts/perf/flex_attention_bench.py`` on B300 at Stage-2 geometry
+# (B=2, 32 q / 8 kv heads, S=16384, head_dim 128, bf16): fwd+bwd 11.93 -> 8.98 ms, -24.8%.
+# End to end on 8xB300 this is **+12-15% useful TPS** (two runs: 17,185 and 17,612 against
+# a control of 15,314 and 15,660).
+#
+# These are architecture- and shape-specific. Re-run the benchmark before assuming they
+# transfer to another GPU or a different sequence length; a bad choice is a slowdown, not a
+# correctness problem, and some combinations fail to compile outright.
+_FLEX_KERNEL_OPTIONS = {"BLOCK_M1": 32, "BLOCK_N1": 128, "BLOCK_M2": 128, "BLOCK_N2": 32}
+
 
 def _get_flex_attention(device: torch.device):
     """Return ``flex_attention``, compiled on CUDA (where the fused kernel lives) and
     eager on CPU (compiling FlexAttention on CPU is slow / unnecessary — used only for
-    correctness tests)."""
+    correctness tests).
+
+    .. note::
+        Do not try to tune the kernels by passing ``mode=`` here. This call sits inside the
+        outer compiled LM block (``model.lm.apply_compile()`` compiles per block) and dynamo
+        inlines it, dropping the inner compile's mode. Measured:
+        ``mode="max-autotune-no-cudagraphs"`` was worth -38.1% on the kernel in isolation
+        but only +3.05% end to end -- inside the run-to-run noise band -- and the training
+        job logged **zero** ``AUTOTUNE`` blocks across 458 k chars of output where the
+        equivalent 1-GPU benchmark logged four. Tune with ``kernel_options`` instead
+        (see :data:`_FLEX_KERNEL_OPTIONS`); it is an argument to ``flex_attention``, so it
+        survives inlining.
+    """
     from torch.nn.attention.flex_attention import flex_attention
 
     if device.type != "cuda":
@@ -624,7 +651,17 @@ class FlexAttentionBackend(AttentionBackend):
             elif seg_code is not None:
                 allow = allow & (seg_code[b, q_idx] <= seg_code[b, kv_idx])
             if example_id is not None:
-                allow = allow & (example_id[b, q_idx] == example_id[b, kv_idx])
+                # Pad positions all carry the same sentinel (-1), so equality alone would
+                # make the entire pad tail one mutually-visible causal segment -- at the
+                # shipped single-image geometry that is ~92% of all computed 128x128
+                # blocks, spent on tokens that cannot affect the loss: their loss_masks
+                # are 0, and under `response_logits_only` the LM head does not even
+                # project them. Let a pad position
+                # attend to itself and nothing else: the row stays well-defined for
+                # softmax, and the tail collapses from a triangle to a diagonal.
+                same_example = example_id[b, q_idx] == example_id[b, kv_idx]
+                q_is_real = example_id[b, q_idx] >= 0
+                allow = allow & same_example & (q_is_real | (q_idx == kv_idx))
             return allow
 
         return mask_mod
@@ -700,6 +737,14 @@ class FlexAttentionBackend(AttentionBackend):
 
         q, k, v = qkv
         # PyTorch SDPA-style GQA expansion + (B, S, H, D) -> (B, H, S, D).
+        #
+        # `_repeat_kv` materialises k/v at `n_rep` x size (its .expand().reshape() cannot be
+        # a view), so the kernel reads 32 kv heads where 8 would do. `flex_attention` can
+        # broadcast in-register instead via `enable_gqa=True`, which looks strictly better.
+        # It is not: measured at Stage-2 geometry on B300 it made the backward *slower*
+        # (10.83 ms against 9.45) for +10.7% on fwd+bwd. Don't re-derive it from first
+        # principles -- the expansion is cheap (~0.2% of a step) and the expanded-head
+        # kernel is better tuned.
         n_rep = self.n_heads // self.n_kv_heads
         k = _repeat_kv(k, n_rep)
         v = _repeat_kv(v, n_rep)
@@ -723,7 +768,9 @@ class FlexAttentionBackend(AttentionBackend):
                 example_id = flex_attn_example_ids
             else:
                 om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
-                am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                am = (
+                    and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                )
                 is_image, seg_code, example_id = self._per_token_from_masks(om, am)
                 subsegment_ids = None
             mask_mod = self._build_mask_mod(is_image, subsegment_ids, seg_code, example_id)
@@ -734,7 +781,17 @@ class FlexAttentionBackend(AttentionBackend):
                 mask_mod, B=B, H=None, Q_LEN=S_q, KV_LEN=S_kv, device=q.device
             )
         flex = _get_flex_attention(q.device)
-        att = flex(q, k, v, block_mask=block_mask, scale=self.scale)
+        # `kernel_options` is an argument to `flex_attention`, not a compile setting, so it
+        # reaches Inductor's flex lowering even when this call is inlined into the outer
+        # compiled LM block -- which a `mode=` on the inner torch.compile is not.
+        att = flex(
+            q,
+            k,
+            v,
+            block_mask=block_mask,
+            scale=self.scale,
+            kernel_options=_FLEX_KERNEL_OPTIONS,
+        )
 
         # (B, H, S, D) -> (B, S, H, D)
         return att.transpose(1, 2).contiguous()

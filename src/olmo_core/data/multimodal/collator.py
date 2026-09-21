@@ -123,6 +123,15 @@ class MultimodalCollator:
                 pooled[i, : pp.shape[0]] = pp
         batch["images"] = torch.from_numpy(images)
         batch["pooled_patches_idx"] = torch.from_numpy(pooled)
+        # Real (unpadded) crop count per example. ``images`` above is padded to the
+        # *rank batch* max, so the ViT runs on every crop in it including the zero pads;
+        # without this the ratio of useful to executed vision work is unrecoverable
+        # downstream (the pad crops are all-zero, but proving that needs a full reduction
+        # over a ~700 MB tensor). Consumed by SpeedMonitorCallback for crop occupancy and
+        # dropped in MultimodalTransformerTrainModule._prepare_batch before the forward.
+        batch["n_real_crops"] = torch.from_numpy(
+            np.array([ex["images"].shape[0] for ex in examples], dtype=np.int64)
+        )
 
         # Subsegment ids only when at least one example is multi-branch (packed). For
         # padded / single-branch positions a uniform id leaves attention unrestricted.
@@ -144,8 +153,6 @@ class MultimodalCollator:
             batch["example_ids"] = self._pad_1d(example_arrays, -1, max_len, np.int64)
 
         if any("pack_source_names" in ex for ex in examples):
-            batch["pack_source_names"] = [
-                ex.get("pack_source_names", []) for ex in examples
-            ]
+            batch["pack_source_names"] = [ex.get("pack_source_names", []) for ex in examples]
 
         return batch

@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from olmo_core.data.multimodal.academic_dataset import AcademicDatasetConfig
-from olmo_core.data.multimodal.mixture_weights import (
-    DatasetSource,
-    SubMixture,
-    compute_flat_mixture_weights,
+from olmo_core.data.multimodal.mixture_weights import DatasetSource, SubMixture
+from olmo_core.data.multimodal.mixtures.registry import (
+    LazyDatasetMap,
+    build_mixture,
+    source_lookup,
 )
 from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.data.multimodal.pixmo_ama import PixMoAmaDatasetConfig
@@ -23,11 +24,14 @@ from olmo_core.data.multimodal.tulu import Tulu4DatasetConfig
 
 __all__ = [
     "IMAGE_ONLY_V9_SUBMIXTURES",
+    "SINGLE_IMAGE_ONLY_V9_SUBMIXTURES",
     "DEBUG_MIXTURE_DATASETS",
     "VALIDATION_MIXTURES",
     "build_image_only_v9_datasets",
     "build_image_only_v9_dataset",
     "build_image_only_v9_mixture",
+    "build_single_image_only_v9_mixture",
+    "filter_submixtures_single_image",
 ]
 
 # Parity-validated subset for stage-2 smoke tests before the full 32-source sweep is green.
@@ -147,6 +151,22 @@ IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = [
     SubMixture("nlp", 0.166, [DatasetSource("tulu4")]),
 ]
 
+
+def filter_submixtures_single_image(submixtures: Sequence[SubMixture]) -> List[SubMixture]:
+    """Drop multi-image sources from each submixture, preserving group rates."""
+    exclude = set(MULTI_IMAGE_MIXTURE_DATASETS)
+    out: List[SubMixture] = []
+    for group in submixtures:
+        kept = [src for src in group.datasets if src.name not in exclude]
+        if kept:
+            out.append(SubMixture(group.name, group.rate, kept))
+    return out
+
+
+SINGLE_IMAGE_ONLY_V9_SUBMIXTURES: List[SubMixture] = filter_submixtures_single_image(
+    IMAGE_ONLY_V9_SUBMIXTURES
+)
+
 ACADEMIC_MIXTURE_DATASETS: Tuple[str, ...] = tuple(
     src.name for src in IMAGE_ONLY_V9_SUBMIXTURES[1].datasets
 )
@@ -161,6 +181,7 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "academic": ACADEMIC_MIXTURE_DATASETS,
     "multi-image": MULTI_IMAGE_MIXTURE_DATASETS,
     "image-only-v9": None,
+    "single-image-only-v9": None,
     # Pointing bisect (one source each).
     "pixmo_multi_points": ("pixmo_multi_points",),
     "pixmo_points_train": ("pixmo_points_train",),
@@ -171,11 +192,7 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
 
 
 def _source_lookup() -> Dict[str, DatasetSource]:
-    out: Dict[str, DatasetSource] = {}
-    for group in IMAGE_ONLY_V9_SUBMIXTURES:
-        for src in group.datasets:
-            out[src.name] = src
-    return out
+    return source_lookup(IMAGE_ONLY_V9_SUBMIXTURES)
 
 
 def get_image_only_v9_source(name: str) -> Optional[DatasetSource]:
@@ -216,23 +233,31 @@ def build_image_only_v9_dataset(
 
     src = sources[name]
     if name == "correction_qa_multi_only_max5":
-        from olmo_core.data.multimodal.multi_image_datasets import CorrectionQaDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            CorrectionQaDatasetConfig,
+        )
 
         return CorrectionQaDatasetConfig(seed=seed).build(tokenizer)
     if name.startswith("mantis_instruct_"):
-        from olmo_core.data.multimodal.multi_image_datasets import MantisInstructDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            MantisInstructDatasetConfig,
+        )
 
         subset = name[len("mantis_instruct_") :].replace("_multi_only", "")
         return MantisInstructDatasetConfig(subset=subset, seed=seed).build(tokenizer)
     if name.startswith("cosyn_multidoc_"):
-        from olmo_core.data.multimodal.multi_image_datasets import CoSynMultiDocDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            CoSynMultiDocDatasetConfig,
+        )
 
         doc_type = name[len("cosyn_multidoc_") :].replace("_exp", "")
         return CoSynMultiDocDatasetConfig(
             doc_type=doc_type, use_exp=name.endswith("_exp"), seed=seed
         ).build(tokenizer)
     if name == "pixmo_multi_points":
-        from olmo_core.data.multimodal.multi_image_datasets import PixMoMultiPointsDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            PixMoMultiPointsDatasetConfig,
+        )
 
         return PixMoMultiPointsDatasetConfig(
             loss_token_weighting="none",
@@ -279,36 +304,15 @@ def build_image_only_v9_dataset(
     ).build(tokenizer)
 
 
-class _LazyDatasetMap:
-    """Lazy dataset registry: builds each dataset on first access."""
+def _v9_dataset_builder(tokenizer, seed: int, max_sequence_length: Optional[int]):
+    """Bind ``build_image_only_v9_dataset`` to everything but the source name."""
 
-    def __init__(
-        self,
-        tokenizer,
-        seed: int,
-        *,
-        max_sequence_length: Optional[int] = None,
-    ):
-        self._tokenizer = tokenizer
-        self._seed = seed
-        self._max_sequence_length = max_sequence_length
-        self._cache: Dict[str, object] = {}
+    def build(name: str):
+        return build_image_only_v9_dataset(
+            name, tokenizer, seed, max_sequence_length=max_sequence_length
+        )
 
-    def keys(self):
-        return _source_lookup().keys()
-
-    def __contains__(self, name: str) -> bool:
-        return name in _source_lookup()
-
-    def __getitem__(self, name: str):
-        if name not in self._cache:
-            self._cache[name] = build_image_only_v9_dataset(
-                name,
-                self._tokenizer,
-                self._seed,
-                max_sequence_length=self._max_sequence_length,
-            )
-        return self._cache[name]
+    return build
 
 
 def build_image_only_v9_datasets(
@@ -316,9 +320,12 @@ def build_image_only_v9_datasets(
     seed: int = 0,
     *,
     max_sequence_length: Optional[int] = None,
-) -> _LazyDatasetMap:
-    """Lazy registry of all 32 image-only-v9 datasets keyed by mm_olmo name."""
-    return _LazyDatasetMap(tokenizer, seed, max_sequence_length=max_sequence_length)
+) -> LazyDatasetMap:
+    """Lazy registry of all image-only-v9 datasets keyed by mm_olmo name."""
+    return LazyDatasetMap(
+        IMAGE_ONLY_V9_SUBMIXTURES,
+        _v9_dataset_builder(tokenizer, seed, max_sequence_length),
+    )
 
 
 def build_image_only_v9_mixture(
@@ -327,26 +334,34 @@ def build_image_only_v9_mixture(
     *,
     dataset_names: Optional[Sequence[str]] = None,
     max_sequence_length: int = 16384,
-) -> Tuple[List, List[float]]:
+    submixtures: Optional[Sequence[SubMixture]] = None,
+) -> Tuple[List, List[float], List[str]]:
     """Build weighted datasets for :class:`~olmo_core.data.multimodal.MixtureDataLoader`.
 
     Flattens ``IMAGE_ONLY_V9_SUBMIXTURES`` with mm_olmo SubMixture rate math, optionally
-    restricting to ``dataset_names`` (weights are renormalized over the subset).
+    restricting to ``dataset_names``. See
+    :func:`~olmo_core.data.multimodal.mixtures.registry.build_mixture`.
     """
-    datasets_map = build_image_only_v9_datasets(
-        tokenizer, seed, max_sequence_length=max_sequence_length
+    return build_mixture(
+        IMAGE_ONLY_V9_SUBMIXTURES,
+        _v9_dataset_builder(tokenizer, seed, max_sequence_length),
+        submixtures=submixtures,
+        dataset_names=dataset_names,
     )
-    lengths = {name: len(datasets_map[name]) for name in datasets_map.keys()}
-    flat = compute_flat_mixture_weights(IMAGE_ONLY_V9_SUBMIXTURES, lengths)
 
-    if dataset_names is not None:
-        allowed = set(dataset_names)
-        flat = [(name, w) for name, w in flat if name in allowed]
-        if not flat:
-            raise ValueError(f"No mixture sources matched dataset_names={dataset_names!r}")
-        norm = sum(w for _, w in flat)
-        flat = [(name, w / norm) for name, w in flat]
 
-    out_datasets = [datasets_map[name] for name, _ in flat]
-    out_weights = [w for _, w in flat]
-    return out_datasets, out_weights
+def build_single_image_only_v9_mixture(
+    tokenizer,
+    seed: int = 0,
+    *,
+    dataset_names: Optional[Sequence[str]] = None,
+    max_sequence_length: int = 16384,
+) -> Tuple[List, List[float], List[str]]:
+    """Build image-only-v9 with multi-image sources removed (rates renormalized)."""
+    return build_image_only_v9_mixture(
+        tokenizer,
+        seed,
+        dataset_names=dataset_names,
+        max_sequence_length=max_sequence_length,
+        submixtures=SINGLE_IMAGE_ONLY_V9_SUBMIXTURES,
+    )

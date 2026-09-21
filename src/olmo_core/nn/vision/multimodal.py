@@ -18,9 +18,27 @@ from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.connector import (
     ImagePoolingType,
     ImageProjectorType,
+    VisionConnector,
     VisionConnectorConfig,
 )
+from olmo_core.nn.vision.image_vit import VisionTransformer
 from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
+from olmo_core.nn.vision.vision_backbone import VisionBackbone
+from olmo_core.utils import env_bool, env_int, warn_once
+
+
+def _warn_removed_env_flags() -> None:
+    """Warn about env vars that no longer do anything, instead of ignoring them."""
+    if "MM_EMB_FULL_TENSOR" in os.environ:
+        # Removed rather than fixed: it never disabled the gather it was named after
+        # (``F.embedding`` needs a full tensor, so ``_gathered_embedding_weight`` always
+        # gathers), and its only real effect was suppressing the step cache — which is
+        # what `emb_step_cache` already does.
+        warn_once(
+            "MM_EMB_FULL_TENSOR is no longer read (it never controlled the gather). "
+            "Use --model.emb_step_cache=false to disable the cached embedding gather."
+        )
+
 
 __all__ = [
     "MOLMO2_BASE_VOCAB_SIZE",
@@ -116,6 +134,77 @@ class MultimodalLMConfig(Config):
     base-vocab-only head for loss, sampling, and (tied-embedding) training dynamics.
     ``None`` (default) disables masking.
     """
+
+    # -- performance / topology knobs ------------------------------------------------
+    #
+    # These were environment variables (``VIT_CROP_MICROBATCH``, ``MM_EMB_STEP_CACHE``,
+    # ``MM_FSDP_IMAGE_ALIGN_HACK``, ``MM_PRE_LM_BARRIER``) read at their call sites. As
+    # config fields they are serialized into the saved config, settable with
+    # ``--model.<field>=...``, and type-checked. ``None`` means "take the legacy
+    # environment variable if set, else the documented default", resolved once in
+    # ``__post_init__`` so the *resolved* value is what gets recorded.
+
+    vit_crop_microbatch: Optional[int] = None
+    """Max image crops per ViT forward; ``0`` disables chunking.
+
+    Defaults to 16. Stage 2 raises it (``SHIP_STACK_ENV`` sets 32, worth ~+3% TPS); it
+    must stay non-zero by default because Stage 1 shares this config and running all
+    ``B*T`` crops in one forward can OOM a config that fits today."""
+
+    emb_step_cache: Optional[bool] = None
+    """Reuse one gathered embedding table across the microbatches of a step (default on).
+
+    Only honoured once a caller invalidates it per step — see
+    :meth:`MultimodalLM.clear_embedding_step_cache`."""
+
+    image_align_tie: Optional[bool] = None
+    """Add a 0-weighted connector-output term to the residual stream on every forward
+    that ran the vision path (default on). Contributes exactly 0 to activations.
+
+    Intended to keep the connector and ViT in every rank's backward graph even when a rank
+    draws an all-text pack, so their FSDP collectives stay in lockstep — FSDP2 skips a
+    param group's reduce-scatter when none of its parameters has a gradient, and an
+    asymmetry there deadlocks the DP group.
+
+    **Measured to be redundant for the current forward.** The splice
+    ``flat[is_image_patch] = flat[is_image_patch] + image_features.reshape(-1, d)`` runs
+    whenever ``images is not None`` (which the collator guarantees), and a masked
+    ``index_put`` with an all-False mask still builds an autograd node — so an all-text
+    microbatch leaves the vision parameters with present-but-zero gradients and the
+    collective fires anyway. Pinned by ``src/test/nn/vision/align_tie_test.py``, which
+    fails if that stops being true.
+
+    **Verified on hardware** (2-GPU holmes run, experiment ``01M2622FH6WTMHZAD6A9WT5D7F``):
+    with this off, real FSDP2 + ``torch.compile``, rank 0 holding image rows and rank 1 an
+    all-text microbatch, both ranks issued 10 reduce-scatters and zero vision/connector
+    params had a ``None`` gradient. The concern also does not apply to compiled code at
+    all: ``apply_compile`` is applied to ``lm``/``vision``/``connector`` submodules, not to
+    ``MultimodalLM.forward``, so inductor never sees the splice.
+
+    Default stays on. Turning it off is safe but buys nothing on the shipped stack: the
+    8-GPU A/Bs measured 13,299 TPS for align-off alone vs a 12,973 baseline, but only
+    13,106 combined with ``MM_FSDP_RESHARD_AFTER_FORWARD=0`` (13,281 on its own) — the two
+    wins do not stack. Single runs, so treat those deltas as noise-level."""
+
+    pre_lm_barrier: Optional[bool] = None
+    """Barrier between the vision path and the LM forward when distributed (default on)."""
+
+    def __post_init__(self):
+        # Resolve legacy env vars into concrete values now, so `as_config_dict()` records
+        # what actually ran rather than a `None` that means "look at the environment".
+        if self.vit_crop_microbatch is None:
+            self.vit_crop_microbatch = env_int("VIT_CROP_MICROBATCH", 16)
+        if self.emb_step_cache is None:
+            self.emb_step_cache = env_bool("MM_EMB_STEP_CACHE", True)
+        if self.image_align_tie is None:
+            self.image_align_tie = env_bool("MM_FSDP_IMAGE_ALIGN_HACK", True)
+        if self.pre_lm_barrier is None:
+            self.pre_lm_barrier = env_bool("MM_PRE_LM_BARRIER", True)
+        if self.vit_crop_microbatch < 0:
+            raise OLMoConfigurationError(
+                f"vit_crop_microbatch must be >= 0 (0 disables chunking), got "
+                f"{self.vit_crop_microbatch}"
+            )
 
     @classmethod
     def _molmo2_like(
@@ -286,8 +375,79 @@ class MultimodalLM(nn.Module):
         self.lm = cfg.lm.build(init_device=init_device)
         # Cached so `forward` only builds a drop mask when some block will consume it.
         self._masked_residual_dropout = float(getattr(cfg.lm.block, "masked_dropout", 0.0) or 0.0)
-        self.vision = cfg.vision.build(init_device=init_device)
-        self.connector = cfg.connector.build(init_device=init_device)
+        self.vision_backbone = VisionBackbone(cfg.vision, cfg.connector, init_device=init_device)
+        _warn_removed_env_flags()
+        self._emb_weight_step_cache: Optional[torch.Tensor] = None
+        # Set by `clear_embedding_step_cache()`; see its docstring for why the cache
+        # stays off until a caller opts in by invalidating at step boundaries.
+        self._emb_cache_armed = False
+
+    @property
+    def vision(self) -> VisionTransformer:
+        return self.vision_backbone.vision
+
+    @property
+    def connector(self) -> VisionConnector:
+        return self.vision_backbone.connector
+
+    def legacy_vision_key_mapping(self) -> dict:
+        """Map current vision keys to the pre-:class:`VisionBackbone` checkpoint names.
+
+        ``{"vision_backbone.vision.foo": "vision.foo", ...}`` — the shape
+        :func:`~olmo_core.distributed.checkpoint.swap_param_keys` expects, so a checkpoint
+        written before the vision modules moved under ``vision_backbone`` still loads.
+
+        Pass it as a train module's ``load_key_mapping``. Doing so unconditionally is
+        safe: ``swap_param_keys`` skips any entry whose checkpoint-side key is absent from
+        the checkpoint metadata, so post-rename checkpoints are untouched.
+
+        This replaced a ``state_dict()`` / ``load_state_dict()`` override pair that
+        rewrote model keys back to the legacy names. That looked like back-compat but
+        broke a load-bearing invariant: optimizer FQNs come from ``named_parameters()``
+        and were *not* rewritten, so a saved checkpoint carried model key
+        ``vision.weight`` beside optimizer key
+        ``param_groups.vision_backbone.connector.bias.lr``. Doing the remap at the
+        checkpoint layer instead keeps model and optimizer key spaces identical.
+
+        Derived from the module tree rather than a hardcoded prefix list, so it cannot
+        drift if the submodule layout changes again.
+        """
+        prefix = "vision_backbone."
+        return {f"{prefix}{sub_key}": sub_key for sub_key in self.vision_backbone.state_dict()}
+
+    def clear_embedding_step_cache(self) -> None:
+        """Drop the per-step gathered embedding table (call once per optimizer step).
+
+        Also *arms* the cache: the gather is only reused by later forwards once a caller
+        has shown it will invalidate at step boundaries. A training loop that never calls
+        this gets a fresh gather every forward — slower, but correct — instead of
+        silently reusing the first step's weights for the rest of the process.
+        """
+        self._emb_weight_step_cache = None
+        self._emb_cache_armed = True
+
+    def _gathered_embedding_weight(self, emb_weight: torch.Tensor) -> torch.Tensor:
+        if not isinstance(emb_weight, DTensor):
+            return emb_weight
+        return emb_weight.full_tensor()
+
+    def _lookup_embedding_weight(self, emb: nn.Module) -> torch.Tensor:
+        cache_enabled = self._emb_cache_armed and bool(self.cfg.emb_step_cache)
+        if cache_enabled and self._emb_weight_step_cache is not None:
+            return self._emb_weight_step_cache
+        if isinstance(emb, SplitVocabEmbedding):
+            gathered = torch.cat(
+                [
+                    self._gathered_embedding_weight(emb.weight),
+                    self._gathered_embedding_weight(emb.extra_weight),
+                ],
+                dim=0,
+            )
+        else:
+            gathered = self._gathered_embedding_weight(emb.weight)
+        if cache_enabled:
+            self._emb_weight_step_cache = gathered
+        return gathered
 
     # -- model introspection (mirrors the Transformer API used by the trainer / callbacks) --
 
@@ -331,16 +491,30 @@ class MultimodalLM(nn.Module):
             self._n_connector_params_cache = sum(p.numel() for p in self.connector.parameters())
         return self._n_connector_params_cache
 
+    def vision_is_trainable(self) -> bool:
+        """True when any vision-encoder parameter requires grad.
+
+        Derived from ``requires_grad`` rather than from a config flag or a parameter-name
+        pattern, so it stays correct across renames of the vision subtree.
+        """
+        return any(p.requires_grad for p in self.vision.parameters())
+
     def image_encoder_flops(
         self, n_crops: int, n_patches_per_crop: int, n_pooled_tokens: int
     ) -> int:
         """Idealized FLOPs for the vision half of one batch, for MFU accounting.
 
         The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
-        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
-        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
-        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
-        (fwd+bwd) per pooled output token.
+        full ``B * n_crops`` of the images tensor. Per patch it costs 2 FLOPs/param for the
+        linear layers plus the attention score+context quadratic ``4·L·P·d``; that is the
+        **forward** cost, and a trainable encoder additionally pays backward, taken at the
+        usual 2x forward, so the whole term is tripled. The connector is always trained →
+        6 FLOPs/param (fwd+bwd) per pooled output token.
+
+        Stage 1 freezes the encoder and Stage 2 trains it (``VISION_LR``), so this is
+        decided per model instance from ``requires_grad`` rather than assumed. Assuming
+        "frozen" unconditionally under-counted Stage-2 vision FLOPs roughly 3x, and hence
+        under-reported Stage-2 MFU.
 
         :param n_crops: total number of image crops processed by the ViT this batch.
         :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
@@ -349,14 +523,15 @@ class MultimodalLM(nn.Module):
         d = self.cfg.vision.image_emb_dim
         n_layers = self.cfg.vision.image_num_layers
         n_raw = n_crops * n_patches_per_crop
-        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit_fwd = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit = vit_fwd * (3 if self.vision_is_trainable() else 1)
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 
     def _vit_crop_microbatch(self) -> int:
-        """Max crops per ViT forward (0 = no chunking). Env: ``VIT_CROP_MICROBATCH``."""
-        raw = os.environ.get("VIT_CROP_MICROBATCH", "16")
-        return int(raw)
+        """Max crops per ViT forward (0 = no chunking). See
+        :attr:`MultimodalLMConfig.vit_crop_microbatch`."""
+        return int(self.cfg.vit_crop_microbatch or 0)
 
     def _vit_forward_features(self, images: torch.Tensor) -> torch.Tensor:
         """Run ViT on ``images`` ``(B*T, N, patch_dim)`` and return ``(B*T, n_patches, dim)``."""
@@ -522,21 +697,10 @@ class MultimodalLM(nn.Module):
 
         # Compute LM token embeddings with any configured scale / norm. We embed here
         # (rather than inside ``self.lm``) so image features can be spliced in below.
-        # Under FSDP the embedding weight is a sharded ``DTensor`` that only the LM's own
-        # forward would unshard, so gather it to a full tensor for the lookup (a no-op for
-        # DDP / single-GPU where the weight is already a plain tensor).
+        # Under FSDP the embedding weight is a sharded ``DTensor``; gather to a full tensor
+        # for the lookup (``MM_EMB_STEP_CACHE=1`` reuses one gather across microbatches).
         emb = self.lm.embeddings
-
-        def _full(weight: torch.Tensor) -> torch.Tensor:
-            return weight.full_tensor() if isinstance(weight, DTensor) else weight
-
-        if isinstance(emb, SplitVocabEmbedding):
-            # The image-special token IDs live in the *extra* block, so the lookup must span
-            # both parameters — `emb.weight` alone covers only the base vocab. Gradients still
-            # reach both blocks through the concatenation.
-            emb_weight = torch.cat([_full(emb.weight), _full(emb.extra_weight)], dim=0)
-        else:
-            emb_weight = _full(emb.weight)
+        emb_weight = self._lookup_embedding_weight(emb)
         h = F.embedding(input_ids, emb_weight, padding_idx=emb.padding_idx)
         if self.lm.embed_scale is not None:
             h = h * self.lm.embed_scale
@@ -550,7 +714,16 @@ class MultimodalLM(nn.Module):
             images = images.to(device)
             pooled_patches_idx = pooled_patches_idx.to(device)
 
-            image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
+            # `record_function` scope so `torch.profiler` can attribute the vision path's
+            # time separately from the LM's. Without it the tables are operator-level only
+            # (`aten::mm`, `aten::_scaled_dot_product_*`), and a GEMM cannot be assigned to
+            # the ViT or the LM -- which is precisely the split that decides where the
+            # remaining throughput work goes. The annotation is a no-op when no profiler is
+            # active.
+            with torch.profiler.record_function("mm::vision_encode"):
+                image_features = self._encode_images(
+                    images, pooled_patches_idx
+                )  # (B, n_pooled, d)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -558,11 +731,13 @@ class MultimodalLM(nn.Module):
             # the activations but keeps the connector's FSDP reduce-scatter — and the vision
             # all-gather — firing on every rank each step, so collectives stay in lockstep
             # across ranks regardless of how text-only vs image examples are distributed.
-            h = h + 0.0 * image_features.sum().to(h.dtype)
+            # Disable for a throughput A/B with ``--model.image_align_tie=false``, but
+            # see that field's docstring first — it has deadlocked multi-node runs.
+            if self.cfg.image_align_tie:
+                h = h + 0.0 * image_features.sum().to(h.dtype)
 
-            # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
-            # sync before the LM FSDP forward so all-gather collectives stay aligned.
-            if is_distributed():
+            # Optional barrier before the LM FSDP forward.
+            if is_distributed() and self.cfg.pre_lm_barrier:
                 barrier()
 
             # Keep only valid pooled rows (a row is padding iff *all* its patch
@@ -613,6 +788,17 @@ class MultimodalLM(nn.Module):
             if example_ids is not None:
                 eid = example_ids.to(device)
                 same_example = eid[:, :, None] == eid[:, None, :]
+                # Keep pad positions from attending to each other, matching the flex
+                # backend (see FlexAttentionBackend._build_mask_mod). Dense SDPA computes
+                # the whole (S, S) matrix either way, so this buys no compute here -- it
+                # is purely so the two backends produce the same hidden states.
+                #
+                # Done in place rather than by ANDing an `eye`-based helper: at Stage-2's
+                # S=16384 each extra (B, S, S) bool temporary is ~268 MB per row, which is
+                # a lot to spend on a path that saves no compute. Restoring the diagonal
+                # unconditionally is safe because a real position always matches itself.
+                same_example &= (eid >= 0)[:, :, None]
+                same_example.diagonal(dim1=-2, dim2=-1)[:] = True
                 combined = same_example & seg_rule if seg_rule is not None else same_example
                 and_mask = combined.unsqueeze(1)
             elif seg_rule is not None:
@@ -621,19 +807,20 @@ class MultimodalLM(nn.Module):
         if position_ids is not None:
             position_ids = position_ids.to(device)
 
-        out = self.lm(
-            input_ids,
-            input_embeddings=h,
-            labels=labels,
-            or_mask=or_mask,
-            and_mask=and_mask,
-            flex_attn_block_mask=flex_attn_block_mask,
-            position_ids=position_ids,
-            response_logits_only=response_logits_only,
-            response_mask=response_mask,
-            drop_mask=drop_mask,
-            **kwargs,
-        )
+        with torch.profiler.record_function("mm::lm_forward"):
+            out = self.lm(
+                input_ids,
+                input_embeddings=h,
+                labels=labels,
+                or_mask=or_mask,
+                and_mask=and_mask,
+                flex_attn_block_mask=flex_attn_block_mask,
+                position_ids=position_ids,
+                response_logits_only=response_logits_only,
+                response_mask=response_mask,
+                drop_mask=drop_mask,
+                **kwargs,
+            )
 
         # Mask the logit columns of the inputs-only image-special tokens (see
         # :attr:`MultimodalLMConfig.output_vocab_size`). ``finfo.min`` underflows to

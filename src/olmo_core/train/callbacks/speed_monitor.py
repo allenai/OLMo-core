@@ -44,6 +44,9 @@ class SpeedMonitorCallback(Callback):
     _step_flops: int = 0
     _step_examples: int = 0
     _total_examples: int = 0
+    _step_useful_tokens: int = 0
+    _total_useful_tokens: int = 0
+    _step_crop_occupancy: Optional[float] = None
     _parallel_degree: int = 1
     _bps_avg: Optional[float] = None
     _tps_avg: Optional[float] = None
@@ -125,6 +128,28 @@ class SpeedMonitorCallback(Callback):
     def pre_step(self, batch: Dict[str, Any]):
         self._batch_load_time = time.perf_counter() - self._batch_load_start
 
+        # Reset unconditionally: these are per-step observations, and leaving a stale
+        # value would silently re-log the previous step's number for a batch that has
+        # no such measurement.
+        self._step_useful_tokens = None
+        self._step_crop_occupancy = None
+
+        # Fraction of the padded crop tensor that is real, as seen at collation time --
+        # before ``MultimodalLM._encode_images`` does its own DP-wide
+        # ``all_reduce(MAX)`` and pads every rank's crop axis further to match the
+        # busiest rank. That second padding round is invisible here: ``pre_step`` runs
+        # before the forward pass, and the extra count is a local variable inside
+        # ``_encode_images``, never surfaced. So this is a lower bound on the padding
+        # the ViT actually executes, i.e. an optimistic occupancy figure -- measured at
+        # ~2 percentage points on the packing profiles this metric was built against
+        # (16-way DP, single-image tiers). Getting the exact figure would mean either a
+        # second collective in this callback or threading a value out of the model's
+        # forward pass; not worth it for 2 points on a monitoring metric.
+        if "n_real_crops" in batch and "images" in batch:
+            padded_crops = batch["images"].shape[0] * batch["images"].shape[1]
+            if padded_crops:
+                self._step_crop_occupancy = int(batch["n_real_crops"].sum()) / padded_crops
+
         if self._first_step:
             # We don't record the first batch since the first one tends to take
             # unusually long.
@@ -148,6 +173,25 @@ class SpeedMonitorCallback(Callback):
                 examples_in_batch = batch["input_ids"].shape[0]
             self._step_examples = examples_in_batch // self._parallel_degree
             self._total_examples += self._step_examples
+
+            # Useful (non-pad) tokens. ``tokens_in_batch`` above counts the padded
+            # sequence, because the multimodal collator pads every pack to a fixed
+            # ``pad_sequence_length`` regardless of how much real content it holds. TPS
+            # built on that figure *rises* when packs get emptier, so it cannot tell
+            # "went faster" from "did less work". Pad positions carry ``example_ids ==
+            # -1``, which is what makes the real count recoverable here.
+            #
+            # Left as ``None`` when ``example_ids`` is absent (packing off, or any
+            # text-only run). Falling back to ``_step_tokens`` there would report 100%
+            # occupancy for a batch that may be mostly padding -- fabricating precisely
+            # the reassurance this metric exists to withhold.
+            if "example_ids" in batch:
+                self._step_useful_tokens = (
+                    int((batch["example_ids"] >= 0).sum()) // self._parallel_degree
+                )
+                self._total_useful_tokens += self._step_useful_tokens
+            else:
+                self._step_useful_tokens = None
 
             self._step_flops = 0
             if (
@@ -174,6 +218,7 @@ class SpeedMonitorCallback(Callback):
             self._total_tokens = 0
             self._total_flops = 0
             self._total_examples = 0
+            self._total_useful_tokens = 0
             self._start_time = counter
             self._first_step = False
             self._step_last_logged = counter
@@ -198,6 +243,38 @@ class SpeedMonitorCallback(Callback):
             self._tps_avg = tps_avg
             self.trainer.record_metric("throughput/device/TPS", tps)
             self.trainer.record_metric("throughput/device/TPS (actual avg)", tps_avg)
+
+            # Padding-aware companions to TPS. ``useful TPS`` is the rate of non-pad
+            # tokens, so unlike TPS it cannot be improved by emitting emptier packs;
+            # prefer it (or examples per second) when comparing pack geometries.
+            #
+            # Reduced with ``mean`` rather than left rank-local like TPS: TPS is
+            # identical on every rank (equal-sized batches), but occupancy genuinely
+            # differs -- a rank that draws an all-text pack has ~0 crop occupancy while
+            # an image-heavy rank is near 1.0 -- so rank 0's value is not representative.
+            if self._step_useful_tokens is not None and self._total_useful_tokens:
+                self.trainer.record_metric(
+                    "throughput/device/useful TPS",
+                    self._step_useful_tokens / step_time,
+                    reduce_type=ReduceType.mean,
+                )
+                self.trainer.record_metric(
+                    "throughput/device/useful TPS (actual avg)",
+                    self._total_useful_tokens / total_time,
+                    reduce_type=ReduceType.mean,
+                )
+                self.trainer.record_metric(
+                    "throughput/device/token occupancy",
+                    self._step_useful_tokens / self._step_tokens,
+                    reduce_type=ReduceType.mean,
+                )
+
+        if self._step_crop_occupancy is not None:
+            self.trainer.record_metric(
+                "throughput/device/crop occupancy",
+                self._step_crop_occupancy,
+                reduce_type=ReduceType.mean,
+            )
 
         if self.trainer.global_train_tokens_seen is not None:
             self.trainer.record_metric(

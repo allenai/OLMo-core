@@ -9,8 +9,10 @@ OLMo-core analogue of mm_olmo's dynamic packer.
 Cross-example isolation reuses the same machinery as intra-example branch isolation:
 
 * a per-token ``example_ids`` vector marks which packed example each token belongs to;
-  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]`` into
-  the attention keep-mask so a token never attends across an example boundary.
+  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]``
+  into the attention keep-mask so a token never attends across an example boundary.
+  Pad positions all carry ``-1``, so they are additionally restricted to themselves --
+  equality alone would make the whole pad tail one mutually-visible segment.
 * per-example ``position_ids`` are preserved (each example keeps its own 0-based RoPE
   positions / branch overlap), so packing is invisible to RoPE.
 * ``subsegment_ids`` are concatenated (examples without branches get a constant id, which
@@ -81,9 +83,7 @@ def greedy_pack_indices(
         crops = int(crop_counts[i]) if crop_counts is not None else 0
         over_tokens = cur and cur_len + n > seq_len
         over_crops = (
-            max_crops_per_pack is not None
-            and cur
-            and cur_crops + crops > max_crops_per_pack
+            max_crops_per_pack is not None and cur and cur_crops + crops > max_crops_per_pack
         )
         if over_tokens or over_crops:
             groups.append(cur)
@@ -205,7 +205,9 @@ def iter_packs(
             and example_has_images(cur[0])
             and cur_crops + crops > max_crops_per_pack
         )
-        if cur and (over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])):
+        if cur and (
+            over_tokens or over_crops or example_has_images(ex) != example_has_images(cur[0])
+        ):
             yield pack_examples(cur)
             cur, cur_len, cur_crops = [], 0, 0
         cur.append(ex)
@@ -281,7 +283,9 @@ class PackingConstraint:
     :param granularity: quantization step for the DP table.
     """
 
-    def __init__(self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int):
+    def __init__(
+        self, key: str, max_len: int, allow_shortcut: bool, weight: float, granularity: int
+    ):
         self.key = key
         self.max_len = max_len
         self.allow_shortcut = allow_shortcut
@@ -407,20 +411,25 @@ def iter_dynamic_packs(
     buffer_size: int = 48,
     text_weight: float = 1.0,
     image_weight: float = 30.0,
+    shortcut_max_len_images: bool = False,
     flush: bool = True,
 ) -> Iterator[Dict[str, np.ndarray]]:
     """2D-knapsack-pack a stream of example dicts (mm_olmo SFT packing parity).
 
-    mm_olmo stage-2 uses ``PackingConfig(buffer_size=48, image_weight=30,
-    shortcut_max_len_images=False)`` with capacities = (sequence length, per-sequence
-    crop capacity) and quantization ``(seq_len // 512, 1)``. Text-only examples pack
-    together with image examples.
+    mm_olmo ``image-only-v9`` uses ``PackingConfig(buffer_size=48, image_weight=30,
+    shortcut_max_len_images=True)`` with image capacity from ``get_output_shapes()`` (≈25
+    crops for one high-res image). OLMo-core defaults to ``shortcut_max_len_images=False``
+    and ``max_crops_per_pack=125`` for dense multi-example packs. For mm_olmo-like
+    packing (fewer ViT crops / higher TPS), use ``max_crops_per_pack=25`` and
+    ``shortcut_max_len_images=True``.
 
     :param seq_len: token capacity per pack.
     :param max_crops_per_pack: crop capacity per pack. Use the max crops a single
         example can produce (global crop + locals; the high-res budget if any dataset
         uses ``p_high_res > 0``) or more.
     :param buffer_size: candidate buffer size (mm_olmo: 48).
+    :param shortcut_max_len_images: mm_olmo ``shortcut_max_len_images`` — emit examples
+        that alone reach the crop capacity without buffering.
     :param flush: drain the buffer once ``examples`` is exhausted (set False to match
         mm_olmo's ``packed_iterator``, which drops the tail of infinite streams).
     """
@@ -428,7 +437,7 @@ def iter_dynamic_packs(
         buffer_size,
         [
             PackingConstraint("input_ids", seq_len, True, text_weight, max(1, seq_len // 512)),
-            PackingConstraint("images", max_crops_per_pack, False, image_weight, 1),
+            PackingConstraint("images", max_crops_per_pack, shortcut_max_len_images, image_weight, 1),
         ],
     )
     for ex in examples:
