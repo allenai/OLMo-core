@@ -57,6 +57,23 @@ print('vllm', vllm.__version__, 'transformers', transformers.__version__)
 from transformers import Qwen3_5ForCausalLM; print('Qwen3_5ForCausalLM OK')
 " || { echo "FATAL: stack did not import"; exit 1; }
 
+# CUDA_HOME must point at the pip cuda-toolkit's OWN nvcc, or vLLM's JIT dies at engine init with
+# "Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist" -- after the model has
+# already loaded, which makes it read like a model problem. It must specifically be the
+# nvidia/cuda_nvcc component: another nvidia-* package can ship a MISMATCHED nvcc whose paired
+# cuda.h declares a different CUDA_VERSION, and flashinfer's coherence guard then rejects it.
+# See the beaker-qwen35-vllm-cracked record.
+echo "=== CUDA_HOME $(date -u '+%T')Z ==="
+NVCC_PATH=$(find "$VENV/lib" -path '*nvidia/cuda_nvcc*' -iname nvcc 2>/dev/null | head -1)
+if [ -z "$NVCC_PATH" ]; then
+  echo "nvidia/cuda_nvcc not found; all nvcc under the venv:"; find "$VENV" -iname nvcc 2>/dev/null
+  NVCC_PATH=$(find "$VENV" -iname nvcc 2>/dev/null | head -1)
+fi
+[ -n "$NVCC_PATH" ] || { echo "FATAL: no nvcc under the venv"; exit 1; }
+export CUDA_HOME=$(dirname "$(dirname "$NVCC_PATH")")
+export PATH="$CUDA_HOME/bin:$PATH"
+echo "CUDA_HOME=$CUDA_HOME"; "$CUDA_HOME/bin/nvcc" --version | tail -2
+
 # The vendored ctc spec code (prompt/parse/score) rides along in the olmo-eval clone; fetch it
 # shallow so the benchmark grades with byte-identical logic to the harness it is sizing.
 echo "=== olmo-eval vendor tree $(date -u '+%T')Z ==="

@@ -1,0 +1,410 @@
+{
+ "ctc_fiqa": {
+  "subset": "fiqa",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_nq": {
+  "subset": "nq",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_hpqa": {
+  "subset": "hotpotqa",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_qdmatch_fiqa": {
+  "subset": "qdmatch_fiqa",
+  "spec": "qdmatch",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_qdmatch_nq": {
+  "subset": "qdmatch_nq",
+  "spec": "qdmatch",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_qdmatch_hpqa": {
+  "subset": "qdmatch_hpqa",
+  "spec": "qdmatch",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_outlier_amzn": {
+  "subset": "outlier_amzn",
+  "spec": "outlier",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_outlier": {
+  "subset": "outlier",
+  "spec": "outlier",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_outlier_fixedm": {
+  "subset": "outlier_fixedM",
+  "spec": "outlier",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_oolong": {
+  "subset": "oolong",
+  "spec": "oolong",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_grouping": {
+  "subset": "grouping",
+  "spec": "grouping",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_absence": {
+  "subset": "absence_gutenberg",
+  "spec": "absence",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_xabsence": {
+  "subset": "xabsence",
+  "spec": "xabsence",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_rerank": {
+  "subset": "rerank",
+  "spec": "rerank",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_msmarco": {
+  "subset": "msmarco",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_reorder": {
+  "subset": "reorder",
+  "spec": "reorder",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_obliq": {
+  "subset": "obliq_twitter",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r2k": 123,
+   "r4k": 126,
+   "r8k": 126,
+   "r16k": 126,
+   "r32k": 126,
+   "r64k": 126,
+   "r128k": 126,
+   "r256k": 125
+  }
+ },
+ "ctc_niah": {
+  "subset": "niah",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_contradiction": {
+  "subset": "contradiction_iid",
+  "spec": "contradiction",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  }
+ },
+ "ctc_strmatch": {
+  "subset": "strmatch",
+  "spec": "strmatch",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_textgroups": {
+  "subset": "textgroups",
+  "spec": "textgroups",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k"
+  ],
+  "eval_size": {}
+ },
+ "ctc_scifact": {
+  "subset": "scifact",
+  "spec": "retrieval",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k"
+  ],
+  "eval_size": {
+   "r2k": 300,
+   "r4k": 300,
+   "r8k": 300,
+   "r16k": 300,
+   "r32k": 300
+  }
+ },
+ "ctc_contra_fever": {
+  "subset": "contra_fever",
+  "spec": "contradiction",
+  "ctc_class": "high",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {},
+  "ood": true
+ },
+ "ctc_outlier_review": {
+  "subset": "outlier_review",
+  "spec": "outlier",
+  "ctc_class": "low",
+  "rungs": [
+   "r2k",
+   "r4k",
+   "r8k",
+   "r16k",
+   "r32k",
+   "r64k",
+   "r128k",
+   "r256k"
+  ],
+  "eval_size": {
+   "r256k": 125
+  },
+  "ood": true
+ }
+}
