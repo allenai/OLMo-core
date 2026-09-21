@@ -8,7 +8,16 @@ from pathlib import Path
 from typing import ClassVar
 
 from olmoe3_dolci_hero_plan import (
-    AUTO, CONTINUATION_PIN, DATA, DECAY_START, FINAL, PIN, ROOT, find_run, install, run,
+    AUTO,
+    CONTINUATION_PIN,
+    DATA,
+    DECAY_START,
+    FINAL,
+    PIN,
+    ROOT,
+    find_run,
+    install,
+    run,
 )
 
 install()
@@ -166,7 +175,8 @@ def install_adapters(r):
     original_scheduler = adapter.scheduler
     adapter.scheduler = lambda x: (
         WSD(warmup=2000, decay=FINAL - DECAY_START, decay_fraction=None)
-        if x.kind == "hero" else original_scheduler(x)
+        if x.kind == "hero"
+        else original_scheduler(x)
     )
     adapter.hero.disk_action = lambda free: (
         "stop" if free < 10_000_000_000_000 else ("warn" if free < 12_000_000_000_000 else "ok")
