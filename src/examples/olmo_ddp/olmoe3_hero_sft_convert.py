@@ -77,6 +77,8 @@ def main():
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--qualify-only", action="store_true")
     args = parser.parse_args()
+    from olmoe3_tokenizer_policy import require_correct_tokenizer
+    require_correct_tokenizer(DATA / "train/tokenizer", runtime=True)
     run = find_run(args.run)
     assert not run.smoke and args.step in (
         data_plan()["steps_per_epoch"],
@@ -130,6 +132,7 @@ def main():
         keywords["max_sequence_length"] = 65536
         # Use the exact saved tokenizer/template, before qualification and checksums.
         keywords["tokenizer_id"] = str(DATA / "train/tokenizer")
+        keywords["tokenizer_revision"] = None
         result = original(*positional, **keywords)
         from olmoe3_hero_sft_metadata import install_metadata
 

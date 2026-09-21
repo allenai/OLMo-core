@@ -57,6 +57,10 @@ def build_spec(template, stage, run, commit):
         f"git -C /tmp/hero-decay-wrapper checkout --quiet {commit}\n"
     )
     if stage == "convert":
+        # Beaker template is immutable and still names the earlier weight mapper.
+        legacy_ref = "b1fd2c9746e88baeb20e372bdca340d788d0f7e5"
+        assert command.count(legacy_ref) == 2
+        command = command.replace(legacy_ref, CORE_REF)
         old = (
             "python src/examples/olmo_ddp/hero_hf_stage.py --arm emo --step 75500\n"
             "python src/examples/olmo_ddp/hero_hf_convert.py --arm emo --step 75500 --full --portable-reference --precise"
