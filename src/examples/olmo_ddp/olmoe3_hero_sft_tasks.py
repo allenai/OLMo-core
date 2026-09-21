@@ -26,7 +26,7 @@ from olmo_eval.evals.tasks.minerva_math import Math500
 
 SAMPLING = SamplingParams(
     max_tokens=32768,
-    temperature=0.6,
+    temperature=float(os.environ.get("HERO_SFT_TEMPERATURE", "0.6")),
     top_p=0.95,
     top_k=-1,
     num_samples=1,
@@ -76,9 +76,9 @@ class ThinkAnswers:
                         path.parent.mkdir(parents=True, exist_ok=True)
                         if path.exists():
                             assert os.environ.get("HERO_SFT_RESUME") == "1"
-                            assert json.loads(path.read_text()) == record, (
-                                "Conflicting saved response"
-                            )
+                            assert (
+                                json.loads(path.read_text()) == record
+                            ), "Conflicting saved response"
                         else:
                             from olmoe3_lr_sweep_watch import atomic_json
 

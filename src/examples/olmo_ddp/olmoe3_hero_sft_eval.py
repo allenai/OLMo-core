@@ -56,7 +56,7 @@ def validate_export(model):
 
     receipt_path = model / "_HERO_CONVERSION_SUCCESS.json"
     receipt = json.loads(receipt_path.read_text())
-    assert receipt["passed"] and receipt["step"] == int(os.environ.get('QKGAIN_SFT_STEP','1810'))
+    assert receipt["passed"] and receipt["step"] == int(os.environ.get("QKGAIN_SFT_STEP", "1810"))
     for file in (
         "config.json",
         "tokenizer.json",
@@ -159,7 +159,9 @@ def main():
     assert not run.smoke
     model = export_root(run) / run.arm / f"step{os.environ.get('QKGAIN_SFT_STEP','1810')}/hf"
     conversion = validate_export(model)
-    output = model.parent / "posttrain-evals-r1" / args.bundle
+    output = (
+        model.parent / os.environ.get("HERO_SFT_OUTPUT_GROUP", "posttrain-evals-r1") / args.bundle
+    )
     resume = os.environ.get("HERO_SFT_RESUME") == "1" and (output / "recipe.json").is_file()
     if resume:
         assert args.bundle in ("math500", "ifbench", "humaneval", "alpaca")
@@ -174,9 +176,9 @@ def main():
     if "humaneval" in bundles:
         code_preflight()
     if "alpaca" in bundles:
-        assert os.environ.get("OPENAI_API_KEY"), (
-            "Alpaca judge credential required before generation"
-        )
+        assert os.environ.get(
+            "OPENAI_API_KEY"
+        ), "Alpaca judge credential required before generation"
         import alpaca_eval
 
         assert alpaca_eval is not None
@@ -235,7 +237,7 @@ def main():
         "-O",
         str(output),
         "--experiment-group",
-        "olmo35-small-sft-20260914",
+        os.environ.get("HERO_SFT_EVAL_GROUP", "olmo35-small-sft-20260914"),
         "--experiment-name",
         run.run_id + "-" + args.bundle,
     ]
@@ -265,9 +267,9 @@ def main():
     }
     recipe = output / "recipe.json"
     if resume:
-        assert json.loads(recipe.read_text()) == json.loads(json.dumps(receipt)), (
-            "Refuse model/recipe drift on resume"
-        )
+        assert json.loads(recipe.read_text()) == json.loads(
+            json.dumps(receipt)
+        ), "Refuse model/recipe drift on resume"
         if (output / "success.json").is_file():
             proof = json.loads((output / "success.json").read_text())
             assert (

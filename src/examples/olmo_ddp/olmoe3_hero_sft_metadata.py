@@ -35,6 +35,14 @@ def inference_template(training_template):
 def check_tokenizer(tokenizer, training):
     """Fail on changed vocab, EOS/PAD/BOS, double formatting, or altered completed turns."""
     assert tokenizer.get_vocab() == training.get_vocab()
+    assert (
+        json.loads(tokenizer.backend_tokenizer.to_str())["pre_tokenizer"]
+        == json.loads(training.backend_tokenizer.to_str())["pre_tokenizer"]
+    )
+    for text in ("9078563412", "12345678901234567890", "def f():\n    return 123456\n"):
+        assert tokenizer.encode(text, add_special_tokens=False) == training.encode(
+            text, add_special_tokens=False
+        )
     assert len(tokenizer) == tokenizer.vocab_size == 100278
     assert tokenizer.eos_token_id == 100257 and tokenizer.pad_token_id == 100277
     assert tokenizer.bos_token_id is None and tokenizer.model_max_length == 65536
