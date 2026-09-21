@@ -46,6 +46,9 @@ def main():
     attn = shared_cpt["model"]["block"]["sequence_mixer"]
     assert attn["name"] == "shared_vector_landmark"
     assert attn["mem_freq"] == 63 and attn["vec_dim"] == 32
+    current_model = config.model.as_config_dict()
+    assert current_model["block"]["sequence_mixer"]["rope"] == attn["rope"]
+    assert not current_model.get("block_overrides"), "Unexpected per-layer RoPE overrides"
     for name, cpt in report["cpt"].items():
         cpt["token_slots"] = cpt["step"] * cpt["global_batch_size"]
         print(

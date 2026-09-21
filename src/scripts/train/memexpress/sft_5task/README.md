@@ -28,8 +28,11 @@ dense task weights, p10 NQ, shared-vector CPT step2385, 10515 steps / 701.224M s
 | launcher | mixture | training RoPE | comparison |
 |---|---|---|---|
 | `Qwen3-4B-sharedvec-5task-33344-tokenmatch-SFT.py` | five tasks only | native | Earlier pilot recipe |
-| `Qwen3-4B-sharedvec-5task-dolci25-33344-tokenmatch-SFT.py` | 75% five tasks / 25% Dolci Qwen3 | YaRN2, original context 32768 | Dense `q4b-dense-5task-dolci25-32k-nocpt/step10700` recipe and token budget |
+| `Qwen3-4B-sharedvec-5task-dolci25-33344-tokenmatch-SFT.py` | 75% five tasks / 25% Dolci Qwen3 | Native CPT RoPE, theta1000000 | Dense `q4b-dense-5task-dolci25-32k-nocpt/step10700` recipe and token budget |
 
 Token matching includes landmarks and padding; it does not imply equal data exposure or FLOPs.
 The Dolci repetition ceiling is 8 (dense saved config: 1); CPU preparation must verify that
 Dolci is downsampled so the higher ceiling is inactive. Use fresh run names.
+
+The Dolci25 arm preserves shared-vector CPT positional encoding by explicit user request;
+its RoPE therefore differs from the dense reference, which trained with YaRN2.

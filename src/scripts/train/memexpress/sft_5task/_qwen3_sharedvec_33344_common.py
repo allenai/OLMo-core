@@ -1,13 +1,14 @@
 """Shared builder for Qwen3 shared-vector SFT at matched 32k content capacity.
 
 Contrast: sharedvec-dolci25-tokenmatch versus the saved dense Dolci25 step10700
-recipe, matching 75/25 mixture, task sources/weights, optimizer, YaRN2, and 701.2M
+recipe, matching 75/25 mixture, task sources/weights, optimizer, and 701.2M
 window-token budget. The sharedvec-tokenmatch arm retains the earlier pure-five-task
 pilot with native RoPE.
 
 Readout: v3 five-task and OOD ladders, task-native metrics (F1, NDCG@10, OOLONG score).
 
-Not matched: attention architecture and architecture-specific CPT weights; CPT budget
+Not matched: positional encoding (native CPT RoPE retained per user request, whereas
+dense SFT used YaRN2), attention architecture and architecture-specific CPT weights; CPT budget
 provenance is audited before launch. Landmark packing includes landmark and block-padding
 slots, so equal window-token budgets consume less original content, potentially biasing
 shared-vector downward. Budget matching is not a claim of equal FLOPs. HSDP shards across
@@ -127,7 +128,7 @@ CONTRA_FRAC = max(0.0, 1.0 - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLIER_FRAC
 DOLCI_DATA_ROOT = "/weka/oe-training-default/amandab/dolci-instruct-sft/qwen3"
 _ARMS = {
     "sharedvec-tokenmatch": {"dolci_fraction": 0.0, "yarn_factor": None},
-    "sharedvec-dolci25-tokenmatch": {"dolci_fraction": 0.25, "yarn_factor": 2.0},
+    "sharedvec-dolci25-tokenmatch": {"dolci_fraction": 0.25, "yarn_factor": None},
 }
 
 LR = 1e-5
