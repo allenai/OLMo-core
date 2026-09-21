@@ -125,10 +125,11 @@ STATE_BENCH_DISTRIBUTION_TOKENS: dict[str, int | None] = {
     # documents (same documents, same tokenizer), so they retain its token count.
     "integer-code--periodic--sens-shuffled": 30_842_931_386,
     "integer-code--periodic--sens-curriculum": 30_842_931_386,
-    # TODO: fill in from token_counts.sh once state-tracking-solvable-v1 is tokenized.
-    "integer-code-modular--solvable": None,
-    "integer-code-modular--aperiodic": None,
-    "integer-code-modular--r-trivial": None,
+    # state-tracking-solvable-v1: increments render as `x <- (x + d) mod 100;`, about
+    # twice the tokens of a copy, so the solvable split is roughly 2x its controls.
+    "integer-code-modular--solvable": 66_254_201_696,
+    "integer-code-modular--aperiodic": 34_596_269_554,
+    "integer-code-modular--r-trivial": 34_596_269_554,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
