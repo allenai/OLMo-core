@@ -72,7 +72,7 @@ def evaluate():
     import olmoe3_qkgain_eval as e
 
     r = p.find_run(sys.argv[sys.argv.index("--run") + 1])
-    if r.kind.startswith("dolci"):
+    if r.uses_dolci:
         e.SFT_DATA = p.DATA
     sys.argv.pop(1)
     e.main()
@@ -106,11 +106,12 @@ def validate():
         assert not c.trainer.callbacks["checkpointer"].save_async
         assert c.trainer.callbacks["checkpointer"].fixed_steps == r.saves
         assert c.train_module.optim.lr == r.lr
-        if r.kind.startswith("dolci"):
+        if r.uses_dolci:
             assert c.train_module.optim.weight_decay == 0 and not c.train_module.compile_model
             assert c.trainer.load_path == str(r.source) and not c.trainer.load_optim_state
             assert a.sft_data_plan(r)["total_steps"] == r.end
-            p.base.validate_checkpoint(r.source, 5961, 16777216, 64)
+            if r.kind in ("dolci-emo", "dolci-non-emo") or r.source.exists():
+                p.base.validate_checkpoint(r.source, 5961, 16777216, 64)
         for block in [c.model.block, *c.model.block_overrides.values()]:
             router = getattr(block, "routed_experts_router", None)
             assert router is None or router.emo is None
@@ -123,6 +124,13 @@ def validate():
             assert schedule.get_lr(r.lr, p.DECAY_START, r.end) == r.lr
             assert schedule.get_lr(r.lr, r.end, r.end) == 0
             assert "branch_pin" in c.trainer.callbacks
+        if r.kind == "hero2t-mt":
+            assert c.dataset.source_mixture_config.requested_tokens == 100_000_000_000
+            assert c.train_module.scheduler.warmup == 2000
+            assert c.train_module.scheduler.alpha_f == 0
+        if r.kind == "hero2t-lc":
+            assert r.batch == 16777216 and r.lr == 1.1e-4
+            assert c.train_module.scheduler.warmup == 2000
         print("CAMPAIGN_CONFIG_VERIFIED", r.as_dict(), flush=True)
         return
     for r in p.runs():
@@ -285,6 +293,48 @@ def classify_failure(text):
     return "manual"
 
 
+def restore_2t():
+    """Restore only the two verified original 2T LC endpoints, never their MT initializers."""
+    import logging
+    from huggingface_hub import HfApi
+    import olmoe3_hero_bucket_download as downloader
+
+    logging.basicConfig(level=logging.INFO)
+    downloader.SCRATCH = p.AUTO / "sources/old-2t"
+    downloader.prepare_scratch()
+    api = HfApi()
+    assert api.bucket_info(p.base.BUCKET).private
+    proofs = {}
+    for kind, (prefix, lineage) in p.OLD_2T_SOURCES.items():
+        r = p.run(kind)
+        restored = downloader.download(api, prefix, 5961, lineage_id=lineage)
+        assert restored == r.source
+        p.base.validate_checkpoint(restored, 5961, 16777216, 64)
+        assert (restored / "config.json").is_file()
+        proofs[kind] = dict(
+            source=str(restored),
+            prefix=prefix,
+            lineage=lineage,
+            step=5961,
+            config_sha256=hashlib.sha256((restored / "config.json").read_bytes()).hexdigest(),
+        )
+    atomic_json(p.AUTO / "old-2t-source-proof.json", dict(passed=True, sources=proofs))
+
+
+def restore_2t_spec(template, commit):
+    """One urgent I/O worker; no checkpoint payloads enter Beaker results."""
+    spec = cpu_spec(template, commit, "download")
+    task = spec["tasks"][0]
+    task["arguments"][-1] = task["arguments"][-1].replace(
+        "olmoe3_qkgain_control.py download", "olmoe3_dolci_hero.py restore-2t"
+    )
+    task["resources"] = dict(gpuCount=1, cpuCount=8, memory="64 GiB", sharedMemory="8 GiB")
+    task["context"].update(minRuntime="1h", priority="urgent", autoResume=True)
+    task["timeout"] = "6h"
+    replace_env(task, dict(GIT_BRANCH=p.BRANCH))
+    return spec
+
+
 def watch():
     """SFT-first admission, once-only dependencies, final evals, and bounded PT recovery."""
     from beaker import Beaker
@@ -359,8 +409,44 @@ def watch():
                             continue
                         bp = json.loads((p.AUTO / "branch-source.json").read_text())
                         assert bp["passed"] and bp["source"] == str(p.PIN)
-                    if r.kind in ("mt", "lc", "sft"):
-                        parent = p.run({"mt": "decay", "lc": "mt", "sft": "lc"}[r.kind])
+                    if r.kind in p.OLD_2T_SOURCES:
+                        hero = p.run("hero")
+                        audit = hero.root / "audit/restore-22000-rank0.json"
+                        metrics = hero.root / "audit/metrics.jsonl"
+                        if not (p.AUTO / "old-2t-sft-admitted.json").exists() and not (
+                            rows.get("hero", {}).get("status") == "STATUS_RUNNING"
+                            and audit.exists()
+                            and metrics.exists()
+                            and metrics.stat().st_mtime_ns > audit.stat().st_mtime_ns
+                        ):
+                            rows[r.kind] = dict(
+                                waiting="128-GPU hero resumed before old-2T SFT admission"
+                            )
+                            continue
+                        if not (p.AUTO / "old-2t-sft-admitted.json").exists():
+                            atomic_json(
+                                p.AUTO / "old-2t-sft-admitted.json",
+                                dict(passed=True, hero=rows["hero"]["id"]),
+                            )
+                        restored, restored_status = ensure_saved(
+                            c,
+                            p.CAMPAIGN + "-restore-old-2t-lc",
+                            lambda: restore_2t_spec(template, commit),
+                        )
+                        if restored_status != "STATUS_SUCCEEDED":
+                            rows[r.kind] = dict(
+                                waiting="verified 2T LC restore",
+                                restore_status=restored_status,
+                                restore_id=restored.experiment.id if restored else None,
+                            )
+                            continue
+                        source_proof = json.loads((p.AUTO / "old-2t-source-proof.json").read_text())
+                        assert source_proof["passed"] and source_proof["sources"][r.kind][
+                            "source"
+                        ] == str(r.source)
+                        p.base.validate_checkpoint(r.source, 5961, 16777216, 64)
+                    if r.kind in p.PARENT_KINDS:
+                        parent = p.run(p.PARENT_KINDS[r.kind])
                         if rows.get(parent.kind, {}).get("status") != "STATUS_SUCCEEDED":
                             rows[r.kind] = dict(waiting="native " + parent.kind)
                             continue
@@ -490,6 +576,8 @@ if __name__ == "__main__":
         node()
     elif mode == "watch":
         watch()
+    elif mode == "restore-2t":
+        restore_2t()
     elif mode == "eval":
         evaluate()
     elif mode == "self-test":

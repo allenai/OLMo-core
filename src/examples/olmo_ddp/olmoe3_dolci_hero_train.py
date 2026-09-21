@@ -25,7 +25,7 @@ import olmoe3_qkgain_train as adapter
 from olmoe3_lr_sweep_watch import atomic_json
 
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.optim.scheduler import WSD
+from olmo_core.optim.scheduler import WSD, CosWithWarmup, LinearWithWarmup
 from olmo_core.train.callbacks import Callback
 
 
@@ -173,11 +173,29 @@ class DecayResizeAudit(adapter.Audit):
 def install_adapters(r):
     """Bind campaign-specific data/schedule before building import-qualified callbacks."""
     original_scheduler = adapter.scheduler
-    adapter.scheduler = lambda x: (
-        WSD(warmup=2000, decay=FINAL - DECAY_START, decay_fraction=None)
-        if x.kind == "hero"
-        else original_scheduler(x)
-    )
+
+    def scheduler(x):
+        if x.kind == "hero":
+            return WSD(warmup=2000, decay=FINAL - DECAY_START, decay_fraction=None)
+        if x.kind == "hero2t-mt":
+            return CosWithWarmup(warmup=2000, alpha_f=0)
+        if x.kind == "hero2t-lc":
+            return LinearWithWarmup(warmup=2000, alpha_f=0)
+        return original_scheduler(x)
+
+    adapter.scheduler = scheduler
+    original_data = adapter.data_components
+
+    def data(common):
+        if r.kind == "hero2t-mt":
+            import olmoe3_hero_mt as mt
+
+            mt.BATCH = r.batch
+            mt.REQUESTED_TOKENS = 100_000_000_000
+            return mt.data_components(common)
+        return original_data(common)
+
+    adapter.data_components = data
     adapter.hero.disk_action = lambda free: (
         "stop" if free < 10_000_000_000_000 else ("warn" if free < 12_000_000_000_000 else "ok")
     )
@@ -198,7 +216,7 @@ def install_adapters(r):
         return c
 
     adapter.trainer_config = trainer
-    if r.kind.startswith("dolci"):
+    if r.uses_dolci:
         adapter.SFT_DATA = DATA
         adapter.SFT_CACHE = DATA / "packing-cache"
         adapter.SFT_DATA_PLAN = AUTO / "dolci-data-plan.json"

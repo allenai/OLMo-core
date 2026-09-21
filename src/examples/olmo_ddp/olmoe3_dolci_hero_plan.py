@@ -22,12 +22,46 @@ DECAY_START = 108_000
 PIN = AUTO / "sources/hero/step6000"
 CONTINUATION_PIN = AUTO / f"sources/hero/step{DECAY_START}"
 KINDS = ("dolci-emo", "dolci-non-emo", "hero", "decay", "mt", "lc", "sft")
+NEW_KINDS = (
+    "hero2t-mt",
+    "hero2t-lc",
+    "hero2t-sft-high",
+    "hero2t-sft-dolci",
+    "dolci2t-emo",
+    "dolci2t-non-emo",
+)
+KINDS += NEW_KINDS
+PARENT_KINDS = {
+    "mt": "decay",
+    "lc": "mt",
+    "sft": "lc",
+    "hero2t-mt": "hero",
+    "hero2t-lc": "hero2t-mt",
+    "hero2t-sft-high": "hero2t-lc",
+    "hero2t-sft-dolci": "hero2t-lc",
+}
+OLD_2T_SOURCES = {
+    "dolci2t-emo": (
+        "posttrain-noemo-20260914/lc100b/emo",
+        "olmo35-small-2t-lc100b-noemo-20260914-emo",
+    ),
+    "dolci2t-non-emo": (
+        "lc100b-after-mt20-decay2t/non-emo",
+        "olmo35-small-2t-lc100b-20260913-non-emo",
+    ),
+}
 PARENTS = {
     "dolci-emo": base.MOUNT
     / "uploader/automation/olmo35-4t-emo-lc-sft8mi-20260919/sources/posttrain-noemo-4t-20260916/lc100b/emo/step5961/olmo-core",
     "dolci-non-emo": base.MOUNT
     / "uploader/automation/olmo35-4t-lc-sft8mi-5epoch-20260920/sources/posttrain-noemo-4t-20260916/lc100b/non-emo/step5961/olmo-core",
 }
+PARENTS.update(
+    {
+        kind: AUTO / "sources/old-2t" / prefix / "step5961/olmo-core"
+        for kind, (prefix, _) in OLD_2T_SOURCES.items()
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -61,14 +95,20 @@ class Run(base.Run):
         return 2
 
     @property
+    def uses_dolci(self):
+        return "dolci" in self.kind
+
+    @property
     def batch(self):
-        return 8388608 if self.kind.startswith("dolci") else super().batch
+        if self.uses_dolci:
+            return 8388608
+        if self.kind == "hero2t-lc":
+            return 16777216
+        return super().batch
 
     @property
     def gpus(self):
-        return (
-            128 if self.kind == "hero" else (64 if self.kind.startswith("dolci") else super().gpus)
-        )
+        return 128 if self.kind == "hero" else (64 if self.uses_dolci else super().gpus)
 
     @property
     def nodes(self):
@@ -84,9 +124,15 @@ class Run(base.Run):
 
     @property
     def end(self):
-        if self.kind.startswith("dolci"):
+        if self.uses_dolci:
             return 2 * json.loads((AUTO / "dolci-data-plan.json").read_text())["steps_per_epoch"]
+        if self.kind in ("hero2t-mt", "hero2t-lc"):
+            return 5961
         return FINAL if self.kind == "hero" else super().end
+
+    @property
+    def lr(self):
+        return 1.1e-4 if self.kind == "hero2t-lc" else super().lr
 
     @property
     def start(self):
@@ -100,7 +146,7 @@ class Run(base.Run):
             return None
         if self.kind == "decay":
             return PIN
-        parent = run({"mt": "decay", "lc": "mt", "sft": "lc"}[self.kind])
+        parent = run(PARENT_KINDS[self.kind])
         return parent.root / f"step{parent.end}"
 
     @property
@@ -109,7 +155,7 @@ class Run(base.Run):
 
     @property
     def saves(self):
-        if self.kind.startswith("dolci"):
+        if self.uses_dolci:
             return [2, 4, self.end // 2, self.end]
         if self.kind == "hero":
             # Whole-step ceilings at the requested token thresholds; pin exactly6000.
@@ -134,7 +180,7 @@ class Run(base.Run):
             epochs=2 if self.stage == "sft" else None,
             dataset=(
                 "allenai/Dolci-Think-SFT"
-                if self.kind.startswith("dolci")
+                if self.uses_dolci
                 else (
                     "jacobmorrison/length-investigation-gptoss-120b-high"
                     if self.stage == "sft"
@@ -146,7 +192,11 @@ class Run(base.Run):
 
 def run(kind):
     assert kind in KINDS
-    stage = "sft" if kind.startswith("dolci") else ("pt" if kind in ("hero", "decay") else kind)
+    stage = (
+        "sft"
+        if "sft" in kind or "dolci" in kind
+        else ("pt" if kind in ("hero", "decay") else kind.rsplit("-", 1)[-1])
+    )
     return Run("7to1-split" if kind.startswith("dolci") else "3to1-shared", stage, False, kind)
 
 
@@ -178,3 +228,9 @@ def self_test():
     assert run("mt").end == 2125 and run("lc").end == 8498 and run("sft").end == 840
     assert run("mt").lr == 2.2e-4 and run("lc").lr == 5.5e-5 and run("sft").lr == 5e-5
     assert all(not r.emo for r in runs())
+    for kind in NEW_KINDS:
+        r = run(kind)
+        assert r.batch % (r.gpus * r.microbatch) == 0
+        assert r.end in r.saves
+    assert run("hero2t-mt").end * run("hero2t-mt").batch == 100_008_984_576
+    assert run("hero2t-lc").end * run("hero2t-lc").batch == 100_008_984_576
