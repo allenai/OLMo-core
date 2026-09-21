@@ -38,6 +38,11 @@ apt-get update -qq && apt-get install -y -qq wget gnupg ca-certificates >/dev/nu
 wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${UBU_TAG}/x86_64/cuda-keyring_1.1-1_all.deb" -O /tmp/cuda-keyring.deb \
   && dpkg -i /tmp/cuda-keyring.deb >/dev/null && apt-get update -qq \
   && apt-get install -y -qq cuda-compat-13-0
+# A REAL system toolkit from the same repo. The image ships /usr/local/cuda-13.0 with only the
+# compat libs (no bin/nvcc), and every pip toolkit in this stack is incoherent, so without this
+# there is nothing for flashinfer's GDN kernels to compile with. Installing nvcc and the cudart
+# headers as a matched apt pair is what makes __CUDACC_VER__ and cuda.h agree by construction.
+apt-get install -y -qq cuda-nvcc-13-0 cuda-cudart-dev-13-0 2>&1 | tail -3
 COMPAT_DIR=$(dpkg -L cuda-compat-13-0 2>/dev/null | grep 'libcuda\.so' | head -1 | xargs -r dirname)
 [ -n "$COMPAT_DIR" ] && export LD_LIBRARY_PATH="$COMPAT_DIR:${LD_LIBRARY_PATH:-}"
 echo "COMPAT_DIR=${COMPAT_DIR:-none}"
