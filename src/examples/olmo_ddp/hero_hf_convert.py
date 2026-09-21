@@ -274,6 +274,8 @@ def main() -> None:
             output,
             reference_config(config["model"]),
             config["dataset"]["tokenizer"],
+            tokenizer_id="allenai/Olmo-3-7B-Think-SFT",
+            tokenizer_revision="6ff857587e040d6d523a3d5f3a56e918f5401d66",
             dtype=DType.bfloat16,
             max_sequence_length=8192,
             device=torch.device("cpu"),
