@@ -10,8 +10,10 @@ Readout: v3 five-task and OOD ladders, task-native metrics (F1, NDCG@10, OOLONG 
 Not matched: attention architecture and architecture-specific CPT weights; CPT budget
 provenance is audited before launch. Landmark packing includes landmark and block-padding
 slots, so equal window-token budgets consume less original content, potentially biasing
-shared-vector downward. Budget matching is not a claim of equal FLOPs. HSDP shards across
-two replicas for memory; dense used shard_degree=1. The 33344 landmark window has 32823
+shared-vector downward. Budget matching is not a claim of equal FLOPs. The Dolci25 arm uses four nodes at CP8 / DP4 per user request (min runtime zero):
+133376 tokens/update and 5258 updates, versus dense 65536/update and 10700 updates.
+Thus the optimizer batch is deliberately larger; its effect is not controlled.
+HSDP shards across all four DP replicas for memory; dense used shard_degree=1. The 33344 landmark window has 32823
 content capacity versus dense 32768, a 0.17% threshold difference. Do not call this data-matched.
 """
 
@@ -126,8 +128,8 @@ CONTRA_FRAC = max(0.0, 1.0 - (NQ_FRAC + OOLONG_FRAC + RERANK_FRAC + OUTLIER_FRAC
 # ---------------------------------------------------------------------------
 DOLCI_DATA_ROOT = "/weka/oe-training-default/amandab/dolci-instruct-sft/qwen3"
 _ARMS = {
-    "sharedvec-tokenmatch": {"dolci_fraction": 0.0, "yarn_factor": None},
-    "sharedvec-dolci25-tokenmatch": {"dolci_fraction": 0.25, "yarn_factor": 2.0},
+    "sharedvec-tokenmatch": {"dolci_fraction": 0.0, "yarn_factor": None, "num_nodes": 2},
+    "sharedvec-dolci25-tokenmatch": {"dolci_fraction": 0.25, "yarn_factor": 2.0, "num_nodes": 4},
 }
 
 LR = 1e-5
@@ -151,6 +153,10 @@ def build_experiment_config(cli_context: CliContext, *, arm: str) -> ExperimentC
     :returns: The full experiment config.
     """
     arm_config = _ARMS[arm]
+    num_nodes = arm_config["num_nodes"]
+    dp_degree = num_nodes * GPUS_PER_NODE // CP_DEGREE
+    global_batch_size = dp_degree * SEQUENCE_LENGTH
+    max_steps = round(TARGET_TOKENS / global_batch_size)
     run_name_with_ts = (
         f"{cli_context.run_name}-{datetime.now().astimezone().strftime('%Y%m%dT%H%M%S%z')}"
     )
@@ -166,7 +172,7 @@ def build_experiment_config(cli_context: CliContext, *, arm: str) -> ExperimentC
         beaker_image=OLMoCoreBeakerImage.stable,
         workspace="ai2/flex2",
         budget="ai2/oe-other",
-        num_nodes=NUM_NODES,
+        num_nodes=num_nodes,
     )
     if beaker_launch_config is not None:
         beaker_launch_config.priority = "urgent"
@@ -228,7 +234,7 @@ def build_experiment_config(cli_context: CliContext, *, arm: str) -> ExperimentC
             param_dtype=DType.bfloat16,
             reduce_dtype=DType.float32,
             wrapping_strategy=TransformerDataParallelWrappingStrategy.full,
-            shard_degree=DP_DEGREE,  # shard params+grads+optim across all DP ranks
+            shard_degree=dp_degree,  # shard params+grads+optim across all DP ranks
         ),
         cp_config=TransformerContextParallelConfig.ulysses(degree=CP_DEGREE),
         ac_config=TransformerActivationCheckpointingConfig(
@@ -316,7 +322,7 @@ def build_experiment_config(cli_context: CliContext, *, arm: str) -> ExperimentC
     data_loader_config = ComposableDataLoaderConfig(
         tokenizer=tokenizer_config,
         work_dir=str(work_dir),
-        global_batch_size=GLOBAL_BATCH_SIZE,
+        global_batch_size=global_batch_size,
         seed=34521,  # the 5-task family seed, so arms draw the same stream
         num_workers=4,
         generate_doc_lengths=False,  # the landmark packing source owns cu_doc_lens
@@ -332,12 +338,12 @@ def build_experiment_config(cli_context: CliContext, *, arm: str) -> ExperimentC
             load_optim_state=False,
             metrics_collect_interval=10,
             cancel_check_interval=10,
-            max_duration=Duration.steps(MAX_STEPS),
+            max_duration=Duration.steps(max_steps),
         )
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=MAX_STEPS,
+                save_interval=max_steps,
                 ephemeral_save_interval=1000,
                 max_checkpoints=2,
                 save_async=True,
