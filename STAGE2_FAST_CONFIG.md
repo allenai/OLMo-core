@@ -2,7 +2,7 @@
 
 This branch (`donovan/stage2-fast-defaults`) makes the measured-fastest Stage-2 SFT
 configuration the default, so a run started from `src/scripts/train/Molmo2-Stage2.py` on a
-**single-image** tier gets roughly **1.85x** the training throughput without anyone having
+**single-image** tier gets roughly **2.1x** the training throughput (1.85x from the crop budget and pad fix, a further 1.13x from the attention block sizes) without anyone having
 to rediscover the flags.
 
 Everything below was measured on 8xB300 (`ai2/holmes`) against `single-image-only-v10`.
@@ -18,10 +18,30 @@ Everything below was measured on 8xB300 (`ai2/holmes`) against `single-image-onl
 | `DL_NUM_WORKERS` | 2 | **8** | `Molmo2-Stage2.py` |
 | `RANK_MICROBATCH_INSTANCES` | 2 | **2** (unchanged, but load-bearing) | `Molmo2-Stage2.py` |
 | `PYTORCH_CUDA_ALLOC_CONF` | unset on the Gantry path | **`expandable_segments:True`** | `SHIP_STACK_ENV` in `Molmo2-Stage2.py` |
+| FlexAttention backward block sizes | Inductor defaults | **`BLOCK_M1/N1/M2/N2 = 32/128/128/32`** | `_FLEX_KERNEL_OPTIONS` in `nn/attention/backend.py` |
 
 Plus the pad-attention fix (PR #865), cherry-picked onto this branch, worth a further
-**+26-34% TPS** on its own, and the occupancy metrics (PR #870), which are how you tell
-whether *your* config is wasting compute.
+**+26-34% TPS** on its own; the occupancy metrics (PR #870), which are how you tell whether
+*your* config is wasting compute; and the FlexAttention `kernel_options` tuning (PR #877),
+worth **+12.65%** on its own.
+
+### Why the attention block sizes are here
+
+The LM's flex-attention backward was the largest single kernel in a profile at this config
+-- 19.56% of GPU time and 3.8x its own forward, against a ~2.5x FLOP ratio. Inductor's
+default block sizes are not tuned for the ~93%-sparse packed masks. Both arms run twice,
+8xB300, 100 steps, medians past step 20, occupancy and memory identical throughout:
+
+| config | runs | mean | vs control |
+|---|---|---|---|
+| Inductor defaults | 15,314 / 15,576 | 15,445 | — |
+| **`kernel_options`** | **17,185 / 17,612** | **17,399** | **+12.65%** |
+
+**Do not try to tune this with `mode="max-autotune..."` on the inner `torch.compile`.** It
+measures -38.1% on the kernel in isolation and delivers **+2.17% end to end, inside the
+control's own spread**: the call is inlined into the outer compiled LM block and the mode
+is dropped. `kernel_options` is an argument, so it survives. See the note on
+`_get_flex_attention`.
 
 Nothing needs to be passed on the command line. A Gantry launch picks all of it up:
 
@@ -88,6 +108,11 @@ cost.
   ceiling is ~10 GiB above what the run showed before it got there, so **do not read a peak
   off a run that has not yet plateaued** (an earlier reading of 223.0 GiB, taken at step
   4,874, was a pre-plateau undercount).
+
+**`reduce_dtype=bfloat16` was tested here and rejected.** It is convergence-neutral
+(largest binned CE delta 0.0008 over 500 steps against a within-bin std of ~0.03) but
+**-1.50% slower** at 500 steps. An earlier 100-step pair suggested +5.18%; that was noise
+from a single unreplicated comparison. Do not re-derive it.
 
 **Convergence is neutral.** CE against *examples consumed* (the fair axis: `crops=80` sees
 1.26M examples in 2,000 steps vs the baseline's 1.05M), binned: final-bin means differ by
@@ -195,6 +220,7 @@ checkpoint trained on this branch.
 | **#834** | `image-only-v10` Stage-2 port: the `single-image-*` tiers, `mixture_pack_profiles.py`, `DL_NUM_WORKERS`, `SHIP_STACK_ENV` | merged in (`Merge the image-only-v10 Stage-2 branch`) |
 | **#865** | pad-attention fix (+26-34% TPS) | 3 cherry-picked commits |
 | **#870** | `useful TPS` + token/crop occupancy metrics | 3 cherry-picked commits |
+| **#877** | FlexAttention `kernel_options` (+12.65%) | `eadd38648`, `48ab6db18` |
 
 All three are still under review. **If any of them changes, rebase this branch onto the new
 version before using it** — particularly #865, whose attention-mask semantics the throughput
