@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np  # noqa: E402
 
 from chartgym.families import emit_all  # noqa: E402
+from chartgym.families_charxiv_probe import emit_probe  # noqa: E402
 from chartgym.render import render  # noqa: E402
 from chartgym.sample import sample_figure  # noqa: E402
 
@@ -43,6 +44,11 @@ def main() -> int:
     ap.add_argument("--max-questions", type=int, default=16)
     ap.add_argument("--eval-split", action="store_true",
                     help="eval-only style sheets, and emit the held-out families")
+    ap.add_argument("--charxiv-probe", action="store_true",
+                    help="CEILING PROBE: emit CharXiv's own templates verbatim instead of "
+                         "the capability families. Produces a corpus that is deliberately "
+                         "benchmark-fitted and must never be shipped -- see "
+                         "chartgym/families_charxiv_probe.py.")
     args = ap.parse_args()
 
     figures_dir = args.out / "figures"
@@ -69,8 +75,11 @@ def main() -> int:
             if not audit.validate(spec):
                 rejects[audit.problems[0].split(":", 1)[1].strip()[:44]] += 1
                 continue
-            qs = emit_all(spec, audit, np.random.default_rng(seed ^ 0x5EED),
-                          include_held_out=args.eval_split)
+            if args.charxiv_probe:
+                qs = emit_probe(spec, audit, np.random.default_rng(seed ^ 0x5EED))
+            else:
+                qs = emit_all(spec, audit, np.random.default_rng(seed ^ 0x5EED),
+                              include_held_out=args.eval_split)
             if not qs:
                 rejects["no questions emitted"] += 1
                 continue

@@ -280,3 +280,70 @@ def test_procedure_traces_are_correct_and_selective():
                 if q["family"] in ("cnt.legend_entries", "ocr.legend_names"):
                     assert q["target"].lower().startswith("checking"), q
     assert TRACE_FAMILIES <= seen_traced, f"missing traces for {TRACE_FAMILIES - seen_traced}"
+
+
+# ---------------------------------------------------------------- ceiling probe
+
+def test_probe_cannot_contaminate_an_honest_corpus():
+    """The CharXiv-mirroring probe must be unreachable from the normal emission path.
+
+    The probe exists to measure a ceiling, not to train a model. If a `charxiv.*` family
+    could ever appear in a default build, every anti-benchmark-fitting guarantee in this
+    package would be void and nothing downstream would notice.
+    """
+    for spec, audit in _figures(n=12):
+        for split in (True, False):
+            for q in emit_all(spec, audit, np.random.default_rng(11), include_held_out=split):
+                assert not q["family"].startswith("charxiv."), q["family"]
+
+
+def test_probe_actually_mirrors_the_benchmark():
+    """...and conversely, the probe must really copy CharXiv, or it measures nothing.
+
+    This is the mirror image of `test_no_charxiv_phrasing`: that test asserts the honest
+    families share no 6-gram with the benchmark; this one asserts the probe families do.
+    Together they make the distinction between the two corpora mechanical.
+    """
+    import json as _json
+
+    from chartgym.families_charxiv_probe import PROBE_TEMPLATES, emit_probe
+
+    _VERBATIM = _json.loads(
+        (Path(__file__).resolve().parents[1] / "metadata" / "charxiv_templates.json").read_text()
+    )
+    seen_templates = set()
+    for spec, audit in _figures(n=12):
+        for q in emit_probe(spec, audit, np.random.default_rng(12)):
+            tid = int(q["family"].split(".t")[1])
+            seen_templates.add(tid)
+            assert tid in PROBE_TEMPLATES
+            assert q["target"] == q["answer"], "probe supervises the bare benchmark answer"
+            # A probe question must overlap the benchmark wording it copies. Compare
+            # against the VERBATIM templates (metadata/charxiv_templates.json), not the
+            # abbreviated list used by test_no_charxiv_phrasing -- several of those are
+            # under six words, so a 6-gram test against them is vacuous.
+            tmpl = _VERBATIM[str(tid)]
+            qt, tt = _tokens(q["question"]), _tokens(tmpl)
+            jacc = len(qt & tt) / len(qt | tt) if (qt | tt) else 0.0
+            assert (_ngrams(q["question"]) & _ngrams(tmpl)) or jacc >= 0.6, (
+                f"t{tid} does not mirror its template (J={jacc:.2f})"
+            )
+    # 14/15 are colorbar-only and deliberately excluded; everything else must appear
+    assert seen_templates >= set(PROBE_TEMPLATES) - {16}, sorted(seen_templates)
+    assert not ({14, 15} & seen_templates)
+
+
+def test_probe_answers_are_exact():
+    from chartgym.families_charxiv_probe import emit_probe
+
+    for spec, audit in _figures(n=12):
+        by = {}
+        for q in emit_probe(spec, audit, np.random.default_rng(13)):
+            by.setdefault(int(q["family"].split(".t")[1]), []).append(q)
+        rows, cols = spec.grid_shape
+        assert by[18][0]["answer"] == f"{rows} by {cols}"
+        assert by[19][0]["answer"] == str(spec.n_panels)
+        # t17 is panel-scoped (figure scope cost 28.6 points in v1)
+        per_panel = {p.x.ticks.n_labeled + p.y.ticks.n_labeled for p in spec.panels}
+        for q in by[17]:
+            assert int(q["answer"]) in per_panel

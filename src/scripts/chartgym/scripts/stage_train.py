@@ -107,9 +107,22 @@ def main() -> int:
           f"to {args.out}")
     print(f"  dropped: {dict(dropped)}")
     print(f"  families: {len(fam)}")
-    assert not any(f.startswith("pnl.") for f in fam), \
-        "HELD-OUT PRIMITIVE LEAKED INTO TRAINING -- panel-layout families must never train"
-    print("  held-out primitive: absent (asserted)")
+    probe = sorted(f for f in fam if f.startswith("charxiv."))
+    if probe:
+        # A probe corpus deliberately trains CharXiv's own templates, including the
+        # panel-layout ones the pnl.* assertion guards. Say so loudly: the only thing worse
+        # than a benchmark-fitted corpus is one nobody realises is benchmark-fitted.
+        print("\n  " + "!" * 68)
+        print("  !! CEILING-PROBE CORPUS -- benchmark-fitted, NOT SHIPPABLE")
+        print(f"  !! {len(probe)} CharXiv template families: {', '.join(probe)}")
+        print("  !! Trains templates 18/19, so the panel-layout transfer holdout is VOID.")
+        print("  !! Any score from this corpus is an upper bound on score, not on skill,")
+        print("  !! and is not comparable to published CharXiv numbers.")
+        print("  " + "!" * 68 + "\n")
+    else:
+        assert not any(f.startswith("pnl.") for f in fam), \
+            "HELD-OUT PRIMITIVE LEAKED INTO TRAINING -- panel-layout families must never train"
+        print("  held-out primitive: absent (asserted)")
     return 0
 
 
