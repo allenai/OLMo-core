@@ -23,10 +23,7 @@ refuses to build until `LANDMARK_ABLATION_INSTANCES` is set. Background:
 ## Qwen3 shared-vector 32k arms
 
 Both use `_qwen3_sharedvec_33344_common.py`: block64/vec32, 33344-slot BFD packing,
-dense task weights, p10 NQ, and shared-vector CPT step2385. The pilot uses two nodes /
-10515 steps / 701.224M slots. The Dolci25 arm uses four nodes at CP8 / DP4,
-133376 tokens per update, 5258 steps / 701.291M slots, and minimum runtime zero.
-This preserves the total token budget but doubles the optimizer batch versus dense.
+dense task weights, p10 NQ, shared-vector CPT step2385, 10515 steps / 701.224M slots.
 
 | launcher | mixture | training RoPE | comparison |
 |---|---|---|---|
