@@ -19,3 +19,17 @@ differ from the baseline only in the landmark geometry — and from each other o
 The datamatch arm needs a CPU-only `launch_prep` first to measure the landmark instance count; it
 refuses to build until `LANDMARK_ABLATION_INSTANCES` is set. Background:
 `records/POSSIBLE_BUG_SFT_DATA.md`.
+
+## Qwen3 shared-vector 32k arms
+
+Both use `_qwen3_sharedvec_33344_common.py`: block64/vec32, 33344-slot BFD packing,
+dense task weights, p10 NQ, shared-vector CPT step2385, 10515 steps / 701.224M slots.
+
+| launcher | mixture | training RoPE | comparison |
+|---|---|---|---|
+| `Qwen3-4B-sharedvec-5task-33344-tokenmatch-SFT.py` | five tasks only | native | Earlier pilot recipe |
+| `Qwen3-4B-sharedvec-5task-dolci25-33344-tokenmatch-SFT.py` | 75% five tasks / 25% Dolci Qwen3 | YaRN2, original context 32768 | Dense `q4b-dense-5task-dolci25-32k-nocpt/step10700` recipe and token budget |
+
+Token matching includes landmarks and padding; it does not imply equal data exposure or FLOPs.
+The Dolci repetition ceiling is 8 (dense saved config: 1); CPU preparation must verify that
+Dolci is downsampled so the higher ceiling is inactive. Use fresh run names.
