@@ -57,22 +57,44 @@ print('vllm', vllm.__version__, 'transformers', transformers.__version__)
 from transformers import Qwen3_5ForCausalLM; print('Qwen3_5ForCausalLM OK')
 " || { echo "FATAL: stack did not import"; exit 1; }
 
-# CUDA_HOME must point at the pip cuda-toolkit's OWN nvcc, or vLLM's JIT dies at engine init with
-# "Could not find nvcc and default cuda_home='/usr/local/cuda' doesn't exist" -- after the model has
-# already loaded, which makes it read like a model problem. It must specifically be the
-# nvidia/cuda_nvcc component: another nvidia-* package can ship a MISMATCHED nvcc whose paired
-# cuda.h declares a different CUDA_VERSION, and flashinfer's coherence guard then rejects it.
-# See the beaker-qwen35-vllm-cracked record.
-echo "=== CUDA_HOME $(date -u '+%T')Z ==="
-NVCC_PATH=$(find "$VENV/lib" -path '*nvidia/cuda_nvcc*' -iname nvcc 2>/dev/null | head -1)
-if [ -z "$NVCC_PATH" ]; then
-  echo "nvidia/cuda_nvcc not found; all nvcc under the venv:"; find "$VENV" -iname nvcc 2>/dev/null
-  NVCC_PATH=$(find "$VENV" -iname nvcc 2>/dev/null | head -1)
+# CUDA_HOME has to name a COHERENT toolkit: nvcc's __CUDACC_VER__ and the cuda.h it resolves must
+# agree, because flashinfer's bundled cccl guard (cuda_toolkit.h:41) hard-errors when they differ --
+# "CUDA compiler and CUDA toolkit headers are incompatible". That error surfaces as ~60 per-layer
+# "GDN prefill kernel warmup failed" WARNINGS, so the engine appears to come up and then dies at
+# first inference, which is the worst possible place to learn about it.
+#
+# Do not pick a toolkit by path and hope. The only honest test is to compile the guard, so that is
+# what this does: try each candidate, keep the first whose test compile succeeds, fail loudly if
+# none do. Candidate order puts REAL system toolkits first (the beaker-qwen35-vllm-cracked record's
+# universal fix) and the pip ones after -- `cuda-toolkit==13.0.2` used to land a coherent nvcc at
+# nvidia/cuda_nvcc, but now resolves to nvidia/cu13, whose nvcc/cuda.h pair is NOT coherent.
+echo "=== CUDA_HOME: probing for a coherent toolkit $(date -u '+%T')Z ==="
+CCCL=$("$VENV/bin/python" -c "import flashinfer,os;print(os.path.join(os.path.dirname(flashinfer.__file__),'data','cccl'))" 2>/dev/null)
+cat > "$WORK/guard.cu" <<'CUEOF'
+#include <cuda.h>
+#include <cuda/std/__cccl/cuda_toolkit.h>
+__global__ void k() {}
+int main() { return 0; }
+CUEOF
+CUDA_HOME=""
+CANDIDATES=$(ls -d /usr/local/cuda /usr/local/cuda-* 2>/dev/null;              find "$VENV/lib" -maxdepth 4 -path '*nvidia/cuda_nvcc' -type d 2>/dev/null;              find "$VENV/lib" -maxdepth 4 -path '*nvidia/cu*' -type d 2>/dev/null)
+for cand in $CANDIDATES; do
+  [ -x "$cand/bin/nvcc" ] || continue
+  if "$cand/bin/nvcc" -std=c++20 --expt-relaxed-constexpr         -I"$CCCL/libcudacxx/include" -I"$CCCL/cub" -I"$CCCL/thrust"         -isystem "$cand/include" -c "$WORK/guard.cu" -o "$WORK/guard.o" 2>"$WORK/guard.err"; then
+    CUDA_HOME="$cand"
+    echo "  COHERENT: $cand  ($("$cand/bin/nvcc" --version | tail -1))"
+    break
+  fi
+  echo "  incoherent, skipping: $cand  ($(grep -m1 -oE 'error:.*' "$WORK/guard.err" || echo 'compile failed'))"
+done
+if [ -z "$CUDA_HOME" ]; then
+  echo "FATAL: no coherent CUDA toolkit. Candidates tried:"; echo "$CANDIDATES"
+  echo "Last compile error:"; cat "$WORK/guard.err"
+  exit 1
 fi
-[ -n "$NVCC_PATH" ] || { echo "FATAL: no nvcc under the venv"; exit 1; }
-export CUDA_HOME=$(dirname "$(dirname "$NVCC_PATH")")
+export CUDA_HOME
 export PATH="$CUDA_HOME/bin:$PATH"
-echo "CUDA_HOME=$CUDA_HOME"; "$CUDA_HOME/bin/nvcc" --version | tail -2
+echo "CUDA_HOME=$CUDA_HOME"
 
 # The vendored ctc spec code (prompt/parse/score) rides along in the olmo-eval clone; fetch it
 # shallow so the benchmark grades with byte-identical logic to the harness it is sizing.
