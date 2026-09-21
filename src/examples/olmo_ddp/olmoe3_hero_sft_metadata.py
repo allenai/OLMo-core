@@ -79,6 +79,8 @@ def install_metadata(output, training_path):
     from transformers import AutoTokenizer, GenerationConfig
 
     output, training_path = Path(output), Path(training_path)
+    from olmoe3_tokenizer_policy import require_correct_tokenizer
+    require_correct_tokenizer(training_path, runtime=True)
     assert output.name == "hf.partial" and not output.is_symlink()
     training = AutoTokenizer.from_pretrained(training_path, local_files_only=True)
     exported = AutoTokenizer.from_pretrained(output, local_files_only=True)
@@ -89,6 +91,7 @@ def install_metadata(output, training_path):
     exported.pad_token_id = 100277
     exported.model_max_length = 65536
     exported.save_pretrained(output)
+    require_correct_tokenizer(output, runtime=True)
     GenerationConfig(**GENERATION).save_pretrained(output)
     check_tokenizer(AutoTokenizer.from_pretrained(output, local_files_only=True), training)
     generation = GenerationConfig.from_pretrained(output, local_files_only=True)

@@ -106,6 +106,8 @@ def structural_check(root, *, full, precise=False):
 def validate_export(model, *, hash_weights=False):
     """CPU watchers inspect receipts; inference workers also hash every output file."""
     model = Path(model)
+    from olmoe3_tokenizer_policy import require_correct_tokenizer
+    require_correct_tokenizer(model)
     assert model.resolve() == model and model.is_dir()
     receipt_path = model / "_HERO_CONVERSION_SUCCESS.json"
     receipt = json.loads(receipt_path.read_text())

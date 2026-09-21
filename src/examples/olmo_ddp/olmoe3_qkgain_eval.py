@@ -69,6 +69,9 @@ def validate_result(r,kind):
 
 
 def convert_checkpoint(r,source):
+    from olmoe3_tokenizer_policy import require_correct_tokenizer
+    if r.stage == 'sft':
+        require_correct_tokenizer(SFT_DATA/'train/tokenizer', runtime=True)
     import olmoe3_hero_decay_plan as cp
     from olmoe3_hero_4t_eval_policy import install_conversion,validate_export
     root=r.hf.parent
@@ -86,7 +89,9 @@ def convert_checkpoint(r,source):
     original=exporter.convert_checkpoint_to_hf
     def export(*args,**kwargs):
         kwargs['max_sequence_length']=r.sequence
-        if r.stage=='sft':kwargs['tokenizer_id']=str(SFT_DATA/'train/tokenizer')
+        if r.stage=='sft':
+            kwargs['tokenizer_id']=str(SFT_DATA/'train/tokenizer')
+            kwargs['tokenizer_revision']=None
         result=original(*args,**kwargs)
         if r.stage=='sft':
             from olmoe3_hero_sft_metadata import install_metadata
