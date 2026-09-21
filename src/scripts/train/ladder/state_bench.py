@@ -5,6 +5,14 @@ Each run trains one model variant on one StateBench training distribution
 repeating the distribution as necessary to fill the size-specific Chinchilla budget
 (Cx1 by default).
 
+A fourth family, ``solvable`` (``integer-code-modular--solvable``), comes from the separate
+``state-tracking-solvable-v1`` build: register updates are modular increments
+``x <- (x + d) mod 100``, whose transition monoid contains only solvable (cyclic) groups,
+sitting between aperiodic and periodic in group complexity. It is rendered with the
+zero-based ``integer-code-modular`` formatter; ``modular-aperiodic`` and
+``modular-r-trivial`` are the same-vocabulary controls derived from the solvable sources.
+These are not part of the default ``launch`` suite; select them with ``--distribution``.
+
 Two additional sensitivity-ordering conditions train on the periodic distribution
 partitioned into :data:`STATE_BENCH_SENSITIVITY_BUCKETS` sensitivity-quantile bucket
 datasets (produced by state-bench's ``scripts/partition_train_by_sensitivity.py`` +
@@ -92,11 +100,24 @@ from olmo_core.train.train_module import (
 
 WEKA_ROOT = "/weka/oe-training-default/ai2-llm"
 
+STATE_BENCH_DATA_DIR = "/weka/oe-training-default/jacksonp/state-bench/data"
 STATE_BENCH_DATA_ROOT = (
-    "/weka/oe-training-default/jacksonp/state-bench/data/"
-    "state-tracking-long-context-v1/rendered-tokenized/tokens"
+    f"{STATE_BENCH_DATA_DIR}/state-tracking-long-context-v1/rendered-tokenized/tokens"
 )
-STATE_BENCH_DISTRIBUTION_TOKENS = {
+STATE_BENCH_SOLVABLE_DATA_ROOT = (
+    f"{STATE_BENCH_DATA_DIR}/state-tracking-solvable-v1/rendered-tokenized/tokens"
+)
+# Distributions built by an experiment other than default.yaml live under their own
+# dataset root; everything else resolves to ``--state-bench-data-root``.
+STATE_BENCH_DISTRIBUTION_ROOTS = {
+    "integer-code-modular--solvable": STATE_BENCH_SOLVABLE_DATA_ROOT,
+    "integer-code-modular--aperiodic": STATE_BENCH_SOLVABLE_DATA_ROOT,
+    "integer-code-modular--r-trivial": STATE_BENCH_SOLVABLE_DATA_ROOT,
+}
+# Exact Dolma token totals of each distribution's train shards (state-bench's
+# ``scripts/token_counts.sh``). Recorded as a W&B tag only; ``None`` marks a
+# distribution whose shards have not been counted yet.
+STATE_BENCH_DISTRIBUTION_TOKENS: dict[str, int | None] = {
     "integer-code--r-trivial": 35_320_069_248,
     "integer-code--aperiodic": 35_320_069_248,
     "integer-code--periodic": 30_842_931_386,
@@ -104,6 +125,10 @@ STATE_BENCH_DISTRIBUTION_TOKENS = {
     # documents (same documents, same tokenizer), so they retain its token count.
     "integer-code--periodic--sens-shuffled": 30_842_931_386,
     "integer-code--periodic--sens-curriculum": 30_842_931_386,
+    # TODO: fill in from token_counts.sh once state-tracking-solvable-v1 is tokenized.
+    "integer-code-modular--solvable": None,
+    "integer-code-modular--aperiodic": None,
+    "integer-code-modular--r-trivial": None,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
@@ -111,6 +136,9 @@ STATE_BENCH_DISTRIBUTION_ALIASES = {
     "periodic": "integer-code--periodic",
     "periodic-sens-shuffled": "integer-code--periodic--sens-shuffled",
     "periodic-sens-curriculum": "integer-code--periodic--sens-curriculum",
+    "solvable": "integer-code-modular--solvable",
+    "modular-aperiodic": "integer-code-modular--aperiodic",
+    "modular-r-trivial": "integer-code-modular--r-trivial",
 }
 # The sensitivity conditions are a separate experiment over pre-bucketed data, so a
 # `launch` with no --distribution expands to the original three distributions only.
@@ -368,9 +396,20 @@ class StateBenchModelConfigurator(TransformerModelConfigurator):
         return train_module
 
 
+def _data_root(args: argparse.Namespace, distribution: str) -> str:
+    """Return the tokens directory holding one distribution.
+
+    ``--state-bench-data-root`` overrides every root when given explicitly; otherwise
+    distributions from a non-default experiment resolve to their own dataset root.
+    """
+    if args.state_bench_data_root is not None:
+        return args.state_bench_data_root
+    return STATE_BENCH_DISTRIBUTION_ROOTS.get(distribution, STATE_BENCH_DATA_ROOT)
+
+
 def _source_paths(args: argparse.Namespace, distribution: str) -> list[str]:
     """Return the token shard glob for one StateBench training distribution."""
-    return [str(join_path(args.state_bench_data_root, distribution, "train", "*.npy"))]
+    return [str(join_path(_data_root(args, distribution), distribution, "train", "*.npy"))]
 
 
 def _state_bench_source(
@@ -455,7 +494,7 @@ class StateBenchLadder(ModelLadder):
 
     model_type: str
     distribution: str
-    state_bench_tokens: int
+    state_bench_tokens: int | None
     training_tokens: int
     chinchilla_multiple: float
     init_seed: int
@@ -488,7 +527,7 @@ class StateBenchLadder(ModelLadder):
                 f"model_type:{self.model_type}",
                 "data:state-bench-only",
                 f"state_bench_distribution:{self.distribution}",
-                f"state_bench_distribution_tokens:{self.state_bench_tokens}",
+                f"state_bench_distribution_tokens:{self.state_bench_tokens or 'unknown'}",
                 f"chinchilla_multiple:{_format_chinchilla_multiple(self.chinchilla_multiple)}",
                 f"init_seed:{self.init_seed}",
                 f"training_tokens:{self.training_tokens}",
@@ -527,15 +566,19 @@ def add_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "StateBench training distribution. Omit with `launch` to launch the default suite "
-            f"({', '.join(STATE_BENCH_DEFAULT_SUITE)}); the periodic-sens-* conditions must be "
-            "selected explicitly."
+            f"({', '.join(STATE_BENCH_DEFAULT_SUITE)}); the periodic-sens-* and solvable/modular-* "
+            "conditions must be selected explicitly."
         ),
     )
     parser.add_argument(
         "--state-bench-data-root",
         type=str,
-        default=STATE_BENCH_DATA_ROOT,
-        help="Directory containing the StateBench distribution directories.",
+        default=None,
+        help=(
+            "Directory containing the StateBench distribution directories. Defaults to "
+            f"{STATE_BENCH_DATA_ROOT}, or the solvable build's root for the "
+            "integer-code-modular distributions."
+        ),
     )
 
 
