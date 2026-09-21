@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from olmoe3_dolci_hero_plan import AUTO, DATA, PIN, ROOT, find_run, install, run
+from olmoe3_dolci_hero_plan import (
+    AUTO, CONTINUATION_PIN, DATA, DECAY_START, FINAL, PIN, ROOT, find_run, install, run,
+)
 
 install()
 import olmoe3_qkgain_train as adapter
 from olmoe3_lr_sweep_watch import atomic_json
 
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.optim.scheduler import ConstantWithWarmup
+from olmo_core.optim.scheduler import WSD
 from olmo_core.train.callbacks import Callback
 
 
@@ -25,13 +27,15 @@ class BranchPin(Callback):
     priority: ClassVar[int] = -15
 
     def post_checkpoint_saved(self, path):
-        if get_rank() != 0 or Path(path).name != "step6000":
+        if get_rank() != 0 or Path(path).name not in ("step6000", f"step{DECAY_START}"):
             return
         p = Path(path)
-        assert p == run("hero").root / "step6000"
-        PIN.parent.mkdir(parents=True, exist_ok=True)
-        temporary = PIN.with_name("step6000.partial")
-        if not PIN.exists():
+        step = int(p.name[4:])
+        assert p == run("hero").root / f"step{step}"
+        pin = PIN if step == 6000 else CONTINUATION_PIN
+        pin.parent.mkdir(parents=True, exist_ok=True)
+        temporary = pin.with_name(pin.name + ".partial")
+        if not pin.exists():
             temporary.mkdir(exist_ok=True)
             for f in sorted(p.rglob("*")):
                 assert not f.is_symlink()
@@ -43,17 +47,17 @@ class BranchPin(Callback):
                         assert dest.stat().st_ino == f.stat().st_ino
                     else:
                         os.link(f, dest)
-            temporary.rename(PIN)
-        assert (PIN / "model_and_optim/.metadata").is_file()
+            temporary.rename(pin)
+        assert (pin / "model_and_optim/.metadata").is_file()
         atomic_json(
-            AUTO / "branch-source.json",
+            AUTO / ("branch-source.json" if step == 6000 else "continuation-source.json"),
             dict(
                 passed=True,
-                source=str(PIN),
-                step=6000,
+                source=str(pin),
+                step=step,
                 gpus=128,
                 batch=16777216,
-                metadata_sha256=hashlib.sha256((PIN / ".metadata.json").read_bytes()).hexdigest(),
+                metadata_sha256=hashlib.sha256((pin / ".metadata.json").read_bytes()).hexdigest(),
                 protection="owned immutable hardlink copy; never deleted automatically",
             ),
         )
@@ -161,7 +165,8 @@ def install_adapters(r):
     """Bind campaign-specific data/schedule before building import-qualified callbacks."""
     original_scheduler = adapter.scheduler
     adapter.scheduler = lambda x: (
-        ConstantWithWarmup(warmup=2000) if x.kind == "hero" else original_scheduler(x)
+        WSD(warmup=2000, decay=FINAL - DECAY_START, decay_fraction=None)
+        if x.kind == "hero" else original_scheduler(x)
     )
     adapter.hero.disk_action = lambda free: (
         "stop" if free < 10_000_000_000_000 else ("warn" if free < 12_000_000_000_000 else "ok")

@@ -1,7 +1,6 @@
 """Approved paired Dolci SFT and 128-GPU non-EMO, 3:1/shared-QK hero campaign."""
 
 import json
-import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,8 +17,10 @@ DATA = Path("/weka/oe-adapt-default/jacobm/olmoe3/olmo-ddp-migration/sft-data/do
 INPUT = Path(
     "/weka/oe-adapt-default/allennlp/deletable_open_instruct_dataset_cache/numpy_sft/15bfc110a1-6068a350"
 )
-FINAL = math.ceil(14_000_000_000_000 / 16777216)
+FINAL = 120_000
+DECAY_START = 108_000
 PIN = AUTO / "sources/hero/step6000"
+CONTINUATION_PIN = AUTO / f"sources/hero/step{DECAY_START}"
 KINDS = ("dolci-emo", "dolci-non-emo", "hero", "decay", "mt", "lc", "sft")
 PARENTS = {
     "dolci-emo": base.MOUNT
@@ -116,7 +117,7 @@ class Run(base.Run):
             b = 500_000_000_000 // self.batch
             return sorted(
                 set(
-                    [2, 4, 25, 6000, FINAL]
+                    [2, 4, 25, 6000, DECAY_START, FINAL]
                     + list(range(100, a + 1, 100))
                     + list(range(((a // 250) + 1) * 250, b + 1, 250))
                     + list(range(((b // 500) + 1) * 500, FINAL, 500))
@@ -170,7 +171,9 @@ def self_test():
     assert run("decay").batch // (run("decay").gpus * run("decay").microbatch) == (
         8 if int(os.environ.get("CAMPAIGN_PT_MB", "4")) == 4 else 16
     )
-    assert run("hero").end * 16777216 >= 14_000_000_000_000
+    assert run("hero").end * 16777216 == 2_013_265_920_000
+    assert FINAL - DECAY_START == FINAL // 10
+    assert DECAY_START in run("hero").saves
     assert run("decay").end == 6667 and run("decay").start == 6000
     assert run("mt").end == 2125 and run("lc").end == 8498 and run("sft").end == 840
     assert run("mt").lr == 2.2e-4 and run("lc").lr == 5.5e-5 and run("sft").lr == 5e-5

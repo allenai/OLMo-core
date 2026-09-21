@@ -86,7 +86,7 @@ def validate():
     p.self_test()
     import olmoe3_dolci_hero_train as train
     from olmo_core.internal.experiment import CliContext, SubCmd
-    from olmo_core.optim.scheduler import ConstantWithWarmup
+    from olmo_core.optim.scheduler import WSD
 
     a = train.adapter
     a.hero.qualified.apply_policy()
@@ -118,7 +118,11 @@ def validate():
             if hasattr(mixer, "qk_norm_per_head_gains"):
                 assert mixer.qk_norm_per_head_gains == r.split
         if r.kind == "hero":
-            assert isinstance(c.train_module.scheduler, ConstantWithWarmup)
+            schedule = c.train_module.scheduler
+            assert isinstance(schedule, WSD)
+            assert schedule.get_lr(r.lr, p.DECAY_START, r.end) == r.lr
+            assert schedule.get_lr(r.lr, r.end, r.end) == 0
+            assert "branch_pin" in c.trainer.callbacks
         print("CAMPAIGN_CONFIG_VERIFIED", r.as_dict(), flush=True)
         return
     for r in p.runs():
