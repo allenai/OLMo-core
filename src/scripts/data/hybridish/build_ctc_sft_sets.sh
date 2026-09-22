@@ -26,7 +26,12 @@ set -uo pipefail
 SET="${1:?usage: build_ctc_sft_sets.sh <set-a|set-b> <out-root>}"
 ROOT="${2:?}"
 PY="${PY:-/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python}"
-CTC_DATA="${CTC_DATA:-ctc-data}"
+# NOT the `ctc-data` console script: it is shebanged to a python with no huggingface_hub, and
+# `--pool auto` fetches the seed pools from the Hub, so every build dies at the first task with
+# ModuleNotFoundError. Drive the CLI as a module under an interpreter that has the Hub client.
+CTC_SRC="${CTC_SRC:-/accounts/projects/berkeleynlp/prasann/projects/newolmocore/OLMo-core/ctc/src}"
+CTC_DATA="${CTC_DATA:-$PY -m ctc.data.cli}"
+export PYTHONPATH="$CTC_SRC:${PYTHONPATH:-}"
 BUCKETS="${BUCKETS:-2k 4k 8k 16k 32k}"
 TOK_PER_BUCKET="${TOK_PER_BUCKET:-20000000}"   # 20M tokens in EVERY bucket
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
@@ -71,10 +76,21 @@ for task in $TASKS; do
     esac
     N=$(( TOK_PER_BUCKET / TOK ))
     echo "--- $task @ $b : $N examples (~${TOK_PER_BUCKET} tok) $(date -u '+%T')Z ---"
+    # EACH BUCKET GETS ITS OWN --out. `ctc-data build` always writes <out>/<task>/train.jsonl, so
+    # reusing one --out across buckets silently CLOBBERS each bucket with the next: the tree ends
+    # up holding only the LAST (smallest) bucket -- the exact opposite of token-balanced, and it
+    # looks like a clean successful build while doing it. Merged per task immediately below.
     $CTC_DATA build --task "$task" --split train --rungs "$b" --train "$N" \
-      --pool auto --out "$BUILD" \
+      --pool auto --out "$BUILD/_b$b" \
       || echo "  !!! $task@$b FAILED (continuing; the mix step reports what is missing)"
   done
+  mkdir -p "$BUILD/$task"
+  : > "$BUILD/$task/train.jsonl"
+  for b in $BUCKETS; do
+    f="$BUILD/_b$b/$task/train.jsonl"
+    [ -s "$f" ] && cat "$f" >> "$BUILD/$task/train.jsonl"
+  done
+  echo "=== $task merged: $(wc -l < "$BUILD/$task/train.jsonl") rows over $(echo $BUCKETS | wc -w) buckets ==="
 done
 
 echo "=== assembling the mix ==="
