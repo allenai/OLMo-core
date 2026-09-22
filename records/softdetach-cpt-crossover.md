@@ -17,6 +17,15 @@ Curves (32 held-out 64k rows, full-attention dev CE, x = FLOP-meter actual PF):
 | ~3030 | 64M 1.256 | 512M 1.2634 (3043) | +0.007 |
 | ~5970 | 128M 1.245 | 1B 1.2585 (5942) | +0.013 |
 
+⚠ **The ≤128M and ≥256M points come from DIFFERENT training shards.** dense (all budgets), sd20 ≤128M,
+sfl20 and lslot20 trained on `cpt_u128M` (source parts 0–7); sd20-256M/512M/1B trained on `cpt_u1B`
+(parts 0–27). Both are built by the same script from the same text in file order, but the loader's
+row order differs (first-5-step train CE 0.384 on the 1B shard vs 0.440 on the 128M shard), so the
+high-end sd20 points are NOT a strict prefix-extension of the low-end ones. Prasann noticed the sd20
+curve is flat exactly across that switch — 128M 1.272 (763 PF) → 256M 1.2725 (1523 PF) — before it
+resumes (512M −0.009, 1B −0.005). Three cheap checks (§A.5) test whether the flat step is the shard
+switch, seed noise, or real.
+
 Read as slopes, not as a "break": dense gains **−0.046 nats per decade of PF** (1.314 → 1.245 over
 196 → 5998), sd20 **−0.028 per decade** (1.309 → 1.2585 over 97 → 5942). sd20 starts with a head
 start (7.7× more optimizer steps and 1.5× more loss tokens per PF) and dense's steeper slope erodes
@@ -81,6 +90,16 @@ deficit vs dense grows with target position (long-range), not uniformly.
 - **FLOP accounting**: the meter counts the compacted forward (sd20 ×0.13 of a dense row); the
   actual PF of the 256M/512M/1B runs (1523/3043/5942) land on the dense 32M/64M/128M points
   (1518/3011/5998), so the comparison is at equal measured compute.
+
+### A.5 The flat 128M → 256M step: shard switch, seed, or real? (launched)
+
+| check | run / job | what it decides |
+|---|---|---|
+| (1) sd20-128M trained on the **1B shard** (`--shard 1B`, run `sdcpt-q35-4b-sd20-u128M-s1B`) | `01M35J4SKD0X5Z3ADWD711B4TV` | a true prefix of the 256M run; if it lands near 1.272 the two segments join and the 256M point is the odd one out; if it lands well above, the 1B shard's row order is harder early and every ≥256M point carries that offset |
+| (2) sd20-256M, seed 1 (`--seed 1`, run `sdcpt-q35-4b-sd20-u256M-seed1`) | `01M35J1RBX4KQWXCBD99QC7D30`, eval `01M35J3QVGDSSXMCQA0CRF4NE7` | run-to-run seed variance at the crossover budget |
+| (3) paired per-row Δ between sd20-128M/256M/512M/1B (+dense) on the shared 32 dev rows, with SE | `dump_sd20_pairs_beaker.sh` → job `01M35J1JYARW6KK7TTD36Y75HR` | whether the flat step is inside ~2σ of paired noise |
+
+_(results pending)_
 
 ## Part B — tweaks (launched at the crossover budgets, compared at equal PF)
 

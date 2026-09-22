@@ -60,13 +60,16 @@ def main():
     ap.add_argument("--budgets", default="32M,64M,128M")
     ap.add_argument("--lr", type=float, default=3e-5)
     ap.add_argument("--wandb-group", default="sdcpt-q35-4b")
+    ap.add_argument("--shard", default=None, choices=[None, "128M", "1B"], help="force the training shard (default: 1B iff budget > 128M)")
+    ap.add_argument("--seed", type=int, default=None, help="training seed passthrough (beaker_ctc_suite --seed); also suffixes the run name")
+    ap.add_argument("--name-suffix", default="", help="appended to the run name (e.g. -s1B for a shard override)")
     a = ap.parse_args()
     rows = []
     for arm in a.arms.split(","):
         for budget in a.budgets.split(","):
             cap = int(float(budget.rstrip("MmBb")) * (1_000_000_000 if budget[-1] in "Bb" else 1_000_000))
-            shard = SHARD_1B if cap > 128_000_000 else SHARD
-            name = run_name(arm, budget)
+            shard = {"128M": SHARD, "1B": SHARD_1B, None: SHARD_1B if cap > 128_000_000 else SHARD}[a.shard]
+            name = run_name(arm, budget) + a.name_suffix + (f"-seed{a.seed}" if a.seed is not None else "")
             variant = "full" if arm == "dense" else "softtoken"
             extra = f"--max-tokens {cap}" + (f" {ARMS[arm]}" if ARMS[arm] else "")
             cmd = [sys.executable, "-u", LAUNCHER, "--task", "cpt", "--variant", variant,
@@ -74,7 +77,7 @@ def main():
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS),
                    "--epochs", "1", "--lr", str(a.lr), "--cluster", CLUSTER, "--wandb-group", a.wandb_group,
                    "--no-follow", "--no-compile", "--seq-len", "65536", "--global-batch", str(ROWS_PER_STEP),
-                   "--micro-batch-instances", "1", "--base-checkpoint", BASE, "--extra-args", extra, a.mode]
+                   "--micro-batch-instances", "1", "--base-checkpoint", BASE] + (["--seed", str(a.seed)] if a.seed is not None else []) + ["--extra-args", extra, a.mode]
             print(" ".join(cmd), flush=True)
             res = subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=f"{REPO}/src"), capture_output=True, text=True)
             out = res.stdout + res.stderr
