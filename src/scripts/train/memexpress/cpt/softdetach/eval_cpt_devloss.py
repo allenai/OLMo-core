@@ -37,6 +37,7 @@ ARMS = {  # mirrors launch_softdetach_cpt.py
     "dense": None,
     "sd20": dict(keep_prob=0.2, rule="none", k=0.0),
     "sfl20": dict(keep_prob=0.0, rule="first_last", k=0.2),
+    "lslot20": dict(keep_prob=0.2, rule="none", k=0.0),  # sd20 geometry; the checkpoint carries its trained projector
 }
 
 
