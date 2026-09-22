@@ -39,6 +39,13 @@ ARMS = {
     # learned slot: sd20 geometry, slot NOT detached and only the projector trains (frozen backbone) --
     # the cheapest "trainable summary" arm; scored afterwards with the dev-loss driver like every other scheme
     "lslot20": f"--st-keep-prob 0.2 --st-no-detach-soft-kv --freeze-backbone {_SOFT}",
+    # crossover tweaks (records/softdetach-cpt-crossover.md, 2026-09-22):
+    #   sd20mix: sd20 + dense-mix curriculum -- the per-row probability of training UNCOMPRESSED ramps
+    #            0 -> 0.5 linearly over the whole run (mean 0.25), so late training sees full context;
+    #            lands at ~0.35x dense FLOPs per token (the meter records the true PF)
+    #   sd20p32: sd20 + every pooled block keeps its first 32 tokens real (~0.17x)
+    "sd20mix": f"--st-keep-prob 0.2 --st-mix-start-p 0.0 --st-mix-end-p 0.5 --st-mix-anneal-frac 1.0 {_SOFT}",
+    "sd20p32": f"--st-keep-prob 0.2 --st-header-extra-tokens 32 {_SOFT}",
 }
 
 

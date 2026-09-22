@@ -61,3 +61,6 @@ sdcpt-q35-4b-sd20-u512M	sd20	512M	ai2/jupiter-cirrascale-2	2026-09-21 23:34	LAUN
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 sdcpt-q35-4b-sd20-u1B	sd20	1B	ai2/jupiter-cirrascale-2	2026-09-21 23:34	LAUNCHED	"01M33X4YY69PMCXM033M2YYPX7   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20mix-u512M	sd20mix	512M	ai2/jupiter-cirrascale-2	2026-09-22 14:27	LAUNCHED	"01M35G8XPPMRKK7FHBFSMME3EB   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20mix-u256M	sd20mix	256M	ai2/jupiter-cirrascale-2	2026-09-22 14:27	LAUNCHED	01M35G3Z7TP78SPGQNDPP6BR99 (crossover tweak: dense-mix ramp 0->0.5; ledger row added by hand, launcher was interrupted)
