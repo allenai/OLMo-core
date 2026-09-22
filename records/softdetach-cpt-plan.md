@@ -67,3 +67,30 @@ saving) and, for soft arms, under their own construction (is it also an inferenc
   of the same mix as the training tokens on weka; overlap with the 15B tokenized sample is not
   excluded. The tokenized dev shard (last source part) is the clean held-out set for the trained
   arms.
+
+## Status 2026-09-21 21:55 PDT — screening done, 12 CPT arms launched
+
+**Screening verdict (cpt80, frozen base, tail-20% CE, `results_screen/`):** at ×0.36 every
+training-free rule sits at ΔCE +0.06–0.08 at 8k/32k (fl20 +0.071/+0.078, first128 +0.069/+0.065,
+attnrow20 +0.059/+0.077, grad20 +0.073 at 8k) — the gradient oracle buys nothing over first/last
+tokens, so *which* tokens are kept is not the lever on pretraining text; the pooled remainder is
+what is unreadable. Random-chunk pooling (rand20/k0, ×0.20–0.25) is +0.15–0.24 at 8k, +0.06–0.20 at
+32k. rule20 is the worst rule (+0.13). → the 4B runs test whether TRAINING closes the gap.
+
+**Launched (wave 2, commit e71683bbd; wave 1 died on a SyntaxError in 0fbd7ba60):** 4 arms × 3
+budgets, 4 GPUs each, jupiter urgent unallocated, wandb group
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/sdcpt-q35-4b —
+`dense`, `sd20` (random 20% of blocks whole, rest one slot, ×~0.2), `sfl20` (first_last 20% per
+block, ×~0.36), `lslot20` (sd20 geometry, slot NOT detached, backbone frozen: 13.1M trainable
+projector params) at 32M/64M/128M tokens (62/124/247 steps of 8×65k rows). sd20 runs ~3.5 s/step
+on 4 GPUs. Experiment ids in `LAUNCH_LEDGER.tsv`.
+
+⚠ **train/CE of the soft arms is scaled by the surviving-label fraction** — `loss_div_factor`
+(`train_module.py:358`, `batch_num_tokens_for_loss`) is counted BEFORE compaction and the pooled
+blocks' labels are dropped, so sd20 logs ~0.2 × the true per-token CE (0.45 vs dense 2.3). Adam
+cancels the gradient scale (up to eps / the skip-step statistic); do not read the wandb train CE
+across arms — the dev-loss eval is the comparison. (ds64 never hit this: its loss tokens were the
+FREE answer span, which always survives.)
+
+**Eval:** `eval_sweep.sh` submits `eval_cpt_devloss_beaker.sh` per run (waits inside the job for
+the checkpoint); results → weka `softdetach_cpt/devloss/<run>.json`, `EVAL_LEDGER.tsv`.

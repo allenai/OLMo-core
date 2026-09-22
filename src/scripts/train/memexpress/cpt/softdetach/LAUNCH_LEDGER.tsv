@@ -1,0 +1,49 @@
+run	arm	budget	cluster	launched	state	note
+sdcpt-q35-4b-dense-u32M	dense	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PKBRTTRE7FNS5EM0S27QQ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u64M	dense	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PM60YV08J511TF2SP5YWP   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u128M	dense	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PMZV3NCARRRVSJPP1V9SJ   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u32M	sd20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PNS7A2P3F3VZ1JSP4EJBG   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u64M	sd20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PPH00VZN7DCS2D0F54QF2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u128M	sd20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PQ8RC7B4E5AB8SNH3DWWM   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u32M	sfl20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PR5K4KSQE5PXP8DFYB9DS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u64M	sfl20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PRZBRQ9XYHJB27ZJ8MD5M   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u128M	sfl20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PSR1ZZKJRD8X7J339DNAY   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u32M	lslot20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PTKGAJEK19TME8SVHQX3T   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u64M	lslot20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PVGQX28AK19NNQ9HJSPTF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u128M	lslot20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:44	FAILED(SyntaxError 0fbd7ba60; relaunched)	"01M33PW7ZDF7QJ5EF7S05R90QE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u32M	dense	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q0K9CNF3PR0GK2KAJX79A   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u64M	dense	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q1C2FJ5JYKB2V04HGXPDF   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u128M	dense	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q230M52PD8314P86RBB96   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u32M	sd20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q2VRRPMX7VM999W5YZ0FD   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u64M	sd20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q3K7V4YRPHK32SG1C49X0   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u128M	sd20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q4AFV5J8V04K80A5W5TZE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u32M	sfl20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q54M1F5K1HE3RES8V6D9G   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u64M	sfl20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q5XD0MSFPMZXNJ3MWRBM2   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sfl20-u128M	sfl20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q6NENSCWXZC9CWVNTZFQE   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u32M	lslot20	32M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q7E9XB5VXTE779XEQN7Z4   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u64M	lslot20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q86V9X8TNS548BXS3Q88K   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-lslot20-u128M	lslot20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q8XJ70X5NGY935MANCTEC   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

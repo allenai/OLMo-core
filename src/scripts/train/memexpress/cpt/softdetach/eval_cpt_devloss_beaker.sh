@@ -10,7 +10,10 @@ export PYTHONWARNINGS=ignore PATH=/opt/conda/bin:\$PATH
 PYB=/opt/conda/bin/python; \$PYB -m pip install -q -e '.[all]' 2>&1 | tail -1
 \$PYB -c "import torch, fla, olmo_core; print(torch.__version__)" || { echo "!!! deps missing"; exit 1; }
 CK=\$(ls -d $WEKA/ctc_suite/ckpts/$RUN/model_and_optim $WEKA/ctc_suite/ckpts/$RUN/step*/model_and_optim 2>/dev/null | sort -V | tail -1)
-[ -n "\$CK" ] || { echo "!!! no checkpoint for $RUN"; exit 2; }
+W=0; while [ -z "\$CK" ] || [ ! -f "\$CK/.metadata" ]; do
+  [ \$W -ge 7200 ] && { echo "!!! no checkpoint for $RUN after 2h"; exit 2; }
+  sleep 60; W=\$((W+60)); CK=\$(ls -d $WEKA/ctc_suite/ckpts/$RUN/model_and_optim $WEKA/ctc_suite/ckpts/$RUN/step*/model_and_optim 2>/dev/null | sort -V | tail -1)
+done; echo "checkpoint: \$CK (waited \${W}s)"
 PYTHONPATH=src \$PYB src/scripts/train/memexpress/cpt/softdetach/eval_cpt_devloss.py --ckpt \$CK --dev $WEKA/softdetach_cpt/shards/cpt_dev --arm $ARM --rows $ROWS --out $WEKA/softdetach_cpt/devloss/${RUN}.json
 RC=\$?; echo "rc=\$RC"; exit \$RC
 EOF
