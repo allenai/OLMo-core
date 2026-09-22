@@ -21,7 +21,8 @@ import sys
 REPO = "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core"
 LAUNCHER = f"{REPO}/src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py"
 WEKA = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
-SHARD = f"{WEKA}/softdetach_cpt/shards/cpt_u128M"  # budgets < 128M are --max-tokens prefixes of it
+SHARD = f"{WEKA}/softdetach_cpt/shards/cpt_u128M"  # budgets <= 128M are --max-tokens prefixes of it
+SHARD_1B = f"{WEKA}/softdetach_cpt/shards/cpt_u1B"  # budgets > 128M (same rows first: parts 0-27, dev part 28 held out)
 BASE = f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"  # marker-repaired 4B base (ds64's)
 TOKENIZER = f"{WEKA}/hf_tokenizers/Qwen3.5-0.8B-Base"
 LEDGER = f"{REPO}/src/scripts/train/memexpress/cpt/softdetach/LAUNCH_LEDGER.tsv"
@@ -56,12 +57,13 @@ def main():
     rows = []
     for arm in a.arms.split(","):
         for budget in a.budgets.split(","):
-            cap = int(budget.rstrip("Mm")) * 1_000_000
+            cap = int(float(budget.rstrip("MmBb")) * (1_000_000_000 if budget[-1] in "Bb" else 1_000_000))
+            shard = SHARD_1B if cap > 128_000_000 else SHARD
             name = run_name(arm, budget)
             variant = "full" if arm == "dense" else "softtoken"
             extra = f"--max-tokens {cap}" + (f" {ARMS[arm]}" if ARMS[arm] else "")
             cmd = [sys.executable, "-u", LAUNCHER, "--task", "cpt", "--variant", variant,
-                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", SHARD,
+                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", shard,
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS),
                    "--epochs", "1", "--lr", str(a.lr), "--cluster", CLUSTER, "--wandb-group", a.wandb_group,
                    "--no-follow", "--no-compile", "--seq-len", "65536", "--global-batch", str(ROWS_PER_STEP),
