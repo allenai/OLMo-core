@@ -1,59 +1,48 @@
 #!/bin/bash
-# The two CTC SFT training sets, built TOKEN-BALANCED across context buckets.
+# The CTC SFT training sets, built TOKEN-BALANCED across context buckets, in PARALLEL.
 #
 #   bash src/scripts/data/hybridish/build_ctc_sft_sets.sh <set-a|set-b> <out-root>
 #
-# TOKEN-BALANCED, not example-balanced (prasann's call). Every context bucket gets the SAME TOKEN
-# BUDGET, so example count falls as the bucket grows: at a 20M-token budget a 2k bucket holds ~9,760
-# examples and a 256k bucket holds ~76. The alternative -- equal examples per bucket -- spends ~99%
-# of the token budget above 32k and trains the short buckets on almost nothing.
+# The 65 (task, bucket) builds are independent, so they run under `xargs -P`. Serially this is ~6
+# hours; on a wide CPU box it is ~20 minutes. NPROC defaults to the machine's core count.
 #
-# query_position=both throughout. NOTE it is NOT a `ctc-data build` flag -- the rung files are raw
-# unified JSONL and the prompt is rendered later, so `both` is passed to
-# convert_ctc_to_sft_completion.py at the tokenisation step (see the tail of this script). It must
-# agree with the EVAL flag: scoring a query-after model with `both` hands it a second copy of the ask
-# it never saw in training, which reads as a capability gap rather than a prompt mismatch.
+# TOKEN-BALANCED, not example-balanced: every bucket gets the same token budget, so example count
+# falls as the bucket grows (~9,765 at 2k, ~610 at 32k). Equal examples per bucket would spend ~99%
+# of the budget above 32k.
 #
-# ⚠ TWO ROSTER FACTS THAT DECIDE WHAT THESE SETS MEASURE:
-#  * `fiqa`, `scifact`, `outlier_review` and `contra_fever` are NEVER trained -- build_ctc_sft_mix.py
-#    refuses them outright. They are the OOD columns; training one makes its number meaningless.
-#  * Both sets collide on a grading spec and so need --allow-spec-collision, which the manifest
-#    records. SET-B trains nq+hotpotqa (both `retrieval`) and outlier+outlier_amzn (both `outlier`).
-#    ⚠ outlier_amzn is HALF category-axis Amazon reviews and outlier_review IS category-axis Amazon
-#    reviews, so SET-B weakens the outlier_review probe specifically. Swap outlier_amzn for
-#    outlier_fixedM if that probe matters more than matching CTC-BENCH-10 exactly.
+# query_position=both is NOT a `ctc-data build` flag -- rung files are raw unified JSONL and the
+# prompt is rendered at tokenisation, so it is passed to convert_ctc_to_sft_completion.py (printed
+# at the end). It must match the EVAL flag or the mismatch reads as a capability gap.
+#
+# ⚠ EACH BUCKET NEEDS ITS OWN --out. `ctc-data build` always writes <out>/<task>/train.jsonl, so a
+# shared --out silently clobbers each bucket with the next and leaves only the smallest one, looking
+# like a clean build the whole way. Buckets go to _b<bucket>/ and are merged per task at the end.
+#
+# ⚠ NOT the `ctc-data` console script: it is shebanged to a python without huggingface_hub, and
+# `--pool auto` fetches seed pools from the Hub, so every build dies at the first task.
+#
+# ⚠ `fiqa`, `scifact`, `outlier_review`, `contra_fever` are NEVER trained (build_ctc_sft_mix.py
+# refuses them) -- they are the OOD columns. Six roster members have no ctc-data generator at all
+# (msmarco, niah, obliq_twitter, qdmatch_fiqa, outlier_amzn, outlier_fixedM), which is why set-a is
+# 13 tasks rather than 20.
 set -uo pipefail
 SET="${1:?usage: build_ctc_sft_sets.sh <set-a|set-b> <out-root>}"
 ROOT="${2:?}"
 PY="${PY:-/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python}"
-# NOT the `ctc-data` console script: it is shebanged to a python with no huggingface_hub, and
-# `--pool auto` fetches the seed pools from the Hub, so every build dies at the first task with
-# ModuleNotFoundError. Drive the CLI as a module under an interpreter that has the Hub client.
 CTC_SRC="${CTC_SRC:-/accounts/projects/berkeleynlp/prasann/projects/newolmocore/OLMo-core/ctc/src}"
-CTC_DATA="${CTC_DATA:-$PY -m ctc.data.cli}"
-export PYTHONPATH="$CTC_SRC:${PYTHONPATH:-}"
+REPO="${REPO:-/accounts/projects/berkeleynlp/prasann/projects/OLMo-core}"
 BUCKETS="${BUCKETS:-2k 4k 8k 16k 32k}"
-TOK_PER_BUCKET="${TOK_PER_BUCKET:-20000000}"   # 20M tokens in EVERY bucket
-REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
+TOK_PER_BUCKET="${TOK_PER_BUCKET:-20000000}"
+NPROC="${NPROC:-$(nproc)}"
+export PYTHONPATH="$CTC_SRC:${PYTHONPATH:-}"
 
-# SET-A: as many of the 22 as are buildable, minus the held-out four. Trains 5 of 7 retrieval
-# sources and all 3 qdmatch, so the surviving OOD columns measure CORPUS transfer only, not
-# unseen-task transfer -- say so wherever those numbers appear.
-# ⚠ Only what `ctc-data build` can actually produce. Six roster members have NO ctc-data generator
-# -- msmarco, niah, obliq_twitter, qdmatch_fiqa, outlier_amzn, outlier_fixedM -- so "as many of the
-# 22 as possible" is FOURTEEN here, not twenty. The missing six need their own generators
-# (outlier_amzn/outlier_fixedM: generate_review_outlier_data.py; the rest: see BUILD_MATRIX.md).
-# qdmatch_hpqa dropped (prasann): qdmatch is then trained from qdmatch_nq ALONE, which keeps
-# qdmatch_hpqa and qdmatch_fiqa as clean held-out probes for that spec. Without it the qdmatch
-# column would have had nothing left to generalise to.
+# qdmatch_hpqa dropped: qdmatch is then trained from qdmatch_nq ALONE, keeping qdmatch_hpqa and
+# qdmatch_fiqa as clean held-out probes for that spec.
 SET_A="nq hotpotqa qdmatch_nq outlier oolong contradiction xabsence absence \
        reorder rerank strmatch textgroups grouping_labeled"
-# SET-B: CTC-BENCH-10 with prasann's substitutions -- rerank for fiqa, reorder for qdmatch_fiqa.
-# Both swaps exist to keep FiQA out of training entirely: fiqa is a held-out probe and qdmatch_fiqa
-# is built from the same corpus, so training it would contaminate that probe.
-# ⚠ outlier_amzn has no ctc-data generator either. Until it is built with
-# generate_review_outlier_data.py (--rating-ratio 0.5, the shipped blend), SET-B is NINE tasks and
-# the "Outlier (Amazon)" row of CTC-BENCH-10 is missing from training.
+# CTC-BENCH-10 with prasann's substitutions (rerank for fiqa, reorder for qdmatch_fiqa) -- both keep
+# the FiQA corpus out of training so the fiqa probe stays clean. outlier_amzn has no ctc-data
+# generator, so this is nine tasks until it is built with generate_review_outlier_data.py.
 SET_B="nq hotpotqa rerank oolong reorder qdmatch_nq outlier xabsence contradiction"
 
 case "$SET" in
@@ -64,41 +53,65 @@ esac
 
 BUILD="$ROOT/$TAG/per_task"
 mkdir -p "$BUILD"
-echo "=== $TAG | $(echo $TASKS | wc -w) tasks | buckets: $BUCKETS | ${TOK_PER_BUCKET} tok/bucket ==="
+NTASK=$(echo $TASKS | wc -w); NB=$(echo $BUCKETS | wc -w)
+echo "=== $TAG | $NTASK tasks x $NB buckets = $((NTASK*NB)) builds | -P $NPROC | ${TOK_PER_BUCKET} tok/bucket ==="
 
+bucket_tokens() {
+  case "$1" in 2k) echo 2048;; 4k) echo 4096;; 8k) echo 8192;; 16k) echo 16384;;
+               32k) echo 32768;; 64k) echo 65536;; 128k) echo 131072;; 256k) echo 262144;;
+               *) echo 0;; esac
+}
+
+JOBS="$ROOT/$TAG/.jobs"
+: > "$JOBS"
 for task in $TASKS; do
   for b in $BUCKETS; do
-    # examples = budget / bucket size, so every bucket costs the same tokens
-    case "$b" in
-      2k) TOK=2048;; 4k) TOK=4096;; 8k) TOK=8192;; 16k) TOK=16384;; 32k) TOK=32768;;
-      64k) TOK=65536;; 128k) TOK=131072;; 256k) TOK=262144;;
-      *) echo "unknown bucket $b"; exit 2;;
-    esac
-    N=$(( TOK_PER_BUCKET / TOK ))
-    echo "--- $task @ $b : $N examples (~${TOK_PER_BUCKET} tok) $(date -u '+%T')Z ---"
-    # EACH BUCKET GETS ITS OWN --out. `ctc-data build` always writes <out>/<task>/train.jsonl, so
-    # reusing one --out across buckets silently CLOBBERS each bucket with the next: the tree ends
-    # up holding only the LAST (smallest) bucket -- the exact opposite of token-balanced, and it
-    # looks like a clean successful build while doing it. Merged per task immediately below.
-    $CTC_DATA build --task "$task" --split train --rungs "$b" --train "$N" \
-      --pool auto --out "$BUILD/_b$b" \
-      || echo "  !!! $task@$b FAILED (continuing; the mix step reports what is missing)"
+    TOK=$(bucket_tokens "$b")
+    [ "$TOK" = 0 ] && { echo "unknown bucket $b"; exit 2; }
+    echo "$task $b $(( TOK_PER_BUCKET / TOK ))" >> "$JOBS"
   done
-  mkdir -p "$BUILD/$task"
-  : > "$BUILD/$task/train.jsonl"
+done
+
+export PY BUILD
+run_one() {
+  task="$1"; b="$2"; n="$3"
+  log="$BUILD/_logs/${task}_${b}.log"; mkdir -p "$BUILD/_logs"
+  if [ -s "$BUILD/_b$b/$task/train.jsonl" ]; then echo "  [skip] $task@$b already built"; return 0; fi
+  $PY -m ctc.data.cli build --task "$task" --split train --rungs "$b" --train "$n" \
+     --pool auto --out "$BUILD/_b$b" > "$log" 2>&1 \
+    && echo "  [ok]   $task@$b  n=$n" \
+    || echo "  [FAIL] $task@$b  n=$n  -> $log"
+}
+export -f run_one
+
+# `--pool auto` downloads a seed pool per task; letting 65 processes race on a cold HF cache would
+# fetch the same pools many times over. One serial warm-up pass per DISTINCT task at the cheapest
+# bucket fills the cache, then everything else runs wide against it.
+echo "=== warming the seed-pool cache (one bucket per task, serial) ==="
+FIRST_B=$(echo $BUCKETS | awk '{print $1}')
+for task in $TASKS; do
+  grep -E "^$task $FIRST_B " "$JOBS" | while read -r t b n; do run_one "$t" "$b" "$n"; done
+done
+
+echo "=== building the rest, $NPROC-way parallel ==="
+xargs -a "$JOBS" -n3 -P "$NPROC" bash -c 'run_one "$0" "$1" "$2"'
+
+echo "=== merging buckets per task ==="
+for task in $TASKS; do
+  mkdir -p "$BUILD/$task"; : > "$BUILD/$task/train.jsonl"
   for b in $BUCKETS; do
     f="$BUILD/_b$b/$task/train.jsonl"
     [ -s "$f" ] && cat "$f" >> "$BUILD/$task/train.jsonl"
   done
-  echo "=== $task merged: $(wc -l < "$BUILD/$task/train.jsonl") rows over $(echo $BUCKETS | wc -w) buckets ==="
+  echo "  $task: $(wc -l < "$BUILD/$task/train.jsonl") rows over $NB buckets"
 done
 
 echo "=== assembling the mix ==="
 $PY "$REPO/src/scripts/data/hybridish/build_ctc_sft_mix.py" \
   --root "$BUILD" --tasks $TASKS --allow-spec-collision \
-  --band "$(echo $BUCKETS | tr ' ' '-')" \
-  --out "$ROOT/$TAG/mix.jsonl"
-echo "=== tokenise (query_position=both is applied HERE, not at build time) ==="
+  --band "$(echo $BUCKETS | tr ' ' '-')" --out "$ROOT/$TAG/mix.jsonl"
+
+echo "=== next: tokenise (query_position=both applies HERE) ==="
 echo "  $PY $REPO/src/scripts/data/hybridish/convert_ctc_to_sft_completion.py \\"
 echo "      --mix $ROOT/$TAG/mix.jsonl --query-position both --verify --out $ROOT/$TAG/shards"
-echo "=== DONE $TAG -> $ROOT/$TAG/mix.jsonl ==="
+echo "=== DONE $TAG -> $ROOT/$TAG/mix.jsonl $(date -u '+%F %T')Z ==="
