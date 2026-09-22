@@ -112,3 +112,24 @@ a *training* saving only: scored under its own construction the model is +0.23 (
 evals (learned slot), which decide whether the own-construction gap can be closed. The base's CE on
 this dev set is not yet measured (add `dense-0M` = the raw base through `eval_cpt_devloss.py`).
 `collect_devloss.py` builds the table from the Beaker logs (`softdetach_devloss.csv`).
+
+## Result table (2026-09-21 22:50 PDT; dense-128M pending) — `softdetach_devloss.csv`
+
+| arm | 32M (PF · full CE · own CE) | 64M | 128M |
+|---|---|---|---|
+| dense | 1518 · 1.283 · — | 3011 · 1.256 · — | 5998 · pending |
+| sd20 (random 20% of blocks whole, rest one slot) | 193 · 1.291 · 1.533 | 383 · 1.279 · 1.513 | 763 · 1.272 · 1.502 |
+| sfl20 (first_last 20% of every block) | 172 · 1.308 · 1.787 | 340 · 1.295 · 1.758 | 678 · 1.288 · 1.740 |
+| lslot20 (slot trained, backbone frozen) | 193 · 1.320 · 1.616 | 383 · 1.320 · 1.614 | 763 · 1.320 · 1.595 |
+
+Frozen base = 1.320 (lslot20's full-attention column). **sd20-64M (383 PF) reaches dense-32M's
+dev CE (1.279 vs 1.283) at 0.25× the FLOPs; sd20-128M (763 PF) is below it at 0.50×.** Random
+whole-block pooling beats the first_last-20% rule at every budget (−0.015), the opposite of the
+frozen-base screen — with training, the model learns to use the slot of a fully pooled block better
+than it learns to read partial blocks. The saving is training-only: under its own construction sd20
+is +0.23 above full attention and the projector-only learned slot (lslot20) does not close it
+(1.60 vs sd20's 1.50 with a trained backbone).
+
+Screening on the CTC rows (`screen_table.py --task ctc`): no training-free rule is near parity at
+×0.2–0.3 without gold (best ΔCE +0.6, oracle included); `first128` (+0.05–0.07) only because
+suite documents are short (×0.85).
