@@ -60,10 +60,46 @@ never**, so if anything sd20 gets the larger effective step. Zero skipped steps 
 Verdict: normalisation is a logging/cosmetic bug, not the crossover. (Fixing the divisor would only
 change the logged CE and remove clipping-asymmetry in dense's favour.)
 
-### A.2 Where the deficit lives — by target position (full-attention CE, bins of the 64k row)
+### A.2 Where the deficit lives — by target position: **the sd20 win is a SHORT-CONTEXT win, the loss is long-range and grows with budget**
 
-_(pending: position-binned eval, jobs 01M35FSHGN1E9VGXZP7WHTG5TB … 01M35FVHS6RJRT1CKJXGAWNDK7,
-`eval_cpt_devloss.py` now emits `full_pos_*` / `own_pos_*`; results → weka `softdetach_cpt/devloss_pos/`)_
+Full-attention dev CE, 32 rows × 64k, binned by the target token's absolute position in the row
+(`eval_cpt_devloss.py` `full_pos_*`, weka `softdetach_cpt/devloss_pos/`). Δ = sd20 − dense at
+equal PF (rows = the matched pairs from the main table):
+
+| pair (equal PF) | 0–2k | 2–8k | 8–16k | 16–32k | 32k–64k | all |
+|---|---|---|---|---|---|---|
+| dense-32M (1518) | 1.462 | 1.314 | 1.260 | 1.226 | 1.301 | 1.283 |
+| sd20-64M (383, ¼ PF) | 1.399 | 1.305 | 1.257 | 1.223 | 1.301 | 1.279 |
+| **Δ sd20-64M − dense-32M** | **−0.063** | −0.009 | −0.002 | −0.003 | 0.000 | −0.004 |
+| sd20-256M (1523) | 1.390 | 1.293 | 1.250 | 1.216 | 1.295 | 1.2725 |
+| **Δ sd20-256M − dense-32M** | **−0.072** | −0.020 | −0.010 | −0.010 | −0.006 | −0.010 |
+| dense-64M (3011) | 1.387 | 1.281 | 1.234 | 1.200 | 1.277 | 1.256 |
+| sd20-512M (3043) | 1.375 | 1.282 | 1.239 | 1.208 | 1.287 | 1.2634 |
+| **Δ sd20-512M − dense-64M** | −0.012 | +0.001 | +0.005 | +0.008 | **+0.011** | +0.007 |
+| dense-128M (5998) | 1.369 | 1.268 | 1.223 | 1.190 | 1.266 | 1.245 |
+| sd20-1B (5942) | 1.369 | 1.275 | 1.234 | 1.202 | 1.283 | 1.2585 |
+| **Δ sd20-1B − dense-128M** | 0.000 | +0.007 | +0.011 | +0.013 | **+0.017** | +0.013 |
+
+Two facts, both monotone:
+
+1. **sd20's whole advantage sits in the first 2k tokens.** At 383 PF and 1523 PF the 0–2k bin is
+   −0.06/−0.07 below dense while every bin past 8k is within ±0.01. A pooled row is, for each real
+   token, a *short* real context plus slots, so sd20 sees ~5× more "early-context" prediction
+   problems per FLOP and learns that regime fast. Dense catches up on it with tokens: its 0–2k CE
+   falls 1.462 → 1.387 → 1.369 across 32M → 128M, and at 128M it equals sd20-1B's 1.369 exactly.
+2. **The deficit grows with position and with budget.** At equal PF the 32k–64k bin goes
+   0.000 → −0.006 → +0.011 → +0.017 from 383 to 5942 PF, and within each high-end pair Δ rises
+   monotonically from the 0–2k bin to the last bin. Long-range use of context is what dense keeps
+   learning and sd20 cannot: 80 % of the context an sd20 loss token attends to is slots.
+
+So the crossover is not a tweak-sized artefact of the optimizer; it is the two regimes trading
+places. The "small tweak" that could keep sd20 ahead has to put real long-range information back
+into the pooled blocks without giving up the compaction — that is Part B (iii) `sd20p32` (every
+pooled block keeps its first 32 tokens) and (ii) the dense-mix curriculum.
+
+⚠ The `own_pos_*` bins in the same JSONs are unusable (every bin equals `own_ce`): the own
+construction's per-token losses live in compacted coordinates and the bin mask was built in
+original coordinates; the full-attention bins above are unaffected. Not fixed (eval-side only).
 
 ### A.3 Train/eval drift
 
@@ -106,7 +142,7 @@ _(results pending)_
 | arm | what | runs | eval |
 |---|---|---|---|
 | `sd20mix` | sd20 + compression-mixing curriculum: per-row probability of training UNCOMPRESSED ramps 0 → 0.5 linearly over the run (`--st-mix-start-p 0 --st-mix-end-p 0.5 --st-mix-anneal-frac 1.0`), i.e. late training sees full context; ~0.35× dense FLOPs per token | 256M `01M35G3Z7TP78SPGQNDPP6BR99`, 512M `01M35G8XPPMRKK7FHBFSMME3EB` | `01M35G9TN92AFBZ41MJE0X4EN2`, `01M35GA43JDKN5W0QWCVHAETWV` |
-| `sd20p32` | sd20 + first 32 real tokens in every pooled block (~0.17×) — only if A.2 says the deficit is long-range | pending A.2 | |
+| `sd20p32` | sd20 + first 32 real tokens in every pooled block (`--st-header-extra-tokens 32`, ~0.17×) — A.2 says long-range, so launched | 256M / 512M (ids in `LAUNCH_LEDGER.tsv`) | position evals queued (`devloss_pos/`) |
 
 Loss-normalisation "fix" (B.i) is not run: A.1 shows it cannot move the curve under Adam.
 
