@@ -46,7 +46,11 @@ def validate(r):
     adapter.hero.qualified.apply_policy()
     c = adapter.builder(r)(CliContext(__file__, SubCmd.dry_run, r.run_id, "ai2/holmes", []))
     c.as_dict(json_safe=True)
-    assert c.model.num_active_params == 794233472
+    expected = 787359872 if r.arm == "3to1-shared" else 794233472
+    assert c.model.num_active_params == expected
+    if r.future_parent:
+        assert r.arm == "3to1-shared" and not r.split and r.parent_ready()
+        assert all(layer in c.model.block_overrides for layer in (3, 7, 11, 15))
     assert c.data_loader.global_batch_size == 8388608
     assert c.train_module.rank_microbatch_size == 65536
     assert c.train_module.ep_config is None and c.train_module.pp_config is None
@@ -63,6 +67,8 @@ def validate(r):
         assert router is None or router.emo is None
         mixer = block.sequence_mixer
         assert not getattr(mixer, "use_cute_kernel", False)
+        if hasattr(mixer, "qk_norm_per_head_gains"):
+            assert mixer.qk_norm_per_head_gains == r.split
     tok = tokenizer_check(r.data / "train/tokenizer")
     from olmoe3_hero_sft_metadata import inference_template
 

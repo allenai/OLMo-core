@@ -8,7 +8,7 @@ import olmoe3_qkgain_plan as base
 from olmoe3_dolci_hero_plan import PARENTS
 
 CAMPAIGN = "olmo35-fixedtok-sft-20260921"
-BRANCH = "codex/corrected-sft-20260921"
+BRANCH = "codex/hero2t-corrected-sft-20260922"
 SCRIPT = "src/examples/olmo_ddp/olmoe3_corrected_sft.py"
 AUTO = base.MOUNT / "uploader/automation" / CAMPAIGN
 ROOT = base.MOUNT / "production-corrected-sft" / CAMPAIGN
@@ -59,8 +59,30 @@ class Run(base.Run):
 
     @property
     def source(self):
+        if self.milestone == "2t3to1":
+            return (
+                base.MOUNT
+                / "production-dolci-hero/olmo35-dolci-hero-20260920"
+                / "olmo35-dolci-hero-20260920-hero2t-lc/step5961"
+            )
         kind = "dolci" if self.milestone == "4t" else "dolci2t"
         return PARENTS[f"{kind}-{self.lineage}"]
+
+    @property
+    def future_parent(self):
+        return self.milestone == "2t3to1"
+
+    def parent_ready(self):
+        """Release future SFT only after the canonical full-LC success receipt exists."""
+        if not self.future_parent:
+            return True
+        proof = self.source.parent / "audit/success.json"
+        if not proof.exists() or not (self.source / ".metadata.json").exists():
+            return False
+        saved = json.loads(proof.read_text())
+        assert saved["passed"] and not saved["smoke"]
+        assert saved["step"] == 5961 and saved["gpus"] == 64
+        return True
 
     @property
     def batch(self):
@@ -116,11 +138,18 @@ class Run(base.Run):
 def runs(smoke=False):
     """Ordered EMO/non-EMO pairs; each starts from LC, never another SFT run."""
     assert not smoke
-    return [
+    original = [
         Run("7to1-split", "sft", False, milestone, dataset, lineage)
         for milestone, dataset in WAVES
         for lineage in ("emo", "non-emo")
     ]
+    future = [
+        Run("3to1-shared", "sft", False, "2t3to1", dataset, "non-emo")
+        for dataset in ("gptoss-medium", "gptoss-high", "dolci-think")
+    ]
+    # Unready future parents do not block the original queue. GPT-OSS remains ahead
+    # of the long Dolci jobs once the new LC source becomes available.
+    return original[:8] + future[:2] + original[8:] + future[2:]
 
 
 def find_run(name):

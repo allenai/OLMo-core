@@ -112,7 +112,7 @@ def main():
         kind = sys.argv[2]
         prepare(kind)
         for r in p.runs():
-            if r.dataset == kind:
+            if r.dataset == kind and not r.future_parent:
                 subprocess.run([sys.executable, p.SCRIPT, "validate", r.run_id], check=True)
         return
     r = p.find_run(sys.argv[2])

@@ -53,6 +53,14 @@ def train_spec(template, r, commit, hosts):
     return s
 
 
+def validation_spec(template, r, commit):
+    """Check the actual future LC checkpoint/config before allocating training GPUs."""
+    s = service_spec(template, commit, "prepare", r.dataset)
+    s["tasks"][0]["arguments"] = ["python", p.SCRIPT, "validate", r.run_id]
+    s["description"] = f"{r.run_id}: native-parent/config/tokenizer gate; no training"
+    return s
+
+
 def export_spec(b, r, commit, bundle=None, temperature=None):
     """Frozen inference packages and scoring, with explicit corrected-tokenizer checks."""
     import olmoe3_hero_decay_eval as d
@@ -233,15 +241,32 @@ def watch():
                 try:
                     w = live.get(r.run_id)
                     if w is None:
+                        if not r.parent_ready():
+                            rows[r.run_id] = dict(
+                                waiting="canonical 2T 3:1 LC checkpoint", source=str(r.source)
+                            )
+                            continue
                         if admission_blocked or not ready[r.dataset] or active >= 2 or not admit:
                             rows[r.run_id] = dict(
                                 waiting="earlier wave/data gate/two-slot capacity/storage"
                             )
                             admission_blocked = True
                             continue
-                        proof = json.loads(
-                            (p.AUTO / "config-proofs" / f"{r.run_id}.json").read_text()
-                        )
+                        proof_path = p.AUTO / "config-proofs" / f"{r.run_id}.json"
+                        if r.future_parent:
+                            vw, vs = ensure_saved(
+                                c,
+                                r.run_id + "-validate",
+                                lambda r=r: validation_spec(template, r, commit),
+                            )
+                            if vs != "STATUS_SUCCEEDED":
+                                rows[r.run_id] = dict(
+                                    waiting="native-parent/config/tokenizer validation",
+                                    validation_status=vs,
+                                    validation_id=vw.experiment.id if vw else None,
+                                )
+                                continue
+                        proof = json.loads(proof_path.read_text())
                         assert proof["passed"] and proof["run"] == json.loads(
                             json.dumps(r.as_dict())
                         )
