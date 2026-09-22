@@ -76,6 +76,9 @@ _TEXTGROUPS_SHORTCUT = (
     "instead of the task"
 )
 
+#: ``absence`` was dropped (prasann, 2026-09-22): its examples are one contiguous sentence run from
+#: a single Gutenberg book, so 128k needs 1,736 sentences where the longest prose run supplies
+#: 1,367. Reaching it means exporting a larger pool, which was judged not worth it.
 SET_A: List[Task] = [
     Task("nq", "retrieval"),
     Task("hotpotqa", "cot_retrieval"),
@@ -84,9 +87,13 @@ SET_A: List[Task] = [
     Task("oolong", "oolong", chunk_by="line"),
     Task("contradiction", "contradiction"),
     Task("xabsence", "xabsence"),
-    Task("absence", "absence"),
     Task("reorder", "reorder"),
-    Task("rerank", "rerank"),
+    # Bounded at 32k by the SEED POOL, not by MS MARCO: `msmarco.load_pool` defaults
+    # `max_docs=250`, which is exactly the 32k rung, and the per-query fill is drawn and CE-scored
+    # at export time. 64k asks for 501 and the draw rejects 50 times running, which reads as "the
+    # corpus is too small" for an 8.8M-passage index. Lifting it needs the foreign-fill change
+    # (borrow unscored passages from other queries' pools), not a bigger corpus.
+    Task("rerank", "rerank", max_rung="32k"),
     # Synthetic: no corpus, so --pool is rejected outright. Ceiling is the frozen 20,045-word
     # vocabulary -- every non-planted word is unique WITHIN an example, which is what makes the
     # planted pairs the only ones meeting the criterion by construction rather than by a check.
