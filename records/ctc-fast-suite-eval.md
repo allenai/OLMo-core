@@ -170,6 +170,45 @@ that extrapolation is not yet measured, and it is ~80% of the bill.**
 the xlong rungs. That works because at a uniform 100/rung the >=64k rungs are 80% of the cost, so
 the cheap rungs are nearly free and the expensive ones are where subsetting buys anything.
 
+## Found on the way: the shipped contradiction xlong rungs are unscoreable
+
+The benchmark died on `contradiction_iid:r64k` with the vendored spec's own gold guard:
+
+    ValueError: gold pair [1359, 251] is not sorted low-high. Predicted pairs are sorted, and
+    scoring is a set intersection, so this pair could never be matched and would silently cost
+    recall on every example that contains it.
+
+It is not one bad row. Every rung **above 32k** carries it, and the figure ladder carries none:
+
+| rung | rows affected | unsorted pairs |
+|---|---|---|
+| 2k–32k | 0 | **0 / 1500** |
+| 64k | 435 / 500 | 744 / 1500 |
+| 128k | 442 / 500 | 764 / 1500 |
+| 256k | 114 / 125 | 192 / 375 |
+| 512k | 109 / 125 | 186 / 375 |
+| 1M | 114 / 125 | 185 / 375 |
+
+`expand_ctc_rung.py` shuffles documents and remaps every index, but never re-sorted the pair — so a
+source pair (low, high) comes out in whatever order the shuffle left it. Roughly **half the gold is
+unmatchable**, and the recall it costs lands *exactly* on the rungs where "contradiction collapses
+at long context" is the expected, publishable-looking result. A mechanical defect wearing the shape
+of the headline finding.
+
+How it surfaces depends on the evaluator, which is the part worth internalising: the grader-fixes
+branch **refuses** the file outright (that guard is why this was caught at all), while any older
+evaluator scores it silently at half recall.
+
+Fixed at source — sort after remap — and `debug/ctc_fast_suite/sort_gold_pairs.py` repairs files
+already built. Sorting is meaning-preserving: a contradiction pair is unordered. **`qdmatch` is
+deliberately not touched** — its `gold_pairs` are (query, doc), ordered by construction, and sorting
+them would corrupt them; it is named explicitly rather than inferred for that reason.
+
+⚠ The **contra_fever ladder built above inherited this** (same tool) and has been repaired: all 8
+rungs now pass the spec's gold guard. **The shipped rungs on the HF dataset have NOT been repaired**
+— that needs the fix re-run and a re-upload. Until then, treat every contradiction number at 64k and
+above as void.
+
 ## Still open
 
 1. The vLLM cost model at 2k–32k, then 64k–256k — the measurement this file exists to record.
