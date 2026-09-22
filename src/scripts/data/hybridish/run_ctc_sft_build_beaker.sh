@@ -12,10 +12,15 @@ echo "=== HOST=$(hostname) CPUS=$(nproc) START=$(date -u '+%F %T')Z ==="
 REPO=$(find / -maxdepth 3 -iname pyproject.toml 2>/dev/null | grep -v /opt/conda | grep -v /root/.cache | head -1 | xargs -r dirname)
 [ -n "$REPO" ] || { echo "FATAL: no cloned repo"; exit 1; }
 
-pip install --quiet "huggingface_hub" \
-  "git+https://github.com/PrasannS/corpustaskcomplexity.git#subdirectory=ctc" 2>&1 | tail -3
+# `python -m pip`, not bare `pip`: gantry runs a uv venv, and a bare `pip` can resolve to a
+# different interpreter than `python` -- the install then "succeeds" into an environment the job
+# never imports from. Errors are NOT suppressed here; the first attempt hid its own cause behind
+# `--quiet | tail -3` and reported only "did not install".
+echo "--- python: $(command -v python) | pip module: $(python -m pip --version) ---"
+python -m pip install "huggingface_hub" \
+  "git+https://github.com/PrasannS/corpustaskcomplexity.git#subdirectory=ctc" 2>&1 | tail -25
 python -c "import ctc.data.cli, huggingface_hub; print('ctc + hub OK')" \
-  || { echo "FATAL: ctc package did not install"; exit 1; }
+  || { echo "FATAL: ctc package did not install (see the pip output above)"; exit 1; }
 
 OUT="${OUT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_sft_sets}"
 mkdir -p "$OUT"
