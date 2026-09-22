@@ -60,12 +60,27 @@ SPEC_SOURCE = {
 
 #: Ladder -> grading spec, for the SPEC_SOURCE check.
 TASK_SPEC = {
+    # retrieval: SEVEN ladders share this spec. Listing only four made the collision check porous --
+    # DEFAULT_ROSTER below ships msmarco AND hotpotqa, which it could not see.
     "nq": "retrieval",
     "msmarco": "retrieval",
     "fiqa": "retrieval",
     "scifact": "retrieval",
+    "hotpotqa": "retrieval",
+    "niah": "retrieval",
+    "obliq_twitter": "retrieval",
     "qdmatch_nq": "qdmatch",
     "qdmatch_hpqa": "qdmatch",
+    "qdmatch_fiqa": "qdmatch",
+    # outlier: outlier_amzn is HALF category-axis Amazon reviews and outlier_review IS category-axis
+    # Amazon reviews, so training the former makes the latter's OOD column near-meaningless. That is
+    # a source collision in every sense that matters, even though only one of them is held out.
+    "outlier": "outlier",
+    "outlier_amzn": "outlier",
+    "outlier_fixedM": "outlier",
+    "outlier_review": "outlier",
+    "contradiction": "contradiction",
+    "contra_fever": "contradiction",
 }
 
 #: The full in-train roster, when ``--tasks`` is not given.
