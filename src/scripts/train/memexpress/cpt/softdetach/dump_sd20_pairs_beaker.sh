@@ -17,3 +17,7 @@ for a in names:
         if a < b and len(D[a]["per_row"]["full_ce"]) == len(D[b]["per_row"]["full_ce"]):
             m, se = paired(D[a], D[b]); print(f"PAIR {a} - {b} = {m:+.4f} (se {se:.4f}, {m/se if se else 0:+.1f} sigma)")
 PY
+EOF
+gantry run --name "sdcpt-pairs-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other --cluster 'ai2/jupiter*' --cluster 'ai2/neptune*' --cluster 'ai2/ceres*' --cluster 'ai2/saturn*' --gpus 0 --cpus 2 --memory 8GiB --priority urgent \
+  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false --branch prasann/landmark --allow-dirty \
+  --weka oe-training-default:/weka/oe-training-default --timeout 0 --yes -- bash -c "$WORK"

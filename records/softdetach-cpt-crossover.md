@@ -97,7 +97,7 @@ deficit vs dense grows with target position (long-range), not uniformly.
 |---|---|---|
 | (1) sd20-128M trained on the **1B shard** (`--shard 1B`, run `sdcpt-q35-4b-sd20-u128M-s1B`) | `01M35J4SKD0X5Z3ADWD711B4TV` | a true prefix of the 256M run; if it lands near 1.272 the two segments join and the 256M point is the odd one out; if it lands well above, the 1B shard's row order is harder early and every ≥256M point carries that offset |
 | (2) sd20-256M, seed 1 (`--seed 1`, run `sdcpt-q35-4b-sd20-u256M-seed1`) | `01M35J1RBX4KQWXCBD99QC7D30`, eval `01M35J3QVGDSSXMCQA0CRF4NE7` | run-to-run seed variance at the crossover budget |
-| (3) paired per-row Δ between sd20-128M/256M/512M/1B (+dense) on the shared 32 dev rows, with SE | `dump_sd20_pairs_beaker.sh` → job `01M35J1JYARW6KK7TTD36Y75HR` | whether the flat step is inside ~2σ of paired noise |
+| (3) paired per-row Δ between sd20-128M/256M/512M/1B (+dense) on the shared 32 dev rows, with SE | `dump_sd20_pairs_beaker.sh` → job `01M35NSJRYB348Y92QBQSHGMK9` (first attempt `01M35J1JYARW6KK7TTD36Y75HR` ran with `--no-logs`, output lost) | whether the flat step is inside ~2σ of paired noise |
 
 _(results pending)_
 
