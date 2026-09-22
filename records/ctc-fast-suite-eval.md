@@ -119,6 +119,57 @@ category"), so injected fillers satisfy the gold condition without being labelle
 n per rung mirrors outlier_amzn's grid (20/40/80/160/320/596/1207/2429) so the two Amazon rows share
 an x-axis; 500 examples per rung to 128k and 125 at 256k, per the suite's eval_size policy.
 
+## Measured: what a cell actually costs
+
+Qwen3.5-4B (stock) through vLLM 0.25.1, one H100 on jupiter, 100 examples/cell, 33 cells over 7
+tasks x 2k-32k. `debug/ctc_fast_suite/results/bench_2k32k.json`; the runner is
+`run_bench_beaker.sh`, the fit and shard packing are `size_the_suite.py`.
+
+**Prefill throughput is FLAT in context length** -- the result the whole budget turns on:
+
+| rung | prefill tok/s (aggregate, excl. grouping) |
+|---|---|
+| 2k | 30,972 |
+| 4k | 40,086 |
+| 8k | 45,802 |
+| 16k | 46,983 |
+| 32k | 46,459 |
+
+There is no quadratic term, which is what a GDN hybrid should do -- only the full-attention layers
+pay for length, and they are a minority of the stack. The climb from 2k to 8k is batch efficiency,
+not attention. Fitting `t = P/R_prefill + G/R_decode` over all 33 cells (two global parameters,
+justified by that flatness) gives **prefill 51,067 tok/s, decode 5,352 tok/s**, rms residual 10.8 s.
+
+For scale: the HF provider measured ~7.8k tok/s on a **0.23B** model. vLLM is ~6.5x faster in
+absolute terms on a model **17x larger**.
+
+⚠ **Decode, not prefill, is what varies between tasks.** The stock base model never emits EOS, so
+every cell ran to its full `max_new_tokens`, and olmo-eval passes no decode-time stop strings by
+design. `grouping` (budget 4096) costs 157 s per 100 examples at 16k against `fiqa`'s 26 s -- 6x,
+at identical prompt length. An SFT checkpoint will stop earlier, so these are upper bounds, but
+`grouping` and `reorder` (2048) are the cells that decide a shard's wall-clock.
+
+The fit's worst residual is `grouping:r16k`, 49 s under-predicted: one global decode rate cannot
+capture how concurrency falls when 100 sequences each generate 4k tokens. Treat decode-heavy cells
+as optimistic in the table below.
+
+### The budget
+
+24 rows (the 22-row suite + the two OOD rows), every rung <=256k, LPT-packed into 8 single-GPU
+jobs, 300 s per job for model load and GDN JIT. **Rungs above 32k are priced at the 32k rate --
+that extrapolation is not yet measured, and it is ~80% of the bill.**
+
+| policy | GPU-h | slowest shard |
+|---|---|---|
+| **A** 100/rung throughout | 5.4 | **46 min** |
+| **B** A, assuming an SFT checkpoint stops at ~40% of budget | 5.2 | 44 min |
+| **C** 500/rung to 32k, 100 at 64k/128k, 50 at 256k | 7.4 | **61 min** |
+| **D** 500 to 32k + 125 at xlong (the roster's own sizes) | 10.7 | 85 min |
+
+**C is the interesting one**: the full 500-example figure ladder survives, paid for entirely out of
+the xlong rungs. That works because at a uniform 100/rung the >=64k rungs are 80% of the cost, so
+the cheap rungs are nearly free and the expensive ones are where subsetting buys anything.
+
 ## Still open
 
 1. The vLLM cost model at 2k–32k, then 64k–256k — the measurement this file exists to record.
