@@ -101,14 +101,27 @@ def main():
     cfg = TransformerConfig.qwen3_5_4B(vocab_size=VOCAB, attn_backend=AttentionBackendName(a.attn_backend))
     cfg.lm_head.loss_implementation = LMLossImplementation.fused_linear
     model = cfg.build(init_device="cpu")
-    t0 = time.time()
-    load_model_and_optim_state(a.ckpt, model)
-    log(f"loaded {a.ckpt} in {time.time() - t0:.0f}s")
     stop = stop_ids_from_rows(rows, ids)
     arm = ARMS[a.arm]
-    model.enable_pooled_soft_tokens(ids.doc_start, ids.doc_end, ids.eos, placeholder_id=ids.landmark,
-                                    keep_prob=(arm or {}).get("keep_prob", 0.0), keep_seed=a.seed, detach_soft_kv=True,
-                                    keep_token_rule=(arm or {}).get("rule", "none"), keep_token_k=(arm or {}).get("k", 0.0))
+
+    def _enable():
+        model.enable_pooled_soft_tokens(ids.doc_start, ids.doc_end, ids.eos, placeholder_id=ids.landmark,
+                                        keep_prob=(arm or {}).get("keep_prob", 0.0), keep_seed=a.seed, detach_soft_kv=True,
+                                        keep_token_rule=(arm or {}).get("rule", "none"), keep_token_k=(arm or {}).get("k", 0.0))
+
+    # A softtoken checkpoint carries pooled_projector.* (trained for lslot20, identity for the
+    # detached arms): create the projector BEFORE loading so those keys land in it. A dense
+    # checkpoint has no such keys (DCP would reject the request), so there the projector is created
+    # after the load and stays identity -- which is exactly what a dense model + slot means.
+    t0 = time.time()
+    if arm is not None:
+        _enable()
+        load_model_and_optim_state(a.ckpt, model)
+    else:
+        load_model_and_optim_state(a.ckpt, model)
+        _enable()
+    wout = float(model.pooled_projector.w_out.weight.abs().max())
+    log(f"loaded {a.ckpt} in {time.time() - t0:.0f}s; pooled_projector max|w_out|={wout:.3e} (0 => identity slot)")
     pst = model._pooled_soft_tokens  # slot construction is driven by these keys (as the trainer does)
     pst.update({"slot_mode": "cent_cmean", "slot_stop_ids": stop, "slot_stop_mask": None,
                 "header_stop_id": None, "header_stop_count": 1, "header_cap": 32, "header_extra_tokens": 0,
