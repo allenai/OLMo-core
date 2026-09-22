@@ -62,6 +62,21 @@ bucket_tokens() {
                *) echo 0;; esac
 }
 
+# ⚠ `--pool auto` is REJECTED by `ctc-data build` for a SYNTHETIC task ("<task> is synthetic: it
+# has no corpus, so --pool does not apply"), which kills all 5 of its buckets. In set-a that is
+# `strmatch` and `textgroups` -- 10 of 65 builds, and the merge/mix steps then quietly carry on with
+# 11 tasks. Ask ctc which generators have a corpus rather than hardcoding the pair, so a roster that
+# grows a synthetic task does not reintroduce this.
+SYNTHETIC=$($PY - "$TASKS" <<'PYEOF'
+import sys
+from ctc.tasks import load_all; load_all()
+from ctc.data.generators import base as gens
+print(" ".join(t for t in sys.argv[1].split() if gens.get(t).corpus is None))
+PYEOF
+)
+echo "=== synthetic (built without --pool): ${SYNTHETIC:-none} ==="
+export SYNTHETIC
+
 JOBS="$ROOT/$TAG/.jobs"
 : > "$JOBS"
 for task in $TASKS; do
@@ -77,8 +92,10 @@ run_one() {
   task="$1"; b="$2"; n="$3"
   log="$BUILD/_logs/${task}_${b}.log"; mkdir -p "$BUILD/_logs"
   if [ -s "$BUILD/_b$b/$task/train.jsonl" ]; then echo "  [skip] $task@$b already built"; return 0; fi
+  POOL=(--pool auto)
+  case " $SYNTHETIC " in *" $task "*) POOL=() ;; esac
   $PY -m ctc.data.cli build --task "$task" --split train --rungs "$b" --train "$n" \
-     --pool auto --out "$BUILD/_b$b" > "$log" 2>&1 \
+     "${POOL[@]}" --out "$BUILD/_b$b" > "$log" 2>&1 \
     && echo "  [ok]   $task@$b  n=$n" \
     || echo "  [FAIL] $task@$b  n=$n  -> $log"
 }
@@ -112,6 +129,7 @@ $PY "$REPO/src/scripts/data/hybridish/build_ctc_sft_mix.py" \
   --band "$(echo $BUCKETS | tr ' ' '-')" --out "$ROOT/$TAG/mix.jsonl"
 
 echo "=== next: tokenise (query_position=both applies HERE) ==="
-echo "  $PY $REPO/src/scripts/data/hybridish/convert_ctc_to_sft_completion.py \\"
-echo "      --mix $ROOT/$TAG/mix.jsonl --query-position both --verify --out $ROOT/$TAG/shards"
+echo "  PYTHONPATH=$REPO/src:\$CTC_SRC $PY $REPO/src/scripts/data/hybridish/convert_ctc_to_sft_completion.py \\"
+echo "      --input-jsonl $ROOT/$TAG/mix.jsonl --out-dir $ROOT/$TAG/shards \\"
+echo "      --tokenizer <hf-tokenizer> --max-seq-len 40960 --query-position both --verify"
 echo "=== DONE $TAG -> $ROOT/$TAG/mix.jsonl $(date -u '+%F %T')Z ==="
