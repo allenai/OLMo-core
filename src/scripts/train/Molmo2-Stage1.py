@@ -302,10 +302,10 @@ OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
 # The OCR user turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
 # `ocr_caption_{high,mid,low}_level:`),
-# mm_olmo's molmo3 stage-1 `style_and_length_v3` family (v3 reserves the length bucket for
-# captions / transcripts). This deliberately differs from the `style_and_length_v2` family the
-# caption and pointing sources use: mm_olmo never trains olmOCR-mix under v2, so v3 is the form
-# with a reference run behind it.
+# mm_olmo's molmo3 stage-1 `style_and_length_v3` family, the one mm_olmo trains olmOCR-mix
+# under. In this repo every `style_and_length` family renders the same bare tag, since no tag
+# carries a length number (captions dropped theirs too), so the family choice only records
+# which mm_olmo run the form is taken from.
 OCR_SYSTEM_PROMPT = "style_and_length_v3"
 
 # Which sources `POINTING_RATE` buys.

@@ -256,21 +256,14 @@ def test_dataset_text_and_prompt(tmp_path):
         ds.text({"caption": "<text></text>"})
     with pytest.raises(ValueError):
         ds.text({"dense_caption": "x"})
-    # style_and_length_v3 default -> bare tag; v2 -> length bucket; none -> nothing.
+    # Every style_and_length family -> the bare tag, with no length number; none -> nothing.
     from olmo_core.data.multimodal.pixmo_cap import style_tag_prompt
 
-    rng = np.random.RandomState(0)
-    assert style_tag_prompt("scene_text", "abc", rng, "style_and_length_v3") == "scene_text:"
-    assert style_tag_prompt("scene_text", "abc", rng, "none") == ""
-    v2 = {
-        style_tag_prompt("ocr_caption", "x" * 300, np.random.RandomState(s), "style_and_length_v2")
-        for s in range(20)
-    }
-    assert all(p.startswith("ocr_caption") and p.endswith(":") for p in v2) and any(
-        " " in p for p in v2
-    )
+    for family in ("style_and_length", "style_and_length_v2", "style_and_length_v3"):
+        assert style_tag_prompt("scene_text", family) == "scene_text:", family
+    assert style_tag_prompt("scene_text", "none") == ""
     with pytest.raises(ValueError):
-        style_tag_prompt("scene_text", "abc", rng, "bogus")
+        style_tag_prompt("scene_text", "bogus")
 
 
 # ---------------------------------------------------------------------------

@@ -10,9 +10,7 @@ at :data:`~olmo_core.data.multimodal.paths.OLMOCR_MIX` -- and does not download.
 
 Each example is one rendered page and its ``natural_text`` transcription. There is no question:
 mm_olmo's formatter has no template for the ``olmocr`` style, so the user turn is just the style
-tag -- the bare ``"olmocr:"`` under molmo3 stage 1's ``style_and_length_v3`` family (the default
-here), or the length-conditioned ``"olmocr <bucket>:"`` under the released Molmo2 pretrain's
-``style_and_length_v2`` -- and the assistant turn is the transcription (``"No text found"`` for
+tag, the bare ``"olmocr:"``, and the assistant turn is the transcription (``"No text found"`` for
 blank pages). Pages are rasterised on the fly with
 ``pypdfium2`` at a longest side sampled from ``target_longest_image_dim_range`` for training
 (mm_olmo: 1024-2048) and fixed (1536) otherwise, following olmOCR's own per-page DPI rule.
@@ -200,10 +198,9 @@ class OlmOcrMixDatasetConfig(Config):
     seed: int = 0
 
     system_prompt: str = "style_and_length_v3"
-    """How the ``olmocr`` style is shown in the user turn. ``style_and_length_v3`` -- mm_olmo's
-    molmo3 stage-1 family, the only one mm_olmo trains this source under -- gives the bare
-    ``"olmocr:"``; ``style_and_length[_v2]`` (the released Molmo2 pretrain family) gives the
-    length-conditioned ``"olmocr <bucket>:"``; ``none`` gives no prefix."""
+    """How the ``olmocr`` style is shown in the user turn: the bare ``"olmocr:"`` under every
+    ``style_and_length`` family (mm_olmo's molmo3 stage 1 trains this source under ``_v3``),
+    or no prefix under ``none``."""
 
     def validate(self):
         canonical_subset(self.subset)
@@ -296,10 +293,10 @@ class OlmOcrMixDataset(EpochSeededExamples):
         """The target text; blank pages are transcribed as ``"No text found"`` (mm_olmo)."""
         return row["natural_text"] or "No text found"
 
-    def user_prompt(self, text: str, rng: np.random.RandomState) -> str:
+    def user_prompt(self) -> str:
         """The user turn: only the style tag, since the ``olmocr`` style has no question
         (:func:`~.pixmo_cap.style_tag_prompt`)."""
-        return style_tag_prompt(OLMOCR_STYLE, text, rng, self.config.system_prompt)
+        return style_tag_prompt(OLMOCR_STYLE, self.config.system_prompt)
 
     # -- example ---------------------------------------------------------------------------
 
@@ -322,7 +319,7 @@ class OlmOcrMixDataset(EpochSeededExamples):
         target_dim = self.target_dim_for(rng)
         text = self.transcription(row)
         image = render_pdf_page(self.pdf_path(row), target_dim)
-        prompt = self.user_prompt(text, rng)
+        prompt = self.user_prompt()
         # One image, one (tag, transcription) turn: the shared message encoder builds exactly the
         # stage-1 single-branch layout (user header + image block + tag, then the response).
         seq = encode_sft_example(

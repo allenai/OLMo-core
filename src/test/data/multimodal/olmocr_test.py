@@ -7,7 +7,6 @@ exercises the real renderer when it is installed."""
 
 import importlib.util
 import os
-import re
 import sys
 
 import numpy as np
@@ -206,7 +205,7 @@ def test_default_prompt_family_is_the_bare_molmo3_tag(tmp_path, stub_renderer):
     root = _write_root(tmp_path)
     ds = _cfg(root).build(_FakeTok())
     assert ds.config.system_prompt == "style_and_length_v3"
-    assert {ds.user_prompt("x" * 300, np.random.RandomState(s)) for s in range(10)} == {"olmocr:"}
+    assert ds.user_prompt() == "olmocr:"
 
 
 def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):
@@ -226,20 +225,13 @@ def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):
 
 
 def test_user_prompt_per_prompt_family(tmp_path, stub_renderer):
+    """No family puts a length number in the tag: v2 and v3 both give the bare tag."""
     root = _write_root(tmp_path)
-    text = "x" * 300
-    v2 = _cfg(root, system_prompt="style_and_length_v2").build(_FakeTok())
-    prompts = {v2.user_prompt(text, np.random.RandomState(s)) for s in range(30)}
-    assert all(re.fullmatch(r"olmocr( -?\d+)?:", p) for p in prompts), prompts
-    assert any(" " in p for p in prompts)  # the length bucket shows up
-    # bucket = (300 chars + N(0, 25)) // 15: centred on 20, noise of a few buckets.
-    buckets = sorted(int(p.split()[1][:-1]) for p in prompts if " " in p)
-    assert all(0 <= b <= 40 for b in buckets), buckets
-    assert abs(buckets[len(buckets) // 2] - 20) <= 3, buckets
-    v3 = _cfg(root, system_prompt="style_and_length_v3").build(_FakeTok())
-    assert v3.user_prompt(text, np.random.RandomState(0)) == f"{OLMOCR_STYLE}:"
+    for family in ("style_and_length", "style_and_length_v2", "style_and_length_v3"):
+        ds = _cfg(root, system_prompt=family).build(_FakeTok())
+        assert ds.user_prompt() == f"{OLMOCR_STYLE}:", family
     none = _cfg(root, system_prompt="none").build(_FakeTok())
-    assert none.user_prompt(text, np.random.RandomState(0)) == ""
+    assert none.user_prompt() == ""
 
 
 def test_blank_page_transcribes_as_no_text_found(tmp_path, stub_renderer):

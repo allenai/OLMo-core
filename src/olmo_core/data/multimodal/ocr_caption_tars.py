@@ -358,7 +358,7 @@ class OcrCaptionTarsDataset(EpochSeededExamples):
         text = self.text(json.loads(json_bytes))
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         rng = self.epoch_rng(i)
-        prompt = style_tag_prompt(cfg.style, text, rng, cfg.system_prompt)
+        prompt = style_tag_prompt(cfg.style, cfg.system_prompt)
         seq = encode_sft_example(
             self.tokenizer,
             image,

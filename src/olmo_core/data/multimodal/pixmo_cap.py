@@ -5,12 +5,13 @@ turns PixMoCap image-caption examples into packed Molmo2 training sequences. Eac
 example produces a shared prefix (qwen3 user header + image block) that branches into
 one or more ``(user turn, assistant response)`` annotations (a long caption and/or a
 spoken transcript), assembled by
-:func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Following
-mm_olmo's ``style_and_length_v2`` system prompt, each branch's user turn **is** a
-``"<style>[ <length-bucket>]:"`` tag derived from that branch's response length, so the
-model learns to condition output length on the prompt (see :data:`CAPTION_STYLE`). The tag is
-the whole user turn, with no instruction after it: that is what mm_olmo's stage 1 trains on and
-what the stage-1 caption eval sends (``long_caption 65:``), so train and test share one form.
+:func:`~olmo_core.data.multimodal.sequence_builder.build_branched_sequence`. Each branch's user
+turn is a bare style tag, ``long_caption:`` or ``transcript:`` (see :data:`CAPTION_STYLE`), with
+nothing before or after it: no instruction, and no length number. That is what the stage-1
+caption eval sends, so train and test share one form. mm_olmo's ``style_and_length`` families
+put the response's length in the tag (``long_caption 63:``, the character count // 15 with
+noise, at inference a fixed 65) so length could be requested at test time; that number was
+dropped here on purpose, so the prompt has no value that differs between training and test.
 
 Three data sources are supported via ``dataset_path``:
 
@@ -38,17 +39,15 @@ __all__ = [
     "PixMoCapDatasetConfig",
     "CAPTION_PROMPTS",
     "TRANSCRIPT_PROMPTS",
-    "style_length_prefix",
     "style_tag_prompt",
     "STYLE_TAG_FAMILIES",
 ]
 
 # Natural-language prompt pools mirroring mm_olmo's ``GENERAL_PROMPTS_V1`` (data_formatter.py).
-# Only the un-conditioned form (``style_length_conditioning=False``) samples from them. The
-# conditioned form that stage 1 trains on does NOT: mm_olmo's stage-1 formatter runs with
-# ``prompt_templates="none"``, under which a caption's question is the empty string
-# (data_formatter.py, the ``"none"`` branch of ``get_user_prompt``), so its user turn is the
-# style tag alone.
+# Only the un-tagged form (``style_tag=False``) samples from them. The tagged form that stage 1
+# trains on does NOT: mm_olmo's stage-1 formatter runs with ``prompt_templates="none"``, under
+# which a caption's question is the empty string (data_formatter.py, the ``"none"`` branch of
+# ``get_user_prompt``), so its user turn is the style tag alone.
 CAPTION_PROMPTS = (
     "Describe this image.",
     "Describe this image",
@@ -68,37 +67,17 @@ TRANSCRIPT_PROMPTS = (
 
 _MODES = ("caption", "transcript", "transcript_and_caption", "sft_demo")
 
-# mm_olmo's ``system_prompt='style_and_length_v2'`` (data_formatter.py): every response
-# branch is preceded, in its user turn, by a ``"<style>[ <bucket>]:"`` length-conditioning
-# prefix so the model learns to control output length from the prompt. ``<style>`` names
-# match mm_olmo (the caption branch is ``long_caption``, the spoken-transcript branch is
-# ``transcript``); the bucket is the response's character length // 15 plus N(0, 25) noise,
-# included 90% of the time (10% of the time only the bare ``"<style>:"`` is shown).
+# Style names match mm_olmo: the caption branch is ``long_caption``, the spoken-transcript branch
+# is ``transcript``. The user turn is ``"<style>:"`` and nothing else.
 CAPTION_STYLE = "long_caption"
 TRANSCRIPT_STYLE = "transcript"
-_LENGTH_BUCKET = 15
-_LENGTH_NOISE_STD = 25.0
-_LENGTH_KEEP_PROB = 0.90
 
 
-def style_length_prefix(style: str, text: str, rng: np.random.RandomState) -> str:
-    """mm_olmo ``style_and_length_v2`` prefix: ``"<style> <bucket>:"`` (90%) or ``"<style>:"``
-    (10%), where ``bucket = (len(text) + N(0, 25)) // 15`` (data_formatter.py:1736-1749).
-
-    Shared by every stage-1 source whose response is free text (captions, transcripts, OCR
-    pages): the tag lets the model condition its output length on the prompt.
-    """
-    if rng.rand() < _LENGTH_KEEP_PROB:
-        n = len(text) + int(rng.normal(scale=_LENGTH_NOISE_STD))
-        n = n // _LENGTH_BUCKET
-        return f"{style} {n}:"
-    return f"{style}:"
-
-
-#: mm_olmo ``system_prompt`` families understood by :func:`style_tag_prompt`
+#: mm_olmo ``system_prompt`` families accepted by :func:`style_tag_prompt`
 #: (``DataFormatter.get_system_prompt``, data_formatter.py:1690-1756). Pretraining families only:
 #: the sources that use this are stage-1 sources, so the SFT-stage ``demo_or_style`` families
-#: are not accepted.
+#: are not accepted. The three ``style_and_length`` families render identically here, because
+#: this repo puts no length number in any tag; ``none`` renders no tag.
 STYLE_TAG_FAMILIES = frozenset(
     {
         "style_and_length",
@@ -109,20 +88,15 @@ STYLE_TAG_FAMILIES = frozenset(
 )
 
 
-def style_tag_prompt(style: str, text: str, rng: np.random.RandomState, system_prompt: str) -> str:
-    """The user turn of a free-text response source that has no question of its own (olmOCR-mix
-    and the caption tars): just the style tag, rendered per mm_olmo's ``system_prompt`` family.
-
-    ``style_and_length[_v2]`` gives the length-conditioned ``"<style> <bucket>:"``;
-    ``style_and_length_v3`` (which reserves the bucket for captions / transcripts) gives the bare
-    ``"<style>:"``; ``none`` gives no prefix at all.
+def style_tag_prompt(style: str, system_prompt: str) -> str:
+    """The user turn of a free-text response source that has no question of its own (the OCR
+    sources): the bare ``"<style>:"`` tag, or nothing under the ``none`` family. No family puts
+    a length number in the tag in this repo (see the module docstring).
     """
     if system_prompt not in STYLE_TAG_FAMILIES:
         raise ValueError(
             f"system_prompt={system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
         )
-    if system_prompt in ("style_and_length", "style_and_length_v2"):
-        return style_length_prefix(style, text, rng)
     if system_prompt == "none":
         return ""
     return f"{style}:"
@@ -151,15 +125,15 @@ class PixMoCapDatasetConfig(Config):
     at 1, which is what the released ``Molmo2-4B-Pretrain`` uses; raising it increases
     captions' share of the ``sum(CE*w)/sum(w)`` objective relative to the other sources."""
     fixed_prompt: Optional[str] = None
-    """If set, always use this user prompt instead of sampling from the pools.
-    Useful for deterministic parity tests. Disables ``style_length_conditioning``."""
+    """If set, always use this user prompt instead of the tag or the pools. Useful for
+    deterministic parity tests. Overrides ``style_tag``."""
 
-    style_length_conditioning: bool = True
-    """Use mm_olmo's ``style_and_length_v2`` ``"<style>[ <bucket>]:"`` tag as each branch's
-    whole user turn, e.g. ``"long_caption 63:"`` (see :data:`CAPTION_STYLE`). This is the
-    stage-1 form, at training and at test time. When False the user turn is instead a
-    natural-language prompt sampled from :data:`CAPTION_PROMPTS` / :data:`TRANSCRIPT_PROMPTS`,
-    with no tag. Ignored when ``fixed_prompt`` is set."""
+    style_tag: bool = True
+    """Use the bare style tag, ``"long_caption:"`` / ``"transcript:"``, as each branch's whole
+    user turn (see :data:`CAPTION_STYLE`). This is the stage-1 form, at training and at test
+    time. When False the user turn is instead a natural-language prompt sampled from
+    :data:`CAPTION_PROMPTS` / :data:`TRANSCRIPT_PROMPTS`, with no tag. Ignored when
+    ``fixed_prompt`` is set."""
 
     seed: int = 0
     synthetic_size: int = 64
@@ -272,10 +246,6 @@ class PixMoCapDataset:
             branches.append((TRANSCRIPT_STYLE, transcripts[rng.randint(len(transcripts))]))
         return branches
 
-    def _style_length_prefix(self, style: str, text: str, rng: np.random.RandomState) -> str:
-        """See :func:`style_length_prefix`."""
-        return style_length_prefix(style, text, rng)
-
     def _sample_prompt(self, style: str, rng: np.random.RandomState) -> str:
         pool = TRANSCRIPT_PROMPTS if style == TRANSCRIPT_STYLE else CAPTION_PROMPTS
         return pool[rng.randint(len(pool))]
@@ -317,11 +287,9 @@ class PixMoCapDataset:
         for style, text in self._select_branches(row, rng):
             if cfg.fixed_prompt is not None:
                 prompt = cfg.fixed_prompt
-            elif cfg.style_length_conditioning:
-                # The tag is the entire user turn. A sampled instruction used to follow it
-                # ("long_caption 63: Describe this image."), a form that neither mm_olmo's
-                # stage 1 trains on nor the stage-1 caption eval sends.
-                prompt = self._style_length_prefix(style, text, rng)
+            elif cfg.style_tag:
+                # The tag is the entire user turn: no instruction after it, no length number.
+                prompt = f"{style}:"
             else:
                 prompt = self._sample_prompt(style, rng)
             response_ids = self.tokenizer.encode(text, add_special_tokens=False)

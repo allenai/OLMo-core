@@ -98,10 +98,6 @@ def _cfg(root, **kw):
     return TextRichCaptionDatasetConfig(dataset_path=root, **kw)
 
 
-def _rng():
-    return np.random.RandomState(0)
-
-
 # ---------------------------------------------------------------------------
 # Three levels, three branches
 # ---------------------------------------------------------------------------
@@ -118,7 +114,7 @@ def test_level_styles_are_mm_olmo_names():
 
 def test_emits_one_branch_per_level_in_order(tmp_path):
     ds = _cfg(_write_corpus(tmp_path)).build(_FakeTok())
-    turns = ds.turns(ds._data[0], _rng())
+    turns = ds.turns(ds._data[0])
     assert [t[1] for t in turns] == [HIGH, MID, LOW]
     assert [t[0] for t in turns] == [
         "ocr_caption_high_level:",
@@ -131,7 +127,7 @@ def test_all_three_captions_are_supervised(tmp_path):
     """The summary and the dense read-out are most of the text; a mid-level-only source would
     carry less than half of it."""
     ds = _cfg(_write_corpus(tmp_path)).build(_FakeTok())
-    total = sum(len(t[1]) for t in ds.turns(ds._data[0], _rng()))
+    total = sum(len(t[1]) for t in ds.turns(ds._data[0]))
     assert total == len(HIGH) + len(MID) + len(LOW)
     assert total > 2 * len(MID)
 
@@ -147,13 +143,13 @@ def test_user_turn_is_the_tag_with_no_question(tmp_path):
 
 def test_levels_can_be_narrowed(tmp_path):
     ds = _cfg(_write_corpus(tmp_path), levels=("low_level",)).build(_FakeTok())
-    assert [t[1] for t in ds.turns(ds._data[0], _rng())] == [LOW]
+    assert [t[1] for t in ds.turns(ds._data[0])] == [LOW]
 
 
 def test_blank_level_is_dropped(tmp_path):
     rows = [{"id": "ex0", "high_level": "", "mid_level": MID, "low_level": LOW}]
     ds = _cfg(_write_corpus(tmp_path, rows=rows)).build(_FakeTok())
-    assert [t[1] for t in ds.turns(ds._data[0], _rng())] == [MID, LOW]
+    assert [t[1] for t in ds.turns(ds._data[0])] == [MID, LOW]
 
 
 def test_row_with_no_caption_is_skipped_not_raised(tmp_path):
@@ -163,7 +159,7 @@ def test_row_with_no_caption_is_skipped_not_raised(tmp_path):
     ]
     ds = _cfg(_write_corpus(tmp_path, rows=rows)).build(_FakeTok())
     with pytest.raises(ValueError, match="no non-empty caption"):
-        ds.turns(ds._data[0], _rng())
+        ds.turns(ds._data[0])
     # ...but fetching it substitutes the next usable row instead of spending the error budget.
     np.testing.assert_array_equal(ds[0]["input_ids"], ds[1]["input_ids"])
 
@@ -175,15 +171,18 @@ def test_row_with_no_caption_is_skipped_not_raised(tmp_path):
 
 @pytest.mark.parametrize(
     "family, expected",
-    [("style_and_length_v3", "ocr_caption_high_level:"), ("none", "")],
+    [
+        ("style_and_length_v2", "ocr_caption_high_level:"),
+        ("style_and_length_v3", "ocr_caption_high_level:"),
+        ("none", ""),
+    ],
 )
 def test_style_tag_per_prompt_family(tmp_path, family, expected):
-    """Under `style_and_length_v3` only `transcript` / `long_caption` take a length bucket
-    (mm_olmo data_formatter.py), so these styles render bare."""
+    """No family puts a length number in the tag; ``none`` renders no tag."""
     ds = _cfg(_write_corpus(tmp_path), levels=("high_level",), system_prompt=family).build(
         _FakeTok()
     )
-    assert ds.turns(ds._data[0], _rng())[0][0] == expected
+    assert ds.turns(ds._data[0])[0][0] == expected
 
 
 def test_sft_stage_family_is_refused():

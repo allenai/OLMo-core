@@ -93,10 +93,8 @@ class TextRichCaptionDatasetConfig(Config):
     seed: int = 0
 
     system_prompt: str = "style_and_length_v3"
-    """How the style is shown in the user turn. Under mm_olmo's molmo3 stage-1 family
-    (``style_and_length_v3``) only ``transcript`` / ``long_caption`` take a length bucket, so
-    these render as the bare ``"ocr_caption_<level>:"``; ``style_and_length[_v2]`` would add the
-    bucket and ``none`` gives no prefix."""
+    """How the style is shown in the user turn: the bare ``"ocr_caption_<level>:"`` under every
+    ``style_and_length`` family, or no prefix under ``none``."""
 
     def validate(self):
         if self.category not in CATEGORIES:
@@ -162,7 +160,7 @@ class TextRichCaptionDataset(EpochSeededExamples):
         """Absolute path of a row's rendered image."""
         return os.path.join(self.config.dataset_path, row["image_relpath"])
 
-    def turns(self, row: Dict[str, Any], rng: np.random.RandomState) -> List[Tuple[str, str]]:
+    def turns(self, row: Dict[str, Any]) -> List[Tuple[str, str]]:
         """The ``(user, assistant)`` pairs of one row, one per configured level.
 
         A level whose caption is blank is dropped, since its branch would carry no loss tokens.
@@ -175,7 +173,7 @@ class TextRichCaptionDataset(EpochSeededExamples):
             text = row[level]
             if not isinstance(text, str) or not text.strip():
                 continue
-            prompt = style_tag_prompt(level_style(level), text, rng, cfg.system_prompt)
+            prompt = style_tag_prompt(level_style(level), cfg.system_prompt)
             turns.append((prompt, text))
         if not turns:
             raise ValueError(f"row {row.get('id')!r} has no non-empty caption in {cfg.levels}")
@@ -196,7 +194,7 @@ class TextRichCaptionDataset(EpochSeededExamples):
         seq = encode_sft_example(
             self.tokenizer,
             image,
-            self.turns(row, rng),
+            self.turns(row),
             max_crops=cfg.max_crops,
             loss_token_weighting=cfg.loss_token_weighting,
             message_weight=cfg.message_weight,
