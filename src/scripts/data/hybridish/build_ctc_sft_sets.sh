@@ -38,7 +38,10 @@ REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 # -- msmarco, niah, obliq_twitter, qdmatch_fiqa, outlier_amzn, outlier_fixedM -- so "as many of the
 # 22 as possible" is FOURTEEN here, not twenty. The missing six need their own generators
 # (outlier_amzn/outlier_fixedM: generate_review_outlier_data.py; the rest: see BUILD_MATRIX.md).
-SET_A="nq hotpotqa qdmatch_nq qdmatch_hpqa outlier oolong contradiction xabsence absence \
+# qdmatch_hpqa dropped (prasann): qdmatch is then trained from qdmatch_nq ALONE, which keeps
+# qdmatch_hpqa and qdmatch_fiqa as clean held-out probes for that spec. Without it the qdmatch
+# column would have had nothing left to generalise to.
+SET_A="nq hotpotqa qdmatch_nq outlier oolong contradiction xabsence absence \
        reorder rerank strmatch textgroups grouping_labeled"
 # SET-B: CTC-BENCH-10 with prasann's substitutions -- rerank for fiqa, reorder for qdmatch_fiqa.
 # Both swaps exist to keep FiQA out of training entirely: fiqa is a held-out probe and qdmatch_fiqa
