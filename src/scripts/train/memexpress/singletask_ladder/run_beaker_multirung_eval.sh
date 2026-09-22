@@ -20,7 +20,7 @@
 #   VARIANT     dense | landmark | compressive | docchunk   (docchunk -> OOLONG only)
 #   WEKA_LLM    weka ai2-llm root (e.g. /weka/oe-training-default/ai2-llm)
 #   STEP        optional: pin a specific step dir (e.g. step580); empty -> latest complete step
-#   MAX_TEST    default 600 ; MAX_LENGTH default 40960 ; BATCH_SIZE default 8 ; NGPU default 8
+#   MAX_TEST    default 500 ; MAX_LENGTH default 40960 ; BATCH_SIZE default 8 ; NGPU default 8
 #   QUERY_POSITION  both (default) | after -- MUST match the SFT shards (qafter data -> after)
 set -uo pipefail
 TASK="${TASK:?set TASK=contra|nq|rerank|outlier|oolong}"
@@ -28,7 +28,7 @@ VARIANT="${VARIANT:?set VARIANT=dense|landmark|compressive|docchunk}"
 RUN="${RUN:?set RUN=<run name>}"
 WEKA_LLM="${WEKA_LLM:?set WEKA_LLM=<weka ai2-llm root>}"
 STEP="${STEP:-}"
-MAX_TEST="${MAX_TEST:-600}"
+MAX_TEST="${MAX_TEST:-500}"
 MAX_LENGTH="${MAX_LENGTH:-40960}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NGPU="${NGPU:-8}"
@@ -70,6 +70,16 @@ DECODE_GATE_ARGS=""
 # write to DISTINCT dirs/files instead of overwriting each other. Set by the launcher; empty (all
 # existing callers) -> byte-identical paths to before.
 EVAL_TAG="${EVAL_TAG:-}"
+if [ "${LANDMARK_PERIODIC_OUTPUT:-0}" = "1" ]; then
+  case "$VARIANT" in
+    landmark|compressive) ;;
+    *) echo "ERROR: periodic landmark output requires landmark/compressive" >&2; exit 2 ;;
+  esac
+  case "$EVAL_TAG" in
+    *periodic-lm*) ;;
+    *) EVAL_TAG="periodic-lm${EVAL_TAG:+_$EVAL_TAG}" ;;
+  esac
+fi
 SUF="${EVAL_TAG:+_$EVAL_TAG}"
 # Landmark + compressive attention can't do batched/left-padded generation (blocks tied to absolute
 # position) -> force batch_size=1 for those variants. Dense keeps the configured (larger) batch.
@@ -79,6 +89,12 @@ case "$VARIANT" in landmark|compressive) BATCH_SIZE=1 ;; esac
 LANDMARK_TOP_K_BLOCKS="${LANDMARK_TOP_K_BLOCKS:-}"
 LANDMARK_NONSELECTED_MASS="${LANDMARK_NONSELECTED_MASS:-}"
 LANDMARK_FLAGS=""
+if [ "${LANDMARK_DISABLE_TOP_K:-0}" = "1" ]; then
+  LANDMARK_FLAGS="--landmark-disable-top-k"
+fi
+if [ "${LANDMARK_PERIODIC_OUTPUT:-0}" = "1" ]; then
+  LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-periodic-output"
+fi
 [ -n "$LANDMARK_TOP_K_BLOCKS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-top-k-blocks $LANDMARK_TOP_K_BLOCKS"
 [ -n "$LANDMARK_NONSELECTED_MASS" ] && LANDMARK_FLAGS="$LANDMARK_FLAGS --landmark-nonselected-mass $LANDMARK_NONSELECTED_MASS"
 
@@ -170,6 +186,10 @@ echo "=== BEAKER multirung eval | host=$(hostname) RUN=$RUN TASK=$TASK VARIANT=$
 echo "    BUNDLE=$BUNDLE"
 echo "    EVAL500=$EVAL500"
 nvidia-smi -L 2>/dev/null | head -8 || true
+
+# Pin both distributions after Gantry environment setup, then verify the actual kernel source.
+python -m pip install --quiet --no-deps 'flash-linear-attention==0.4.2' 'fla-core==0.4.2'
+python src/scripts/ctc_eval/preflight/verify_fla.py
 
 # ---- resolve the checkpoint step dir (CKPT override > STEP pin > latest complete step) ----
 if [ -n "${CKPT:-}" ]; then
@@ -354,6 +374,12 @@ if [ "$LADDER_XLONG" = "1" ]; then
     # ladder rather than silently re-running it under an xlong tag.
     *) echo "    [xlong] no xlong rungs for TASK=$TASK; base ladder unchanged." ;;
   esac
+fi
+# Periodic landmark decoding turns every 63 visible tokens into 64 physical positions. Keep the
+# existing MAX_LENGTH budget in visible-token terms by expanding its physical-position cap exactly.
+if [ "${LANDMARK_PERIODIC_OUTPUT:-0}" = "1" ]; then
+  MAX_LENGTH=$(( (MAX_LENGTH * 64 + 62) / 63 ))
+  echo "    [periodic landmarks] physical MAX_LENGTH -> $MAX_LENGTH (64/63 of visible-token cap)"
 fi
 # The summary layout appends NUM_SUMMARY_TOKENS <|summ|> tokens after EVERY document, so a summary
 # prompt is materially longer than the dense prompt the MAX_LENGTH table above was calibrated on, and

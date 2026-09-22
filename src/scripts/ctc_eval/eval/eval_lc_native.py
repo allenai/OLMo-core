@@ -199,6 +199,11 @@ def main():
                          "is ~59KiB/token vs ~32KiB/token of KV, so past ~256k that transient is what "
                          "OOMs, not the cache. 32768 puts the 1M rung at ~48GiB on an 80GB card. "
                          "Unset/0 keeps the single-shot prefill.")
+    ap.add_argument("--landmark-disable-top-k", action="store_true",
+                    help="Disable landmark retrieval; soft-gate over every context block.")
+    ap.add_argument("--landmark-periodic-output", action="store_true",
+                    help="Continue SFT landmark insertion through output, stripping markers before "
+                         "decoding/scoring. max_length includes inserted landmark positions.")
     ap.add_argument("--landmark-top-k-blocks", type=int, default=None,
                     help="landmark/compressive variant: fixed number of landmark BLOCKS to keep per "
                          "query at decode (overrides GenerationConfig's default 10%%-of-prompt "
@@ -243,6 +248,8 @@ def main():
                          "--prompt-format chat for BASE models, whose tokenizers ship no template "
                          "(Olmo-3 base and HiLS-7B both do not). Ignored for other formats.")
     args = ap.parse_args()
+    if args.landmark_periodic_output and args.backend != "olmo_core":
+        ap.error("--landmark-periodic-output requires --backend olmo_core")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     # xlong opt-in: the runner REJECTS prompts longer than (max_length - max_new_tokens), so
     # max_length MUST cover the largest selected ultra-long rung, and it feeds the gen budget below.
@@ -357,13 +364,20 @@ def main():
         from olmo_core.generate.generation_module.config import GenerationConfig
         from olmo_core.generate.generation_module.transformer import TransformerGenerationModuleConfig
 
+        if args.landmark_disable_top_k and args.landmark_top_k_blocks is not None:
+            raise ValueError("--landmark-disable-top-k conflicts with --landmark-top-k-blocks")
         gen_cfg = GenerationConfig(eos_token_id=tok.eos_token_id, pad_token_id=tok.pad_token_id,
                                    max_length=args.max_length, use_cache=True,
                                    prefill_chunk_size=args.prefill_chunk_size,
                                    landmark_top_k_blocks=args.landmark_top_k_blocks,
+                                   landmark_top_k_fraction=None if args.landmark_disable_top_k else 0.1,
+                                   landmark_decode_mode="periodic" if args.landmark_periodic_output else "extend_last_block",
                                    landmark_nonselected_mass=args.landmark_nonselected_mass,
                                    landmark_group_selection=args.landmark_group_selection,
                                    landmark_decode_gate_mode=args.landmark_decode_gate_mode)
+        print(f"[landmark retrieval] blocks={gen_cfg.landmark_top_k_blocks} "
+              f"fraction={gen_cfg.landmark_top_k_fraction}", flush=True)
+        print(f"[landmark output] decode_mode={gen_cfg.landmark_decode_mode}", flush=True)
         gm = TransformerGenerationModuleConfig(
             gen_cfg, float8_config=None, dtype=DType("bfloat16"), compile_model=False,
         ).build(checkpoint_dir=args.model_path, device=device)
@@ -471,6 +485,12 @@ def main():
                "attn_impl": args.attn_impl or None,
                "chat_template": os.path.basename(args.chat_template) if args.chat_template else None,
                "ruler": {}, "contradiction": {}, "nq": {}}
+    if args.landmark_periodic_output:
+        summary["landmark_decode_mode"] = "periodic"
+        summary["landmark_output_stripped"] = True
+        summary["landmark_top_k_disabled"] = args.landmark_disable_top_k
+        summary["landmark_top_k_blocks"] = args.landmark_top_k_blocks
+        summary["landmark_top_k_fraction"] = None if args.landmark_disable_top_k else 0.1
 
     # Per-example generation dump (for error inspection). Each _eval_* returns (metrics, details);
     # we pair the FULL model generation with its per-example detail (parsed pred, gold, metrics) and

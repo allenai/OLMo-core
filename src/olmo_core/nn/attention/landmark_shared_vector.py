@@ -51,7 +51,8 @@ Both paths call the same :meth:`_shared_vector_tail`, so the tail is validated o
 brute-force reference) and shared; only the ``head_dim`` output differs between them.
 
 .. note::
-    Generation / KV-caching, the output gate, and sliding windows are not supported by this variant.
+    KV-cached generation supports block-aligned chunked prefill and single-row decode.
+    The output gate and sliding windows are not supported by this variant.
 """
 
 from typing import Optional
@@ -105,6 +106,9 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
     #: fp32 score/softmax working set to ``O(chunk * n_blocks)`` instead of ``O(seq_len * n_blocks)``.
     #: Rounded down to a whole number of blocks; a value >= ``seq_len`` reproduces the dense path.
     _tail_query_chunk: int = 4096
+
+    # The inherited ragged implementation omits the shared-vector output branch.
+    _supports_ragged_decode = False
 
     def __init__(
         self,
@@ -322,9 +326,14 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         ``LandmarkAttention._eager_forward``, optionally with ``cu_doc_lens`` block-diagonal
         document masking for sequence packing."""
         B, H, T, _ = q.shape
+        total = k.shape[2]
+        offset = total - T
         attn_mask, is_mem, last_section_mask = build_landmark_masks(
-            T, self.block_size, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
+            total, self.block_size, q.device, q.dtype, cu_doc_lens=cu_doc_lens, batch_size=B
         )
+        attn_mask = attn_mask[..., offset:, :]
+        is_mem = is_mem[..., offset:, :]
+        last_section_mask = last_section_mask[..., offset:, :]
 
         attn = torch.matmul(q, k.transpose(-1, -2)) * self.softmax_scale
         attn = attn + attn_mask
@@ -334,8 +343,8 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         probs = landmark_grouped_softmax(
             attn,
             dim=-1,
-            is_mem=is_mem.expand(B, H, T, T),
-            last_section_mask=last_section_mask.expand(B, 1, T, T),
+            is_mem=is_mem.expand(B, H, T, total),
+            last_section_mask=last_section_mask.expand(B, 1, T, total),
         ).to(q.dtype)
         return torch.matmul(probs, v)
 
@@ -362,7 +371,13 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         """
         B, H, T, D = q.shape
         Lb = self.block_size
-        nb = T // Lb
+        total = k.shape[2]
+        offset = total - T
+        if offset < 0 or offset % Lb or T % Lb:
+            raise ValueError("Shared-vector prefill requires block-aligned queries and history")
+        nb = total // Lb
+        query_blocks = T // Lb
+        n_rep = H // k.shape[1]
         scale = self.softmax_scale
         device = q.device
         neg_inf = torch.finfo(torch.float32).min
@@ -382,9 +397,9 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
 
         # Per-block landmark value/key vectors and the block codes e_B -- computed once (all cheap,
         # O(nb) not O(T)) and shared across query chunks.
-        mem_pos = torch.arange(Lb - 1, T, Lb, device=device)  # (nb,)
-        v_lm = v[:, :, mem_pos, :]  # (B, H, nb, D)
-        k_lm = k[:, :, mem_pos, :]  # (B, H, nb, D)
+        mem_pos = torch.arange(Lb - 1, total, Lb, device=device)  # (nb,)
+        v_lm = repeat_kv(v[:, :, mem_pos, :], n_rep)  # (B, H, nb, D)
+        k_lm = repeat_kv(k[:, :, mem_pos, :], n_rep)  # (B, H, nb, D)
         # e_B = v_landmark_B @ weight_landmark_h  -> (B, H, nb, vec_dim)
         e = torch.einsum("bhnd,hde->bhne", v_lm.float(), weight_landmark.float())
         base_t = base.float().view(1, H, 1, self.vec_dim)
@@ -453,10 +468,12 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             q.requires_grad or k.requires_grad or v.requires_grad
         )
         parts = []
-        for nb0 in range(0, nb, chunk_blocks):
-            nb1 = min(nb0 + chunk_blocks, nb)
-            t0, t1 = nb0 * Lb, nb1 * Lb
-            q_c, k_c = q[:, :, t0:t1], k[:, :, t0:t1]
+        for qb0 in range(0, query_blocks, chunk_blocks):
+            qb1 = min(qb0 + chunk_blocks, query_blocks)
+            t0, t1 = qb0 * Lb, qb1 * Lb
+            nb0 = offset // Lb + qb0
+            q_c = q[:, :, t0:t1]
+            k_c = repeat_kv(k[:, :, offset + t0 : offset + t1], n_rep)
             if use_ckpt:
                 part = checkpoint(
                     _tail_chunk, q_c, k_c, k_lm, e, base_t, nb0, doc_id, use_reentrant=False
@@ -476,7 +493,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
         freqs_cis: Optional[torch.Tensor],
         cache_leftpad: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        """KV-cached generation: single-shot prefill (T>1) or incremental decode (T==1).
+        """KV-cached generation: block-aligned chunked prefill or incremental decode.
 
         Mirrors :meth:`FastLandmarkAttention._forward_generate` but additionally computes the
         ``vec_dim`` tail and projects the two branches (``w_out(main) + w_out_vec(tail)``). As in the
@@ -510,17 +527,15 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
             main = torch.matmul(probs.to(v_used.dtype), v_used)  # (B, H, 1, head_dim)
             tail = self._decode_tail(probs, v_used, section_start)  # (B, H, 1, vec_dim)
         else:
-            if start_pos != 0:
+            if start_pos % self.block_size:
                 raise NotImplementedError(
-                    "Landmark multi-token forward with a non-empty cache is not supported "
-                    "(only single-shot prefill from position 0)."
+                    "Shared-vector chunked prefill must start on a block boundary"
                 )
-            kh = repeat_kv(k.transpose(1, 2), n_rep)
-            vh = repeat_kv(v.transpose(1, 2), n_rep)
-            main = self._prefill(qh, kh, vh)  # (B, H, T, head_dim)
-            # _shared_vector_tail computes nb = T // block_size and silently drops any partial
-            # trailing block, so an arbitrary-length prompt must be right-padded to a block-aligned
-            # length first (mirroring FastLandmarkAttention._prefill) and sliced back to T after.
+            # Keep the full prefix in KV-group form; expand only per-group main attention
+            # and the small landmark/local slices needed by the tail.
+            kh = kvm.k_cache[:, :total].transpose(1, 2)
+            vh = kvm.v_cache[:, :total].transpose(1, 2)
+            main = self._prefill(qh, kh, vh, n_rep=n_rep)
             pad = (-T) % self.block_size
             if pad:
                 qp = F.pad(qh, (0, 0, 0, pad))
@@ -528,7 +543,7 @@ class SharedVectorLandmarkAttention(FastLandmarkAttention):
                 vp = F.pad(vh, (0, 0, 0, pad))
             else:
                 qp, kp, vp = qh, kh, vh
-            tail = self._shared_vector_tail(qp, kp, vp)[:, :, :T]  # (B, H, T, vec_dim)
+            tail = self._shared_vector_tail(qp, kp, vp)[:, :, :T]
 
         main_flat = main.transpose(1, 2).contiguous().view(B, T, -1)
         tail_flat = tail.to(main.dtype).transpose(1, 2).contiguous().view(B, T, -1)
