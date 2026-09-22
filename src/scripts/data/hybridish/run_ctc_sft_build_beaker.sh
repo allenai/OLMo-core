@@ -16,8 +16,18 @@ REPO=$(find / -maxdepth 3 -iname pyproject.toml 2>/dev/null | grep -v /opt/conda
 # different interpreter than `python` -- the install then "succeeds" into an environment the job
 # never imports from. Errors are NOT suppressed here; the first attempt hid its own cause behind
 # `--quiet | tail -3` and reported only "did not install".
-echo "--- python: $(command -v python) | pip module: $(python -m pip --version) ---"
-python -m pip install "huggingface_hub" \
+# gantry builds its runtime with uv, and a uv venv ships WITHOUT pip -- both `pip` and
+# `python -m pip` fail with "No module named pip" in ~70ms, which reads as a network or URL problem
+# and is neither. Use `uv pip`, falling back to ensurepip only if uv is somehow absent.
+echo "--- python: $(command -v python) | uv: $(command -v uv) ---"
+if command -v uv >/dev/null; then
+  INSTALL="uv pip install"
+else
+  python -m ensurepip --upgrade >/dev/null 2>&1
+  INSTALL="python -m pip install"
+fi
+echo "--- installing with: $INSTALL ---"
+$INSTALL "huggingface_hub" \
   "git+https://github.com/PrasannS/corpustaskcomplexity.git#subdirectory=ctc" 2>&1 | tail -25
 python -c "import ctc.data.cli, huggingface_hub; print('ctc + hub OK')" \
   || { echo "FATAL: ctc package did not install (see the pip output above)"; exit 1; }
