@@ -47,3 +47,11 @@ sdcpt-q35-4b-lslot20-u64M	lslot20	64M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 sdcpt-q35-4b-lslot20-u128M	lslot20	128M	ai2/jupiter-cirrascale-2	2026-09-21 21:51	LAUNCHED	"01M33Q8XJ70X5NGY935MANCTEC   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u8M	dense	8M	ai2/jupiter-cirrascale-2	2026-09-21 22:56	LAUNCHED	"01M33TZPA22EY8G9K55GGRA2RS   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u16M	dense	16M	ai2/jupiter-cirrascale-2	2026-09-21 22:56	LAUNCHED	"01M33V0M9FSSQY0XGJF3PZT526   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-dense-u4M	dense	4M	ai2/jupiter-cirrascale-2	2026-09-21 23:12	LAUNCHED	"01M33VW64Y70MCRQY1WM74KD81   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20-u16M	sd20	16M	ai2/jupiter-cirrascale-2	2026-09-21 23:12	LAUNCHED	"01M33VX27DBVW7G8YDYACDARA8   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

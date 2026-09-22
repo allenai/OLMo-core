@@ -133,3 +133,58 @@ is +0.23 above full attention and the projector-only learned slot (lslot20) does
 Screening on the CTC rows (`screen_table.py --task ctc`): no training-free rule is near parity at
 ×0.2–0.3 without gold (best ΔCE +0.6, oracle included); `first128` (+0.05–0.07) only because
 suite documents are short (×0.85).
+
+## Downstream CTC-bench as an alternative metric (launched 2026-09-21 23:20 PDT)
+
+Prasann: do downstream numbers rank the arms the way dev loss does? 24 Beaker jobs (jupiter,
+urgent, unallocated): {base, dense 16M/32M/64M/128M, sd20 64M/128M, sfl20 64M} × {contra, nq,
+oolong}, the standard `run_q4b_beaker_multirung_eval.py` path with **`--prompt-format raw`** (these
+are raw CPT checkpoints, no SFT), `--query-position both`, v2_clean bundle, 2k–32k figure rungs only
+(no xlong/YaRN/OOD — deliberate, see the ledger header), eval_size 500/rung. Ledger:
+`records/eval_launches/2026-09-21_sdcpt-q35-4b_ctcbench.yaml` (+ rows in `EVAL_LEDGER.tsv`);
+results → weka `softdetach_cpt/ctc_eval/<run>/`; table via
+`python src/scripts/train/memexpress/cpt/softdetach/ctc_eval_ledger.py collect .../ctc_eval_wave.tsv`
+(reads the `[ladder:task@rung] f1=` lines from the Beaker logs → `ctc_eval_results.json`).
+
+Smoke (nq, 40 rows ⚠ SE ≈ 0.07): dense-64M 0.65 / 0.325 / 0.125 / 0.0 and sd20-64M 0.80 / 0.35 /
+0.15 / 0.0 at 3k/8k/16k/32k — raw-format output is parseable (no format collapse at short rungs),
+sd20 ≥ dense at every rung, and BOTH arms read 0.0 at 32k: check generations/parse rate at 32k
+before reading that as capability (raw prompt + 64-token greedy continuation at 32k is the likely
+artifact; `native-eval-repetition-loop-bug`). Table + dev-loss agreement: fill in when the wave lands.
+
+## FINAL results (2026-09-21 23:25 PDT) — all 18 runs evaluated
+
+Dev = 32 held-out 64k rows (`cpt_dev`, source part 28). CE = full-attention dev CE (nats/token);
+ΔCE = **paired** per-row delta vs dense-32M (SE 0.001–0.007); own = the arm's own construction.
+PF = `flop_meter/actual_pflops` (dense-priced PF = the dense column at the same token budget).
+
+| tokens | dense: PF · CE | sd20 (random 20% of blocks whole): PF · CE · own | sfl20 (first_last 20%): PF · CE · own | lslot20 (slot only trained): PF · CE · own |
+|---|---|---|---|---|
+| 4M | 196 · 1.314 | — | — | — |
+| 8M | 392 · 1.303 | — | — | — |
+| 16M | 759 · 1.296 | 97 · 1.309 · 1.560 | — | — |
+| 32M | 1518 · 1.283 | 193 · 1.291 · 1.533 | 172 · 1.308 · 1.787 | 193 · 1.320 · 1.616 |
+| 64M | 3011 · 1.256 | 383 · **1.279** · 1.513 | 340 · 1.295 · 1.758 | 383 · 1.320 · 1.614 |
+| 128M | 5998 · 1.245 | 763 · **1.272** · 1.502 | 678 · 1.288 · 1.740 | 763 · 1.320 · 1.595 |
+
+Frozen base = 1.320. **Matched-FLOP, against MEASURED dense anchors:** sd20 is ~0.024 nats better
+than dense at every equal-FLOP point — 193 PF: 1.291 vs dense-4M 1.314; 383 PF: 1.279 vs dense-8M
+1.303; 763 PF: 1.272 vs dense-16M 1.296 (paired SE ≤0.005). Equivalently **sd20 reaches dense's
+dev loss with ~4× fewer FLOPs** (sd20-64M 383 PF = dense-32M 1518 PF: 1.279 vs 1.283, Δ −0.004 ±
+0.004; sd20-128M 763 PF beats dense-32M by −0.011 ± 0.005 at 0.5×, but not dense-64M). sfl20 is
+only ~0.007 better than dense at equal FLOPs; the learned-slot-only arm never moves the backbone
+(its full-attention CE is the base) and improves its own construction by just 0.02 over three
+budgets. **Random whole-block pooling with a detached, untrained slot is the winning arm.**
+
+The saving is training-only: under its own compressed input sd20 is +0.23 above full attention
+(1.50 vs 1.27) — the ds64 pattern — so this buys cheaper CPT, not cheaper inference.
+
+Screening on the frozen base predicted the opposite ranking (rand20 worst among the ×0.2–0.36
+rules, fl20/attnrow20 best): training changes what the model can read out of a slot, so the frozen
+screen ranks *inference* usability, not *training* value. Use the frozen harness to pick the
+inference-side rule; use a short trained ladder (these 4-GPU runs are 5–20 min each) for the
+training-side one.
+
+Artifacts: `softdetach_devloss.csv` (collector), weka `softdetach_cpt/devloss/<run>.json`,
+`LAUNCH_LEDGER.tsv` / `EVAL_LEDGER.tsv`, wandb group
+https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/sdcpt-q35-4b.
