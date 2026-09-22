@@ -166,9 +166,37 @@ that extrapolation is not yet measured, and it is ~80% of the bill.**
 | **C** 500/rung to 32k, 100 at 64k/128k, 50 at 256k | 7.4 | **61 min** |
 | **D** 500 to 32k + 125 at xlong (the roster's own sizes) | 10.7 | 85 min |
 
-**C is the interesting one**: the full 500-example figure ladder survives, paid for entirely out of
-the xlong rungs. That works because at a uniform 100/rung the >=64k rungs are 80% of the cost, so
-the cheap rungs are nearly free and the expensive ones are where subsetting buys anything.
+### Corrected once the xlong rungs were measured
+
+⚠ **The flat extrapolation above was optimistic by ~40%.** Prefill IS flat to 32k, but it decays
+past it. `outlier` gives a clean series (same spec, same 256-token decode budget at every rung, so
+rung-to-rung is pure prefill):
+
+| rung | prefill tok/s | vs previous |
+|---|---|---|
+| 32k | 48,337 | — |
+| 64k | 42,526 | 0.880x |
+| 128k | 33,870 | 0.796x |
+| 256k | ~26,975 *projected* | 0.796x assumed — **not measured**, it needs a YaRN copy |
+
+That is the full-attention layers' quadratic term finally showing; the GDN layers keep it to ~20%
+per doubling rather than 4x, which is still the reason any of this is affordable, but it is not
+free. Repricing the same policies:
+
+| policy | GPU-h | slowest shard |
+|---|---|---|
+| **S** 200/rung to 32k; 100 at 64k; 50 at 128k; 25 at 256k | 4.9 | **42 min** |
+| **R** 500/rung to 32k; 50 at 64k+128k; 25 at 256k | 7.7 | **63 min** |
+| A 100/rung throughout | 7.9 | 65 min |
+| C 500 to 32k; 100 at 64k/128k; 50 at 256k | 10.0 | 80 min |
+
+**S fits an hour with room; R buys the full 500-example figure ladder for three minutes over.**
+Assuming an SFT checkpoint stops early barely moves either, because above 32k the cost is prefill,
+not decode -- so the eval_size at 128k/256k is the only lever that really matters.
+
+⚠ **The 128k MAX_LENGTH in the repo's own table (146,227) is too small.** `fiqa:r128k` has prompts
+of at least 146,228 tokens and was rejected outright. Any 128k launch needs a larger cap, and a cap
+that merely *looks* generous silently skips the tail.
 
 ## Found on the way: the shipped contradiction xlong rungs are unscoreable
 
