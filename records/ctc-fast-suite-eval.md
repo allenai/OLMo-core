@@ -237,6 +237,59 @@ rungs now pass the spec's gold guard. **The shipped rungs on the HF dataset have
 — that needs the fix re-run and a re-upload. Until then, treat every contradiction number at 64k and
 above as void.
 
+## The recommended config (S+)
+
+200 at each of 2k/4k/8k/16k/32k, 100 at 64k, 50 at 128k, 50 at 256k -- **26,627 examples over 169
+cells, 6.11 GPU-h, ~51 min** across 8 single-GPU shards.
+
+| rung | n per row | rows | examples | per-row SE @f1~0.7 |
+|---|---|---|---|---|
+| 2k / 4k / 8k / 16k | 200 | 24 | ~4,725 each | ±0.032 |
+| 32k | 200 | 22 | 4,326 | ±0.032 |
+| 64k | 100 | 17 | 1,700 | ±0.046 |
+| 128k | 50 | 17 | 850 | ±0.065 |
+| 256k | 50 | 17 | 850 | ±0.065 |
+
+Per-rung totals fall short of `n x rows` because some rows cap themselves lower -- `scifact` is 300
+and `obliq_twitter` 126 at every rung, and the roster declares 125 at 256k+.
+
+Why these numbers and not others:
+
+* **The xlong tail is the only lever.** Above 32k the cost is prefill, so thinning the short rungs
+  buys almost nothing and assuming an SFT checkpoint stops generating early buys almost nothing
+  either. 128k->256k at 50 each costs 9 minutes over the 25/25 version and halves the 256k error
+  bar; taking 128k to 100 costs another 7 minutes and does not move 256k at all.
+* **Grouping and reorder stay in.** They are the two largest decode budgets (4096 and 2048) and the
+  2026-09-19 sweep dropped them for speed -- but that was under the HF provider. Under vLLM they are
+  7% of the total (16.9 + 7.1 min of 367) and are not on the critical path; dropping them saves
+  ~0 wall-clock because the 256k cells decide it. Grouping is also the only O(NM) clustering row at
+  the base rungs.
+* **Shard per CELL, not per row.** Same work, 51 min vs 59.5 min -- 24 lumpy rows do not divide into
+  8 jobs evenly, and the row-level split leaves the shard holding the 256k-heavy rows on the
+  critical path alone.
+
+⚠ **Every rung is below the 500 floor**, so every number from this config carries an inline
+`eval_size` and error bar per [[eval-size-and-error-bars]]. ±0.032 at the short rungs is fine for
+ladder *shape*; a 0.03 difference between two arms at a single rung is not resolvable. This is the
+**iteration** config -- score every checkpoint, watch the shape, catch regressions. Anything
+publication-facing re-runs the specific rows at 500 (125 at 256k, the roster's own size), which is
+the ~3-hour config.
+
+### What carries the xlong half
+
+Only 17 of 24 rows reach 64k, and **6 of the 7 that stop short are high-CTC**:
+
+| row | tops out | why |
+|---|---|---|
+| `absence`, `reorder` | 16k | real ceiling -- one contiguous book, ~250k max as constructed |
+| `grouping`, `strmatch`, `textgroups`, `xabsence`, `scifact` | 32k | merely UNBUILT -- regen-only, the 2026-08-14 push ran out of time |
+
+So the high-CTC class drops from 11 rows at <=32k to 6 at 64k+, which is what makes the pooled
+high-CTC statistic the binding constraint on the error bars up there (gap SE ±0.037 at 50/row,
+±0.053 at 25/row). The long-context story rests on `contradiction`, the three `qdmatch` rows,
+`outlier` and `contra_fever`. Extending even two of the five unbuilt rows would materially
+strengthen it -- `grouping`'s OpenAlex pool alone is reported to support ~1M.
+
 ## Still open
 
 1. The vLLM cost model at 2k–32k, then 64k–256k — the measurement this file exists to record.
