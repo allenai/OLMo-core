@@ -344,18 +344,33 @@ two-sources-per-spec guard could not see `hotpotqa`, `niah`, `obliq`, `qdmatch_f
 
 ### In flight at handoff
 
-⚠ **`ctc-data build` always writes `<out>/<task>/train.jsonl`**, so calling it once per bucket with
-a shared `--out` overwrites each bucket with the next. Caught on the first live build: `nq`'s file
-held 4,882 rows (the 4k bucket) after the 2k bucket's 9,765 had already been written, and left
-running every task would have ended up with only its 32k bucket -- ~610 examples, the exact opposite
-of token-balanced, while looking like a clean successful build throughout. Each bucket now builds
-into its own `_b<bucket>` tree and the buckets are concatenated per task afterwards, with the merged
-row count echoed. **Expect ~14 min for a 2k bucket, ~27 min per task, ~6 h for all 13.**
+**The build runs on BEAKER, CPU-only** (prasann: "CPU heavy just use lots of CPUs, do this on beaker
+so all data / training is fully on beaker"). The 65 (task, bucket) builds are independent, so they
+run under `xargs -P`: ~6 h serially on an 8-core login node, ~20 min on a 180-core Beaker box. A
+serial warm-up pass builds one bucket per task first, so 65 processes do not race to fetch the same
+seed pools onto a cold HF cache.
 
-Set A data build running on the LOGIN node:
-`bash src/scripts/data/hybridish/build_ctc_sft_sets.sh set-a /scratch/users/prasann/ctc_sft_sets`,
-log `/scratch/users/prasann/ctc_sft_sets/setA.log`, 13 tasks x 5 buckets. Check it completed
-before tokenising; the script continues past a failed task and the mix step reports what is missing.
+    gantry run --name ctc-sftdata-setA-c -w ai2/flex2 -b ai2/oe-other \
+      --cluster ai2/jupiter-cirrascale-2 --gpus 0 --cpus 64 --priority urgent \
+      --weka oe-training-default:/weka/oe-training-default --branch prasann/landmark \
+      --env SET=set-a -- bash src/scripts/data/hybridish/run_ctc_sft_build_beaker.sh
+
+Output: `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_sft_sets/setA_max20/`, so
+training reads it with no staging hop. Last run: `prasanns/ctc-sftdata-setA-c`
+(`01M33VRDV1HCXHMTJZGJN1T02M`).
+
+⚠ **`uv pip install`, never `pip` or `python -m pip`.** gantry builds its runtime with uv, and a uv
+venv ships WITHOUT pip, so both die with `No module named pip` in ~70 ms -- which reads as a network
+or bad-URL failure and is neither. Cost two launches to find. Applies to ANY gantry job that installs
+something at runtime.
+
+⚠ **The `ctc` package is not in `prasann/landmark`.** It is installed from the public release repo
+(`git+https://github.com/PrasannS/corpustaskcomplexity.git#subdirectory=ctc`). If that ever becomes
+flaky, vendor the source into this branch instead and drop the network dependency.
+
+**Before tokenising, check the merged per-task row counts** (~18k per task over 5 buckets). That is
+where the bucket-clobbering bug above would hide, and it hides well -- the build reports success
+throughout.
 
 ### Next: the two SFT runs (NOT launched)
 
