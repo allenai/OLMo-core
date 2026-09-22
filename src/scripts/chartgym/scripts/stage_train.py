@@ -38,6 +38,14 @@ def main() -> int:
     ap.add_argument("--raw", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--num-shards", type=int, default=60)
+    ap.add_argument("--parquet", action="store_true",
+                    help="Write parquet shards instead of save_to_disk. REQUIRED above ~20k "
+                         "rows: datasets' Image.embed_storage calls "
+                         "pa.StructArray.from_arrays, which raises 'Expected Array, got "
+                         "ChunkedArray' once the embedded-image column crosses pyarrow's 2GB "
+                         "chunk threshold. FineVisionDatasetConfig.dataset_path accepts a "
+                         "parquet directory, and sft_common.decode_pil_image handles the "
+                         "{bytes, path} struct, so nothing downstream changes.")
     args = ap.parse_args()
 
     shards = sorted(args.raw.glob("shard-*")) or [args.raw]
@@ -97,9 +105,32 @@ def main() -> int:
         "figure_id": Value("string"), "difficulty": Value("string"),
         "families": [Value("string")], "capabilities": [Value("string")],
     })
-    ds = Dataset.from_list(rows, features=feats)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    ds.save_to_disk(str(args.out), num_shards=min(args.num_shards, max(1, len(rows) // 100)))
+    if args.parquet:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        args.out.mkdir(parents=True, exist_ok=True)
+        per = max(1, len(rows) // max(1, args.num_shards))
+        n_written = 0
+        for i in range(0, len(rows), per):
+            chunk = rows[i : i + per]
+            table = pa.table({
+                # images inline as {bytes, path}: decode_pil_image reads this struct directly
+                "images": [[{"bytes": Path(im).read_bytes(), "path": Path(im).name}
+                            for im in r["images"]] for r in chunk],
+                "texts": [r["texts"] for r in chunk],
+                "figure_id": [r["figure_id"] for r in chunk],
+                "difficulty": [r["difficulty"] for r in chunk],
+                "families": [r["families"] for r in chunk],
+                "capabilities": [r["capabilities"] for r in chunk],
+            })
+            pq.write_table(table, args.out / f"part-{i // per:05d}.parquet", compression="zstd")
+            n_written += len(chunk)
+        print(f"  wrote {n_written} rows as parquet shards")
+    else:
+        ds = Dataset.from_list(rows, features=feats)
+        ds.save_to_disk(str(args.out), num_shards=min(args.num_shards, max(1, len(rows) // 100)))
 
     n_turns = sum(len(r["texts"]) for r in rows)
     fam = collections.Counter(f for r in rows for f in r["families"])

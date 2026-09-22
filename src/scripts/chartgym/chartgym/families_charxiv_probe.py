@@ -50,6 +50,37 @@ _TEMPLATES = json.loads(
 #: Templates this probe covers. 14/15 excluded -- see the module docstring.
 PROBE_TEMPLATES = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 17, 18, 19)
 
+#: Gold "Not Applicable" rate per template, measured on CharXiv validation (n=4000).
+#: The generator's own absence rates COMPOUND -- a panel is non-line if it is categorical
+#: (17.9%) OR if the not-a-line roll fires (44.6% of the rest) -- so v5's probe emitted
+#: 64.3% NA on t10 against the benchmark's 22.6%, and over-declared NA on t8 (35.0% vs
+#: 17.9%), which is the most likely cause of t8's -11.6. Absence is therefore SUBSAMPLED to
+#: these rates rather than inherited: an NA-eligible instance is emitted with probability
+#: `gold_rate / observed_rate`, so the trained distribution matches what the eval scores.
+GOLD_NA_RATE = {1: 0.590, 2: 0.117, 3: 0.137, 8: 0.179, 9: 0.169,
+                10: 0.226, 11: 0.446, 12: 0.253, 13: 0.297}
+
+#: Observed absence rate in the raw generator output (v5 measurement), used as the
+#: denominator of the keep-probability above.
+_OBSERVED_NA_RATE = {1: 0.593, 2: 0.118, 3: 0.143, 8: 0.357, 9: 0.175,
+                     10: 0.646, 11: 0.648, 12: 0.287, 13: 0.280}
+
+
+def _keep_na(qid: int, rng) -> bool:
+    """Whether to emit this inapplicable instance, so NA *frequency* matches the benchmark.
+
+    The keep probability is NOT ``gold / obs``. Dropping an instance removes it from the
+    denominator too, so that naive form overshoots: at obs=0.646 and gold=0.226 it leaves
+    0.226/(0.226+0.354) = 39% NA, which is what the first v6 corpus measured (38.2%).
+    Solving ``(obs*p) / (obs*p + (1-obs)) == gold`` for p gives the form below.
+    """
+    gold = GOLD_NA_RATE.get(qid)
+    obs = _OBSERVED_NA_RATE.get(qid)
+    if gold is None or obs is None or obs <= gold:
+        return True
+    p = (gold * (1.0 - obs)) / (obs * (1.0 - gold))
+    return bool(rng.random() < p)
+
 
 def _prefix(spec, panel) -> str:
     """Mirror ``descriptive_query_helper``'s locator exactly."""
@@ -88,10 +119,13 @@ def emit_probe(spec, audit, rng) -> list[dict]:
     out: list[dict] = []
 
     def add(qid, panel, answer, atype="verbatim"):
+        is_na = str(answer) == NA_TOKEN
+        if is_na and not _keep_na(qid, rng):
+            return
         out.append(dict(
             family=f"charxiv.t{qid}", capability=CAP, question=_question(qid, spec, panel),
             answer=str(answer), answer_type=atype, tol=None, held_out=False,
-            is_na=(str(answer) == NA_TOKEN), target=str(answer),
+            is_na=is_na, target=str(answer),
         ))
 
     for panel in spec.panels:

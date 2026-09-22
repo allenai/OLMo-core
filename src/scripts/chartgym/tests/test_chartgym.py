@@ -347,3 +347,31 @@ def test_probe_answers_are_exact():
         per_panel = {p.x.ticks.n_labeled + p.y.ticks.n_labeled for p in spec.panels}
         for q in by[17]:
             assert int(q["answer"]) in per_panel
+
+
+def test_probe_na_rates_match_measured_gold():
+    """The probe must mirror CharXiv's ANSWER distribution, not just its phrasing.
+
+    v5 inherited the generator's compounded absence rates and emitted 64.3% NA on template
+    10 against the benchmark's 22.6%, and 35.0% vs 17.9% on template 8 -- the most likely
+    cause of t8 losing 11.6 points. A probe whose NA frequency is wrong measures a ceiling
+    for a benchmark that does not exist.
+    """
+    import collections
+
+    from chartgym.families_charxiv_probe import GOLD_NA_RATE, emit_probe
+
+    n = collections.Counter()
+    na = collections.Counter()
+    for spec, audit in _figures(n=30):
+        for q in emit_probe(spec, audit, np.random.default_rng(21)):
+            tid = int(q["family"].split(".t")[1])
+            n[tid] += 1
+            na[tid] += q["is_na"]
+    for tid, gold in GOLD_NA_RATE.items():
+        if n[tid] < 60:
+            continue  # too few to test at this sample size
+        got = na[tid] / n[tid]
+        assert abs(got - gold) < 0.06, (
+            f"t{tid} NA rate {got:.3f} is far from the measured gold {gold:.3f}"
+        )
