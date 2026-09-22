@@ -7,7 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/../../../../../.."
 WEKA=/weka/oe-training-default/ai2-llm/checkpoints/prasanns
-for arm in dense sd20 sfl20 lslot20; do for b in 32M 64M 128M; do
+for arm in dense sd20 sfl20 lslot20; do for b in ${BUDGETS:-32M 64M 128M}; do
   RUN=sdcpt-q35-4b-$arm-u$b
   grep -q "^EVAL	$RUN	" src/scripts/train/memexpress/cpt/softdetach/EVAL_LEDGER.tsv 2>/dev/null && continue
   OUT=$(RUN=$RUN ARM=$arm bash src/scripts/train/memexpress/cpt/softdetach/eval_cpt_devloss_beaker.sh 2>&1 | grep -oE "ex/[A-Z0-9]{26}" | head -1 | cut -d/ -f2)

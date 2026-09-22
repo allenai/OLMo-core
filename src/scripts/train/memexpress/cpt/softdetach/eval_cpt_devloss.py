@@ -70,13 +70,16 @@ def per_token_loss(model, x, labels):
     loss = out.loss if hasattr(out, "loss") else out
     loss = loss.float().reshape(-1)
     full = torch.full((x.shape[1],), float("nan"), device=x.device)
+    sel = labels[0] != -100
     if loss.numel() == x.shape[1]:
-        sel = labels[0] != -100
         full[sel] = loss[sel]
         return full
-    # compacted frame: only the count is trustworthy -> spread as a constant (mean preserved)
+    if loss.numel() == int(sel.sum()):  # per-label-token vector (fused head)
+        full[sel] = loss
+        return full
+    # compacted frame (shorter row): only the count is trustworthy -> spread as a constant (mean preserved)
     nz = loss[loss != 0]
-    full[labels[0] != -100] = nz.mean() if nz.numel() else float("nan")
+    full[sel] = nz.mean() if nz.numel() else float("nan")
     return full
 
 
@@ -118,12 +121,19 @@ def main():
     t_start = time.time()
     for ri, (row, m) in enumerate(zip(rows, masks)):
         x = torch.tensor(row[None], device="cuda")
-        lab = torch.where(torch.tensor(m[None], device="cuda"), x, torch.full_like(x, -100))
+        # olmo-core labels are PRE-SHIFTED (labels[t] = input_ids[t+1], get_labels in train/common.py):
+        # position t is scored on predicting token t+1, and the loss mask is the mask of the TARGET
+        tgt_mask = torch.tensor(m[None], device="cuda")
+        lab = torch.full_like(x, -100)
+        lab[:, :-1] = torch.where(tgt_mask[:, 1:], x[:, 1:], torch.full_like(x[:, 1:], -100))
         # tail = the last tail_frac of the row's pseudo-documents
         cid = build_chunk_ids_from_tokens(x.cpu(), doc_start_id=ids.doc_start, doc_end_id=ids.doc_end, eos_id=ids.eos, mode="chunked")
         n_docs = int(cid.max()) + 1
         tail_docs = set(range(int(round(n_docs * (1 - a.tail_frac))), n_docs))
-        tail_pos = torch.tensor([c in tail_docs for c in cid[0].tolist()], device="cuda")
+        # tail = predictions whose TARGET token lies in a tail pseudo-doc (shift by one like the labels)
+        tail_tok = torch.tensor([c in tail_docs for c in cid[0].tolist()], device="cuda")
+        tail_pos = torch.zeros_like(tail_tok)
+        tail_pos[:-1] = tail_tok[1:]
         # (a)+(b): full attention
         model.eval(); model._pooled_keep_holder = None
         pt = per_token_loss(model, x, lab)
