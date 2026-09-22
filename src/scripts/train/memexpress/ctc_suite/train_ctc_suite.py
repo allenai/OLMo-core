@@ -1487,6 +1487,15 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             ),
             cat_keep=resolve_cat_keep(opts),
         )
+        if opts.freeze_backbone:
+            # learned-slot screening arm: only the soft-token projector trains (the backbone is
+            # frozen), so with --st-no-detach-soft-kv the LM loss shapes the slot and nothing else
+            n_train = 0
+            for pname, prm in model.named_parameters():
+                trainable = pname.startswith("pooled_projector")
+                prm.requires_grad_(trainable)
+                n_train += int(trainable) * prm.numel()
+            print(f"[ctc-suite] --freeze-backbone: {n_train:,} trainable params (pooled_projector only)", flush=True)
         print(
             f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} "
             f"(count {opts.st_header_stop_count}, extra {opts.st_header_extra_tokens}) "
@@ -1510,15 +1519,6 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         opts.variant == "softtoken"
         and not opts.st_gold_blind
         and opts.st_keep_mode != "smallcat_keep"
-        if opts.freeze_backbone:
-            # learned-slot screening arm: only the soft-token projector trains (the backbone is
-            # frozen), so with --st-no-detach-soft-kv the LM loss shapes the slot and nothing else
-            n_train = 0
-            for pname, prm in model.named_parameters():
-                trainable = pname.startswith("pooled_projector")
-                prm.requires_grad_(trainable)
-                n_train += int(trainable) * prm.numel()
-            print(f"[ctc-suite] --freeze-backbone: {n_train:,} trainable params (pooled_projector only)", flush=True)
     ):
         from olmo_core.nn.attention.pooled_doc_kv import (
             install_pooled_doc_keep,
@@ -2050,6 +2050,11 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--st-gold-sidecar", default=None, help="default <data>/gold_fingerprints.json")
     ap.add_argument(
+        "--freeze-backbone",
+        action="store_true",
+        help="softtoken: freeze every parameter except pooled_projector (learned-slot screening arm)",
+    )
+    ap.add_argument(
         "--st-no-detach-soft-kv",
         action="store_true",
         help="the winning recipe DETACHES; this is the ablation",
@@ -2081,11 +2086,6 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="softtoken: ALSO keep the next K body tokens (right after the header) real, so a "
         "pooled doc's compacted row is <header><first K body tokens><SLOT>. 0 (default) is "
-    ap.add_argument(
-        "--freeze-backbone",
-        action="store_true",
-        help="softtoken: freeze every parameter except pooled_projector (learned-slot screening arm)",
-    )
         "bit-identical to header-only behaviour. Works even without --st-header-stop-id (K is "
         "then counted from the doc's first token after doc_start). A doc whose remaining body "
         "has fewer than K tokens is kept entirely real (no slot at all) -- see "
@@ -2112,7 +2112,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--st-keep-token-k",
-        type=int,
+        type=float,
         default=0,
         help="softtoken: tokens kept real per pooled document for --st-keep-token-rule; a value in "
         "(0, 1) is a FRACTION of each document body (per-document budget, e.g. 0.2)",
