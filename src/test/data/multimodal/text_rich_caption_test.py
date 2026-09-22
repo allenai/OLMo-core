@@ -106,9 +106,9 @@ def _cfg(root, **kw):
 def test_level_styles_are_mm_olmo_names():
     assert CAPTION_LEVELS == ("high_level", "mid_level", "low_level")
     assert [level_style(lvl) for lvl in CAPTION_LEVELS] == [
-        "ocr_caption_high_level",
-        "ocr_caption_mid_level",
-        "ocr_caption_low_level",
+        "figure_caption_high_level",
+        "figure_caption_mid_level",
+        "figure_caption_low_level",
     ]
 
 
@@ -117,9 +117,9 @@ def test_emits_one_branch_per_level_in_order(tmp_path):
     turns = ds.turns(ds._data[0])
     assert [t[1] for t in turns] == [HIGH, MID, LOW]
     assert [t[0] for t in turns] == [
-        "ocr_caption_high_level:",
-        "ocr_caption_mid_level:",
-        "ocr_caption_low_level:",
+        "figure_caption_high_level:",
+        "figure_caption_mid_level:",
+        "figure_caption_low_level:",
     ]
 
 
@@ -172,8 +172,8 @@ def test_row_with_no_caption_is_skipped_not_raised(tmp_path):
 @pytest.mark.parametrize(
     "family, expected",
     [
-        ("style_and_length_v2", "ocr_caption_high_level:"),
-        ("style_and_length_v3", "ocr_caption_high_level:"),
+        ("style_and_length_v2", "figure_caption_high_level:"),
+        ("style_and_length_v3", "figure_caption_high_level:"),
         ("none", ""),
     ],
 )

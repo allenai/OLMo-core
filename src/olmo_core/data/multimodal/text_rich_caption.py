@@ -6,13 +6,16 @@ the two OCR groups its molmo3 stage-1 mixture spends 0.075 on each
 :mod:`.olmocr`). One row is one rendered chart / diagram / document / graphic / table, and it
 carries three captions of decreasing altitude, which become the three branches of one example:
 
-===============  ===========================  ==========================================
-field            style                        what it is
-===============  ===========================  ==========================================
-``high_level``   ``ocr_caption_high_level``   one- or two-sentence summary (~150 chars)
-``mid_level``    ``ocr_caption_mid_level``    layout and content description (~700 chars)
-``low_level``    ``ocr_caption_low_level``    dense read-out of the page (2-4k chars)
-===============  ===========================  ==========================================
+===============  ==============================  ==========================================
+field            style                           what it is
+===============  ==============================  ==========================================
+``high_level``   ``figure_caption_high_level``   one- or two-sentence summary (~150 chars)
+``mid_level``    ``figure_caption_mid_level``    layout and content description (~700 chars)
+``low_level``    ``figure_caption_low_level``    dense description quoting the text (2-4k chars)
+===============  ==============================  ==========================================
+
+The style names are this repo's. mm_olmo calls them ``ocr_caption_<level>``; they were renamed
+because all three are descriptions of a figure, not OCR of it, and the name should say so.
 
 All three on one image is the point of the group: the model learns to read the same page at
 several altitudes, and ``low_level``, the read-out of everything on the page, is the part closest
@@ -61,8 +64,8 @@ CAPTION_LEVELS: Tuple[str, ...] = ("high_level", "mid_level", "low_level")
 
 
 def level_style(level: str) -> str:
-    """The mm_olmo style name of one caption level, e.g. ``ocr_caption_high_level``."""
-    return f"ocr_caption_{level}"
+    """The style name of one caption level, e.g. ``figure_caption_high_level``."""
+    return f"figure_caption_{level}"
 
 
 @dataclass
@@ -93,7 +96,7 @@ class TextRichCaptionDatasetConfig(Config):
     seed: int = 0
 
     system_prompt: str = "style_and_length_v3"
-    """How the style is shown in the user turn: the bare ``"ocr_caption_<level>:"`` under every
+    """How the style is shown in the user turn: the bare ``"figure_caption_<level>:"`` under every
     ``style_and_length`` family, or no prefix under ``none``."""
 
     def validate(self):

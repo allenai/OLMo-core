@@ -16,6 +16,26 @@ import pytest
 from olmo_core.data.multimodal.sft_formatter import SftFormatter
 
 STAGE1 = {"prompt_templates": "none", "system_prompt": "style_and_length_v2"}
+
+
+class _PromptTok:
+    """Minimal tokenizer that records the user turns it templates."""
+
+    eos_token_id = 1
+    bos_token_id = 0
+
+    def __init__(self):
+        self.prompts = []
+
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+        self.prompts.append(messages[0]["content"])
+        text = f"<|im_start|>user\n{messages[0]['content']}<|im_end|>\n"
+        if add_generation_prompt:
+            text += "<|im_start|>assistant\n"
+        return text
+
+    def encode(self, text, add_special_tokens=False):
+        return [(ord(c) % 90) + 10 for c in text]
 POINTS = [{"x": 10.5, "y": 20.5}, {"x": 30.0, "y": 40.0}]
 
 
@@ -39,6 +59,54 @@ def test_stage2_family_is_unchanged(style: str):
     assert not user.startswith(f"{style}:")
     assert "leather earmuff" in user.lower()
     assert len(user) > len(f"{style}: leather earmuff")
+
+
+# ---------------------------------------------------------------------------
+# CoSyn pointing: the same `pointing:` tag, on a question instead of a label
+# ---------------------------------------------------------------------------
+
+
+def _write_cosyn_point(tmp_path):
+    """A one-row `cosyn-point` fixture: the columns `CoSynPointDataset` reads."""
+    from datasets import Dataset, DatasetDict
+    from PIL import Image
+
+    img = tmp_path / "doc.png"
+    Image.new("RGB", (64, 48), color=(10, 40, 90)).save(img)
+    rows = {
+        "image": [str(img)],
+        "questions": [["Find the button that submits the form."]],
+        "answer_points": [[{"x": [50.0], "y": [25.0]}]],
+        "names": [["submit button"]],
+    }
+    path = tmp_path / "cosyn-point"
+    DatasetDict({"train": Dataset.from_dict(rows)}).save_to_disk(str(path))
+    return str(path)
+
+
+def _cosyn_turn(tmp_path, **family):
+    from olmo_core.data.multimodal import CoSynPointDatasetConfig
+
+    tok = _PromptTok()
+    CoSynPointDatasetConfig(
+        dataset_path=_write_cosyn_point(tmp_path), max_crops=1, **family
+    ).build(tok)[0]
+    return [p for p in tok.prompts if p]
+
+
+def test_cosyn_point_carries_the_pointing_tag_in_stage1(tmp_path):
+    """CoSyn pointing is a pointing task whose question is an English sentence from the data.
+    Under the stage-1 family it gets the same `pointing:` tag as every other pointing source,
+    so stage 1 has one pointing tag; mm_olmo tags it `cosyn_point:` instead."""
+    from olmo_core.data.multimodal.pixmo_points import COSYN_POINT_STYLE
+
+    assert COSYN_POINT_STYLE == "pointing"
+    assert _cosyn_turn(tmp_path, **STAGE1) == ["pointing: Find the button that submits the form."]
+
+
+def test_cosyn_point_has_no_tag_in_stage2(tmp_path):
+    """The SFT family sends the question as written, so `image_only_v9` is unchanged."""
+    assert _cosyn_turn(tmp_path) == ["Find the button that submits the form."]
 
 
 def test_target_never_carries_the_prefix():

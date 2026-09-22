@@ -336,18 +336,29 @@ class PixMoCountDataset:
 # CoSyn point (document pointing; multi-branch, prompt = the question)
 # ---------------------------------------------------------------------------
 
+#: The style CoSyn pointing is tagged with. It is a pointing task whose question is an English
+#: sentence stored in the data rather than a bare label, and it shares the ``pointing`` tag so
+#: that stage 1 has one pointing tag. mm_olmo tags it ``cosyn_point`` instead.
+COSYN_POINT_STYLE = "pointing"
+
 
 @dataclass
 class CoSynPointDatasetConfig(Config):
+    dataset_path: str = f"{PIXMO_DATASETS}/cosyn-point"
+    """HF dataset with ``image``, ``questions``, ``answer_points`` and ``names`` columns."""
+
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
     prompt_templates: str = "uber_model_v2"
-    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    """Unused: the question is always the one stored in the data. Kept so the source takes the
+    same kwargs as the other pointing sources."""
     system_prompt: str = "demo_or_style_v2"
-    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
+    """Prompt family for the style prefix. Under the stage-1 ``style_and_length_v2`` family the
+    question is prefixed with ``"pointing:"``; under the SFT ``demo_or_style_v2`` family it is
+    sent as written (:data:`COSYN_POINT_STYLE`)."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)
@@ -357,20 +368,26 @@ class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
+        self._data = _load_split(config.dataset_path, "train")
 
     def __len__(self) -> int:
         return len(self._data)
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         row = self._data[i]
+        # The prefix follows the checkpoint's family exactly as for the PixMo sources.
+        prefix = SftFormatter(
+            seed=self.config.seed,
+            prompt_templates=self.config.prompt_templates,
+            system_prompt=self.config.system_prompt,
+        ).style_prefix(COSYN_POINT_STYLE)
         branches: List[Tuple[str, str]] = []
         for question, points, name in zip(row["questions"], row["answer_points"], row["names"]):
             xy = np.array([points["x"], points["y"]], dtype=np.float64).T.reshape(-1, 2)
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
             answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
-            branches.append((question, answer))
+            branches.append((f"{prefix} {question}" if prefix else question, answer))
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),

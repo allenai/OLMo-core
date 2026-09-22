@@ -301,7 +301,7 @@ NLP_RATE = 0.10
 OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
 # The OCR user turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
-# `ocr_caption_{high,mid,low}_level:`),
+# `figure_caption_{high,mid,low}_level:`),
 # mm_olmo's molmo3 stage-1 `style_and_length_v3` family, the one mm_olmo trains olmOCR-mix
 # under. In this repo every `style_and_length` family renders the same bare tag, since no tag
 # carries a length number (captions dropped theirs too), so the family choice only records
