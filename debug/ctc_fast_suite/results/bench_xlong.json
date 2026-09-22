@@ -1,0 +1,23 @@
+{
+  "cells": [
+    {
+      "subset": "fiqa",
+      "spec": "retrieval",
+      "rung": "r64k",
+      "rung_label_tokens": 65536,
+      "eval_size": 50,
+      "max_new_tokens": 64,
+      "wall_s": 68.12,
+      "prompt_tokens": 3286546,
+      "gen_tokens": 2334,
+      "prompt_tok_p50": 65589,
+      "prompt_tok_p95": 71963,
+      "label_ratio": 1.001,
+      "prompt_tok_per_s": 48248.2,
+      "gen_tok_per_example": 46.7,
+      "s_per_example": 1.362,
+      "parse_rate": 1.0,
+      "f1": 0.3734
+    }
+  ]
+}

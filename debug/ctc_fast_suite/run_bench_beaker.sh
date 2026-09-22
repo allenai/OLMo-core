@@ -123,7 +123,8 @@ OUT=/results/bench_${TAG:-run}.json
 echo "=== bench MODEL=$MODEL LIMIT=$LIMIT MAXLEN=$MAXLEN $(date -u '+%T')Z ==="
 "$VENV/bin/python" -u "$REPO/debug/ctc_fast_suite/bench_vllm_rungs.py" \
   --model "$MODEL" --data-root hf --ctc-vendor "$VENDOR" \
-  --cells "$CELLS" --limit "$LIMIT" --max-model-len "$MAXLEN" --out "$OUT"
+  --cells "$CELLS" --limit "$LIMIT" --max-model-len "$MAXLEN" --out "$OUT" \
+  ${SAVE_GENERATIONS:+--save-generations}
 rc=$?
 echo "--- $OUT ---"; cat "$OUT" 2>/dev/null
 echo "=== DONE rc=$rc $(date -u '+%F %T')Z ==="

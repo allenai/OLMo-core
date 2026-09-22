@@ -129,6 +129,15 @@ def main() -> int:
             [f"{c['task']}:{c['rung']}(n={c['n']},{round(c['est_s'])}s)" for c in sorted(s, key=lambda c: -c["est_s"])]
             for s in shards
         ],
+        # Ready to paste into the launcher: one CELLS string per job, in the
+        # subset:spec:rung:n form bench_vllm_rungs.py parses.
+        "shard_cells": [
+            ",".join(
+                f"{roster[c['task']]['subset']}:{roster[c['task']]['spec']}:{c['rung']}:{c['n']}"
+                for c in sorted(s, key=lambda c: -c["est_s"])
+            )
+            for s in shards
+        ],
     }
     with open(args.out, "w") as f:
         json.dump(report, f, indent=2)

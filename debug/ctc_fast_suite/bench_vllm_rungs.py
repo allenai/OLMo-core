@@ -43,11 +43,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cells",
         required=True,
-        help="comma-separated subset:spec:rung triples. With a local tree the rung is the file's "
-        "token budget (fiqa:retrieval:2048); with --data-root hf it is the split label "
-        "(fiqa:retrieval:r2k).",
+        help="comma-separated subset:spec:rung[:n] specs. With a local tree the rung is the "
+        "file's token budget (fiqa:retrieval:2048); with --data-root hf it is the split label "
+        "(fiqa:retrieval:r2k). A trailing :n overrides --limit for that cell, which is how a "
+        "per-rung eval_size policy is expressed -- the cheap rungs and the expensive ones do not "
+        "want the same number of examples.",
     )
-    p.add_argument("--limit", type=int, default=100, help="examples per cell")
+    p.add_argument("--limit", type=int, default=100, help="examples per cell, unless the cell "
+                   "spec carries its own :n")
+    p.add_argument("--save-generations", action="store_true",
+                   help="write <out>.generations.jsonl -- never grade-and-delete a real eval")
     p.add_argument("--max-model-len", type=int, default=40960)
     p.add_argument("--gpu-mem-util", type=float, default=0.90)
     p.add_argument(
@@ -139,15 +144,17 @@ def main() -> int:
 
     cells = []
     for raw in args.cells.split(","):
-        subset, spec_name, rung = raw.split(":")
+        parts = raw.split(":")
+        subset, spec_name, rung = parts[0], parts[1], parts[2]
+        n = int(parts[3]) if len(parts) > 3 else args.limit
         if args.data_root == "hf":
-            cells.append((subset, spec_name, rung, None))
+            cells.append((subset, spec_name, rung, None, n))
             continue
         path = os.path.join(args.data_root, subset, f"rung_{rung}.jsonl")
         if not os.path.exists(path):
             print(f"[bench] SKIP {raw}: no {path}", flush=True)
             continue
-        cells.append((subset, spec_name, rung, path))
+        cells.append((subset, spec_name, rung, path, n))
     if not cells:
         print("[bench] nothing to run", file=sys.stderr)
         return 2
@@ -156,10 +163,10 @@ def main() -> int:
     # reported wall-clock is generation only.
     print(f"[bench] building prompts for {len(cells)} cells", flush=True)
     built = []
-    for subset, spec_name, rung, path in cells:
+    for subset, spec_name, rung, path, n in cells:
         spec = registry.get(spec_name)
         try:
-            rows = read_hf(subset, rung, args.limit) if path is None else read_jsonl(path, args.limit)
+            rows = read_hf(subset, rung, n) if path is None else read_jsonl(path, n)
         except Exception as exc:  # a missing rung must not lose the cells already built
             print(f"[bench] SKIP {subset}:{rung}: {type(exc).__name__}: {exc}", flush=True)
             continue
@@ -203,14 +210,23 @@ def main() -> int:
         if args.stop_strings and getattr(stop, "text_stops", None):
             sp = SamplingParams(max_tokens=max_new, temperature=0, stop=list(stop.text_stops))
         t1 = time.time()
-        outs = llm.generate(prompts, sp)
+        try:
+            outs = llm.generate(prompts, sp)
+        except Exception as exc:
+            # One unusable cell must not cost the shard every cell after it. This is not
+            # hypothetical: a single corrupt rung (unsorted gold pairs in contradiction_iid:r64k)
+            # aborted a whole benchmark run and lost nine healthy cells with it.
+            print(f"[bench] FAILED {subset}:{rung}: {type(exc).__name__}: {exc}", flush=True)
+            results.append({"subset": subset, "rung": rung, "error": f"{type(exc).__name__}: {exc}"})
+            continue
         wall = time.time() - t1
 
         prompt_toks = sum(len(o.prompt_token_ids) for o in outs)
         gen_toks = sum(len(o.outputs[0].token_ids) for o in outs)
         lens = sorted(len(o.prompt_token_ids) for o in outs)
         scores, parsed_ok = [], 0
-        for ex, o in zip(rows, outs):
+        try:
+          for ex, o in zip(rows, outs):
             cleaned = apply_stop(o.outputs[0].text or "", stop)
             parsed = spec.parse(cleaned, len(ex["documents"]))
             parsed_ok += parsed is not None
@@ -219,6 +235,17 @@ def main() -> int:
             else:
                 gold = ex.get(spec.extra.get("gold_field", "gold_doc_indices")) or ex
             scores.append(float(spec.score(parsed, gold).get(spec.primary_metric, 0.0)))
+        except Exception as exc:
+            # A grader that refuses the data (the specs validate gold) is a DATA verdict, not a
+            # model result -- record it as such rather than letting a zero look like a score.
+            print(f"[bench] UNGRADABLE {subset}:{rung}: {type(exc).__name__}: {exc}", flush=True)
+            results.append({"subset": subset, "rung": rung, "wall_s": round(wall, 2),
+                            "prompt_tokens": prompt_toks, "gen_tokens": gen_toks,
+                            "prompt_tok_per_s": round(prompt_toks / wall, 1),
+                            "error": f"{type(exc).__name__}: {exc}"})
+            with open(args.out, "w") as f:
+                json.dump({"model": args.model, "load_s": round(load_s, 1), "cells": results}, f, indent=2)
+            continue
 
         rec = {
             "subset": subset,
@@ -241,6 +268,14 @@ def main() -> int:
         }
         results.append(rec)
         print(f"[bench] {json.dumps(rec)}", flush=True)
+        if args.save_generations:
+            with open(args.out.replace(".json", ".generations.jsonl"), "a") as gf:
+                for ex, o, sc in zip(rows, outs, scores):
+                    gf.write(json.dumps({
+                        "subset": subset, "rung": rung, "score": sc,
+                        "gold": ex.get(spec.extra.get("gold_field", "gold_doc_indices")),
+                        "generation": o.outputs[0].text,
+                    }) + "\n")
         with open(args.out, "w") as f:
             json.dump({"model": args.model, "load_s": round(load_s, 1), "cells": results}, f, indent=2)
 
