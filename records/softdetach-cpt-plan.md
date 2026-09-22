@@ -1,0 +1,69 @@
+# Soft-detached pooling for continued pretraining — plan (2026-09-21)
+
+**Ask (Prasann):** CPT runs "similar to one of amandab's" that use soft-detaching with ≥4×
+compaction (random chunks are fine) — does it reach the same dev loss at the same FLOP budget?
+Then, the same day: **screen strategies at small cost first, pick 1–2, then spend the 4B runs**;
+"you can use the dev loss setup to measure this."
+
+## Instrument: the frozen-base dev-loss harness
+
+`debug/devloss_grid/ctc_devloss_grid.py --task cpt80` scores a frozen checkpoint (the
+marker-repaired Qwen3.5-4B base) on held-out long documents: the first 80% of a document is cut
+into 512-token pseudo-documents wrapped in `<|doc_start|>/<|doc_end|>`, the last 20% is the loss
+region, rungs 2k/8k/32k. Every strategy is a `SCHEMES` entry that runs through
+`Transformer._compact_pooled_soft_tokens`, so all strategies land on one axis: **tail-20% CE vs
+compaction** (plus a per-scheme `sel_cost` for selectors that need an extra pass).
+
+Strategies (all gold-blind, `cent_cmean` slot, detached K/V+GDN):
+
+| scheme | rule | compaction on 512-token blocks | selection cost |
+|---|---|---|---|
+| `rand20` | 20% of pseudo-docs whole, rest one slot each (random-chunk k0) | ×0.20 | 0 |
+| `fl20` | first 10% + last 10% of every block | ×0.20 | 0 |
+| `first64` / `first128` | first K of every block | ×0.13 / ×0.25 | 0 |
+| `rule20` | token-feature saliency (`DEFAULT_KEEP_TOKEN_WEIGHTS`), 20% per block | ×0.20 | 0 |
+| `grad20` | **oracle**: top-20% per block by ‖∂CE(tail)/∂embedding‖ | ×0.20 | ~3 fwd-equiv (fwd+bwd), uses the label |
+| `attnrow20` | layer-3 attention mass from the last 32 prompt positions sets each block's budget (20% total), first-k inside | ×0.20 | 1 fwd (4/32 if truncated at layer 3) |
+| `k0` | everything pooled (floor) | ×0.20 on cpt80 (tail is real) | 0 |
+
+Library additions for this: fractional `keep_token_k` (0<k<1 = per-document fraction,
+`mark_doc_topk_tokens_free`), and a `custom` keep rule (`mark_positions_free`) that takes a
+caller-built keep mask — how `grad20`/`attnrow20` inject their selections.
+
+Runs: `debug/devloss_grid/run_grid_local.sbatch` with `SCHEMES=… RES_DIR=…/results_screen`
+(jsteinhardt preemptive_high; also over the 18 CTC rows so the cheap ones merge into the CTC grid).
+Only a strategy that NEEDS training (a trainable compressive-landmark / learned slot) gets a
+training job, and the smallest one: train the slot layer on the frozen base briefly, then score with
+the same driver.
+
+## The 4B CPT runs (after screening picks 1–2)
+
+Recipe copied from `src/scripts/train/memexpress/cpt/Qwen3.5-4B-dense-dolma3longmino.py`
+(Qwen3.5-4B hybrid, 64k rows, dolma3_longmino sample at
+`checkpoints/amandab/dolma3_longmino_mix_sample15B_qwen3_5`, no CP, no YaRN), run through
+`train_ctc_suite.py` (`--variant full|softtoken`) so the soft-token machinery, the FLOP meter and
+the ds64 Beaker path are reused verbatim: **same rows/step for every arm (8 × 64k = 520k
+tokens/step)**, budgets 32M/64M/128M tokens as `--max-tokens` prefixes of one 128M shard,
+`flop_meter/actual_pflops` as the x-axis (trap: a budget below one step's tokens is a 1-step run).
+
+Data (`cpt/softdetach/build_cpt_shard*.{py,sh}`): CPT streams carry no document markers, so each 64k
+row is cut into 127 pseudo-documents of 510 body tokens + the marker pair (65,024 tokens + EOS);
+loss mask on body tokens only. Dense trains on the same marker-wrapped shard. The dev shard comes
+from the last source part, never read by training.
+
+Arms so far (`launch_softdetach_cpt.py`): `dense`; `sd20` = `--st-gold-blind --st-keep-prob 0.2`
+(20% of blocks whole, 80% → one slot; ~×0.20); `sfl20` = `--st-keep-prob 0 --st-keep-token-rule
+first_last --st-keep-token-k 0.2` (~×0.20). The screening decides which 1–2 replace/join these.
+
+Dev loss (`eval_cpt_devloss.py`, one GPU per checkpoint, gantry wrapper): on the held-out shard,
+full-row CE and tail-20% CE under FULL attention (the ds64 convention: compression is a training
+saving) and, for soft arms, under their own construction (is it also an inference saving).
+
+## Traps
+- `--st-keep-token-k` was `type=int` in the trainer; fractional K needed `float` (done).
+- The base must be the marker-repaired one (`q35-4b-base-markerfix`), CLAUDE.md "REPAIR THE BASE
+  CHECKPOINT FIRST".
+- Held-out text for the harness (`geodesic-research/dolma3_longmino_mix_500k_sample`) is a sample
+  of the same mix as the training tokens on weka; overlap with the 15B tokenized sample is not
+  excluded. The tokenized dev shard (last source part) is the clean held-out set for the trained
+  arms.

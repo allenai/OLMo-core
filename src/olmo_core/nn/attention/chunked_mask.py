@@ -468,7 +468,7 @@ def mark_doc_topk_tokens_free(
     *,
     doc_start_id: int,
     doc_end_id: int,
-    k: int,
+    k: float,
     n_docs: Optional[int] = None,
 ) -> torch.Tensor:
     """
@@ -493,7 +493,10 @@ def mark_doc_topk_tokens_free(
     :param input_ids: ``(B, S)`` token ids.
     :param scores: ``(B, S)`` per-token scores; only body positions are read (see
         :func:`~olmo_core.nn.pooled_soft_token.keep_token_scores` for the feature rule).
-    :param k: Tokens to keep real per document. ``<= 0`` returns ``chunk_ids`` unchanged.
+    :param k: Tokens to keep real per document. ``<= 0`` returns ``chunk_ids`` unchanged. A value
+        in ``(0, 1)`` is a FRACTION of each document's body: document ``d`` keeps
+        ``ceil(k * |body_d|)`` tokens (at least 1), so compaction is controlled per document
+        regardless of document length (``fl20`` = ``k=0.2`` with ``first_last`` scores).
     :param n_docs: Document-id space (see :func:`doc_body_groups`).
 
     :returns: A new ``(B, S)`` chunk-id tensor.
@@ -526,11 +529,16 @@ def mark_doc_topk_tokens_free(
     perm = o1[torch.argsort(gid[o1], stable=True)]
     starts = torch.cumsum(counts, dim=0) - counts
     rank = torch.arange(M, device=device) - starts[gid[perm]]
-    out[flat_idx[perm[rank < k]]] = FREE_CHUNK_ID
+    if 0 < k < 1:
+        # fractional budget: per-document k_d = ceil(k * |body_d|), at least 1
+        k_doc = torch.clamp(torch.ceil(counts.to(torch.float32) * float(k)).to(torch.long), min=1)
+    else:
+        k_doc = torch.full_like(counts, int(k))
+    out[flat_idx[perm[rank < k_doc[gid[perm]]]]] = FREE_CHUNK_ID
     out = out.reshape(B, S)
     # Documents whose whole body fits in the budget: free the markers too, so the document is not
     # "present" for compact_pooled_rows at all (no slot standing in for a marker pair).
-    whole = counts <= k
+    whole = counts <= k_doc
     if bool(whole.any()):
         cid = chunk_ids.to(torch.long)
         gid_full = torch.arange(B, device=device)[:, None] * n_docs_eff + cid.clamp(min=0)
@@ -538,6 +546,57 @@ def mark_doc_topk_tokens_free(
         out = torch.where(markers & whole[gid_full], torch.full_like(out, FREE_CHUNK_ID), out)
     return out
 
+
+
+def mark_positions_free(
+    chunk_ids: torch.Tensor,
+    input_ids: torch.Tensor,
+    keep_mask: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    n_docs: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Keep an arbitrary, caller-chosen set of BODY tokens real (re-label them ``FREE``).
+
+    The per-token twin of :func:`mark_doc_topk_tokens_free` for selectors the model cannot score
+    itself -- an embedding-gradient saliency from a proxy backward, a layer-L attention budget
+    allocator, an external oracle. ``keep_mask`` is ``(B, S)`` bool; only positions that are body
+    tokens (inside a document, not a marker) are honoured. A document whose ENTIRE body is kept has
+    its markers freed too, exactly as the top-k rule does, so it is not "present" for
+    ``compact_pooled_rows``.
+
+    :returns: A new ``(B, S)`` chunk-id tensor.
+    """
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    if keep_mask.dim() == 1:
+        keep_mask = keep_mask.unsqueeze(0)
+    if keep_mask.shape != input_ids.shape:
+        raise ValueError(
+            f"mark_positions_free: keep_mask {tuple(keep_mask.shape)} must match input_ids "
+            f"{tuple(input_ids.shape)}"
+        )
+    cid = chunk_ids.to(torch.long)
+    markers = (input_ids == doc_start_id) | (input_ids == doc_end_id)
+    body = (cid >= 0) & ~markers
+    free = body & keep_mask.to(cid.device)
+    out = chunk_ids.clone()
+    out[free] = FREE_CHUNK_ID
+    B = cid.shape[0]
+    n_eff = int(n_docs) if n_docs is not None else int(cid.max().item()) + 1
+    if n_eff <= 0:
+        return out
+    gid = torch.arange(B, device=cid.device)[:, None] * n_eff + cid.clamp(min=0)
+    body_cnt = torch.bincount(gid[body], minlength=B * n_eff)
+    kept_cnt = torch.bincount(gid[free], minlength=B * n_eff)
+    whole = (body_cnt > 0) & (kept_cnt == body_cnt)
+    if bool(whole.any()):
+        out = torch.where(markers & (cid >= 0) & whole[gid], torch.full_like(out, FREE_CHUNK_ID), out)
+    return out
 
 # ---------------------------------------------------------------------------
 # Mask mixing (runtime schedule)

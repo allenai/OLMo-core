@@ -2100,7 +2100,8 @@ def parse_args() -> argparse.Namespace:
         "--st-keep-token-k",
         type=int,
         default=0,
-        help="softtoken: tokens kept real per pooled document for --st-keep-token-rule",
+        help="softtoken: tokens kept real per pooled document for --st-keep-token-rule; a value in "
+        "(0, 1) is a FRACTION of each document body (per-document budget, e.g. 0.2)",
     )
     ap.add_argument(
         "--st-keep-token-weights",

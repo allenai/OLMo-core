@@ -549,7 +549,7 @@ class Transformer(nn.Module):
             # bit-identical to --st-header-extra-tokens; "rule" adds a non-contiguous per-document
             # top-k over cheap token features (pooled_soft_token.keep_token_scores).
             "keep_token_rule": str(keep_token_rule),
-            "keep_token_k": int(keep_token_k),
+            "keep_token_k": float(keep_token_k),
             "keep_token_weights": (
                 None if keep_token_weights is None else dict(keep_token_weights)
             ),
@@ -967,7 +967,20 @@ class Transformer(nn.Module):
                 scores,
                 doc_start_id=cfg["doc_start_id"],
                 doc_end_id=cfg["doc_end_id"],
-                k=int(cfg["keep_token_k"]),
+                k=float(cfg["keep_token_k"]),
+                n_docs=n_docs,
+            )
+        elif keep_rule == "custom":
+            # caller-supplied per-token keep mask (saliency / attention-budget selectors that the
+            # model cannot score from token features alone); see chunked_mask.mark_positions_free
+            from ..attention.chunked_mask import mark_positions_free
+
+            chunk_ids = mark_positions_free(
+                chunk_ids,
+                input_ids,
+                cfg["keep_token_mask"],
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
                 n_docs=n_docs,
             )
         # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row

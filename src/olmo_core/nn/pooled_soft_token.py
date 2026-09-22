@@ -226,7 +226,11 @@ def compact_pooled_rows(
         row_cid = entry_cid[order]
         row_lab = lab[order] if lab is not None else None
         soft_mask = is_soft[order]
-        doc_len = torch.bincount(c[is_ctx], minlength=n_docs) if is_ctx.any() else torch.zeros(n_docs, dtype=torch.long, device=device)
+        doc_len = (
+            torch.bincount(c[is_ctx], minlength=n_docs)
+            if is_ctx.any()
+            else torch.zeros(n_docs, dtype=torch.long, device=device)
+        )
         doc_of_ordered = doc_of[order]
         # One host sync per row (not two per pooled document): with FSDP on 8 GPUs every .item()
         # drains the CUDA queue and stalls the overlapped all-gathers -- the per-doc version cost
@@ -489,7 +493,7 @@ def apply_slot_mode(
 # second probe (``records/outlier-realtoken-parity-probe.md``) found beats ``first`` at every
 # rung at identical cost, and needs no feature tables at all.
 
-KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule")
+KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule", "custom")
 
 #: The probe's feature list, in order (``outlier_saliency_preview_probe.FEATURES``).
 KEEP_TOKEN_FEATURES = (
