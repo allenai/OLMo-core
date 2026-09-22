@@ -94,3 +94,21 @@ FREE answer span, which always survives.)
 
 **Eval:** `eval_sweep.sh` submits `eval_cpt_devloss_beaker.sh` per run (waits inside the job for
 the checkpoint); results → weka `softdetach_cpt/devloss/<run>.json`, `EVAL_LEDGER.tsv`.
+
+## First trained numbers (2026-09-21 22:30 PDT; dev = 32 held-out 64k rows, CE nats/token)
+
+| run | actual PF | dense-priced PF | full-attn dev CE | tail-20% CE | own construction CE @ ×comp |
+|---|---|---|---|---|---|
+| dense-32M | 1518 | 1518 | 1.283 | 1.308 | — |
+| sd20-32M | 193 (0.13×) | 1518 | 1.291 | 1.319 | 1.533 @ 0.19 |
+| sd20-64M | 383 (0.13×) | 3011 | **1.279** | 1.309 | 1.513 @ 0.19 |
+| sfl20-32M | 172 (0.11×) | 1518 | 1.308 | 1.334 | 1.787 @ 0.20 |
+| sfl20-64M | 340 (0.11×) | 3011 | 1.295 | 1.323 | 1.758 @ 0.20 |
+
+Read: at **0.25× dense-32M's FLOPs** (sd20-64M, 383 vs 1518 PF) the random-chunk soft arm reaches
+dense-32M's full-attention dev CE (1.279 vs 1.283); sfl20 trails sd20 by ~0.015. The compression is
+a *training* saving only: scored under its own construction the model is +0.23 (sd20) / +0.46
+(sfl20) worse — the ds64 pattern. Pending: dense-64M/128M, sd20/sfl20-128M and the three lslot20
+evals (learned slot), which decide whether the own-construction gap can be closed. The base's CE on
+this dev set is not yet measured (add `dense-0M` = the raw base through `eval_cpt_devloss.py`).
+`collect_devloss.py` builds the table from the Beaker logs (`softdetach_devloss.csv`).
