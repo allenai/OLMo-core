@@ -321,12 +321,13 @@ class Transformer(nn.Module):
         header_cap: int = 32,
         header_extra_tokens: int = 0,
         keep_token_rule: str = "none",
-        keep_token_k: int = 0,
+        keep_token_k: float = 0,
         keep_token_weights: Optional[Dict[str, float]] = None,
         keep_token_sd: Optional[Dict[str, float]] = None,
         keep_token_tables: Optional[Any] = None,
         keep_token_log_every: int = 50,
         detach_soft_gdn: bool = True,
+        drop_slots: bool = False,
         mix_start_p: float = 0.0,
         mix_end_p: float = 0.0,
         mix_total_calls: int = 0,
@@ -437,6 +438,10 @@ class Transformer(nn.Module):
             all of that row's document content tokens, computed online, no extra pass) is
             implemented; the eval-side probe used the corpus centroid, which a row of 14-56
             documents from the same corpus estimates.
+        :param drop_slots: Emit NO slot token for pooled documents (their tokens simply vanish
+            from the compacted row; kept tokens keep their original positions). Slot-less
+            compaction has no slot K/V or recurrent write to detach, so ``detach_soft_kv`` /
+            ``detach_soft_gdn`` become no-ops.
         :param detach_soft_gdn: With ``detach_soft_kv``, ALSO sever the backward through the
             slots' recurrent-mixer write channels (``k``/``v`` before the conv, ``beta``, ``g``)
             on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
@@ -563,6 +568,10 @@ class Transformer(nn.Module):
             # bool mask is built lazily on the first compaction (the embedding may be on meta
             # here) and cached under "slot_stop_mask".
             "slot_mode": slot_mode,
+            # drop_slots=True: pooled documents get NO slot at all -- their tokens vanish from the
+            # compacted row (pooled_soft_token.compact_pooled_rows). Slot-less training then has
+            # nothing to detach: the detach paths see zero slot columns and are no-ops.
+            "drop_slots": bool(drop_slots),
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -695,7 +704,11 @@ class Transformer(nn.Module):
             layer_curriculum_calls=layer_curriculum_calls,
         )
         routed = install_nested_ffn_moe(
-            self.blocks, holder, start_layer=start_layer, widths=widths, costs=costs,
+            self.blocks,
+            holder,
+            start_layer=start_layer,
+            widths=widths,
+            costs=costs,
             trainable_width=trainable_width,
         )
         if not routed:
@@ -766,7 +779,10 @@ class Transformer(nn.Module):
         }
         log.info(
             "KV routing enabled on %d attention layers %s (start_layer=%d) target=%.3f",
-            len(routed), routed, start_layer, target,
+            len(routed),
+            routed,
+            start_layer,
+            target,
         )
 
     def enable_block_skip(
@@ -778,6 +794,8 @@ class Transformer(nn.Module):
         two_sided: bool = True,
         target_anneal_calls: int = 0,
         seed: int = 0,
+        compact: bool = False,
+        capacity_frac: Optional[float] = None,
     ) -> None:
         """
         Enable learned per-token block skipping (see :mod:`olmo_core.nn.block_skip`): every block at
@@ -785,6 +803,16 @@ class Transformer(nn.Module):
         tokens pass the residual stream unchanged and are not keys in that block's attention (in a
         GatedDeltaNet block: do not write the recurrent state). Adds
         NEW state-dict keys ``bskip_routers.<i>.w.*`` (on the model root) initialised to run everything.
+
+        :param compact: Gather the kept tokens into a shorter sequence instead of masking, so the
+            skipped work is really not done. This is what makes block skipping a wall-clock lever
+            rather than a FLOP-meter one -- and it changes what "skipped" means for the
+            GatedDeltaNet short convolution. Read the caveat in :mod:`olmo_core.nn.block_skip`
+            before enabling it.
+        :param capacity_frac: Fixed per-block capacity (mixture-of-depths): run the top
+            ``capacity_frac`` of tokens by router logit instead of thresholding. Makes the
+            compacted shape static, which removes one host sync per block. Changes the router's
+            semantics -- see :func:`olmo_core.nn.block_skip.block_skip_decide`.
 
         :raises OLMoConfigurationError: If no block was routed.
         """
@@ -798,14 +826,19 @@ class Transformer(nn.Module):
             seed=seed,
             start_layer=start_layer,
             n_layers=len(self.blocks),
+            compact=compact,
+            capacity_frac=capacity_frac,
         )
         routed = install_block_skip(self.blocks, holder, start_layer=start_layer, owner=self)
         if not routed:
             raise OLMoConfigurationError("enable_block_skip routed no blocks")
         self._block_skip = {"start_layer": int(start_layer), "routed": routed, "holder": holder}
         log.info(
-            "Block skipping enabled on %d blocks (start_layer=%d) target=%.3f",
-            len(routed), start_layer, target,
+            "Block skipping enabled on %d blocks (start_layer=%d) target=%.3f compact=%s",
+            len(routed),
+            start_layer,
+            target,
+            compact,
         )
 
     def _attach_block_budget(self, h: torch.Tensor, block_idx: int) -> torch.Tensor:
@@ -918,7 +951,10 @@ class Transformer(nn.Module):
         # bit-identical); "rule" adds a non-contiguous per-document top-k afterwards.
         keep_rule = cfg.get("keep_token_rule", "none")
         extra_tokens = int(cfg.get("header_extra_tokens", 0))
-        if keep_rule == "first":
+        # "first" with 0 < k < 1 is a per-document FRACTION (first ceil(k*|body|) tokens) and goes
+        # through the top-k path with first_scores; integer k stays on the header call below.
+        frac_first = keep_rule == "first" and 0.0 < float(cfg["keep_token_k"]) < 1.0
+        if keep_rule == "first" and not frac_first:
             extra_tokens = int(cfg["keep_token_k"])
         pre_free_chunk_ids = chunk_ids if keep_rule != "none" else None
         if cfg.get("header_stop_id") is not None or extra_tokens > 0:
@@ -934,15 +970,24 @@ class Transformer(nn.Module):
                 extra_tokens=extra_tokens,
                 cap=cfg["header_cap"],
             )
-        if keep_rule in ("rule", "first_last"):
+        if keep_rule in ("rule", "first_last") or frac_first:
             from ..attention.chunked_mask import mark_doc_topk_tokens_free
             from ..pooled_soft_token import (
                 DEFAULT_KEEP_TOKEN_WEIGHTS,
                 first_last_scores,
+                first_scores,
                 keep_token_scores,
             )
 
-            if keep_rule == "first_last":
+            if frac_first:
+                scores = first_scores(
+                    input_ids,
+                    chunk_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
+            elif keep_rule == "first_last":
                 scores = first_last_scores(
                     input_ids,
                     chunk_ids,
@@ -1144,7 +1189,6 @@ class Transformer(nn.Module):
                     flush=True,
                 )
 
-
         cb = compact_pooled_rows(
             input_ids,
             labels,
@@ -1155,6 +1199,7 @@ class Transformer(nn.Module):
             ignore_index=ignore_index,
             add_shadows=cfg["aux_match_weight"] > 0.0,
             max_shadows_per_row=cfg["aux_max_shadows"],
+            drop_slots=bool(cfg.get("drop_slots", False)),
         )
         if pre_free_chunk_ids is not None:
             cfg["_keep_token_calls"] += 1
@@ -1278,7 +1323,11 @@ class Transformer(nn.Module):
             extra: Dict[str, Any] = {}
             attn_mod = getattr(block, "attention", None)
             kv_cfg = getattr(attn_mod, "_kv_route", None)
-            if kv_cfg is not None and kv_cfg["holder"].enabled and kv_cfg.get("location", "attention") == "root":
+            if (
+                kv_cfg is not None
+                and kv_cfg["holder"].enabled
+                and kv_cfg.get("location", "attention") == "root"
+            ):
                 from ..attention.kv_route import kv_route_decide
 
                 extra.update(kv_route_decide(self, attn_mod, h))
@@ -1286,7 +1335,9 @@ class Transformer(nn.Module):
                 from ..block_skip import block_skip_decide, block_skip_forward
 
                 p_skip, keep_skip = block_skip_decide(block, h)
-                h = block_skip_forward(block, h, {**all_block_kwargs, **block_kwargs, **extra}, p_skip, keep_skip)
+                h = block_skip_forward(
+                    block, h, {**all_block_kwargs, **block_kwargs, **extra}, p_skip, keep_skip
+                )
             else:
                 h = block(h, **all_block_kwargs, **block_kwargs, **extra)
             if self.budget_attach and h.requires_grad:
@@ -1817,7 +1868,11 @@ class Transformer(nn.Module):
                 # FlopMeterCallback reads and resets it every step).
                 stats = getattr(self, "_soft_token_compaction", None)
                 if stats is None:
-                    stats = self._soft_token_compaction = {"tokens_in": 0, "tokens_out": 0, "rows": 0}
+                    stats = self._soft_token_compaction = {
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "rows": 0,
+                    }
                 stats["tokens_in"] += n_tokens_in
                 stats["tokens_out"] += int(input_ids.numel())
                 stats["rows"] += int(input_ids.shape[0])
@@ -1880,7 +1935,10 @@ class Transformer(nn.Module):
                             cb, dtype=self.embeddings.weight.dtype, device=input_ids.device  # type: ignore[union-attr]
                         )
                     kwargs["attn_bias"] = add_soft_len_bias(
-                        kwargs["attn_bias"], cb, scale=pst.get("len_bias_scale", 1.0), extra=pst.get("len_bias_extra", 0.0)
+                        kwargs["attn_bias"],
+                        cb,
+                        scale=pst.get("len_bias_scale", 1.0),
+                        extra=pst.get("len_bias_extra", 0.0),
                     )
         # Role-gated FFN: gate mask from the FINAL token stream (post-compaction when the
         # soft-token path rewrote input_ids), so kept-doc tokens are gated in compacted rows too.

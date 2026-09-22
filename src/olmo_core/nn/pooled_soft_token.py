@@ -60,6 +60,7 @@ __all__ = [
     "parse_keep_token_weights",
     "keep_token_scores",
     "first_last_scores",
+    "first_scores",
 ]
 
 
@@ -142,10 +143,16 @@ def compact_pooled_rows(
     ignore_index: int = -100,
     add_shadows: bool = False,
     max_shadows_per_row: int = 8,
+    drop_slots: bool = False,
 ) -> CompactedBatch:
     """
     Compact a padded batch by dropping pooled documents' tokens (and original PAD), inserting one
     ``placeholder_id`` token per pooled document at its center position.
+
+    ``drop_slots=True`` inserts NO placeholder for pooled documents: their tokens simply vanish
+    from the compacted row (kept tokens still carry their original positions), so the model sees
+    the real tokens with nothing standing in for the rest. ``soft_*`` come back empty. The default
+    is bit-identical to the historical behaviour.
 
     :param input_ids: ``(B, T)`` token ids.
     :param labels: Optional ``(B, T)`` already-shifted labels aligned with ``input_ids`` (the value
@@ -196,6 +203,8 @@ def compact_pooled_rows(
             last.scatter_reduce_(0, d_ix, pos_ix, reduce="amax", include_self=True)
         pooled = present & ~keep_docs[b]
         pooled_docs = pooled.nonzero(as_tuple=True)[0]
+        if drop_slots:
+            pooled_docs = pooled_docs[:0]  # no slot stands in for a pooled document
         centers = torch.div(first[pooled_docs] + last[pooled_docs], 2, rounding_mode="floor")
 
         # Merge kept tokens and soft tokens in original-position order.
@@ -781,6 +790,39 @@ def first_last_scores(
     dist = torch.minimum(within, from_end)
     # +1 penalty for the FRONT member of a tie, so the tail wins it (the probe's ``b = k - k // 2``).
     out[flat_idx] = -(2.0 * dist + (within < from_end).to(torch.float32))
+    return out.reshape(input_ids.shape)
+
+
+def first_scores(
+    input_ids: torch.Tensor,
+    chunk_ids: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+    n_docs: Optional[int] = None,
+) -> torch.Tensor:
+    """
+    Scores for a FRACTIONAL ``first`` keep-token rule: rank each document's body tokens by
+    position, earliest first, so :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_topk_tokens_free`
+    with ``0 < k < 1`` keeps the first ``ceil(k * |body|)`` tokens of every document. The integer
+    ``first`` rule stays on :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`
+    (``extra_tokens=k``), which is bit-identical to the trained ds64 arms' recipe.
+
+    :returns: ``(B, S)`` float32 scores, zero at non-body positions.
+    """
+    from .attention.chunked_mask import doc_body_groups
+
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if chunk_ids.dim() == 1:
+        chunk_ids = chunk_ids.unsqueeze(0)
+    out = torch.zeros(input_ids.shape, dtype=torch.float32, device=input_ids.device).reshape(-1)
+    flat_idx, _gid, within, _counts, _n = doc_body_groups(
+        chunk_ids, input_ids, doc_start_id=doc_start_id, doc_end_id=doc_end_id, n_docs=n_docs
+    )
+    if flat_idx.numel() == 0:
+        return out.reshape(input_ids.shape)
+    out[flat_idx] = -within.to(torch.float32)
     return out.reshape(input_ids.shape)
 
 

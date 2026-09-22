@@ -80,12 +80,12 @@ from olmo_core.train import (
 )
 from olmo_core.train.callbacks import (
     BlockSkipCallback,
-    FlopMeterCallback,
-    KVRouteCallback,
-    NestedFFNMoECallback,
     CheckpointerCallback,
     ConfigSaverCallback,
+    FlopMeterCallback,
     GPUMemoryMonitorCallback,
+    KVRouteCallback,
+    NestedFFNMoECallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -527,6 +527,24 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
 _LARGE_SCALES = ("2b", "4b", "9b", "27b")
 
 
+def kv_route_enabled(opts: argparse.Namespace) -> bool:
+    """Whether the learned KV keep/drop router runs.
+
+    On by default for the ``kvroute`` and ``flexcompute`` variants. ``--kv-route-off`` turns it
+    off inside ``flexcompute`` so the FFN-width and block-skip routers can be measured without
+    it: once block skipping is COMPACTED it already removes a skipped token as a key, so the KV
+    router re-does that work and charges for it (measured 5.650x -> 5.402x on a 4B/16k step, see
+    ``debug/flexcompute_40x/README.md``). Ignored for ``kvroute``, where it is the whole arm.
+
+    :param opts: Parsed CLI options.
+
+    :returns: ``True`` if :meth:`Transformer.enable_kv_route` should be called.
+    """
+    if opts.variant == "kvroute":
+        return True
+    return opts.variant == "flexcompute" and not opts.kv_route_off
+
+
 def resolve_keep_frac(opts: argparse.Namespace) -> Optional[float]:
     """Resolve the soft-token keep FRACTION for the gold-sidecar path.
 
@@ -664,7 +682,9 @@ def build_train_module_config(
     )
     return TransformerTrainModuleConfig(
         rank_microbatch_size=opts.micro_batch_instances * opts.seq_len,
-        microbatch_sort_pad_id=(RESERVED_IDS[opts.model_family].eos if opts.variant == "softtoken" else None),  # length-homogeneous micro-batches
+        microbatch_sort_pad_id=(
+            RESERVED_IDS[opts.model_family].eos if opts.variant == "softtoken" else None
+        ),  # length-homogeneous micro-batches
         max_sequence_length=opts.seq_len,
         optim=SkipStepAdamWConfig(
             lr=opts.lr,
@@ -695,7 +715,7 @@ def build_train_module_config(
                         opts=dict(lr=opts.router_lr, weight_decay=0.0),
                     )
                 ]
-                if opts.variant in ("kvroute", "flexcompute")
+                if kv_route_enabled(opts)
                 else []
             )
             + (
@@ -1117,7 +1137,10 @@ def _tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
     import torch.distributed.checkpoint as dist_cp
     import torch.distributed.checkpoint.state_dict as dist_cp_sd
 
-    from olmo_core.distributed.checkpoint import RemoteFileSystemReader, _prepare_state_dict
+    from olmo_core.distributed.checkpoint import (
+        RemoteFileSystemReader,
+        _prepare_state_dict,
+    )
     from olmo_core.utils import gc_cuda
 
     reader = RemoteFileSystemReader(base_checkpoint)
@@ -1392,7 +1415,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     if opts.kv_route_debug:
         os.environ["KV_ROUTE_DEBUG"] = opts.kv_route_debug
         print(f"[ctc-suite] KV_ROUTE_DEBUG={opts.kv_route_debug}", flush=True)
-    if opts.variant in ("kvroute", "flexcompute"):
+    if kv_route_enabled(opts):
         model.enable_kv_route(
             start_layer=opts.kv_route_start_layer,
             target=opts.kv_route_target,
@@ -1473,6 +1496,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             ),
             keep_token_log_every=opts.st_keep_token_log_every,
             detach_soft_gdn=not opts.st_no_detach_soft_gdn,
+            drop_slots=opts.st_drop_slots,
             # Compression-mixing curriculum. With --st-gold-blind there is NO keep hook, so the
             # model applies it to the seeded keep_prob draw itself; otherwise the hook installed
             # below carries it (the model side then stays off, see _compact_pooled_soft_tokens).
@@ -1500,6 +1524,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"[ctc-suite] softtoken: slot_mode={opts.st_slot_mode} header_stop_id={opts.st_header_stop_id} "
             f"(count {opts.st_header_stop_count}, extra {opts.st_header_extra_tokens}) "
             f"detach_gdn={not opts.st_no_detach_soft_gdn} "
+            f"drop_slots={opts.st_drop_slots} "
             f"detach={not opts.st_no_detach_soft_kv} len_bias={opts.st_len_bias} "
             f"distill_prob={opts.st_distill_prob} keep_mode={opts.st_keep_mode} "
             f"n_random={opts.st_n_random_range or opts.st_n_random} keep_frac={opts.st_keep_frac} "
@@ -1571,7 +1596,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         trainer_config = trainer_config.with_callback(
             "ffn_moe", NestedFFNMoECallback(calls_per_step=accum)
         )
-    if opts.variant in ("kvroute", "flexcompute"):
+    if kv_route_enabled(opts):
         trainer_config = trainer_config.with_callback(
             "kv_route", KVRouteCallback(calls_per_step=accum)
         )
@@ -1753,7 +1778,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                         "target": opts.kv_route_target,
                         "router_location": "root",
                     }
-                    if opts.variant in ("kvroute", "flexcompute")
+                    if kv_route_enabled(opts)
                     else None
                 ),
                 "block_skip": (
@@ -1848,8 +1873,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run the LM head only at supervised positions (exact; SFT masked-label runs only)",
     )
+    # 0 = every layer routed. Matches the KV and block-skip routers (both default 0) and what the
+    # trained v11/v12 checkpoints used. The old default of 12 left a third of the FFN unrouted, so
+    # an all-null arm only reached a 2.66x FFN cut instead of the ~20x the component sweeps show.
     ap.add_argument(
-        "--ffn-moe-start-layer", type=int, default=12, help="first routed layer (0 = all)"
+        "--ffn-moe-start-layer", type=int, default=0, help="first routed layer (0 = all)"
     )
     # Rung ladder. Default chosen from the MEASURED speed knee (debug/flexcompute_40x): below
     # width ~300 at 4B, narrowing a rung buys FLOPs but no time -- a narrow token still reads x,
@@ -1898,6 +1926,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ffn-moe-layer-curriculum-frac", type=float, default=0.0)
     ap.add_argument(
         "--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)"
+    )
+    ap.add_argument(
+        "--kv-route-off",
+        action="store_true",
+        help="flexcompute: do NOT install the KV keep/drop router (FFN + block-skip routers only). "
+        "Ignored for --variant kvroute. See kv_route_enabled().",
     )
     ap.add_argument(
         "--kv-route-start-layer", type=int, default=0, help="kvroute: first routed attention layer"
@@ -2134,6 +2168,14 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="softtoken: log the realised keep-token cost (real tokens per pooled doc, real-token "
         "fraction) every N compactions; the first 5 are always logged",
+    )
+    ap.add_argument(
+        "--st-drop-slots",
+        action="store_true",
+        help="softtoken: emit NO slot token for pooled documents -- their tokens simply vanish from "
+        "the compacted row and the kept tokens keep their original positions. Slot-less compaction "
+        "has no slot K/V / GDN write to detach (detach flags become no-ops). Motivated by the "
+        "eval-side grid, where gold_fl20p8_noslot == gold_fl20p8 on every cell (2026-09-22).",
     )
     ap.add_argument(
         "--st-slot-mode",
@@ -2504,7 +2546,7 @@ def parse_args() -> argparse.Namespace:
     if opts.variant in ("ffnmoe", "flexcompute") and opts.compile:
         print("[ctc-suite] ffnmoe: forcing --no-compile (data-dependent per-rung GEMM shapes)")
         opts.compile = False
-    if opts.variant in ("kvroute", "flexcompute") and opts.compile:
+    if kv_route_enabled(opts) and opts.compile:
         print("[ctc-suite] kvroute: forcing --no-compile (FlexAttention compiles its own kernel)")
         opts.compile = False
     if opts.variant in ("kvroute", "flexcompute") and not opts.pack:

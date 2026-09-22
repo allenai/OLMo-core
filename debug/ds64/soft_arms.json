@@ -1,14 +1,42 @@
 {
+ "contradiction": [
+  "chk32",
+  "chk64",
+  "chk16",
+  "chk32ns"
+ ],
  "oolong": [
   "ohdr33",
-  "ohdr17"
+  "ohdr17",
+  "ohdr08",
+  "occ08",
+  "occ00"
  ],
  "nq": [
   "kv33",
-  "kv17"
+  "kv17",
+  "kvgb",
+  "nqcc17",
+  "nqcc08",
+  "nqk32",
+  "nqk64"
  ],
  "outlier": [
-  "kv33",
-  "kv17"
+  "kvgb",
+  "kvgbmix",
+  "kvgb50",
+  "xh2k50",
+  "xh2warm17",
+  "xh2mix17",
+  "kvgbmix2",
+  "cc00",
+  "cc03",
+  "cc08",
+  "ck32",
+  "ck64",
+  "ck16",
+  "flk32",
+  "flk64",
+  "flk64ns"
  ]
 }
