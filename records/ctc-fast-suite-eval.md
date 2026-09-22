@@ -308,6 +308,64 @@ high-CTC statistic the binding constraint on the error bars up there (gap SE ±0
 `outlier` and `contra_fever`. Extending even two of the five unbuilt rows would materially
 strengthen it -- `grouping`'s OpenAlex pool alone is reported to support ~1M.
 
+## SFT training sets (2026-09-22)
+
+Builder: `src/scripts/data/hybridish/build_ctc_sft_sets.sh <set-a|set-b> <out-root>`.
+
+**Set A is the one being built** (prasann: "just use set A"). **13 tasks**:
+`nq hotpotqa qdmatch_nq outlier oolong contradiction xabsence absence reorder rerank strmatch
+textgroups grouping_labeled`.
+
+* **Token-balanced buckets, not example-balanced.** Every context bucket gets the same token budget
+  (default 20M), so examples fall as the bucket grows -- ~9,765 at 2k, ~610 at 32k. Equal examples
+  per bucket would spend ~99% of the budget above 32k.
+* **`query_position=both`**, applied at `convert_ctc_to_sft_completion.py`, NOT at `ctc-data build`
+  (rung files are raw unified JSONL; the prompt is rendered at tokenisation). It must match the eval
+  flag or the mismatch reads as a capability gap.
+* **`qdmatch_hpqa` dropped** so the qdmatch spec is trained from `qdmatch_nq` alone and
+  `qdmatch_hpqa`/`qdmatch_fiqa` stay clean probes.
+* Set B (CTC-BENCH-10, `fiqa`->`rerank`, `qdmatch_fiqa`->`reorder`) is defined in the script but
+  **not being built**.
+
+⚠ **Six roster members have no `ctc-data` generator** -- `msmarco`, `niah`, `obliq_twitter`,
+`qdmatch_fiqa`, `outlier_amzn`, `outlier_fixedM`. That is why "as many of the 22 as possible" is 13,
+not 20. `outlier_amzn`/`outlier_fixedM` would come from `generate_review_outlier_data.py`.
+
+⚠ **`ctc-data` the console script is unusable**: it is shebanged to a python without
+`huggingface_hub`, and `--pool auto` fetches seed pools from the Hub, so every build dies at the
+first task. Drive it as `python -m ctc.data.cli` under the `corpus-reasoning-olmo` env with
+`PYTHONPATH=<newolmocore>/OLMo-core/ctc/src`. The script now does this.
+
+⚠ **Training `outlier_amzn` would gut the `outlier_review` probe** -- the former is half
+category-axis Amazon reviews and the latter IS category-axis Amazon reviews. `TASK_SPEC` in
+`build_ctc_sft_mix.py` now declares this (it previously listed only 6 ladders, so the
+two-sources-per-spec guard could not see `hotpotqa`, `niah`, `obliq`, `qdmatch_fiqa` or any
+`outlier` variant -- and `DEFAULT_ROSTER` ships `msmarco`+`hotpotqa`, a collision it was blind to).
+
+### In flight at handoff
+
+Set A data build running on the LOGIN node:
+`bash src/scripts/data/hybridish/build_ctc_sft_sets.sh set-a /scratch/users/prasann/ctc_sft_sets`,
+log `/scratch/users/prasann/ctc_sft_sets/setA.log`, 13 tasks x 5 buckets. Check it completed
+before tokenising; the script continues past a failed task and the mix step reports what is missing.
+
+### Next: the two SFT runs (NOT launched)
+
+prasann wants **dense attention** and **compressive landmark**, ~1B tokens each, >=500 steps.
+Step arithmetic is comfortable: 1B tokens at seq 40960 and global batch 8 is ~3,000 steps; even at
+global batch 32 it is ~760. Two pre-flight checks that are silent failures if skipped:
+
+1. **The base checkpoint needs repaired marker embeddings** before ANY landmark/document-chunked
+   training -- and re-repaired if the fix predates 2026-07-14, because the first version fixed the
+   marker cosine but not the norm and flatlines training at CE ~0.79 for *every* mask, which reads
+   as "the mask is too restrictive" when it is not. See [[marker-embedding-norm-bug]].
+2. **The run name must carry the variant.** The docchunk/landmark eval path infers its emitter from
+   the run name (`*compressive*`/`*landmark*` -> landmark emitter, else dense). A mismatched emitter
+   produces garbage, not a low score.
+
+Watch the loss curve in the first few hundred steps: a wrong emitter, an unrepaired base and a bad
+shard all produce a plausible-looking or flat curve rather than an error.
+
 ## Still open
 
 1. The vLLM cost model at 2k–32k, then 64k–256k — the measurement this file exists to record.
