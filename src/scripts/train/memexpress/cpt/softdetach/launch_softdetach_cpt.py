@@ -35,6 +35,9 @@ ARMS = {
     "dense": None,
     "sd20": f"--st-keep-prob 0.2 {_SOFT}",
     "sfl20": f"--st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.2 {_SOFT}",
+    # learned slot: sd20 geometry, slot NOT detached and only the projector trains (frozen backbone) --
+    # the cheapest "trainable summary" arm; scored afterwards with the dev-loss driver like every other scheme
+    "lslot20": f"--st-keep-prob 0.2 --st-no-detach-soft-kv --freeze-backbone {_SOFT}",
 }
 
 

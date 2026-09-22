@@ -16,6 +16,6 @@ RC=\$?; echo "rc=\$RC"; exit \$RC
 EOF
 gantry run --name "sdcpt-eval-$RUN-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
   --cluster 'ai2/jupiter*' --gpus 1 --cpus 8 --memory 120GiB --priority urgent \
-  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false --branch "$BRANCH" \
+  --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false --branch "$BRANCH" --allow-dirty \
   --weka oe-training-default:/weka/oe-training-default \
   --timeout 0 --yes -- bash -c "$WORK"
