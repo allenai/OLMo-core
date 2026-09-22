@@ -344,6 +344,14 @@ two-sources-per-spec guard could not see `hotpotqa`, `niah`, `obliq`, `qdmatch_f
 
 ### In flight at handoff
 
+⚠ **`ctc-data build` always writes `<out>/<task>/train.jsonl`**, so calling it once per bucket with
+a shared `--out` overwrites each bucket with the next. Caught on the first live build: `nq`'s file
+held 4,882 rows (the 4k bucket) after the 2k bucket's 9,765 had already been written, and left
+running every task would have ended up with only its 32k bucket -- ~610 examples, the exact opposite
+of token-balanced, while looking like a clean successful build throughout. Each bucket now builds
+into its own `_b<bucket>` tree and the buckets are concatenated per task afterwards, with the merged
+row count echoed. **Expect ~14 min for a 2k bucket, ~27 min per task, ~6 h for all 13.**
+
 Set A data build running on the LOGIN node:
 `bash src/scripts/data/hybridish/build_ctc_sft_sets.sh set-a /scratch/users/prasann/ctc_sft_sets`,
 log `/scratch/users/prasann/ctc_sft_sets/setA.log`, 13 tasks x 5 buckets. Check it completed
