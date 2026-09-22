@@ -132,6 +132,12 @@ def main():
         if rope is not None and hasattr(rope, "warmup_cache"):
             rope.warmup_cache(len(rows[0]) + 8, torch.device("cuda"))
     res = {"full_ce": [], "tail20_ce": [], "own_ce": [], "own_tail20_ce": [], "own_compaction": []}
+    # position breakdown (2026-09-22 crossover diagnosis): mean CE of predictions whose TARGET token
+    # sits in each absolute-position bin of the 64k row, full attention and own construction.
+    POS_BINS = [(0, 2048), (2048, 8192), (8192, 16384), (16384, 32768), (32768, 1 << 20)]
+    pos_names = [f"{lo // 1024}k-{hi // 1024 if hi < 1 << 19 else 'end'}" for lo, hi in POS_BINS]
+    res.update({f"full_pos_{n}": [] for n in pos_names})
+    res.update({f"own_pos_{n}": [] for n in pos_names})
     t_start = time.time()
     for ri, (row, m) in enumerate(zip(rows, masks)):
         x = torch.tensor(row[None], device="cuda")
@@ -153,6 +159,10 @@ def main():
         pt = per_token_loss(model, x, lab)
         res["full_ce"].append(float(torch.nanmean(pt)))
         res["tail20_ce"].append(float(torch.nanmean(pt[tail_pos])))
+        tgt_idx = torch.arange(x.shape[1], device="cuda") + 1  # target position of prediction t
+        for (lo, hi), n in zip(POS_BINS, pos_names):
+            sel = (tgt_idx >= lo) & (tgt_idx < hi)
+            v = pt[sel]; res[f"full_pos_{n}"].append(float(torch.nanmean(v)) if v.numel() else float("nan"))
         # (c): the arm's own construction (gold-blind keep + rule from the run's flags)
         if arm is not None:
             keep = resolve_keep_docs(cid, n_docs, holder=None, keep_prob=float(arm["keep_prob"]), keep_seed=a.seed).cpu()
@@ -162,14 +172,17 @@ def main():
             pt2 = per_token_loss(model, x, lab)
             res["own_ce"].append(float(torch.nanmean(pt2)))
             res["own_tail20_ce"].append(float(torch.nanmean(pt2[tail_pos])))
+            for (lo, hi), n in zip(POS_BINS, pos_names):
+                sel = (tgt_idx >= lo) & (tgt_idx < hi)
+                v = pt2[sel]; res[f"own_pos_{n}"].append(float(torch.nanmean(v)) if v.numel() else float("nan"))
             model.eval(); model._pooled_keep_holder = None
         if ri + 1 in (1, 2, 5, 10) or (ri + 1) % 10 == 0:
             el = time.time() - t_start
             log(f"row {ri + 1}/{len(rows)} full {np.mean(res['full_ce']):.4f} tail20 {np.mean(res['tail20_ce']):.4f}"
                 + (f" own {np.mean(res['own_ce']):.4f}/{np.mean(res['own_tail20_ce']):.4f} @x{np.mean(res['own_compaction']):.3f}" if arm else "")
                 + f"  ({el:.0f}s, ETA {el / (ri + 1) * (len(rows) - ri - 1):.0f}s)")
-    summ = {k: (float(np.mean(v)) if v else None) for k, v in res.items()}
-    summ.update({k + "_se": (float(np.std(v, ddof=1) / np.sqrt(len(v))) if len(v) > 1 else None) for k, v in res.items()})
+    summ = {k: (float(np.nanmean(v)) if v else None) for k, v in res.items()}
+    summ.update({k + "_se": (float(np.nanstd(v, ddof=1) / np.sqrt(len(v))) if len(v) > 1 else None) for k, v in res.items()})
     out = {"ckpt": a.ckpt, "arm": a.arm, "dev": a.dev, "eval_size": len(rows), "summary": summ, "per_row": res,
            "git_commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip(),
            "argv": os.sys.argv}
