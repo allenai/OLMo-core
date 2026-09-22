@@ -232,10 +232,28 @@ already built. Sorting is meaning-preserving: a contradiction pair is unordered.
 deliberately not touched** — its `gold_pairs` are (query, doc), ordered by construction, and sorting
 them would corrupt them; it is named explicitly rather than inferred for that reason.
 
-⚠ The **contra_fever ladder built above inherited this** (same tool) and has been repaired: all 8
-rungs now pass the spec's gold guard. **The shipped rungs on the HF dataset have NOT been repaired**
-— that needs the fix re-run and a re-upload. Until then, treat every contradiction number at 64k and
-above as void.
+⚠ The **contra_fever ladder built above inherited this** (same tool) and has been repaired.
+
+**Resolved in the GRADER instead of the data (prasann's call, and the better one).** `parse()`
+already sorts predicted pairs, on the stated grounds that "1 contradicts 4" and "4 contradicts 1"
+are the same claim. Gold was never canonicalised the same way, and *that asymmetry is the whole
+defect*. So `_check_gold` now canonicalises rather than raises:
+
+* it fixes every affected file at once, including ones nobody has audited, and any future builder
+  that reintroduces the same bug;
+* it needs **no dataset re-upload**, which was the one blocker requiring an HF token;
+* ordered-pair tasks cannot be caught by it -- they go through `parse_qd_pairs` and never reach
+  this function.
+
+The signal is kept: module counter `UNSORTED_GOLD_SEEN` records what it canonicalised, so a builder
+emitting unsorted pairs stays visible even though the scores are now correct. Verified: unchanged on
+already-sorted gold; the shipped `rung_65536` scores 50/50 without raising (73 pairs canonicalised);
+and the **gold-answer control on that same corrupt file is f1 1.0000**, which it could not reach
+before.
+
+⚠ **The fix is in the VENDORED copy and must go upstream.** The vendor tree's own rule is
+fix-upstream-then-re-vendor, so the same change belongs in the `ctc` package (OLMo-core branch
+`prasann/ctc` / the public repo) before this diverges.
 
 ## The recommended config (S+)
 
