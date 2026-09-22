@@ -115,6 +115,25 @@
       "s_per_example": 3.619,
       "parse_rate": 1.0,
       "score": 0.003
+    },
+    {
+      "subset": "qdmatch_nq",
+      "spec": "qdmatch",
+      "rung": "r128k",
+      "rung_label_tokens": 131072,
+      "eval_size": 50,
+      "max_new_tokens": 512,
+      "wall_s": 213.68,
+      "prompt_tokens": 6428416,
+      "gen_tokens": 25600,
+      "prompt_tok_p50": 128586,
+      "prompt_tok_p95": 129466,
+      "label_ratio": 0.981,
+      "prompt_tok_per_s": 30084.7,
+      "gen_tok_per_example": 512.0,
+      "s_per_example": 4.274,
+      "parse_rate": 1.0,
+      "f1": 0.0013
     }
   ]
 }
