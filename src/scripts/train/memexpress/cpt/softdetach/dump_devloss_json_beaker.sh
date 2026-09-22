@@ -7,15 +7,20 @@ read -r -d '' WORK <<EOF
 /opt/conda/bin/python - <<'PY'
 import glob, json, os, math
 D = {os.path.basename(f)[:-5]: json.load(open(f)) for f in sorted(glob.glob("$WEKA/*.json"))}
-ref = D.get("sdcpt-q35-4b-dense-u32M")
+def paired(a, b):
+    diff = [x - y for x, y in zip(a["per_row"]["full_ce"], b["per_row"]["full_ce"])]
+    m = sum(diff) / len(diff); se = (sum((x - m) ** 2 for x in diff) / (len(diff) - 1)) ** 0.5 / math.sqrt(len(diff))
+    return m, se
+dense = {n: d for n, d in D.items() if d["arm"] == "dense"}
 for name, d in D.items():
     s = d["summary"]
     line = " ".join(f"{k}={v:.4f}" for k, v in s.items() if v is not None)
-    # PAIRED delta vs dense-32M on the same rows (the between-row SE ~0.045 is row difficulty, not noise)
-    if ref is not None and len(d["per_row"]["full_ce"]) == len(ref["per_row"]["full_ce"]):
-        diff = [a - b for a, b in zip(d["per_row"]["full_ce"], ref["per_row"]["full_ce"])]
-        m = sum(diff) / len(diff); se = (sum((x - m) ** 2 for x in diff) / (len(diff) - 1)) ** 0.5 / math.sqrt(len(diff))
-        line += f" dfull_vs_dense32M={m:+.4f} dfull_se={se:.4f}"
+    # PAIRED per-row deltas vs EVERY dense point (the between-row SE ~0.045 is row difficulty, not
+    # noise); the reader picks the dense point at equal PF from the collector table
+    for dn, dd in sorted(dense.items()):
+        if len(dd["per_row"]["full_ce"]) == len(d["per_row"]["full_ce"]):
+            m, se = paired(d, dd)
+            line += f" d_vs_{dn.split('-u')[-1]}={m:+.4f}({se:.4f})"
     print("DEVLOSS", name, d["arm"], d["eval_size"], line)
 PY
 EOF

@@ -54,7 +54,7 @@ def main():
         for run in sorted(runs):
             w.writerow(dict(run=run, **runs[run]))
     print(f"{'run':30} {'steps':>8} {'densePF':>8} {'actPF':>8} {'full':>7} {'tail20':>7} {'own':>7} {'x':>5}")
-    for run in sorted(runs, key=lambda k: (runs[k]['arm'], int(runs[k]['budget'][:-1]))):
+    for run in sorted(runs, key=lambda k: (runs[k]['arm'], (int(float(runs[k]['budget'][:-1]) * (1000 if runs[k]['budget'][-1] in 'Bb' else 1))))):
         r = runs[run]
         g = lambda k, f="{:7.3f}": (f.format(r[k]) if r.get(k) is not None else f"{'—':>7}")
         print(f"{run:30} {r.get('steps') or '—':>8} {g('dense_pf','{:8.1f}')} {g('actual_pf','{:8.1f}')} {g('full_ce')} {g('tail20_ce')} {g('own_ce')} {g('own_compaction','{:5.2f}')}")
