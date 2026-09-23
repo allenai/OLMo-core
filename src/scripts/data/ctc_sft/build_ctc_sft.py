@@ -361,6 +361,10 @@ def main() -> None:
                     help="shard dir name under the set root; default shards_<marker-set>. Name it "
                          "when converting at a different --seq-len: the trainer REFUSES a --seq-len "
                          "below a shard's max_example_len, so one dir cannot serve both windows.")
+    ap.add_argument("--no-doc-markers", action="store_true",
+                    help="tokenize WITHOUT the <|box_start|>/<|box_end|> document markers. Use for "
+                         "plain full-attention runs graded by olmo-eval, whose prompts carry no "
+                         "markers; the marker-wrapped default belongs to the chunked/landmark arms.")
     ap.add_argument("--query-position", default="both", choices=("before", "after", "both"))
     ap.add_argument("--cot-mode", default="none")
     ap.add_argument("--calibration", default="",
@@ -500,7 +504,8 @@ def main() -> None:
         "skipped": skipped, "failed": failed, "per_task": per_task, "shards": shards,
         "convert": ({"marker_set": args.marker_set, "tokenizer": args.tokenizer,
                      "seq_len": args.seq_len, "query_position": args.query_position,
-                     "cot_mode": args.cot_mode} if args.convert else None),
+                     "cot_mode": args.cot_mode, "doc_markers": not args.no_doc_markers,
+                     "shards_dir": args.shards_dir} if args.convert else None),
     }
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
@@ -639,7 +644,8 @@ def _convert_one(job):
               "--chunk-by", t.chunk_by, "--marker-set", args.marker_set,
               "--tokenizer", args.tokenizer, "--query-position", args.query_position,
               "--cot-mode", args.cot_mode, "--seq-len", str(args.seq_len),
-              "--input-jsonl", src, "--out-dir", d])
+              "--input-jsonl", src, "--out-dir", d]
+             + (["--no-doc-markers"] if args.no_doc_markers else []))
     meta_path = os.path.join(d, "metadata.json")
     if p.returncode != 0 or not os.path.exists(meta_path):
         tail = (p.stdout + p.stderr).strip().splitlines()
