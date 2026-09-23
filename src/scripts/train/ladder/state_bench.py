@@ -5,13 +5,13 @@ Each run trains one model variant on one StateBench training distribution
 repeating the distribution as necessary to fill the size-specific Chinchilla budget
 (Cx1 by default).
 
-A fourth family, ``solvable`` (``integer-code-modular--solvable``), comes from the separate
-``state-tracking-solvable-v1`` build: register updates are modular increments
-``x <- (x + d) mod 100``, whose transition monoid contains only solvable (cyclic) groups,
-sitting between aperiodic and periodic in group complexity. It is rendered with the
-zero-based ``integer-code-modular`` formatter; ``modular-aperiodic`` and
-``modular-r-trivial`` are the same-vocabulary controls derived from the solvable sources.
-These are not part of the default ``launch`` suite; select them with ``--distribution``.
+A fourth family, ``solvable`` (``integer-code-modular--solvable-v2``), comes from the
+separate ``state-tracking-solvable-v2`` build of the same periodic sources as the three
+above: every copy ``a <- b`` is rewritten as ``a <- (a + d) mod 100`` with ``d`` chosen to
+land on the copied value, so each register holds the same value after every step as in
+the periodic and aperiodic traces while its transition monoid contains only solvable
+(cyclic) groups. It is rendered with the zero-based ``integer-code-modular`` formatter and
+is not part of the default ``launch`` suite; select it with ``--distribution``.
 
 Two additional sensitivity-ordering conditions train on the periodic distribution
 partitioned into :data:`STATE_BENCH_SENSITIVITY_BUCKETS` sensitivity-quantile bucket
@@ -105,14 +105,17 @@ STATE_BENCH_DATA_ROOT = (
     f"{STATE_BENCH_DATA_DIR}/state-tracking-long-context-v1/rendered-tokenized/tokens"
 )
 STATE_BENCH_SOLVABLE_DATA_ROOT = (
-    f"{STATE_BENCH_DATA_DIR}/state-tracking-solvable-v1/rendered-tokenized/tokens"
+    f"{STATE_BENCH_DATA_DIR}/state-tracking-solvable-v2/rendered-tokenized/tokens"
 )
-# Distributions built by an experiment other than default.yaml live under their own
-# dataset root; everything else resolves to ``--state-bench-data-root``.
-STATE_BENCH_DISTRIBUTION_ROOTS = {
-    "integer-code-modular--solvable": STATE_BENCH_SOLVABLE_DATA_ROOT,
-    "integer-code-modular--aperiodic": STATE_BENCH_SOLVABLE_DATA_ROOT,
-    "integer-code-modular--r-trivial": STATE_BENCH_SOLVABLE_DATA_ROOT,
+# Distributions built by an experiment other than default.yaml, as (dataset root,
+# tokens directory). Their names differ from the directory so that save folders and
+# W&B runs never collide with runs on earlier builds of the same directory name.
+# Everything else resolves to ``<--state-bench-data-root>/<distribution>``.
+STATE_BENCH_DISTRIBUTION_SOURCES = {
+    "integer-code-modular--solvable-v2": (
+        STATE_BENCH_SOLVABLE_DATA_ROOT,
+        "integer-code-modular--solvable",
+    ),
 }
 # Exact Dolma token totals of each distribution's train shards (state-bench's
 # ``scripts/token_counts.sh``). Recorded as a W&B tag only; ``None`` marks a
@@ -125,11 +128,8 @@ STATE_BENCH_DISTRIBUTION_TOKENS: dict[str, int | None] = {
     # documents (same documents, same tokenizer), so they retain its token count.
     "integer-code--periodic--sens-shuffled": 30_842_931_386,
     "integer-code--periodic--sens-curriculum": 30_842_931_386,
-    # state-tracking-solvable-v1: increments render as `x <- (x + d) mod 100;`, about
-    # twice the tokens of a copy, so the solvable split is roughly 2x its controls.
-    "integer-code-modular--solvable": 66_254_201_696,
-    "integer-code-modular--aperiodic": 34_596_269_554,
-    "integer-code-modular--r-trivial": 34_596_269_554,
+    # state-tracking-solvable-v2 has not been counted yet.
+    "integer-code-modular--solvable-v2": None,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
@@ -137,9 +137,7 @@ STATE_BENCH_DISTRIBUTION_ALIASES = {
     "periodic": "integer-code--periodic",
     "periodic-sens-shuffled": "integer-code--periodic--sens-shuffled",
     "periodic-sens-curriculum": "integer-code--periodic--sens-curriculum",
-    "solvable": "integer-code-modular--solvable",
-    "modular-aperiodic": "integer-code-modular--aperiodic",
-    "modular-r-trivial": "integer-code-modular--r-trivial",
+    "solvable": "integer-code-modular--solvable-v2",
 }
 # The sensitivity conditions are a separate experiment over pre-bucketed data, so a
 # `launch` with no --distribution expands to the original three distributions only.
@@ -397,20 +395,23 @@ class StateBenchModelConfigurator(TransformerModelConfigurator):
         return train_module
 
 
-def _data_root(args: argparse.Namespace, distribution: str) -> str:
+def _data_dir(args: argparse.Namespace, distribution: str) -> str:
     """Return the tokens directory holding one distribution.
 
     ``--state-bench-data-root`` overrides every root when given explicitly; otherwise
     distributions from a non-default experiment resolve to their own dataset root.
     """
+    root, directory = STATE_BENCH_DISTRIBUTION_SOURCES.get(
+        distribution, (STATE_BENCH_DATA_ROOT, distribution)
+    )
     if args.state_bench_data_root is not None:
-        return args.state_bench_data_root
-    return STATE_BENCH_DISTRIBUTION_ROOTS.get(distribution, STATE_BENCH_DATA_ROOT)
+        root = args.state_bench_data_root
+    return str(join_path(root, directory))
 
 
 def _source_paths(args: argparse.Namespace, distribution: str) -> list[str]:
     """Return the token shard glob for one StateBench training distribution."""
-    return [str(join_path(_data_root(args, distribution), distribution, "train", "*.npy"))]
+    return [str(join_path(_data_dir(args, distribution), "train", "*.npy"))]
 
 
 def _state_bench_source(
@@ -567,7 +568,7 @@ def add_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "StateBench training distribution. Omit with `launch` to launch the default suite "
-            f"({', '.join(STATE_BENCH_DEFAULT_SUITE)}); the periodic-sens-* and solvable/modular-* "
+            f"({', '.join(STATE_BENCH_DEFAULT_SUITE)}); the periodic-sens-* and solvable "
             "conditions must be selected explicitly."
         ),
     )
@@ -578,7 +579,7 @@ def add_args(cmd: str, parser: argparse.ArgumentParser) -> None:
         help=(
             "Directory containing the StateBench distribution directories. Defaults to "
             f"{STATE_BENCH_DATA_ROOT}, or the solvable build's root for the "
-            "integer-code-modular distributions."
+            "solvable distribution."
         ),
     )
 
