@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `OLMoDDPModel.apply_ddp()` now raises `NotImplementedError` directing callers to `apply_dp()`, including under `python -O`. Removed its unreachable legacy DDP implementation.
+
 - Removed the unused `OLMoDDPTrainModule.max_grad_norm` constructor argument and attribute; DDP examples now set `optim.max_grad_norm`. Old train-module configs still accept the legacy field, warn when it is set, and discard it on serialization. The optimizer threshold remains authoritative even when legacy values disagree, preserving prior clipping behavior. Regular transformer gradient clipping is unchanged.
 
 - Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
