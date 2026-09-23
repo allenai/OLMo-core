@@ -1049,11 +1049,22 @@ def test_scalable_softmax_scale_is_initialized_to_one():
 
 
 @pytest.mark.parametrize("flag", ["scalable_softmax", "qk_norm_per_head_gains"])
-def test_normalized_attention_rejects_hybrid_extensions(flag):
-    config = AttentionConfig(name=AttentionType.normalized, n_heads=2)
+@pytest.mark.parametrize("name", [AttentionType.normalized, AttentionType.fused_v2])
+def test_attention_rejects_unsupported_hybrid_extensions(flag, name):
+    config = AttentionConfig(name=name, n_heads=2)
     setattr(config, flag, True)
-    with pytest.raises(OLMoConfigurationError, match="not supported with normalized attention"):
+    with pytest.raises(OLMoConfigurationError, match=f"not supported with {name} attention"):
         config.build(d_model=8, layer_idx=0, n_layers=1)
+
+
+@pytest.mark.parametrize("mode", ["context-parallel", "kv-cache"])
+def test_scalable_softmax_rejects_unsupported_setup(mode):
+    attention = Attention(d_model=8, n_heads=2, scalable_softmax=True)
+    with pytest.raises(OLMoConfigurationError, match="Scalable-Softmax"):
+        if mode == "context-parallel":
+            attention.apply_cp(None)
+        else:
+            attention.init_kv_cache_manager(1, 8)
 
 
 def test_scalable_softmax_is_applied_after_qk_norm(monkeypatch):

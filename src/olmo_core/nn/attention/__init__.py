@@ -348,6 +348,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
     scalable_softmax: bool = False
+    """Scalable softmax; incompatible with CP, KV caching, and sliding window attention."""
     qk_norm_per_head_gains: Optional[bool] = None
     attention_sinks: bool = False
     """
@@ -547,17 +548,19 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"{enabled} are only supported by default and fused_v2 attention"
             )
 
+        if self.name != AttentionType.default:
+            for key in ("scalable_softmax", "qk_norm_per_head_gains"):
+                if kwargs.pop(key, False):
+                    raise OLMoConfigurationError(
+                        f"'{key}' is not supported with {self.name} attention"
+                    )
+
         try:
             if self.name == "default":
                 return Attention(**kwargs, **shared_forward_kwargs)
             elif self.name == "fused_v2":
                 return FusedAttentionV2(**kwargs, **fused_v2_kwargs, **shared_forward_kwargs)
             elif self.name == "normalized":
-                for key in ("scalable_softmax", "qk_norm_per_head_gains"):
-                    if kwargs.pop(key, False):
-                        raise OLMoConfigurationError(
-                            f"'{key}' is not supported with normalized attention"
-                        )
                 if "window_size" in kwargs:
                     raise OLMoConfigurationError(
                         "'window_size' is not supported with normalized attention"
@@ -617,6 +620,7 @@ class Attention(SequenceMixer):
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
     :param scalable_softmax: Use Scalable-Softmax with a learned scale for each query head.
+        Context parallelism, KV caching, and sliding window attention are unsupported.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -1153,6 +1157,10 @@ class Attention(SequenceMixer):
         :param ring: The ring context parallel style.
         :param uly: The ulysses context parallel style.
         """
+        if self.scalable_softmax:
+            raise OLMoConfigurationError(
+                "Scalable-Softmax is not supported with context parallelism"
+            )
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def init_weights(
@@ -1215,6 +1223,8 @@ class Attention(SequenceMixer):
         :param batch_size: The batch size for the cache.
         :param max_seq_len: The maximum sequence length for the cache.
         """
+        if self.scalable_softmax:
+            raise OLMoConfigurationError("Scalable-Softmax is not supported with KV caching")
         self.backend.assert_supports_kv_cache()
 
         self.kv_cache_manager = KVCacheManager(

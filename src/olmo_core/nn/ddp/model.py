@@ -3,6 +3,7 @@ import os
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Dict,
     Iterator,
     List,
@@ -78,7 +79,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     """
     An MoE transformer implementation, to be used with one of the
     :class:`MoETransformerBlock` block types.
+
+    Training currently uses BF16 activations, regardless of the parameter initialization dtype.
+    Symmetric-buffer prewarming and model materialization share this precision contract.
     """
+
+    _training_dtype: ClassVar[torch.dtype] = torch.bfloat16
 
     def __init__(self, *args, **kwargs):
         self.tbo = kwargs.pop("two_batch_overlap")
@@ -394,7 +400,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # A non-PP dry run can hide the mismatch by resizing one slot, but PP can
         # retain several concurrent forward activations and needs every prewarmed
         # slot to match the eventual activation dtype.
-        dtype = torch.bfloat16
+        dtype = self._training_dtype
         device = param.device
         if first_block.routed_experts is None:
             raise RuntimeError("EP no-sync block is missing routed experts during prewarm")
@@ -641,7 +647,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         #     else:
         #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
 
-        self.to(torch.bfloat16)  # HACK, need fix
+        self.to(self._training_dtype)
 
         replicate(
             self,
@@ -772,7 +778,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # TODO(dtype): broad bf16 casting is a current MoE V2 shortcut. Replace
         # this with explicit dtype ownership so FP8 state, optimizer main params,
         # and normal model params are not coupled to a blanket module cast.
-        self.to(torch.bfloat16)
+        self.to(self._training_dtype)
         self.disable_mxfp8_expert_anchor_grads()
 
         dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
@@ -905,7 +911,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         device = device or self.device
         # TODO(dtype): materialization currently relies on the same broad bf16
         # cast as apply_dp(); replace with an explicit precision policy.
-        self.to(torch.bfloat16)
+        self.to(self._training_dtype)
         self.to_empty(device=device)
         for _, module in self.named_modules():
             if hasattr(module, "reset_parameters"):

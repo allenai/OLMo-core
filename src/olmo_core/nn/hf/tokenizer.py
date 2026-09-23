@@ -27,11 +27,6 @@ def tokenizer_source(checkpoint, identifier, override=None):
     nearby = Path(checkpoint).parent / "tokenizer" if checkpoint is not None else None
     if nearby is not None and nearby.is_dir():
         return str(nearby)
-    if identifier == "allenai/dolma2-tokenizer":
-        raise ValueError(
-            "Legacy dolma2 tokenizer identifier is ambiguous for production OLMo-3 exports. "
-            "Pass --tokenizer explicitly with the tokenizer actually used to create the data."
-        )
     return identifier
 
 
@@ -138,9 +133,12 @@ def export_checkpoint_tokenizer(
         raise ValueError(f"Tokenizer vocabulary size {len(tokenizer)} != {config.vocab_size}")
     for attr in ("bos_token_id", "eos_token_id", "pad_token_id"):
         expected = getattr(config, attr)
-        if expected is not None and expected not in tokenizer.get_vocab().values():
-            raise ValueError(f"{attr}={expected} not in tokenizer vocabulary")
-        setattr(tokenizer, attr, expected)
+        # An unspecified optional ID is not an instruction to discard source metadata.
+        # Explicit IDs in the training config remain authoritative.
+        if expected is not None:
+            if expected not in tokenizer.get_vocab().values():
+                raise ValueError(f"{attr}={expected} not in tokenizer vocabulary")
+            setattr(tokenizer, attr, expected)
     if max_sequence_length is not None:
         tokenizer.model_max_length = max_sequence_length
     tokenizer = save_tokenizer_losslessly(

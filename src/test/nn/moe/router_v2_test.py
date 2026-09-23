@@ -199,7 +199,7 @@ def test_global_load_balancing_rejects_instance_granularity():
         )
 
 
-def _run_global_load_balancing_matches_concatenated_reference():
+def _run_global_load_balancing_matches_concatenated_reference(compiled=False):
     world_size = get_world_size()
     rank = get_rank()
     group = dist.group.WORLD
@@ -216,9 +216,15 @@ def _run_global_load_balancing_matches_concatenated_reference():
     )
     router.set_load_balancing_process_group(group)
 
-    _, _, _, aux = router(full_x[rank : rank + 1], False, loss_div_factor=local_tokens)
-    assert aux is not None
-    loss = router.compute_aux_loss(*aux, accumulate_metrics=False)
+    def forward(x):
+        _, _, _, aux = router(x, False, loss_div_factor=local_tokens)
+        assert aux is not None
+        return router.compute_aux_loss(*aux, accumulate_metrics=False)
+
+    if compiled:
+        # A full graph must include the count collective; graph breaks fail the test.
+        forward = torch.compile(forward, fullgraph=True)
+    loss = forward(full_x[rank : rank + 1])
     assert loss is not None
     loss.backward()
     assert router.weight.grad is not None
@@ -248,12 +254,14 @@ def _run_global_load_balancing_matches_concatenated_reference():
     torch.testing.assert_close(distributed_grad, reference.weight.grad)
 
 
-def test_global_load_balancing_matches_concatenated_reference_cpu():
+@pytest.mark.parametrize("compiled", [False, True])
+def test_global_load_balancing_matches_concatenated_reference_cpu(compiled):
     run_distributed_test(
         _run_global_load_balancing_matches_concatenated_reference,
         world_size=2,
         backend="gloo",
         start_method="spawn",
+        func_args=(compiled,),
     )
 
 

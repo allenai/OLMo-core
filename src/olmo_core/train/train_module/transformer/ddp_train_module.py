@@ -1282,7 +1282,7 @@ class OLMoDDPTrainModule(TrainModule):
                             sd_to_load.pop(key)
 
             if not loaded_model_directly:
-                from .headwise_qk_checkpoint import (
+                from olmo_core.distributed.checkpoint.utils import (
                     finish_qk_expansion,
                     prepare_qk_expansion,
                 )

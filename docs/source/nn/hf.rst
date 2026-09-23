@@ -7,9 +7,10 @@ Tokenizer export safety
 Conversion uses the explicit ``tokenizer_id`` (CLI ``--tokenizer``) first, then a
 checkpoint-side tokenizer directory, then the saved configuration identifier.
 Use ``tokenizer_revision`` / ``--tokenizer-revision`` to pin a Hub revision.
-Implicit legacy ``allenai/dolma2-tokenizer`` identifiers require an explicit
-choice: production OLMo-3 data and legacy tokenizer-class defaults can disagree
-despite identical vocabularies.
+Saved identifiers, including ``allenai/dolma2-tokenizer``, remain supported.
+For SFT, select the tokenizer and chat template actually used in training.
+An unspecified BOS in the training config preserves the source tokenizer's BOS;
+explicit special-token IDs in the config take precedence.
 
 The exporter requires a fast ``tokenizer.json`` and preserves its encoding
 backend with a generic fast tokenizer. An independent AutoTokenizer reload

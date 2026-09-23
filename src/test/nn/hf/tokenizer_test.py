@@ -47,9 +47,8 @@ def test_explicit_override_wins(tmp_path):
     assert tokenizer_source(None, "fallback") == "fallback"
 
 
-def test_legacy_fallback_requires_choice():
-    with pytest.raises(ValueError, match="ambiguous"):
-        tokenizer_source(None, "allenai/dolma2-tokenizer")
+def test_saved_tokenizer_identifier_remains_a_supported_fallback():
+    assert tokenizer_source(None, "allenai/dolma2-tokenizer") == "allenai/dolma2-tokenizer"
     assert (
         tokenizer_source(None, "unused", "allenai/dolma2-tokenizer") == "allenai/dolma2-tokenizer"
     )
@@ -72,6 +71,24 @@ def test_generic_load_preserves_backend_and_metadata(tmp_path):
     assert reloaded.chat_template == tok.chat_template
     assert reloaded.model_max_length == 65536
     assert json.loads((dest / "tokenizer-export-audit.json").read_text())["passed"]
+
+
+@pytest.mark.parametrize("bos_override", [None, 1])
+def test_export_preserves_unspecified_bos_and_honors_explicit_ids(tmp_path, bos_override):
+    src = tmp_path / "source"
+    tok, _ = source(src)
+    tok.bos_token = "<unk>"
+    tok.save_pretrained(src)
+    config = SimpleNamespace(
+        identifier=str(src),
+        vocab_size=len(tok),
+        eos_token_id=1,
+        pad_token_id=2,
+        bos_token_id=bos_override,
+    )
+    exported = export_checkpoint_tokenizer(None, tmp_path / "dest", config)
+    assert exported.bos_token_id == (0 if bos_override is None else bos_override)
+    assert exported.eos_token_id == 1 and exported.pad_token_id == 2
 
 
 def test_same_vocabulary_wrong_segmentation_rejected(tmp_path):

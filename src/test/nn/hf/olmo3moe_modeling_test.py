@@ -10,7 +10,12 @@ model's real parameter set (strict ``load_state_dict``). Requires ``transformers
 import pytest
 import torch
 
-from olmo_core.testing.utils import requires_fla, requires_gpu, requires_triton
+from olmo_core.testing.utils import (
+    requires_fla,
+    requires_gpu,
+    requires_te,
+    requires_triton,
+)
 
 
 def _has_olmo3moe() -> bool:
@@ -203,3 +208,50 @@ def test_olmo3moe_experts_grouped_mm_matches_reference_loop():
     reference = experts._forward_loop(hidden_states, topk_ids, topk_weights)
     grouped = experts._forward_grouped_mm(hidden_states, topk_ids, topk_weights)
     torch.testing.assert_close(grouped, reference, rtol=1e-5, atol=1e-5)
+
+
+@requires_olmo3moe
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_expert_combination_preserves_fp32_routing_weights(dtype):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeExperts
+
+    # Identity experts isolate the combination from GEMM rounding. Probabilities deliberately
+    # fall between BF16 values, so rounding them before combination changes the result.
+    experts = Olmo3MoeExperts([torch.nn.Identity(), torch.nn.Identity()])
+    x = torch.tensor([[0.125, -0.5], [0.25, 0.75]], dtype=dtype)
+    indices = torch.tensor([[0, 1], [1, 0]])
+    weights = torch.tensor([[0.1732, 0.8262], [0.3511, 0.6472]], dtype=torch.float32)
+    expected = (x.double() * weights.double().sum(-1, keepdim=True)).to(dtype)
+    tolerance = 1e-7 if dtype == torch.float32 else 0
+    torch.testing.assert_close(
+        experts._forward_loop(x, indices, weights), expected, rtol=0, atol=tolerance
+    )
+    torch.testing.assert_close(
+        experts._forward_compile_fallback(x, indices, weights), expected, rtol=0, atol=tolerance
+    )
+
+
+@requires_olmo3moe
+@requires_te
+def test_expert_combination_matches_core_unpermute():
+    from olmo_core.nn.moe.utils import moe_permute_no_compile, moe_unpermute_no_compile
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeExperts
+
+    experts = Olmo3MoeExperts([torch.nn.Identity(), torch.nn.Identity()])
+    # TE's vectorized permutation requires a model-sized hidden dimension.
+    x = torch.tensor([[0.125, -0.5], [0.25, 0.75]], dtype=torch.bfloat16, device="cuda").repeat(
+        1, 64
+    )
+    indices = torch.tensor([[0, 1], [1, 0]], device="cuda")
+    weights = torch.tensor([[0.1732, 0.8262], [0.3511, 0.6472]], device="cuda")
+    permuted, row_id_map = moe_permute_no_compile(
+        inp=x, routing_map=indices.int(), num_out_tokens=4, map_type="index"
+    )
+    combined = moe_unpermute_no_compile(
+        inp=permuted,
+        row_id_map=row_id_map,
+        restore_shape=x.shape,
+        map_type="index",
+        merging_probs=weights,
+    )
+    torch.testing.assert_close(experts._forward_loop(x, indices, weights), combined, rtol=0, atol=0)

@@ -9,11 +9,11 @@ from torch.distributed.checkpoint.metadata import (
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import Shard, distribute_tensor
 
-from olmo_core.testing import run_distributed_test
-from olmo_core.train.train_module.transformer.headwise_qk_checkpoint import (
+from olmo_core.distributed.checkpoint.utils import (
     finish_qk_expansion,
     prepare_qk_expansion,
 )
+from olmo_core.testing import run_distributed_test
 
 
 @pytest.mark.parametrize("suffix", ["main", "exp_avg", "exp_avg_sq"])

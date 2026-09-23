@@ -92,9 +92,8 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
     # Include an independent reference/reference control. Mask/selected-index
     # equality is strict; changing the graph may change fused FP32 arithmetic.
     settings = [(False, False), (False, False), (True, False)]
-    if torch.__version__.startswith("2.11."):
-        # The native tie-order kernel deliberately rejects other Torch versions.
-        # Still exercise document pooling and A/A controls on the newer CI image.
+    if torch.__version__.startswith(("2.11.", "2.13.")):
+        # Exercise combined optimizations on every qualified Torch version.
         settings += [(False, True), (True, True)]
     for document_pool, top16 in settings:
         torch.manual_seed(754)

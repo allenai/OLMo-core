@@ -498,10 +498,9 @@ def histc(x: torch.Tensor, num_classes: int) -> torch.Tensor:
 
 
 def segment_ids_from_eos(input_ids: torch.Tensor, eos_token_id: int) -> torch.Tensor:
-    """Return per-token document IDs, with each EOS token starting the next segment."""
+    """Return document IDs with EOS ending its document, matching attention boundaries."""
     eos = (input_ids == eos_token_id).to(torch.long)
-    eos[:, 0] = 0
-    return eos.cumsum(dim=1)
+    return eos.cumsum(dim=1) - eos
 
 
 def doc_sum_scatter(per_token: torch.Tensor, segment_ids: torch.Tensor) -> torch.Tensor:

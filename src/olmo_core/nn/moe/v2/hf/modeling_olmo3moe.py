@@ -226,14 +226,14 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_ids: torch.Tensor,
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
-        out = hidden_states.new_zeros(hidden_states.shape)
+        out = hidden_states.new_zeros(hidden_states.shape, dtype=torch.float32)
         for expert_id, expert in enumerate(self):
             # Aggregate the routing weights for this expert across the K slots.
             w = (topk_weights * (topk_ids == expert_id).to(topk_weights.dtype)).sum(
                 dim=1, keepdim=True
             )  # (N, 1)
-            out = out + expert(hidden_states) * w
-        return out
+            out = out + expert(hidden_states).float() * w.float()
+        return out.to(hidden_states.dtype)
 
     def _forward_loop(
         self,
@@ -242,7 +242,7 @@ class Olmo3MoeExperts(nn.ModuleList):
         topk_weights: torch.Tensor,
     ) -> torch.Tensor:
         N, H = hidden_states.shape
-        out = hidden_states.new_zeros((N, H))
+        out = hidden_states.new_zeros((N, H), dtype=torch.float32)
         for expert_id, expert in enumerate(self):
             mask = topk_ids == expert_id  # (N, K) bool
             if not mask.any():
@@ -250,9 +250,9 @@ class Olmo3MoeExperts(nn.ModuleList):
             token_ids, k_ids = mask.nonzero(as_tuple=True)  # both (M,)
             x_sel = hidden_states.index_select(0, token_ids)  # (M, H)
             y_sel = expert(x_sel)  # (M, H)
-            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).to(dtype=hidden_states.dtype)
-            out.index_add_(0, token_ids, y_sel * w_sel)
-        return out
+            w_sel = topk_weights[token_ids, k_ids].unsqueeze(-1).float()
+            out.index_add_(0, token_ids, y_sel.float() * w_sel)
+        return out.to(hidden_states.dtype)
 
     def _forward_grouped_mm(
         self,
@@ -267,7 +267,7 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         route_token_ids = torch.arange(N, device=hidden_states.device).repeat_interleave(K)
         route_expert_ids = topk_ids.reshape(-1)
-        route_weights = topk_weights.reshape(-1).to(dtype=hidden_states.dtype)
+        route_weights = topk_weights.reshape(-1).float()
 
         sorted_route_ids = torch.argsort(route_expert_ids)
         sorted_expert_ids = route_expert_ids.index_select(0, sorted_route_ids)
@@ -295,10 +295,14 @@ class Olmo3MoeExperts(nn.ModuleList):
 
         # Reduce in the same expert-order as the reference loop. This avoids
         # duplicate-index CUDA atomics and keeps close greedy decisions stable.
-        weighted_y_grouped = y_grouped * sorted_weights.unsqueeze(-1)
+        weighted_y_grouped = y_grouped.float() * sorted_weights.unsqueeze(-1)
         token_expert_order = torch.argsort(sorted_token_ids * num_experts + sorted_expert_ids)
         weighted_y = weighted_y_grouped.index_select(0, token_expert_order)
-        return weighted_y.reshape(N, K, H).sum(dim=1)
+        weighted_y = weighted_y.reshape(N, K, H)
+        out = hidden_states.new_zeros((N, H), dtype=torch.float32)
+        for slot in range(K):
+            out = out + weighted_y[:, slot]
+        return out.to(hidden_states.dtype)
 
     def forward(
         self,
@@ -392,7 +396,9 @@ class Olmo3MoeSparseMLP(nn.Module):
         routed_h = routed_x.shape[-1]
         x_flat = routed_x.reshape(B * S, routed_h)
         idx_flat = expert_indices.reshape(B * S, K)  # (N, K)
-        w_flat = expert_weights.reshape(B * S, K).to(dtype=x.dtype)  # (N, K)
+        # Core's unpermute/combine keeps router probabilities and accumulation in FP32,
+        # then rounds the combined expert result to the activation dtype once.
+        w_flat = expert_weights.reshape(B * S, K).float()  # (N, K)
 
         out_flat = self.experts(x_flat, topk_ids=idx_flat, topk_weights=w_flat)
         routed_expert_out = out_flat.view(B, S, routed_h)
@@ -738,8 +744,18 @@ class Olmo3MoeAttention(nn.Module):
         else:
             raise ValueError(f"Unsupported attention_gate_type={self.gate_type!r}")
         if config.use_head_qk_norm:
-            self.q_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
-            self.k_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
+            q_shape = (
+                (config.num_attention_heads, self.head_dim)
+                if config.qk_norm_per_head_gains
+                else self.head_dim
+            )
+            k_shape = (
+                (config.num_key_value_heads, self.head_dim)
+                if config.qk_norm_per_head_gains
+                else self.head_dim
+            )
+            self.q_norm = Olmo3MoeRMSNorm(q_shape, config.rms_norm_eps)
+            self.k_norm = Olmo3MoeRMSNorm(k_shape, config.rms_norm_eps)
         else:
             self.q_norm = Olmo3MoeRMSNorm(
                 config.num_attention_heads * self.head_dim, config.rms_norm_eps
@@ -747,6 +763,11 @@ class Olmo3MoeAttention(nn.Module):
             self.k_norm = Olmo3MoeRMSNorm(
                 config.num_key_value_heads * self.head_dim, config.rms_norm_eps
             )
+        self.ssmax_scale = (
+            nn.Parameter(torch.ones(config.num_attention_heads))
+            if config.scalable_softmax
+            else None
+        )
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = (
@@ -761,6 +782,7 @@ class Olmo3MoeAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
@@ -777,21 +799,35 @@ class Olmo3MoeAttention(nn.Module):
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
 
-        query_states = query_states.view(hidden_shape).transpose(1, 2)  # (B, n_heads, T, head_dim)
-        key_states = key_states.view(hidden_shape).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
+        # Apply [H,D] gains in [B,T,H,D] layout, so H never broadcasts against T.
+        query_states = query_states.view(hidden_shape)
+        key_states = key_states.view(hidden_shape)
         value_states = value_states.view(hidden_shape).transpose(
             1, 2
         )  # (B, n_kv_heads, T, head_dim)
 
         if self.use_head_qk_norm:
-            query_states = self.q_norm(query_states.contiguous())
-            key_states = self.k_norm(key_states.contiguous())
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
 
         cos: Optional[torch.Tensor] = None
         sin: Optional[torch.Tensor] = None
         if position_embeddings is not None:
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        # Match core's rounding order: Q/K norm, RoPE, then scalable-softmax query scaling.
+        if self.ssmax_scale is not None:
+            positions = position_ids if position_ids is not None else cache_position
+            if positions is None:
+                positions = torch.arange(input_shape[1], device=hidden_states.device)
+            lengths = positions.to(hidden_states.device).reshape(-1, input_shape[1]) + 1
+            scale = lengths.log().to(query_states.dtype).unsqueeze(1)
+            scale = scale * self.ssmax_scale.to(query_states.dtype).view(1, -1, 1)
+            query_states = query_states * scale.unsqueeze(-1)
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}
@@ -960,6 +996,17 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
                 inputs_embeds = self.embed_norm(inputs_embeds)
 
         has_linear_attention = "linear_attention" in self.config.layer_types
+        if has_linear_attention and any(
+            kwargs.get(key) is not None for key in ("cu_doc_lens", "cu_seqlens")
+        ):
+            raise NotImplementedError(
+                "Packed documents are not supported by the exported KDA model."
+            )
+        if has_linear_attention and position_ids is not None and position_ids.shape[-1] > 1:
+            if not bool(torch.all(position_ids[..., 1:] == position_ids[..., :-1] + 1)):
+                raise NotImplementedError(
+                    "Packed/reset position IDs are not supported by the exported KDA model."
+                )
         if use_cache and has_linear_attention:
             raise NotImplementedError(
                 "KDA recurrent-state caching is not implemented in the exported HF model; "

@@ -151,6 +151,31 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
+def _olmo3moe_attention_signature(attention: Attention) -> tuple:
+    """Validate the norm layout and describe the HF model's full-attention configuration."""
+    if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
+        raise NotImplementedError("HF export requires head-wise QK norm.")
+    per_head = attention.q_norm.weight.ndim == 2
+    for norm, heads in (
+        (attention.q_norm, attention.n_heads),
+        (attention.k_norm, attention.n_kv_heads),
+    ):
+        shape = (heads, attention.head_dim) if per_head else (attention.head_dim,)
+        if tuple(norm.weight.shape) != shape or norm.bias is not None:
+            raise NotImplementedError("Unsupported Q/K norm gain layout or bias for HF export.")
+    return (
+        attention.n_heads,
+        attention.n_kv_heads,
+        attention.head_dim,
+        per_head,
+        attention.scalable_softmax,
+        attention.q_norm.eps,
+        attention.k_norm.eps,
+        str(attention.gate.granularity) if attention.gate is not None else None,
+        attention.gate.full_precision if attention.gate is not None else True,
+    )
+
+
 def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
@@ -323,6 +348,8 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         rope_scaling=None,
         rms_norm_eps=moe_block.feed_forward_norm.eps,
         use_head_qk_norm=attention.use_head_qk_norm,
+        qk_norm_per_head_gains=attention.q_norm.weight.ndim == 2,
+        scalable_softmax=attention.scalable_softmax,
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -337,7 +364,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
 
 def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
-    """Build a fail-closed HF config for the KDA + full-width EMo ladder."""
+    """Build a fail-closed HF config for hybrid KDA MoE, with optional latent projections/EMO."""
 
     from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 
@@ -368,13 +395,18 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         block_router = block.routed_experts_router
         block_experts = block.routed_experts
         _validate_olmo3moe_router_selection(block_router)
-        if block.latent_down_proj is not None or block.latent_up_proj is not None:
-            raise NotImplementedError("The EMo ladder export expects latent_moe=None.")
-        if block_router.emo is None:
-            raise NotImplementedError("The EMo ladder export requires an EmoRouterConfig.")
-        if block_router.emo.eval_pool_size() != block_experts.num_experts:
+        emo = getattr(block_router, "emo", None)
+        if emo is not None and emo.eval_pool_size() != block_experts.num_experts:
             raise NotImplementedError(
                 "HF EMo export currently requires eval_document_expert_pool=num_experts."
+            )
+        latent = block.latent_down_proj
+        latent_norm = block.latent_up_proj_input_norm
+        if latent_norm is not None and (
+            latent_norm.bias is not None or latent_norm.eps != block.feed_forward_norm.eps
+        ):
+            raise NotImplementedError(
+                "HF latent input norm requires the model RMSNorm epsilon and no bias."
             )
         if block_router.bias is not None:
             raise NotImplementedError("Exporting KDA + EMo with a biased router is unsupported.")
@@ -397,10 +429,13 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             block_router.normalize_expert_weights,
             block_router.restore_weight_scale,
             block_router.global_load_balancing,
-            block_router.emo.min_document_expert_pool,
-            block_router.emo.max_document_expert_pool,
-            block_router.emo.eval_pool_size(),
-            block_router.emo.eos_token_id,
+            emo.min_document_expert_pool if emo is not None else None,
+            emo.max_document_expert_pool if emo is not None else None,
+            emo.eval_pool_size() if emo is not None else None,
+            emo.eos_token_id if emo is not None else None,
+            latent.out_features if latent is not None else None,
+            latent.bias is not None if latent is not None else False,
+            latent_norm is not None,
             block.shared_experts.hidden_size if block.shared_experts is not None else None,
         )
         if sparse_signature is None:
@@ -440,6 +475,18 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
+    attention_signature = _olmo3moe_attention_signature(attention)
+    assert attention.q_norm is not None and attention.k_norm is not None
+    if any(
+        _olmo3moe_attention_signature(block.attention) != attention_signature
+        for block in attention_blocks
+    ):
+        raise NotImplementedError("Heterogeneous full-attention configurations are unsupported.")
+    if (
+        attention.q_norm.eps != representative.feed_forward_norm.eps
+        or attention.k_norm.eps != representative.feed_forward_norm.eps
+    ):
+        raise NotImplementedError("HF export requires the same Q/K and model RMSNorm epsilon.")
     ropes = [block.attention.rope for block in attention_blocks]
     if any(rope is None for rope in ropes) != all(rope is None for rope in ropes):
         raise NotImplementedError("Full-attention layers must consistently enable or disable RoPE.")
@@ -491,6 +538,8 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         for block in blocks
     ]
     kda_norm_eps = float(getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5)))
+    latent = representative.latent_down_proj
+    emo = getattr(router, "emo", None)
 
     return Olmo3MoeConfig(
         vocab_size=model.vocab_size,
@@ -511,6 +560,8 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         restore_weight_scale=router.restore_weight_scale,
         max_position_embeddings=-1,
         use_head_qk_norm=True,
+        qk_norm_per_head_gains=attention.q_norm.weight.ndim == 2,
+        scalable_softmax=attention.scalable_softmax,
         use_rope=attention.rope is not None,
         rope_theta=rope_theta,
         rope_scaling=rope_scaling,
@@ -523,7 +574,9 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         linear_conv_kernel_dim=kda.conv_size,
         linear_allow_neg_eigval=kda.allow_neg_eigval,
         linear_norm_eps=kda_norm_eps,
-        latent_moe_dim=None,
+        latent_moe_dim=latent.out_features if latent is not None else None,
+        latent_moe_bias=latent.bias is not None if latent is not None else False,
+        latent_moe_up_proj_input_norm=representative.latent_up_proj_input_norm is not None,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
         dense_layers_use_shared_expert=True,
@@ -531,15 +584,15 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         embed_norm=model.embedding_norm is not None,
         use_peri_ln=True,
         rms_norm_eps=representative.feed_forward_norm.eps,
-        emo_min_document_expert_pool=router.emo.min_document_expert_pool,
-        emo_max_document_expert_pool=router.emo.max_document_expert_pool,
-        emo_eval_document_expert_pool=router.emo.eval_pool_size(),
-        emo_eos_token_id=router.emo.eos_token_id,
+        emo_min_document_expert_pool=emo.min_document_expert_pool if emo is not None else None,
+        emo_max_document_expert_pool=emo.max_document_expert_pool if emo is not None else None,
+        emo_eval_document_expert_pool=emo.eval_pool_size() if emo is not None else None,
+        emo_eos_token_id=emo.eos_token_id if emo is not None else None,
         global_load_balancing=router.global_load_balancing,
         use_cache=False,
         pad_token_id=None,
         bos_token_id=None,
-        eos_token_id=router.emo.eos_token_id,
+        eos_token_id=emo.eos_token_id if emo is not None else None,
         tie_word_embeddings=model.tie_word_embeddings,
     )
 

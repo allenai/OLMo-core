@@ -1,4 +1,4 @@
-"""Exact-shape Torch 2.11 CUDA top16 index selection; default-off profiling use.
+"""Exact-shape Torch 2.11/2.13 CUDA top16 index selection; default-off profiling use.
 
 Reimplements TensorTopK gather ordering and SortUtils 32-lane tie swaps:
 https://github.com/pytorch/pytorch/blob/v2.11.0/aten/src/ATen/native/cuda/SortUtils.cuh
@@ -61,9 +61,11 @@ def top16_native_indices(scores):
         or scores.dtype != torch.float32
         or not scores.is_contiguous()
         or scores.shape[-1] != 512
-        or not torch.__version__.startswith("2.11.")
+        or not torch.__version__.startswith(("2.11.", "2.13."))
     ):
-        raise ValueError("Qualified only for contiguous CUDA FP32 512-expert Torch 2.11 scores")
+        raise ValueError(
+            "Qualified only for contiguous CUDA FP32 512-expert Torch 2.11/2.13 scores"
+        )
     output = torch.empty((*scores.shape[:-1], 16), device=scores.device, dtype=torch.int64)
     _native_tie_top16[(scores.numel() // 512,)](scores, output, num_warps=4)
     return output

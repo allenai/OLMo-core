@@ -10,7 +10,7 @@ top16_native_indices = pytest.importorskip("olmo_core.ops.moe_top16").top16_nati
 def test_top16_native_contract():
     if not torch.cuda.is_available():
         pytest.skip("CUDA required")
-    if not torch.__version__.startswith("2.11."):
+    if not torch.__version__.startswith(("2.11.", "2.13.")):
         with pytest.raises(ValueError, match="Torch 2.11"):
             top16_native_indices(torch.zeros(1, 512, device="cuda"))
         return
