@@ -92,15 +92,20 @@ class Task:
     max_rung_reason: str = ""
     #: Buckets withheld for a data-quality reason, as ``{bucket: why}``. These are deliberate.
     withhold: Dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Pass ``--force`` to ctc: write the data even though a shortcut probe fails. Only for a
+    #: shortcut the EVAL's own rows carry too (so training on it is IID), with the reason recorded.
+    force_reason: str = ""
     #: Build with an in-repo generator (a key of :data:`EXTERNAL`) instead of ``ctc``, for eval
     #: rows ``ctc`` has no generator for. Its train pool is read from ``--external-pools``.
     external: Optional[str] = None
 
 
 _TEXTGROUPS_SHORTCUT = (
-    "fails the gold_length_bias shortcut audit (0.620 vs 0.228 chance at 8k, 0.485 vs 0.114 at "
-    "16k): the gold group is findable from length alone, so training on it teaches length-matching "
-    "instead of the task"
+    "ctc's gold_length_bias probe fails at 8k+ (the SHORTEST document is gold in ~0.6 of rows vs "
+    "0.228 chance at 8k, 0.056 at 32k) -- and the suite's own eval rows carry the same cue at every "
+    "rung (0.585 at 8k, 0.520 at 16k, 0.570 at 32k; measured 2026-09-23 with 1-based gold). It "
+    "names one of the six gold documents, not the answer. Training on it would teach the cue, so "
+    "textgroups is dropped from training; the eval's textgroups numbers carry this caveat"
 )
 
 #: ``absence`` was dropped (prasann, 2026-09-22): its examples are one contiguous sentence run from
@@ -144,8 +149,7 @@ SET_A: List[Task] = [
     # A ceiling, NOT an enumerated withhold list: the bias is roughly flat in absolute terms while
     # the chance baseline collapses as documents multiply, so every rung ABOVE the measured ones is
     # worse, not unknown. Enumerating {8k,16k,32k} re-admitted it at 64k+ the moment the ladder grew.
-    Task("textgroups", "textgroups", pooled=False, max_rung="4k",
-         max_rung_reason=_TEXTGROUPS_SHORTCUT),
+    # textgroups is NOT trained (prasann, 2026-09-23): _TEXTGROUPS_SHORTCUT. It stays in the eval.
     # The suite's ctc_grouping row: UNLABELED OpenAlex partition (k per the concept level, up to
     # ~1 doc per group at the finest), graded by the `grouping` spec. grouping_labeled -- ctc's only
     # grouping generator -- asks for coarse named groups instead, so it is not this task. Built by
@@ -328,6 +332,8 @@ def _build_cell(job) -> dict:
         cmd += ["-C", kv]
     if task.pooled:
         cmd += ["--pool", "auto"]
+    if task.force_reason:
+        cmd += ["--force"]
     p = _run(cmd, env=env)
     if p.returncode != 0 or not os.path.exists(target):
         tail = (p.stdout + p.stderr).strip().splitlines()

@@ -54,7 +54,6 @@ TASK_TO_ROW = {
     "reorder": "ctc_reorder",
     "rerank": "ctc_rerank",
     "strmatch": "ctc_strmatch",
-    "textgroups": "ctc_textgroups",
     "grouping": "ctc_grouping",
 }
 BUCKETS = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
