@@ -141,9 +141,9 @@ deficit vs dense grows with target position (long-range), not uniformly.
 | point | shard | seed | full CE | paired Δ (se) |
 |---|---|---|---|---|
 | sd20-128M (763 PF) | 128M | 0 | 1.2720 | — |
-| **sd20-128M-s1B** (763 PF) | **1B** | 0 | **1.2812** | +0.009 vs sd20-128M (old shard) |
+| **sd20-128M-s1B** (763 PF) | **1B** | 0 | **1.2812** | +0.0089 (0.0020) vs sd20-128M old shard, +4.5σ; +0.0087 (0.0018) vs sd20-256M, +4.8σ |
 | sd20-256M (1523 PF) | 1B | 0 | 1.2725 | −0.0002 (0.0005) vs sd20-128M old shard, −0.4σ |
-| **sd20-256M-seed1** | 1B | 1 | **1.2682** | −0.004 vs seed 0 |
+| **sd20-256M-seed1** | 1B | 1 | **1.2682** | −0.0043 (0.0012) vs seed 0, 3.6σ; −0.0151 (0.0062) vs dense-32M, 2.5σ |
 | sd20-512M (3043 PF) | 1B | 0 | 1.2634 | −0.0091 (0.0019) vs sd20-256M, −4.8σ |
 | sd20-1B (5942 PF) | 1B | 0 | 1.2585 | −0.0048 (0.0010) vs sd20-512M, −5.1σ |
 
@@ -153,7 +153,7 @@ deficit vs dense grows with target position (long-range), not uniformly.
 1.2725 → 1.2634 → 1.2585 (−0.009 / −0.009 / −0.005 per doubling). The two shard families are
 offset by ~0.009 at 128M (the 1B shard's early rows are harder / differently ordered), so joining
 "old-shard 128M" to "1B-shard 256M" hides one doubling of progress. (2) A second seed at 256M
-gives 1.2682, 0.004 below seed 0 — run-to-run seed variance is ±~0.003, comparable to the
+gives 1.2682, 0.0043 (0.0012) below seed 0 — a paired-significant seed effect of ~0.004, comparable to the
 between-budget steps at this end of the curve, so single runs cannot resolve 0.005-size features.
 (3) The between-budget paired Δs are all >4σ except the 128M(old)→256M(new) step (−0.4σ), which
 is exactly the cross-shard comparison. Consequence for the main table: on a single shard the sd20
