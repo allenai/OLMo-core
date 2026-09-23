@@ -393,9 +393,13 @@ shard all produce a plausible-looking or flat curve rather than an error.
 
 1. The vLLM cost model at 2k–32k, then 64k–256k — the measurement this file exists to record.
 2. eval_size policy + LPT-balanced 8-way shard assignment (`size_the_suite.py`).
-3. Registering the two OOD rows in olmo-eval. They should go in a **separate `OOD_ROSTER` and a
-   `ctc:ood` suite**, not appended to `ROSTER`: `ROSTER` is the roster frozen 2026-08-12, and
-   appending would silently redefine `ctc:figure` (108 → 124 runs), `ctc:low` and `ctc:high`.
+3. ~~Registering the two OOD rows in olmo-eval.~~ **DONE** (olmo-eval `a150b926`, branch
+   `prasann/ctc-absence-low-ctc`): `OOD_ROSTER` holds `ctc_contra_fever` and `ctc_outlier_review`,
+   registered as `ctc:ood` / `ctc:ood:figure` / `ctc:ood:xlong` and deliberately NOT folded into
+   `ctc`/`ctc:figure`/`ctc:low`/`ctc:high`, so an already-published figure-ladder number still
+   refers to the roster frozen 2026-08-12. Ask for OOD explicitly.
+   Note from that roster: `contra_fever` r256k p90 is 264,294 — past the 262,144 position ceiling,
+   so it needs a YaRN factor-2 serving copy exactly as the suite's own r256k rungs do.
 4. Staging the new rung files where Beaker can read them (weka, or uploaded to the public HF dataset
    — the latter needs prasann's HF token).
 
