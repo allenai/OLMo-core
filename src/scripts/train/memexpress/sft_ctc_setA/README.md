@@ -81,6 +81,16 @@ for the IID audit against the eval's own rows).
 
 ## Runs
 
+Prep ([01M386CQPAHG0C8SXPB4BXB9HR](https://beaker.org/ex/01M386CQPAHG0C8SXPB4BXB9HR), 2026-09-23):
+base marker audit PASS (cos +0.24, norms 0.57x / 0.84x the median). The table gives
+examples / tokens kept at each window:
+
+| Window | Examples | Tokens | Dropped | Packed windows | Steps (1 epoch) |
+|---|---:|---:|---:|---:|---:|
+| 262,144 | 212,786 | 1,671,337,712 | 0 | 6,380 | 1,595 |
+| 32,768 | 203,156 | 925,280,412 | 9,630 (4.5%) | 28,425 | 888 |
+
 | Arm | Run name | Beaker | Commit |
 |---|---|---|---|
-| | | | |
+| `32k` | `q35-4b-dense-ctc-setA-32k-20260923T1537` | [01M386N34ADGF0DVCNH5V0DNY6](https://beaker.org/ex/01M386N34ADGF0DVCNH5V0DNY6) | `2582480a8` |
+| `256k` | `q35-4b-dense-ctc-setA-256k-20260923T1537` | [01M386N7CM9Y66RH505F6A9T2Z](https://beaker.org/ex/01M386N7CM9Y66RH505F6A9T2Z) | `2582480a8` |
