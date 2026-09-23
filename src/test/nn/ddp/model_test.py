@@ -4,7 +4,7 @@ import pytest
 
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -31,7 +31,11 @@ def _build_model_config(*, d_model: int = 64, n_layers: int = 2) -> OLMoDDPModel
         block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             attention=AttentionConfig(
-                name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype
+                name=AttentionType.default,
+                n_heads=4,
+                bias=False,
+                backend=AttentionBackendName.torch,
+                dtype=dtype,
             ),
             routed_experts=RoutedExpertsConfig(
                 d_model=d_model, hidden_size=128, num_experts=4, bias=False, dtype=dtype
