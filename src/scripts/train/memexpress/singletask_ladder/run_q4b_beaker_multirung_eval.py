@@ -37,6 +37,7 @@ Usage::
 """
 
 import argparse
+import re
 import sys
 
 from olmo_core.internal.common import build_launch_config, get_root_dir
@@ -90,8 +91,11 @@ def build_eval_launch_config(
     xlong_rungs,
     cot_mode,
     tokenizer="",
- dc_rung_files: str = "", dc_rungs: str = ""):
-    root_dir = get_root_dir(cluster)  # e.g. /weka/oe-training-default/ai2-llm (mounts weka bucket)
+ dc_rung_files: str = "", dc_rungs: str = "", extra_env=()):
+    # `cluster` may be a comma list for any-of placement (build_launch_config splits it the same
+    # way). The weka root is identical across the weka-tagged clusters, so resolve it from the first
+    # -- get_root_dir() takes ONE cluster name and 404s on a comma list.
+    root_dir = get_root_dir(cluster.split(",")[0])  # e.g. /weka/oe-training-default/ai2-llm
     # Eval CODE now ships IN the cloned repo (src/scripts/ctc_eval); the runner runs from the repo root
     # (gantry cwd). DATA still comes from weka (the runner derives BUNDLE/EVAL500 from WEKA_LLM=root_dir).
     runner = "src/scripts/train/memexpress/singletask_ladder/run_beaker_multirung_eval.sh"
@@ -99,7 +103,8 @@ def build_eval_launch_config(
     # The on-node runner reads its inputs from env; gantry torchrun wrapping is disabled so the runner
     # can drive its own 8-way `torchrun`. cmd[0]="bash" => not auto-prefixed with `python`.
     inner = (
-        f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
+        "".join(f"{kv} " for kv in extra_env)
+        + f"RUN={run_name} TASK={task} VARIANT={variant} STEP='{step}' CKPT='{ckpt}' "
         f"EVAL_OUT_DIR='{results_dir}' PROMPT_FORMAT='{prompt_format}' "
         f"QUERY_POSITION='{query_position}' "
         f"MAX_TEST={max_test} MAX_LENGTH={max_length} BATCH_SIZE={batch_size} NGPU={ngpu} "
@@ -247,9 +252,20 @@ def main():
         "rung files a dense campaign used)",
     )
     ap.add_argument("--dc-rungs", default="", help="docchunk: comma rung labels to score (pairs with --dc-rung-files)")
+    ap.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="KEY=VAL",
+        help="extra env var for the on-node runner (repeatable), e.g. "
+        "OLMO_LANDMARK_SPARSE_DECODE=1 to route landmark decode through the sparse path.",
+    )
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
+    for kv in args.env:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[^\s'\"]*", kv):
+            raise SystemExit(f"--env expects KEY=VAL with no spaces/quotes, got {kv!r}")
     prepare_cli_environment()
 
     variant = args.variant or variant_from_run_name(args.run_name)
@@ -289,6 +305,7 @@ def main():
             tokenizer=args.tokenizer,
             dc_rung_files=args.dc_rung_files,
             dc_rungs=args.dc_rungs,
+            extra_env=args.env,
         )
         print(f"\n--- [{task}] {lc.name} ---")
         print(f"    cmd: {lc.cmd[-1]}")
