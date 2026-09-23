@@ -1,4 +1,4 @@
-"""Entrypoints for the twelve-run corrected-tokenizer SFT campaign."""
+"""Entrypoints for corrected-tokenizer SFT controls and the 128-GPU hero SFT."""
 
 import hashlib
 import os
@@ -20,7 +20,7 @@ def node(r):
 
     verify_runtime()
     rank = int(os.environ.get("BEAKER_REPLICA_RANK", "0"))
-    assert int(os.environ["BEAKER_REPLICA_COUNT"]) == 8
+    assert int(os.environ["BEAKER_REPLICA_COUNT"]) == r.nodes
     assert int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]) == 8
     exp, job = os.environ["BEAKER_EXPERIMENT_ID"], os.environ["BEAKER_JOB_ID"]
     topology = subprocess.check_output(["nvidia-smi", "topo", "-m"], text=True, timeout=30)
@@ -63,7 +63,7 @@ def node(r):
                 sys.executable,
                 "-m",
                 "torch.distributed.run",
-                "--nnodes=8",
+                f"--nnodes={r.nodes}",
                 "--nproc-per-node=8",
                 f"--node-rank={rank}",
                 "--rdzv-backend=static",
@@ -86,7 +86,7 @@ def node(r):
             dict(
                 passed=True,
                 step=r.end,
-                gpus=64,
+                gpus=r.gpus,
                 smoke=False,
                 checkpoint_metadata_sha256=hashlib.sha256(
                     (r.root / f"step{r.end}/.metadata.json").read_bytes()

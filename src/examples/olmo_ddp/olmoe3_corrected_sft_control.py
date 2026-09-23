@@ -44,12 +44,12 @@ def service_spec(template, commit, mode, kind=None):
 
 
 def train_spec(template, r, commit, hosts):
-    """Exact qualified model/runtime, eight nodes, allocated urgent training."""
+    """Allocate the run's node count with the qualified model and runtime."""
     s = training_spec(template, r, commit, hosts)
     t = s["tasks"][0]
     t["arguments"] = ["python", p.SCRIPT, "node", r.run_id]
     replace_env(t, dict(GIT_BRANCH=p.BRANCH, QKGAIN_TRAIN_SCRIPT=None))
-    assert t["replicas"] * t["resources"]["gpuCount"] == 64
+    assert t["replicas"] * t["resources"]["gpuCount"] == r.gpus
     return s
 
 
@@ -161,7 +161,7 @@ def watch():
         ec = control(b, commit, p.AUTO / "evals", p.base.EVAL_WORKSPACE)
         template = b.experiment.get_spec(b.workload.get(TRAIN_TEMPLATE)).to_json()
         hosts = template["tasks"][0]["constraints"]["hostname"]
-        assert len(hosts) >= 8
+        assert len(hosts) >= max(r.nodes for r in p.runs())
         HuggingFaceBucketBackend().assert_private(p.base.BUCKET)
         store = StateStore(p.base.CONTROL, p.base.STATE)
         for r in p.runs():
@@ -194,7 +194,7 @@ def watch():
                         source=str(r.source),
                         lr=r.lr,
                         epochs=2,
-                        gpus=64,
+                        gpus=r.gpus,
                         batch=r.batch,
                         emo=False,
                     )

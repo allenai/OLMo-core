@@ -8,7 +8,7 @@ from pathlib import Path
 import olmoe3_qkgain_plan as base
 
 CAMPAIGN = "olmo35-dolci-hero-20260920"
-BRANCH = "codex/dolci-hero-20260920"
+BRANCH = "codex/hero2t-128gpu-dolci-20260922"
 SCRIPT = "src/examples/olmo_ddp/olmoe3_dolci_hero.py"
 AUTO = base.MOUNT / "uploader/automation" / CAMPAIGN
 ROOT = base.MOUNT / "production-dolci-hero" / CAMPAIGN
@@ -108,7 +108,9 @@ class Run(base.Run):
 
     @property
     def gpus(self):
-        return 128 if self.kind == "hero" else (64 if self.uses_dolci else super().gpus)
+        if self.kind in ("hero", "hero2t-mt", "hero2t-lc"):
+            return 128
+        return 64 if self.uses_dolci else super().gpus
 
     @property
     def nodes(self):

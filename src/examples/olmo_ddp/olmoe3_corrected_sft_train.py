@@ -1,4 +1,4 @@
-"""Bind corrected data to the unchanged qualified 64-GPU, packed, eager SFT recipe."""
+"""Bind corrected data to the qualified packed, eager SFT recipe at each run's size."""
 
 import json
 import os
@@ -38,7 +38,7 @@ def install(r):
 
 
 def validate(r):
-    """Fail before scheduling 64 GPUs if any source/config/tokenizer invariant drifts."""
+    """Fail before scheduling training if any source/config/tokenizer invariant drifts."""
     from olmo_core.internal.experiment import CliContext, SubCmd
 
     os.environ.update(QKGAIN_RUN=r.run_id, QKGAIN_START="0", QKGAIN_STOP=str(r.end))
@@ -53,6 +53,7 @@ def validate(r):
         assert all(layer in c.model.block_overrides for layer in (3, 7, 11, 15))
     assert c.data_loader.global_batch_size == 8388608
     assert c.train_module.rank_microbatch_size == 65536
+    assert r.batch % (r.gpus * r.microbatch) == 0
     assert c.train_module.ep_config is None and c.train_module.pp_config is None
     assert c.model.recompute_each_block and not c.model.two_batch_overlap
     assert c.train_module.optim.lr == r.lr and c.train_module.optim.weight_decay == 0
@@ -76,7 +77,7 @@ def validate(r):
     assert tok.apply_chat_template(
         [{"role": "user", "content": "2+2?"}], tokenize=False, add_generation_prompt=True
     ).endswith("assistant\n<think>")
-    p.base.validate_checkpoint(r.source, 5961, 16777216, 64)
+    p.base.validate_checkpoint(r.source, 5961, 16777216, r.source_gpus)
     atomic_json(
         p.AUTO / "config-proofs" / f"{r.run_id}.json",
         dict(passed=True, commit=os.environ["GIT_REF"], run=r.as_dict()),

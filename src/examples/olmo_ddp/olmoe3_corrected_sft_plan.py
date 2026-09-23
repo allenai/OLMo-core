@@ -1,4 +1,4 @@
-"""Twelve independently initialized, corrected-tokenizer SFT controls."""
+"""Twelve completed SFT controls and the hero's full Dolci-Think descendant."""
 
 import json
 from dataclasses import dataclass
@@ -8,7 +8,7 @@ import olmoe3_qkgain_plan as base
 from olmoe3_dolci_hero_plan import PARENTS
 
 CAMPAIGN = "olmo35-fixedtok-sft-20260921"
-BRANCH = "codex/hero2t-corrected-sft-20260922"
+BRANCH = "codex/hero2t-128gpu-dolci-20260922"
 SCRIPT = "src/examples/olmo_ddp/olmoe3_corrected_sft.py"
 AUTO = base.MOUNT / "uploader/automation" / CAMPAIGN
 ROOT = base.MOUNT / "production-corrected-sft" / CAMPAIGN
@@ -72,6 +72,11 @@ class Run(base.Run):
     def future_parent(self):
         return self.milestone == "2t3to1"
 
+    @property
+    def source_gpus(self):
+        """The new hero LC uses 128 ranks; the completed control parents used 64."""
+        return 128 if self.future_parent else 64
+
     def parent_ready(self):
         """Release future SFT only after the canonical full-LC success receipt exists."""
         if not self.future_parent:
@@ -81,7 +86,7 @@ class Run(base.Run):
             return False
         saved = json.loads(proof.read_text())
         assert saved["passed"] and not saved["smoke"]
-        assert saved["step"] == 5961 and saved["gpus"] == 64
+        assert saved["step"] == 5961 and saved["gpus"] == self.source_gpus
         return True
 
     @property
@@ -90,11 +95,11 @@ class Run(base.Run):
 
     @property
     def gpus(self):
-        return 64
+        return 128 if self.future_parent else 64
 
     @property
     def nodes(self):
-        return 8
+        return self.gpus // 8
 
     @property
     def epochs(self):
@@ -143,17 +148,12 @@ def runs(smoke=False):
         for milestone, dataset in WAVES
         for lineage in ("emo", "non-emo")
     ]
-    future = [
-        Run("3to1-shared", "sft", False, "2t3to1", dataset, "non-emo")
-        for dataset in ("gptoss-medium", "gptoss-high", "dolci-think")
-    ]
-    # Unready future parents do not block the original queue. GPT-OSS remains ahead
-    # of the long Dolci jobs once the new LC source becomes available.
-    return original[:8] + future[:2] + original[8:] + future[2:]
+    future = Run("3to1-shared", "sft", False, "2t3to1", "dolci-think", "non-emo")
+    return original + [future]
 
 
 def find_run(name):
-    """Resolve only the authorized twelve identities."""
+    """Resolve the completed controls and the sole authorized future SFT."""
     return next(r for r in runs() if r.run_id == name)
 
 
