@@ -178,17 +178,44 @@ def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
 
     rec["train"], rec["eval"] = dist(train), dist(evalr)
 
-    # 3. distributions: the eval's median must sit inside the train range, and the medians close.
+    # 3. distributions: medians within tolerance. (An earlier version also accepted any eval median
+    # inside the train RANGE; that let oolong's 2x-short training contexts through.) doc_chars is
+    # skipped for qdmatch, whose "documents" mix short queries and long passages, so its median
+    # flips between the two modes on the count alone.
     keys = ["total_chars"] if line_mode else ["n_docs", "doc_chars", "gold_card"]
-    tol = {"n_docs": 0.10, "doc_chars": 0.25, "total_chars": 0.15, "gold_card": 0.25}
+    if task.startswith("qdmatch"):
+        keys = [k for k in keys if k != "doc_chars"]
+    tol = {"n_docs": 0.06, "doc_chars": 0.15, "total_chars": 0.15, "gold_card": 0.25}
     for key in keys:
         t, e = rec["train"][key], rec["eval"][key]
         if not t or not e:
             continue
-        if not (t["min"] <= e["med"] <= t["max"]) and abs(t["med"] - e["med"]) > tol[key] * max(
-                e["med"], 1):
+        if abs(t["med"] - e["med"]) > tol[key] * max(e["med"], 1):
             fails.append(f"{key}: train {t['min']}/{t['med']}/{t['max']} vs eval "
                          f"{e['min']}/{e['med']}/{e['max']} (min/med/max)")
+
+    # 3b. mixes that are part of the task definition, not its size.
+    def mix(rows, fn):
+        from collections import Counter
+
+        c = Counter(fn(r) for r in rows)
+        return {k: round(v / max(len(rows), 1), 2) for k, v in c.most_common()}
+
+    if task == "oolong":
+        tg = lambda r: (r.get("_meta") or {}).get("task_group")  # noqa: E731
+        rec["mix_train"], rec["mix_eval"] = mix(train, tg), mix(evalr, tg)
+        if set(rec["mix_train"]) != set(rec["mix_eval"]):
+            fails.append(f"question-type mix: train {rec['mix_train']} vs eval {rec['mix_eval']}")
+    if task == "rerank":
+        def null_frac(r):
+            ce = r.get("ce_scores") or []
+            return round(sum(x is None for x in ce) / max(len(ce), 1), 1)
+
+        rec["null_ce_train"] = statistics.mean(null_frac(r) for r in train) if train else None
+        rec["null_ce_eval"] = statistics.mean(null_frac(r) for r in evalr) if evalr else None
+        if rec["null_ce_train"] is not None and abs(rec["null_ce_train"] - rec["null_ce_eval"]) > 0.1:
+            fails.append(f"unscored (foreign-fill) document share: train {rec['null_ce_train']:.2f} "
+                         f"vs eval {rec['null_ce_eval']:.2f}")
 
     # 4. fields the eval row carries that the train rows do not.
     ek = set().union(*(r.keys() for r in evalr))
@@ -223,6 +250,14 @@ def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
             try:
                 _, ans = _render_train(ex, train_spec, qpos)
                 scores.append(_self_score(sp, ex, ans))
+                if scores[-1] < 1.0 and f"worst_{name}" not in rec:
+                    parsed = sp.parse(ans, len(ex.get("documents") or []))
+                    rec[f"worst_{name}"] = {
+                        "target": ans[:300], "parsed": str(parsed)[:300],
+                        "metrics": sp.score(parsed, _gold(sp, ex)),
+                        "gold": str(ex.get(sp.extra.get("gold_field", "gold_doc_indices")))[:200],
+                        "ce_scores": str(ex.get("ce_scores"))[:300],
+                    }
             except Exception as e:  # noqa: BLE001
                 err = err or f"{type(e).__name__}: {e}"
         rec[f"self_score_{name}"] = round(statistics.mean(scores), 4) if scores else None
@@ -230,7 +265,7 @@ def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
             fails.append(f"target on {name} rows: {err}")
         elif scores and statistics.mean(scores) < 1.0:
             fails.append(f"training target scores {statistics.mean(scores):.3f} (not 1.0) under "
-                         f"the eval's grader on {name} rows")
+                         f"the eval's grader on {name} rows; first: {rec.get(f'worst_{name}')}")
     rec["fails"] = fails
     rec["status"] = "FAIL" if fails else "ok"
     return rec

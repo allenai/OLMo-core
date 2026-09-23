@@ -201,10 +201,14 @@ def sha256(path: str) -> str:
 # ---------------------------------------------------------------- the stages
 
 
-def _bucket_allowed(task: Task, bucket: str) -> Optional[str]:
+def _bucket_allowed(task: Task, bucket: str, cal: Optional[dict] = None) -> Optional[str]:
     """:returns: ``None`` if the bucket should be built, else the reason it is skipped."""
     if bucket in task.withhold:
         return f"withheld: {task.withhold[bucket]}"
+    # A foreign-filled cell asks ctc for the fixed scored set only, so a ceiling set by the
+    # per-query candidate pool (rerank's 250) does not bound it.
+    if cal and "fill_to" in cal:
+        return None
     if task.max_rung and BUCKET_TOKENS[bucket] > rung_tokens(task.max_rung):
         why = f"above the task ceiling ({task.max_rung})"
         return f"{why}: {task.max_rung_reason}" if task.max_rung_reason else why
@@ -212,18 +216,31 @@ def _bucket_allowed(task: Task, bucket: str) -> Optional[str]:
 
 
 def _build_cell(job) -> dict:
-    task, bucket, n, build_root, seed, python = job
+    task, bucket, n, build_root, seed, python, cal = job
     out = os.path.join(build_root, f"_b{bucket}")
     target = os.path.join(out, task.name, "train.jsonl")
     rec = {"task": task.name, "bucket": bucket, "want": n, "path": target}
     if os.path.exists(target) and os.path.getsize(target) > 0:
         rec.update(status="cached", rows=sum(1 for _ in open(target)))
         return rec
-    cmd = [python, "-m", "ctc.data.cli", "build", "--task", task.name, "--split", "train",
-           "--rungs", bucket, "--train", str(n), "--seed", str(seed), "--out", out]
+    env = None
+    if cal:
+        # sizes measured from the eval itself (measure_eval_ladder.py), applied by patching
+        # ctc's docs_for_rung for this one cell; generation is otherwise ctc as published
+        entry = [python, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      "ctc_calibrated.py")]
+        env = {**os.environ,
+               "CTC_DOCS_OVERRIDE": json.dumps({f"{task.name}:{bucket}": cal["n_docs"]})}
+        rec["n_docs"] = cal["n_docs"]
+    else:
+        entry = [python, "-m", "ctc.data.cli"]
+    cmd = entry + ["build", "--task", task.name, "--split", "train",
+                   "--rungs", bucket, "--train", str(n), "--seed", str(seed), "--out", out]
+    for kv in (cal or {}).get("set", []):
+        cmd += ["-C", kv]
     if task.pooled:
         cmd += ["--pool", "auto"]
-    p = _run(cmd)
+    p = _run(cmd, env=env)
     if p.returncode != 0 or not os.path.exists(target):
         tail = (p.stdout + p.stderr).strip().splitlines()
         rec.update(status="FAILED", error=" | ".join(tail[-3:])[:600])
@@ -251,6 +268,10 @@ def main() -> None:
                          "below a shard's max_example_len, so one dir cannot serve both windows.")
     ap.add_argument("--query-position", default="both", choices=("before", "after", "both"))
     ap.add_argument("--cot-mode", default="none")
+    ap.add_argument("--calibration", default="",
+                    help="eval_calibration.json from measure_eval_ladder.py: size every "
+                         "(task, bucket) it names to the EVAL's own rows instead of ctc's ladder "
+                         "table. Builds into <set tag>_evaliid so no table-sized cell is reused.")
     ap.add_argument("--check", action="store_true",
                     help="re-hash an existing build against its manifest and report drift")
     # this file is <repo>/src/scripts/data/ctc_sft/build_ctc_sft.py -> five levels up
@@ -266,6 +287,10 @@ def main() -> None:
             raise SystemExit(f"unknown bucket {b!r}; have {', '.join(BUCKET_TOKENS)}")
 
     tasks, tag = SETS[args.set_name]
+    calibration: Dict[str, Dict[str, dict]] = {}
+    if args.calibration:
+        calibration = json.load(open(args.calibration))["tasks"]
+        tag = f"{tag}_evaliid"
     root = os.path.join(args.out, tag)
     build_root = os.path.join(root, "per_task")
     manifest_path = os.path.join(root, "manifest.json")
@@ -290,12 +315,15 @@ def main() -> None:
     jobs, skipped = [], []
     for t in tasks:
         for b in args.buckets:
-            why = _bucket_allowed(t, b)
+            why = _bucket_allowed(t, b, calibration.get(t.name, {}).get(b))
             if why:
                 skipped.append({"task": t.name, "bucket": b, "reason": why})
                 continue
+            # A bucket the eval has no rung for keeps ctc's own table: nothing grades it, so there
+            # is nothing to match, and dropping it would quietly shrink the long-context mix.
+            cal = calibration.get(t.name, {}).get(b)
             jobs.append((t, b, args.tokens_per_bucket // BUCKET_TOKENS[b], build_root,
-                         args.seed, python))
+                         args.seed, python, cal))
 
     print(f"=== {tag} | {len(tasks)} tasks x {len(args.buckets)} buckets "
           f"| {len(jobs)} to build, {len(skipped)} skipped | seed={args.seed} "
@@ -329,6 +357,12 @@ def main() -> None:
 
     failed = [r for r in results if r["status"] == "FAILED"]
 
+    for t in tasks:
+        fills = {b: c["fill_to"] for b, c in calibration.get(t.name, {}).items()
+                 if "fill_to" in c and b in args.buckets}
+        if fills:
+            _foreign_fill(t.name, fills, build_root, args.seed)
+
     print("=== merging buckets per task ===", flush=True)
     per_task = {}
     for t in tasks:
@@ -355,6 +389,8 @@ def main() -> None:
         shards = _convert(tasks, root, build_root, args)
 
     manifest = {
+        "calibration": ({"path": os.path.abspath(args.calibration), "cells": calibration}
+                        if args.calibration else None),
         "set": args.set_name, "tag": tag, "root": root,
         "seed": args.seed, "buckets": args.buckets,
         "tokens_per_bucket": args.tokens_per_bucket,
@@ -381,6 +417,80 @@ def main() -> None:
         for n in empty:
             print(f"  EMPTY  {n}: no bucket produced rows", flush=True)
         raise SystemExit(1)
+
+
+def _foreign_fill(task: str, fills: Dict[str, int], build_root: str, seed: int) -> None:
+    """
+    Pad each row's CE-scored candidate set to the eval's document count with unscored passages.
+
+    This is how the eval's rerank rows are built: a fixed set of CE-scored candidates at every rung
+    plus foreign passages with ``ce_scores`` None, which the scorer excludes from the target. The
+    fill is drawn from OTHER queries' candidates across every bucket of this build (the eval drew
+    random MS MARCO passages; both are unrelated to the query), inserted at uniformly random
+    positions, with gold / hard-negative / CE indices remapped. ``ctc``'s own output is kept as
+    ``train.ctc.jsonl`` and ``train.jsonl`` is always regenerated from it, so this is idempotent.
+    """
+    import random
+
+    raws = {}
+    for b in fills:
+        d = os.path.join(build_root, f"_b{b}", task)
+        raw, out = os.path.join(d, "train.ctc.jsonl"), os.path.join(d, "train.jsonl")
+        if not os.path.exists(raw) and os.path.exists(out):
+            os.replace(out, raw)
+        if os.path.exists(raw):
+            raws[b] = raw
+    donors: List[tuple] = []  # (query, text)
+    seen = set()
+    for raw in raws.values():
+        with open(raw) as f:
+            for line in f:
+                ex = json.loads(line)
+                q = (ex.get("queries") or [""])[0]
+                for doc in ex["documents"]:
+                    key = doc.get("text", "")
+                    if key not in seen:
+                        seen.add(key)
+                        donors.append((q, doc))
+    print(f"=== foreign fill {task}: {len(donors):,} donor passages ===", flush=True)
+    for b, raw in sorted(raws.items(), key=lambda kv: BUCKET_TOKENS[kv[0]]):
+        rng = random.Random(f"{seed}:foreign_fill:{task}:{b}")
+        target = fills[b]
+        rows = short = 0
+        with open(raw) as f, open(os.path.join(os.path.dirname(raw), "train.jsonl"), "w") as out:
+            for line in f:
+                ex = json.loads(line)
+                docs = list(ex["documents"])
+                own = {d.get("text", "") for d in docs}
+                q = (ex.get("queries") or [""])[0]
+                need = target - len(docs)
+                fill = []
+                while len(fill) < need:
+                    dq, doc = donors[rng.randrange(len(donors))]
+                    if dq != q and doc.get("text", "") not in own:
+                        own.add(doc.get("text", ""))
+                        fill.append(doc)
+                n = len(docs) + len(fill)
+                slots = sorted(rng.sample(range(n), len(fill)))  # where fill lands
+                order, it_own, it_fill = [], iter(range(len(docs))), iter(range(len(fill)))
+                fill_slots = set(slots)
+                for pos in range(n):
+                    order.append(("f", next(it_fill)) if pos in fill_slots else ("o", next(it_own)))
+                remap = {i: pos for pos, (kind, i) in enumerate(order) if kind == "o"}
+                ce = ex.get("ce_scores") or [None] * len(docs)
+                ex["documents"] = [docs[i] if k == "o" else fill[i] for k, i in order]
+                ex["ce_scores"] = [ce[i] if k == "o" else None for k, i in order]
+                for key in ("gold_doc_indices", "hard_neg_indices"):
+                    if ex.get(key) is not None:
+                        ex[key] = [remap[i] for i in ex[key]]
+                meta = dict(ex.get("_meta") or {})
+                meta.update(foreign_fill=len(fill), scored=len(docs))
+                ex["_meta"] = meta
+                out.write(json.dumps(ex) + "\n")
+                rows += 1
+                short += need < 0
+        print(f"  {task}@{b}: {rows} rows filled to {target} docs"
+              + (f"  ⚠ {short} rows already above target" if short else ""), flush=True)
 
 
 def _convert(tasks, root, build_root, args) -> dict:
