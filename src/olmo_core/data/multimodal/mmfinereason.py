@@ -42,6 +42,7 @@ from .message_sequence import encode_sft_example
 from .sequence_builder import example_rng
 from .sft_common import (
     decode_pil_image,
+    extract_reasoning_scratchpad,
     extract_reasoning_text,
     get_example_with_skip,
     load_hf_dataset,
@@ -139,6 +140,21 @@ class MMFineReasonDatasetConfig(Config):
     loss_token_weighting: str = "root_subsegments"
     seed: int = 0
 
+    short_answer_column: str = "answer"
+    """Column holding the short verifiable answer (p50 **4 characters**), as opposed to
+    :attr:`answer_column`'s verbose ``original_answer`` (p50 1,516). Used only by
+    :attr:`cot_scratchpad`, which needs a *committed* answer short enough to be graded on
+    its own -- CharXiv descriptive gold is p50 5 characters, and Qwen-Thinking's graded
+    span is p50 24 against a p50 639 trace. Falls back to the parsed verbose answer when
+    this column is missing or empty (~4% of rows)."""
+
+    cot_scratchpad: bool = False
+    """With :attr:`supervise_cot`, keep the trace inside ``<think>…</think>`` and follow it
+    with the bare answer, instead of stripping the tags and supervising the derivation as
+    prose. Only meaningful paired with olmo-eval's ``strip_reasoning_trace``, which removes
+    the scratchpad before grading; without that the tags reach the judge. Rows with no
+    ``<think>`` block (~51%) fall back to the answer-only target either way."""
+
     skip_overlong: bool = False
     """Skip over-budget rows instead of right-truncating them (see
     :attr:`~olmo_core.data.multimodal.chartverse.ChartVerseDatasetConfig.skip_overlong`).
@@ -164,6 +180,8 @@ class MMFineReasonDataset:
         self.tokenizer = tokenizer
 
         needed = [config.question_column, config.answer_column, config.image_column]
+        if config.cot_scratchpad and config.short_answer_column:
+            needed.append(config.short_answer_column)
         filter_cols = ["source", "pass_rate", "is_consistent"]
         self._data = load_hf_dataset(
             config.dataset_path,
@@ -220,9 +238,15 @@ class MMFineReasonDataset:
         raw = row[cfg.answer_column]
         answer = extract_answer_text(raw)
         if cfg.supervise_cot:
-            # extract_reasoning_text falls back to the plain text when there is no <think>
+            # Both extractors fall back to the answer-only target when there is no <think>
             # block, so the ~51% of rows without a trace behave exactly as they do today.
-            answer = extract_reasoning_text(raw, final_answer=answer) or answer
+            if cfg.cot_scratchpad:
+                # Grade the short verifiable answer, not the verbose one: everything the
+                # model needs to *say* goes inside <think>, and only this is scored.
+                short = (row.get(cfg.short_answer_column) or "").strip()
+                answer = extract_reasoning_scratchpad(raw, final_answer=short or answer) or answer
+            else:
+                answer = extract_reasoning_text(raw, final_answer=answer) or answer
         if not question or not answer:
             raise ValueError("empty question or answer after parsing")
 

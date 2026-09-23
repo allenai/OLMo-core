@@ -297,6 +297,10 @@ class ExperimentConfig(Config):
     Needs no staging -- the trace is already in the column the loader reads -- so this is
     the cheap half of the process-supervision question, with the answer-only mmfinereason
     10k diet curve as an exact control."""
+    mmfinereason_cot_scratchpad: bool = False
+    """With ``mmfinereason_supervise_cot``, keep the derivation inside ``<think>...</think>``
+    and supervise a bare answer after it, rather than training the derivation as the graded
+    prose. Requires olmo-eval's ``strip_reasoning_trace`` on the eval side."""
     finevision_rate: float = 0.0
     """Total mixture fraction for the five verified FineVision configs, split evenly
     across them via ``FINEVISION_RATES`` keys (0 disables)."""
@@ -779,6 +783,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 max_crops=MAX_CROPS,
                 max_sequence_length=SEQUENCE_LENGTH,
                 supervise_cot=config.mmfinereason_supervise_cot,
+                cot_scratchpad=config.mmfinereason_cot_scratchpad,
             ).build(tokenizer)
         )
         weights.append(mmfr_rate)

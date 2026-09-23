@@ -264,6 +264,41 @@ _ANSWER_BLOCK_RE = re.compile(r"<answer>(.*?)</answer>", re.DOTALL)
 _STRAY_REASONING_TAGS_RE = re.compile(r"</?(?:think|answer)>")
 
 
+def extract_reasoning_scratchpad(raw: Optional[str], final_answer: str = "") -> str:
+    """Render a trace as a delimited ``<think>…</think>`` scratchpad plus a bare answer.
+
+    This is the *other* way to supervise a derivation, and it tests a different hypothesis
+    from :func:`extract_reasoning_text`. That function strips the tags, so the derivation
+    becomes the graded string — the manipulation that measured 5-of-6 negative on CharXiv
+    (see ``RESPONSE_LENGTH.md``). This one keeps ``<think>`` (a real Qwen3 special token,
+    151667/151668) so the harness can remove the scratchpad before grading and score only
+    the committed answer, which is how Qwen-Thinking's +6.5 is actually measured: p50 639
+    chars of trace against a p50 24-char graded answer.
+
+    Requires the matching scorer-side strip (``strip_reasoning_trace`` in olmo-eval); without
+    it the tags reach the GPT judge and this is strictly worse than the plain form.
+
+    :param raw: The raw trace. ``None`` / empty, or a trace with no reasoning body, yields
+        ``""`` so the caller can fall back to the answer-only target.
+    :param final_answer: Graded short answer, emitted verbatim after ``</think>``.
+    """
+    if not raw:
+        return ""
+    think = _THINK_BLOCK_RE.search(raw)
+    if not think:
+        return ""
+    body = _STRAY_REASONING_TAGS_RE.sub("", think.group(1)).strip()
+    if not body:
+        return ""
+    if not final_answer:
+        answer_block = _ANSWER_BLOCK_RE.search(raw)
+        final_answer = answer_block.group(1).strip() if answer_block else ""
+    final_answer = _STRAY_REASONING_TAGS_RE.sub("", final_answer).strip()
+    if not final_answer:
+        return ""
+    return f"<think>{body}</think>{final_answer}"
+
+
 def extract_reasoning_text(raw: Optional[str], final_answer: str = "") -> str:
     """Turn a ``<think>…</think>…<answer>…</answer>`` trace into plain supervised text.
 
