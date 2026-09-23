@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
+
 - Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.
 
 - Replaced `FusedAttention` with `FusedAttentionV2` and migrated its applicable tests to V2. Legacy `AttentionConfig(name="fused")` configs still load through V2 with the same packed QKV parameter names and shapes, preserving model and optimizer checkpoint compatibility. Legacy fused RoPE is mapped to regular RoPE: floating-point results (especially low-precision RoPE gradients) differ, so resumed training is not numerically identical. `TransformerConfig.llama_like(fused_ops=True)` now selects V2 with regular RoPE when it previously selected fused attention.
