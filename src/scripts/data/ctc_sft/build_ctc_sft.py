@@ -253,9 +253,13 @@ def main() -> None:
     ap.add_argument("--cot-mode", default="none")
     ap.add_argument("--check", action="store_true",
                     help="re-hash an existing build against its manifest and report drift")
-    ap.add_argument("--repo", default=os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+    # this file is <repo>/src/scripts/data/ctc_sft/build_ctc_sft.py -> five levels up
+    ap.add_argument("--repo", default=os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), *[os.pardir] * 4)))
     args = ap.parse_args()
+    if args.convert and not os.path.exists(os.path.join(
+            args.repo, "src", "scripts", "data", "convert_unified_to_document_landmark.py")):
+        raise SystemExit(f"--repo {args.repo} has no src/scripts/data/convert_unified_to_document_landmark.py")
 
     for b in args.buckets:
         if b not in BUCKET_TOKENS:
@@ -368,7 +372,10 @@ def main() -> None:
 
     print(f"\n=== {tag}: {len(per_task) - len(empty)}/{len(tasks)} tasks, "
           f"{sum(v['rows'] for v in per_task.values()):,} rows ===", flush=True)
-    if failed or empty:
+    bad_shards = sorted(n for n, v in shards.items() if v.get("status") == "FAILED")
+    if failed or empty or bad_shards:
+        for n in bad_shards:
+            print(f"  SHARD FAILED {n}: {shards[n].get('error')}", flush=True)
         for r in failed:
             print(f"  FAILED {r['task']}@{r['bucket']}: {r.get('error')}", flush=True)
         for n in empty:

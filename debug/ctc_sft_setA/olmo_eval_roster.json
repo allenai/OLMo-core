@@ -1,0 +1,510 @@
+{
+ "hf_dataset": "PrasannSinghal/ctc-suite-eval",
+ "rung_tokens": {
+  "r2k": 2048,
+  "r4k": 4096,
+  "r8k": 8192,
+  "r16k": 16384,
+  "r32k": 32768,
+  "r64k": 65536,
+  "r128k": 131072,
+  "r256k": 262144,
+  "r512k": 524288,
+  "r1m": 1048576
+ },
+ "olmo_eval_commit": "5f165a65",
+ "roster": {
+  "ctc_fiqa": {
+   "subset": "fiqa",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_nq": {
+   "subset": "nq",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_hpqa": {
+   "subset": "hotpotqa",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_qdmatch_fiqa": {
+   "subset": "qdmatch_fiqa",
+   "spec": "qdmatch",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_pairs",
+   "score_takes_example": false
+  },
+  "ctc_qdmatch_nq": {
+   "subset": "qdmatch_nq",
+   "spec": "qdmatch",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_pairs",
+   "score_takes_example": false
+  },
+  "ctc_qdmatch_hpqa": {
+   "subset": "qdmatch_hpqa",
+   "spec": "qdmatch",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_pairs",
+   "score_takes_example": false
+  },
+  "ctc_outlier_amzn": {
+   "subset": "outlier_amzn",
+   "spec": "outlier",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_outlier": {
+   "subset": "outlier",
+   "spec": "outlier",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_outlier_fixedm": {
+   "subset": "outlier_fixedM",
+   "spec": "outlier",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_oolong": {
+   "subset": "oolong",
+   "spec": "oolong",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_grouping": {
+   "subset": "grouping",
+   "spec": "grouping",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": false
+  },
+  "ctc_absence": {
+   "subset": "absence_gutenberg",
+   "spec": "absence",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_xabsence": {
+   "subset": "xabsence",
+   "spec": "xabsence",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_rerank": {
+   "subset": "rerank",
+   "spec": "rerank",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": true
+  },
+  "ctc_msmarco": {
+   "subset": "msmarco",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_reorder": {
+   "subset": "reorder",
+   "spec": "reorder",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": true,
+   "gold_field": "gold_order",
+   "score_takes_example": false
+  },
+  "ctc_obliq": {
+   "subset": "obliq_twitter",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r2k": 123,
+    "r4k": 126,
+    "r8k": 126,
+    "r16k": 126,
+    "r32k": 126,
+    "r64k": 126,
+    "r128k": 126,
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_niah": {
+   "subset": "niah",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_contradiction": {
+   "subset": "contradiction_iid",
+   "spec": "contradiction",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k",
+    "r64k",
+    "r128k",
+    "r256k",
+    "r512k",
+    "r1m"
+   ],
+   "rung_alias": {
+    "r2k": 2560
+   },
+   "eval_size": {
+    "r256k": 125,
+    "r512k": 125,
+    "r1m": 125
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_strmatch": {
+   "subset": "strmatch",
+   "spec": "strmatch",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_textgroups": {
+   "subset": "textgroups",
+   "spec": "textgroups",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k"
+   ],
+   "rung_alias": {},
+   "eval_size": {},
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  },
+  "ctc_scifact": {
+   "subset": "scifact",
+   "spec": "retrieval",
+   "rungs": [
+    "r2k",
+    "r4k",
+    "r8k",
+    "r16k",
+    "r32k"
+   ],
+   "rung_alias": {},
+   "eval_size": {
+    "r2k": 300,
+    "r4k": 300,
+    "r8k": 300,
+    "r16k": 300,
+    "r32k": 300
+   },
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
+  }
+ }
+}

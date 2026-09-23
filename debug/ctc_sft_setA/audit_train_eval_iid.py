@@ -1,142 +1,238 @@
 """
-Is the setA training data IID with what the CTC suite actually grades — at every context length?
+Is the setA training data IID with what the CTC suite actually grades -- at every context length?
 
 This is the check that has cost this project the most: a train/eval mismatch does not error, it
 scores. Realistic-mode contradiction graded on the ``both`` ladder read 0.559 when the true number
 was 0.946; a train n-max of 697 against an eval of 1,423 documents read as a long-context collapse.
 Both were data bugs wearing a capability result's clothes.
 
-So this audits against **olmo-eval's VENDORED ctc**, not the public package the data was built from.
-The vendored copy is spec-only -- ``spec.py`` per task plus ``format/`` and ``data/ladders.py`` --
-and it is the code that will actually grade the run. Point ``--vendor`` at
-``olmo-eval/src/olmo_eval/evals/tasks/ctc_suite/_vendor``.
+The authority is **olmo-eval's CTC suite** -- its ROSTER (which rows exist, which spec grades
+them, which rungs they have), its vendored ``ctc`` (the parser, scorer and prompt builder that
+will grade the run) and its data (``PrasannSinghal/ctc-suite-eval`` on HF). The first attempt at
+this audit compared against the ladder *formula* and the spec's default rung list instead, and
+half its verdicts were about the audit, not the data. So every comparison here is against a real
+eval row at the same rung:
 
-Per (task, bucket) it checks five things, each a real failure that has happened:
+1. **Rung coverage** (per task): rungs the eval grades that training lacks (a train gap) and
+   rungs training has that nothing grades (unevaluated, reported not failed).
+2. **Spec**: the spec our renderer uses must be the spec the ROSTER grades with.
+3. **Distribution** (per rung): document count, per-document length and gold cardinality of the
+   train rows against the eval rows. oolong is one long document, so it compares total length.
+4. **Fields**: every top-level field an eval row carries must exist on the train rows (rerank's
+   scorer reads ``ce_scores``; a train row without them cannot be graded the way eval rows are).
+5. **Prompt**: on the SAME eval row, the training renderer (``olmo_core`` ``build_prompt``, what
+   the converter tokenizes) and the eval's ``spec.build_prompt`` must produce identical text.
+6. **Target**: the training target, parsed and scored by the EVAL's parser and scorer with gold
+   resolved exactly as ``CTCScorer`` resolves it, must score 1.0 -- on train rows and on eval rows.
 
-1. **Format contract.** The row's own gold target, parsed and scored by the EVAL's parser and
-   scorer, must come back at the primary metric = 1.0. A target the grader cannot parse trains the
-   model to emit unparseable answers and reads as a capability failure.
-2. **Gold index base.** Bases differ per task (contradiction 1-indexed, outlier/rerank/nq
-   0-indexed). Applying the wrong one silently pools the true gold document away.
-3. **Rung coverage.** The bucket must be a rung the eval actually has, else nothing scores there.
-4. **Document count.** Train ``n_docs`` must sit on the eval's calibrated ``docs_for_rung`` for that
-   rung; a train support that does not reach the eval's n is the "long-context collapse" above.
-5. **Prompt renders** under the eval's ``build_prompt`` at the run's ``query_position``.
+Runs where both weka (train data) and HF (eval data) are reachable::
 
-    python debug/ctc_sft_setA/audit_train_eval_iid.py \
-        --root /weka/.../ctc_sft_sets/setA_max20 --vendor <olmo-eval>/..._vendor
+    python debug/ctc_sft_setA/audit_train_eval_iid.py \\
+        --root /weka/.../ctc_sft_sets/setA_max20 --vendor <olmo-eval>/.../ctc_suite/_vendor
 """
 
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import statistics
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-#: Ladder -> spec, taken from olmo-eval's own ROSTER (the `spec=` field of each RosterRow), which
-#: is the only authority: the suite grades ctc_hpqa with `retrieval`, and the eval registry has no
-#: `cot_retrieval` at all. Do NOT copy this mapping from a converter -- converters render through
-#: olmo_core's build_prompt, which accepts names the grader has never heard of.
-TASK_TO_SPEC = {"nq": "retrieval", "hotpotqa": "retrieval", "qdmatch_nq": "qdmatch"}
-TASKS = ["nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
-         "reorder", "rerank", "strmatch", "textgroups", "grouping_labeled"]
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+#: train task -> olmo-eval ROSTER key. The ROSTER row then names the eval subset and grading spec.
+TASK_TO_ROW = {
+    "nq": "ctc_nq",
+    "hotpotqa": "ctc_hpqa",
+    "qdmatch_nq": "ctc_qdmatch_nq",
+    "outlier": "ctc_outlier",
+    "oolong": "ctc_oolong",
+    "contradiction": "ctc_contradiction",
+    "xabsence": "ctc_xabsence",
+    "reorder": "ctc_reorder",
+    "rerank": "ctc_rerank",
+    "strmatch": "ctc_strmatch",
+    "textgroups": "ctc_textgroups",
+    "grouping_labeled": "ctc_grouping",
+}
 BUCKETS = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
+#: The training window: eval rungs above it are out of scope, not train gaps.
+MAX_TRAIN_RUNG = "256k"
 
 
-def audit_cell(task: str, bucket: str, root: str, sample: int, qpos: str) -> dict:
-    from ctc.data import ladders
-    from ctc.format import registry
+def _load_builder_roster(repo: str) -> Dict[str, dict]:
+    """The spec / chunk_by each train task is RENDERED with, from the builder that made the data."""
+    sys.path.insert(0, os.path.join(repo, "src", "scripts", "data", "ctc_sft"))
+    import build_ctc_sft as B  # noqa: E402
 
-    spec_name = TASK_TO_SPEC.get(task, task)
-    rec = {"task": task, "bucket": bucket, "spec": spec_name}
+    return {t.name: {"spec": t.spec, "chunk_by": t.chunk_by} for t in B.SET_A}
+
+
+def _train_rows(root: str, task: str, bucket: str, k: int) -> List[dict]:
     path = os.path.join(root, "per_task", f"_b{bucket}", task, "train.jsonl")
     if not os.path.exists(path):
-        rec["status"] = "absent"
-        return rec
-
-    try:
-        sp = registry.get(spec_name)
-        mod = importlib.import_module(f"ctc.tasks.{spec_name}.spec")
-    except (KeyError, ModuleNotFoundError) as e:
-        # An unregistered spec means the GRADER cannot render or score this task at all -- report it
-        # per-cell instead of aborting the run and losing every other task's verdict.
-        rec.update(status="FAIL", rows=0, n_docs_min=0, n_docs_med=0, n_docs_max=0,
-                   fails=[f"spec {spec_name!r} is not registered in the eval: {e}"])
-        return rec
-
-    # 3. Does the EVAL have this rung at all?
-    rec["eval_has_rung"] = bucket in set(sp.rungs or ())
-    # 4. The eval's calibrated document count for this rung.
-    try:
-        rec["eval_n_docs"] = ladders.docs_for_rung(task, bucket)
-    except Exception as e:
-        rec["eval_n_docs"] = None
-        rec["ladder_error"] = f"{type(e).__name__}: {e}"
-
-    rows: List[dict] = []
+        return []
+    rows = []
     with open(path) as f:
-        for i, line in enumerate(f):
-            if i >= sample:
+        for line in f:
+            if len(rows) >= k:
                 break
             ex = json.loads(line)
-            rows.append(ex["ex"] if "ex" in ex and "documents" not in ex else ex)
-    if not rows:
-        rec["status"] = "empty"
-        return rec
+            rows.append(_normalize(ex["ex"] if "ex" in ex and "documents" not in ex else ex))
+    return rows
 
-    ndocs, scores, bad_gold, render_err, score_err = [], [], 0, None, None
-    for ex in rows:
-        n = len(ex.get("documents") or [])
-        ndocs.append(n)
-        # 2. gold index base: every index must land inside the document list under the spec's base.
-        base = sp.gold_index_base
-        for g in ex.get("gold_doc_indices") or []:
-            for idx in (g if isinstance(g, (list, tuple)) else [g]):
-                if not (base <= idx < n + base):
-                    bad_gold += 1
-        # 5 + 1. render, then grade the row's OWN gold through the eval's parser and scorer.
+
+def _eval_rows(ds: str, subset: str, rung: str, k: int) -> Optional[List[dict]]:
+    """First ``k`` rows of one rung's parquet, read one batch at a time (the 256k files are ~90MB)."""
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfFileSystem
+
+    fs = HfFileSystem()
+    path = f"datasets/{ds}/data/{subset}/{rung}.parquet"
+    if not fs.exists(path):
+        return None
+    pf = pq.ParquetFile(fs.open(path))
+    out: List[dict] = []
+    for batch in pf.iter_batches(batch_size=k):
+        out.extend(batch.to_pylist())
+        if len(out) >= k:
+            break
+    return [_normalize(r) for r in out[:k]]
+
+
+def _normalize(ex: dict) -> dict:
+    """The HF parquet stores dict-valued fields (outlier ``meta``, ``_meta``) as JSON strings."""
+    for key in ("meta", "_meta"):
+        if isinstance(ex.get(key), str):
+            try:
+                ex[key] = json.loads(ex[key])
+            except ValueError:
+                pass
+    return ex
+
+
+def _gold(sp, ex: dict):
+    """Exactly ``CTCScorer.score``'s gold resolution."""
+    if sp.extra.get("score_takes_example"):
+        return ex
+    return ex.get(sp.extra.get("gold_field", "gold_doc_indices")) or ex
+
+
+def _gold_card(sp, ex: dict) -> Optional[int]:
+    if sp.extra.get("score_takes_example"):
+        return None
+    g = ex.get(sp.extra.get("gold_field", "gold_doc_indices"))
+    return len(g) if isinstance(g, (list, tuple)) else None
+
+
+def _doc_text(d) -> str:
+    return str(d.get("text", "")) if isinstance(d, dict) else str(d)
+
+
+def _stats(xs: List[float]) -> Optional[dict]:
+    xs = [x for x in xs if x is not None]
+    if not xs:
+        return None
+    return {"min": min(xs), "med": statistics.median(xs), "max": max(xs)}
+
+
+def _first_diff(a: str, b: str) -> str:
+    i = next((j for j in range(min(len(a), len(b))) if a[j] != b[j]), min(len(a), len(b)))
+    return (f"first diff at char {i} (train len {len(a)}, eval len {len(b)}): "
+            f"train={a[max(0, i - 40):i + 60]!r} | eval={b[max(0, i - 40):i + 60]!r}")
+
+
+def _render_train(ex: dict, spec: str, qpos: str, alpaca: bool = False):
+    """What the converter tokenizes (segment_prompt_to_chunks' build_prompt call, minus markers).
+
+    ``alpaca=True`` adds the Alpaca preamble the eval wraps every prompt in, so the BODY can be
+    compared byte-for-byte; the converter itself renders ``use_alpaca=False`` inside the chat
+    template, a wrapper difference reported once, globally, rather than per cell.
+    """
+    from olmo_core.data.corpus_reasoning_prompts import build_prompt
+
+    return build_prompt(ex, task=spec, query_position=qpos, use_alpaca=alpaca, cot_mode="none",
+                        use_titles=False)
+
+
+def _self_score(sp, ex: dict, answer: str) -> float:
+    parsed = sp.parse(answer, len(ex.get("documents") or []))
+    return float(sp.score(parsed, _gold(sp, ex)).get(sp.primary_metric, 0.0))
+
+
+def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
+    rec: dict = {"task": task, "bucket": bucket, "train_rows": len(train), "eval_rows": len(evalr)}
+    fails: List[str] = []
+    line_mode = task == "oolong"
+
+    def dist(rows):
+        nd = [len(r.get("documents") or []) for r in rows]
+        dl = [statistics.median([len(_doc_text(d)) for d in r["documents"]]) for r in rows
+              if r.get("documents")]
+        tot = [sum(len(_doc_text(d)) for d in r.get("documents") or []) for r in rows]
+        gc = [_gold_card(sp, r) for r in rows]
+        return {"n_docs": _stats(nd), "doc_chars": _stats(dl), "total_chars": _stats(tot),
+                "gold_card": _stats(gc)}
+
+    rec["train"], rec["eval"] = dist(train), dist(evalr)
+
+    # 3. distributions: the eval's median must sit inside the train range, and the medians close.
+    keys = ["total_chars"] if line_mode else ["n_docs", "doc_chars", "gold_card"]
+    tol = {"n_docs": 0.10, "doc_chars": 0.25, "total_chars": 0.15, "gold_card": 0.25}
+    for key in keys:
+        t, e = rec["train"][key], rec["eval"][key]
+        if not t or not e:
+            continue
+        if not (t["min"] <= e["med"] <= t["max"]) and abs(t["med"] - e["med"]) > tol[key] * max(
+                e["med"], 1):
+            fails.append(f"{key}: train {t['min']}/{t['med']}/{t['max']} vs eval "
+                         f"{e['min']}/{e['med']}/{e['max']} (min/med/max)")
+
+    # 4. fields the eval row carries that the train rows do not.
+    ek = set().union(*(r.keys() for r in evalr))
+    tk = set().union(*(r.keys() for r in train))
+    missing = sorted(k for k in ek - tk if not k.startswith("_"))
+    rec["fields_missing_in_train"] = missing
+    if missing:
+        fails.append(f"eval rows carry fields the train rows lack: {missing}")
+
+    # 5. prompt parity on the SAME eval rows.
+    mism, err = 0, None
+    for ex in evalr[:5]:
         try:
-            sp.build_prompt(ex, query_position=qpos)
-        except Exception as e:
-            render_err = render_err or f"{type(e).__name__}: {e}"
-        try:
-            tgt = mod.build_target(ex)
-            parsed = sp.parse(tgt, n)
-            s = sp.score(parsed, ex.get("gold_doc_indices"))
-            scores.append(float(s.get(sp.primary_metric, 0.0)))
-        except Exception as e:
-            score_err = score_err or f"{type(e).__name__}: {e}"
+            tp, _ = _render_train(ex, train_spec, qpos, alpaca=True)
+            ep = sp.build_prompt(ex, query_position=qpos)
+            if tp != ep:
+                mism += 1
+                rec.setdefault("prompt_diff", _first_diff(tp, ep))
+        except Exception as e:  # noqa: BLE001 -- report, never abort the sweep
+            err = err or f"{type(e).__name__}: {e}"
+    rec["prompt_mismatch"] = mism
+    if err:
+        fails.append(f"prompt render: {err}")
+    if mism:
+        fails.append(f"prompt BODY differs from the eval's on {mism}/{min(5, len(evalr))} eval rows; "
+                     f"{rec['prompt_diff']}")
 
-    rec.update(
-        rows=len(rows),
-        n_docs_min=min(ndocs), n_docs_med=int(statistics.median(ndocs)), n_docs_max=max(ndocs),
-        bad_gold=bad_gold,
-        self_score=round(statistics.mean(scores), 4) if scores else None,
-        render_error=render_err, score_error=score_err,
-        primary_metric=sp.primary_metric, gold_index_base=sp.gold_index_base,
-    )
-
-    fails = []
-    if render_err:
-        fails.append(f"prompt render: {render_err}")
-    if score_err:
-        fails.append(f"grade: {score_err}")
-    if rec["self_score"] is not None and rec["self_score"] < 1.0:
-        fails.append(f"gold target self-scores {rec['self_score']} under the EVAL's grader, not 1.0")
-    if bad_gold:
-        fails.append(f"{bad_gold} gold index/indices out of range at base {sp.gold_index_base}")
-    if not rec["eval_has_rung"]:
-        fails.append(f"the eval has no {bucket} rung for this task ({sorted(sp.rungs or ())})")
-    if rec.get("eval_n_docs") and not (
-            rec["n_docs_min"] <= rec["eval_n_docs"] <= rec["n_docs_max"]):
-        fails.append(f"train n_docs [{rec['n_docs_min']},{rec['n_docs_max']}] does not cover the "
-                     f"eval's calibrated {rec['eval_n_docs']} for {bucket}")
-    rec["status"] = "ok" if not fails else "FAIL"
+    # 6. training target graded by the eval, on train rows and on eval rows.
+    for name, rows in (("train", train), ("eval", evalr)):
+        scores, err = [], None
+        for ex in rows:
+            try:
+                _, ans = _render_train(ex, train_spec, qpos)
+                scores.append(_self_score(sp, ex, ans))
+            except Exception as e:  # noqa: BLE001
+                err = err or f"{type(e).__name__}: {e}"
+        rec[f"self_score_{name}"] = round(statistics.mean(scores), 4) if scores else None
+        if err:
+            fails.append(f"target on {name} rows: {err}")
+        elif scores and statistics.mean(scores) < 1.0:
+            fails.append(f"training target scores {statistics.mean(scores):.3f} (not 1.0) under "
+                         f"the eval's grader on {name} rows")
     rec["fails"] = fails
+    rec["status"] = "FAIL" if fails else "ok"
     return rec
 
 
@@ -146,47 +242,105 @@ def main() -> None:
     ap.add_argument("--root", required=True, help="the set root holding per_task/")
     ap.add_argument("--vendor", required=True,
                     help="olmo-eval .../ctc_suite/_vendor -- the code that will GRADE the run")
-    ap.add_argument("--sample", type=int, default=50, help="rows per (task,bucket)")
-    ap.add_argument("--query-position", default="both")
+    ap.add_argument("--roster", default=os.path.join(HERE, "olmo_eval_roster.json"),
+                    help="frozen olmo-eval ROSTER (dump_olmo_eval_roster.py)")
+    ap.add_argument("--repo", default=os.path.abspath(os.path.join(HERE, os.pardir, os.pardir)))
+    ap.add_argument("--sample", type=int, default=40, help="rows per (task, rung) on each side")
+    ap.add_argument("--query-position", default="both",
+                    help="the eval pins 'both' (olmo-eval QUERY_POSITION)")
+    ap.add_argument("--tasks", nargs="*", default=list(TASK_TO_ROW))
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
+    R = json.load(open(args.roster))
     sys.path.insert(0, args.vendor)
+    sys.path.insert(0, os.path.join(args.repo, "src"))
     import ctc.tasks as T
+    from ctc.format import registry
 
     T.load_all()
-    print(f"grading through the VENDORED spec at {args.vendor}\n", flush=True)
+    builder = _load_builder_roster(args.repo)
+    print(f"grading through the VENDORED spec at {args.vendor}; ROSTER from olmo-eval "
+          f"{R['olmo_eval_commit']}; eval data {R['hf_dataset']}\n", flush=True)
 
-    results = []
-    for t in TASKS:
-        for b in BUCKETS:
-            results.append(audit_cell(t, b, args.root, args.sample, args.query_position))
-
-    present = [r for r in results if r["status"] not in ("absent",)]
-    fails = [r for r in present if r["status"] == "FAIL"]
-
-    print(f"{'task':<18}{'bucket':>7}{'rows':>6}{'n_docs (min/med/max)':>24}"
-          f"{'eval_n':>8}{'self':>7}  status")
-    for r in results:
-        if r["status"] == "absent":
+    cells, coverage, task_fails = [], {}, {}
+    top = BUCKETS.index(MAX_TRAIN_RUNG)
+    for task in args.tasks:
+        row = R["roster"][TASK_TO_ROW[task]]
+        train_spec = builder[task]["spec"]
+        tf = []
+        if train_spec != row["spec"]:
+            tf.append(f"rendered as spec {train_spec!r} but the eval grades {TASK_TO_ROW[task]} "
+                      f"with {row['spec']!r}")
+        if not row.get("spec_registered"):
+            tf.append(f"the eval's spec {row['spec']!r} is not registered in its own vendored "
+                      "registry -- this row cannot be graded at all")
+        eval_rungs = [r[1:] for r in row["rungs"]]
+        train_b = [b for b in BUCKETS if _train_rows(args.root, task, b, 1)]
+        in_window = [r for r in eval_rungs if r in BUCKETS[: top + 1]]
+        coverage[task] = {
+            "eval_rungs": eval_rungs, "train_buckets": train_b,
+            "train_gap": [r for r in in_window if r not in train_b],
+            "unevaluated": [b for b in train_b if b not in eval_rungs],
+        }
+        if coverage[task]["train_gap"]:
+            tf.append(f"the eval grades {coverage[task]['train_gap']} but training has no rows there")
+        task_fails[task] = tf
+        try:
+            sp = registry.get(row["spec"] if row.get("spec_registered") else train_spec)
+        except KeyError:
             continue
-        nd = f"{r.get('n_docs_min',0)}/{r.get('n_docs_med',0)}/{r.get('n_docs_max',0)}"
-        print(f"{r['task']:<18}{r['bucket']:>7}{r.get('rows',0):>6}{nd:>24}"
-              f"{str(r.get('eval_n_docs') or '-'):>8}{str(r.get('self_score')):>7}  {r['status']}")
+        for b in train_b:
+            if b not in eval_rungs:
+                continue
+            evalr = _eval_rows(R["hf_dataset"], row["subset"], "r" + b, args.sample)
+            if not evalr:
+                cells.append({"task": task, "bucket": b, "status": "FAIL",
+                              "fails": [f"eval parquet {row['subset']}/r{b} missing on HF"]})
+                continue
+            train = _train_rows(args.root, task, b, args.sample)
+            rec = audit_cell(task, b, train, evalr, sp, train_spec, args.query_position)
+            cells.append(rec)
+            t, e = rec.get("train", {}), rec.get("eval", {})
+            nd = lambda d, k: (f"{d[k]['med']:g}" if d.get(k) else "-")  # noqa: E731
+            print(f"{task:<17}{b:>5}  n_docs {nd(t,'n_docs'):>6}/{nd(e,'n_docs'):<6}"
+                  f" doc_chars {nd(t,'doc_chars'):>6}/{nd(e,'doc_chars'):<6}"
+                  f" gold {nd(t,'gold_card'):>3}/{nd(e,'gold_card'):<3}"
+                  f" self {rec.get('self_score_train')}/{rec.get('self_score_eval')}"
+                  f" prompt_mismatch {rec.get('prompt_mismatch')}  {rec['status']}", flush=True)
 
-    if fails:
-        print(f"\n=== {len(fails)} FAILING CELL(S) ===")
-        for r in fails:
-            for f in r["fails"]:
-                print(f"  {r['task']}@{r['bucket']}: {f}")
-    print(f"\n{len(present) - len(fails)}/{len(present)} cells IID-clean"
-          + ("" if not fails else "  -- DO NOT TRAIN until the above are understood"))
+    print("\n=== coverage (train buckets vs eval rungs, window <= "
+          f"{MAX_TRAIN_RUNG}) ===")
+    for task, c in coverage.items():
+        print(f"  {task:<17} eval {c['eval_rungs'][0]}..{c['eval_rungs'][-1]:<5} "
+              f"train {c['train_buckets'][0] if c['train_buckets'] else '-'}.."
+              f"{c['train_buckets'][-1] if c['train_buckets'] else '-':<5}"
+              f" gap={c['train_gap'] or '-'}  unevaluated={c['unevaluated'] or '-'}")
 
+    bad_cells = [c for c in cells if c["status"] == "FAIL"]
+    bad_tasks = {t: f for t, f in task_fails.items() if f}
+    if bad_tasks or bad_cells:
+        print("\n=== FAILURES ===")
+        for t, fs in bad_tasks.items():
+            for f in fs:
+                print(f"  {t}: {f}")
+        for c in bad_cells:
+            for f in c["fails"]:
+                print(f"  {c['task']}@{c['bucket']}: {f}")
+    print("\n=== wrapper (global) ===\n  the eval sends spec.build_prompt as a RAW COMPLETION: Alpaca "
+          "preamble, no chat template. The converter renders use_alpaca=False inside the Qwen chat "
+          "template. Bodies are compared with the Alpaca preamble applied; the wrapper itself "
+          "differs for every task.")
+    n_ok = len(cells) - len(bad_cells)
+    print(f"\n{n_ok}/{len(cells)} graded cells IID-clean; {len(bad_tasks)} task-level issue(s)"
+          + ("" if not (bad_cells or bad_tasks) else "  -- DO NOT TRAIN until understood"))
     if args.out:
         with open(args.out, "w") as f:
-            json.dump({"vendor": args.vendor, "cells": results}, f, indent=2)
+            json.dump({"vendor": args.vendor, "roster_commit": R["olmo_eval_commit"],
+                       "coverage": coverage, "task_fails": task_fails, "cells": cells}, f,
+                      indent=2, default=str)
         print(f"wrote {args.out}")
-    raise SystemExit(1 if fails else 0)
+    raise SystemExit(1 if (bad_cells or bad_tasks) else 0)
 
 
 if __name__ == "__main__":
