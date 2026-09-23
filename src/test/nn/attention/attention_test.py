@@ -18,7 +18,6 @@ from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionConfig,
     AttentionType,
-    FusedAttention,
     FusedAttentionV2,
     GateConfig,
     GateGranularity,
@@ -345,7 +344,7 @@ def test_sdpa(
 @pytest.mark.parametrize(
     "use_flash", [pytest.param(True, id="flash_2"), pytest.param(False, id="torch-SDPA")]
 )
-def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
+def test_fused_attention_v2_against_non_fused(dtype: torch.dtype, use_flash: bool):
     seed_all(0)
 
     d_model = 128
@@ -358,7 +357,7 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
     )
 
     attention = Attention(use_flash=use_flash, **kwargs)
-    fused_att = FusedAttention(**kwargs)
+    fused_att = FusedAttentionV2(backend=AttentionBackendName.flash_2, **kwargs)
 
     # Make sure weights match.
     with torch.no_grad():
@@ -382,14 +381,18 @@ def test_fused_attention_against_non_fused(dtype: torch.dtype, use_flash: bool):
 
 @requires_gpu
 @requires_flash_attn_2
-def test_fused_attention_with_rope():
+def test_fused_attention_v2_with_rope():
     seed_all(0)
 
     d_model = 128
     seq_len = 32
 
-    fused_att = FusedAttention(
-        d_model=d_model, n_heads=8, rope=RoPEConfig(name=RoPEType.fused), init_device="cuda"
+    fused_att = FusedAttentionV2(
+        d_model=d_model,
+        n_heads=8,
+        rope=RoPEConfig(),
+        init_device="cuda",
+        backend=AttentionBackendName.flash_2,
     )
 
     x1 = torch.randn(1, seq_len, d_model, dtype=torch.bfloat16, device="cuda")
@@ -415,7 +418,9 @@ def test_attention_with_intra_document_masking():
     seq_len = 32
 
     attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
-    fused_att = FusedAttention(d_model=d_model, n_heads=8, init_device="cuda")
+    fused_att = FusedAttentionV2(
+        d_model=d_model, n_heads=8, init_device="cuda", backend=AttentionBackendName.flash_2
+    )
 
     # Make sure weights match.
     with torch.no_grad():
@@ -1615,19 +1620,17 @@ def test_attention_num_flops_per_token():
     assert mha_full_gated > mha_full
 
 
-@requires_gpu
-@requires_flash_attn_2
-def test_fused_attention_num_flops_per_token():
+def test_fused_attention_v2_num_flops_per_token():
     n_heads = 8
 
-    fused_small = FusedAttention(d_model=128, n_heads=n_heads, init_device="cuda")
+    fused_small = FusedAttentionV2(d_model=128, n_heads=n_heads, init_device="cpu")
 
     # Compare against the basic Attention estimate for the same configuration.
     attn_small = Attention(
         d_model=128,
         n_heads=n_heads,
         backend=AttentionBackendName.torch,
-        init_device="cuda",
+        init_device="cpu",
     )
     assert fused_small.num_flops_per_token(32) == attn_small.num_flops_per_token(32)
 
@@ -1635,7 +1638,7 @@ def test_fused_attention_num_flops_per_token():
     assert fused_small.num_flops_per_token(64) > fused_small.num_flops_per_token(32)
 
     # Larger models should be more expensive.
-    fused_large = FusedAttention(d_model=256, n_heads=n_heads, init_device="cuda")
+    fused_large = FusedAttentionV2(d_model=256, n_heads=n_heads, init_device="cpu")
     assert fused_large.num_flops_per_token(32) > fused_small.num_flops_per_token(32)
 
 
@@ -1901,3 +1904,56 @@ def test_attention_num_flops_per_token_sliding_window_is_cheaper():
     param_flops = 6 * sum(p.numel() for p in swa_attn.parameters())
     expected_attn = 12 * n_heads * head_dim * _causal_attention_positions(seq_len, 8) // seq_len
     assert swa_attn.num_flops_per_token(seq_len) == param_flops + expected_attn
+
+
+@pytest.mark.parametrize("bias", [False, True])
+@pytest.mark.parametrize("use_rope", [False, True])
+def test_legacy_fused_attention_checkpoint(bias: bool, use_rope: bool):
+    """Load the original packed parameter and optimizer layout through a serialized legacy config."""
+    config = AttentionConfig.from_dict(
+        {
+            "name": "fused",
+            "n_heads": 2,
+            "bias": bias,
+            "backend": "torch",
+            "use_flash": True,  # Ignored by the original implementation, even with a backend set.
+            "rope": {"name": "fused", "theta": 12345, "full_precision": False}
+            if use_rope
+            else None,
+        }
+    )
+    original_config = config.as_config_dict()
+    # The original module registered exactly these projections, in this order.
+    legacy = torch.nn.ModuleDict(
+        {
+            "w_qkv": torch.nn.Linear(32, 96, bias=bias),
+            "w_out": torch.nn.Linear(32, 32, bias=bias),
+        }
+    )
+    legacy_optim = torch.optim.AdamW(legacy.parameters())
+    sum(p.square().sum() for p in legacy.parameters()).backward()
+    legacy_optim.step()
+
+    with pytest.warns(UserWarning, match="not numerically identical"):
+        attention = config.build(32, layer_idx=0, n_layers=1)
+    assert isinstance(attention, FusedAttentionV2)
+    assert config.as_config_dict() == original_config
+    assert list(attention.state_dict()) == list(legacy.state_dict())
+    attention.load_state_dict(legacy.state_dict(), strict=True)
+    optim = torch.optim.AdamW(attention.parameters())
+    optim.load_state_dict(legacy_optim.state_dict())
+    for old_param, new_param in zip(legacy.parameters(), attention.parameters()):
+        torch.testing.assert_close(new_param, old_param, rtol=0, atol=0)
+        for key, value in legacy_optim.state[old_param].items():
+            torch.testing.assert_close(optim.state[new_param][key], value, rtol=0, atol=0)
+    if use_rope:
+        from olmo_core.nn.rope import RotaryEmbedding
+
+        assert isinstance(attention.rope, RotaryEmbedding)
+        assert attention.rope.theta == 12345
+        assert not attention.rope.full_precision
+    else:
+        assert attention.rope is None
+    attention(torch.randn(2, 8, 32)).square().mean().backward()
+    optim.step()
+    assert all(torch.isfinite(p).all() for p in attention.parameters())

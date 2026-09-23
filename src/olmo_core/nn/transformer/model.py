@@ -38,12 +38,7 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-    SequenceMixer,
-)
+from ..attention import Attention, RingAttentionLoadBalancer, SequenceMixer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -255,7 +250,7 @@ class Transformer(nn.Module):
             device = self.device
         rope_buffers = {}
         for key, block in self.blocks.items():
-            if isinstance(block.attention, (Attention, FusedAttention)):
+            if isinstance(block.attention, Attention):
                 rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
                 rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
             else:
@@ -416,7 +411,7 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            if isinstance(att, (Attention, FusedAttention)):
+            if isinstance(att, Attention):
                 # Warm up attention backend cache.
                 if max_seq_len is not None and att.backend is not None:
                     att.backend.warmup_cache(max_seq_len, device)

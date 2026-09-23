@@ -900,7 +900,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         :param world_mesh: The parallel meshes; required only when pipeline or expert parallelism
             is enabled (used to derive per-rank init seeds). Optional for standalone/non-parallel init.
         """
-        from olmo_core.nn.attention import Attention, FusedAttention
+        from olmo_core.nn.attention import Attention
 
         device = device or self.device
         # TODO(dtype): materialization currently relies on the same broad bf16
@@ -948,7 +948,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for _, block in self.named_required_ddp_blocks():
             # This might fail if it's wrapped.
             # v2 MoE/shared-only DDP blocks.
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            att = cast(Attention, block.attention)
 
             # Attention weights.
             self.init_method.init_attention(
