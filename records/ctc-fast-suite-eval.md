@@ -405,3 +405,30 @@ shard all produce a plausible-looking or flat curve rather than an error.
 
 Related: [[ctc-final-suite-22-tasks]], [[ctc-1m-ladders-olmo-eval]], [[ctc-public-repo-release]],
 [[eval-wallclock-sanity-check]], [[eval-size-and-error-bars]], [[beaker-qwen35-vllm-cracked]].
+
+## 2026-09-23 status — IID setA built; eval path = olmo-eval native; 1.5 h compressive plan
+
+**Data.** `setA_max20_evaliid` (weka `ctc_sft_sets/`), built by `build_ctc_sft.py --calibration
+eval_calibration.json --external-pools` (commits 1378c4ac2, aafbf027f, 1a68b2eb4): every rung sized from
+the eval's OWN rows; xabsence = one-sided Gutenberg exact-copy and grouping = unlabeled OpenAlex partition
+(both via their in-repo generators, not ctc); rerank = 20 CE-scored + unscored foreign fill (to 256k),
+CE-positive-less rows dropped. Shards `shards_qwen35_256k` (seq 262,144): 227,372 instances, 1.70B tokens.
+IID audit vs real eval rows: **76/77 cells clean**; textgroups capped at 4k (length shortcut, also
+present in the eval's own construction) and its 2k docs 15% longer than the eval's. strmatch keeps ctc's
+decoys: the eval's construction is shortcut-solvable (overlap_pair_is_gold 1.000 vs 0.004).
+
+**Eval speed.** The native slowness was FLA re-autotuning per prompt length (see
+[[fla-autotune-per-length-eval-slowdown]]); fixed in 57ad361b9 + follow-up, results bit-identical.
+
+**Eval path.** `launch_ctc_evals.py --backend olmo-eval`: olmo-eval's data + graders, native olmo_core
+provider, `CTC_SUITE_PROMPT_FORMAT=chat` (IID with setA). Validated outlier@8k: 0.597 (olmo-eval, 500)
+vs 0.587 (native driver, 500). Measured 0.73–0.83 s/example at 8k single GPU; the planner's model
+(prefill/rung + 30 ms/decoded token × measured answer length) is ~35% conservative there.
+**1.5 h compressive-landmark plan (setA 12 rows + 2 OOD, policy 500/100/50/50):** 27 single-GPU jobs,
+~35 GPU-h, each ≤82 min + 8 min setup. Dominated by grouping (answers list every doc: 1,384 tokens at
+32k; r32k alone ~6 GPU-h, split in 5 exact shards). rerank uses the opt-in 160-token decode cap.
+⚠ Some 256k rows of hpqa/outlier/qdmatch_nq/rerank exceed 262,144 tokens and are left-truncated.
+
+olmo-eval changes live on branch `prasann/ctc-absence-low-ctc` (de51be6c..37563d01, NOT pushed): chat
+prompt flag, reference grouping spec + singleton scoring fix, one-sided xabsence wording, rerank decode
+cap, exact sharding, OOD-row KeyError fix.
