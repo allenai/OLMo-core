@@ -48,6 +48,28 @@ BUCKET_TOKENS = {
 }
 
 
+def rung_tokens(label: str) -> int:
+    """
+    Tokens a rung label stands for, parsed rather than looked up.
+
+    A CEILING is not always a bucket: ``strmatch`` tops out at ``48k``, which sits between two
+    rungs and has no entry in :data:`BUCKET_TOKENS`. Looking ceilings up in that table raised
+    ``KeyError: '48k'`` and killed the whole build before a single cell ran.
+
+    :param label: A rung label such as ``32k``, ``48k`` or ``1m``.
+
+    :returns: Its token count.
+
+    :raises ValueError: If the label is not ``<number><k|m>``.
+    """
+    t = label.strip().lower()
+    if t.endswith("k"):
+        return int(float(t[:-1]) * 1024)
+    if t.endswith("m"):
+        return int(float(t[:-1]) * 1024 * 1024)
+    raise ValueError(f"unparseable rung label {label!r}; want <number>k or <number>m")
+
+
 @dataclasses.dataclass(frozen=True)
 class Task:
     """One ladder in a set, with everything that differs between ladders."""
@@ -63,9 +85,11 @@ class Task:
     #: ``--pool auto`` fetches a seed pool. A pure-synthetic generator has no corpus and REJECTS the
     #: flag, failing every one of its buckets. Cross-checked against ctc at startup.
     pooled: bool = True
-    #: Hard ceiling from ``ctc.data.ladders.CEILINGS``; buckets above it are skipped with a reason
-    #: rather than attempted and silently lost.
+    #: Hard ceiling; buckets above it are skipped with a reason rather than attempted and silently
+    #: lost. Need not be a rung label -- ``strmatch`` tops out at ``48k``, between two rungs.
     max_rung: Optional[str] = None
+    #: Why :attr:`max_rung` is where it is, printed on every skip.
+    max_rung_reason: str = ""
     #: Buckets withheld for a data-quality reason, as ``{bucket: why}``. These are deliberate.
     withhold: Dict[str, str] = dataclasses.field(default_factory=dict)
 
@@ -93,14 +117,22 @@ SET_A: List[Task] = [
     # at export time. 64k asks for 501 and the draw rejects 50 times running, which reads as "the
     # corpus is too small" for an 8.8M-passage index. Lifting it needs the foreign-fill change
     # (borrow unscored passages from other queries' pools), not a bigger corpus.
-    Task("rerank", "rerank", max_rung="32k"),
+    Task("rerank", "rerank", max_rung="32k",
+         max_rung_reason="msmarco.load_pool defaults max_docs=250 -- exactly the 32k rung -- and "
+                         "the per-query fill is drawn and CE-scored at EXPORT time, so the seed "
+                         "pool physically holds ~250 candidates per query. Not a corpus bound"),
     # Synthetic: no corpus, so --pool is rejected outright. Ceiling is the frozen 20,045-word
     # vocabulary -- every non-planted word is unique WITHIN an example, which is what makes the
     # planted pairs the only ones meeting the criterion by construction rather than by a check.
-    Task("strmatch", "strmatch", pooled=False, max_rung="48k"),
-    Task("textgroups", "textgroups", pooled=False,
-         withhold={"8k": _TEXTGROUPS_SHORTCUT, "16k": _TEXTGROUPS_SHORTCUT,
-                   "32k": _TEXTGROUPS_SHORTCUT}),
+    Task("strmatch", "strmatch", pooled=False, max_rung="48k",
+         max_rung_reason="the frozen 20,045-word vocabulary caps ~1.9k documents at ~9.8 words "
+                         "each; every non-planted word is unique WITHIN an example, which is what "
+                         "makes the planted pairs the only ones meeting the criterion"),
+    # A ceiling, NOT an enumerated withhold list: the bias is roughly flat in absolute terms while
+    # the chance baseline collapses as documents multiply, so every rung ABOVE the measured ones is
+    # worse, not unknown. Enumerating {8k,16k,32k} re-admitted it at 64k+ the moment the ladder grew.
+    Task("textgroups", "textgroups", pooled=False, max_rung="4k",
+         max_rung_reason=_TEXTGROUPS_SHORTCUT),
     Task("grouping_labeled", "grouping_labeled"),
 ]
 
@@ -167,8 +199,9 @@ def _bucket_allowed(task: Task, bucket: str) -> Optional[str]:
     """:returns: ``None`` if the bucket should be built, else the reason it is skipped."""
     if bucket in task.withhold:
         return f"withheld: {task.withhold[bucket]}"
-    if task.max_rung and BUCKET_TOKENS[bucket] > BUCKET_TOKENS[task.max_rung]:
-        return f"above the task ceiling ({task.max_rung})"
+    if task.max_rung and BUCKET_TOKENS[bucket] > rung_tokens(task.max_rung):
+        why = f"above the task ceiling ({task.max_rung})"
+        return f"{why}: {task.max_rung_reason}" if task.max_rung_reason else why
     return None
 
 
