@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Consolidated output-discard checkpoint tests: removed duplicate generic tests under MoE v2 and parameterized linear-chain coverage while retaining 3D-view, Python-fallback, native-storage, and router-specific checks.
+
 - Migrated training recipes and examples from scheduler `warmup_steps` to `warmup`, preserving values and scheduler units. Legacy `warmup_steps`, `decay_steps`, and `schedulers_max_steps` config inputs remain supported, with regression coverage for equivalent step- and token-based schedules.
 
 - `OLMoDDPModel.apply_ddp()` now raises `NotImplementedError` directing callers to `apply_dp()`, including under `python -O`. Removed its unreachable legacy DDP implementation.
