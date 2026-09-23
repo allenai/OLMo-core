@@ -251,8 +251,7 @@
     "eval_rows_measured": 40,
     "n_docs": 2048,
     "set": [
-     "min_tokens=2048",
-     "max_context=131072"
+     "min_tokens=2048"
     ]
    },
    "4k": {
@@ -262,8 +261,7 @@
     "eval_rows_measured": 40,
     "n_docs": 4096,
     "set": [
-     "min_tokens=4096",
-     "max_context=131072"
+     "min_tokens=4096"
     ]
    },
    "8k": {
@@ -273,8 +271,7 @@
     "eval_rows_measured": 40,
     "n_docs": 8192,
     "set": [
-     "min_tokens=8192",
-     "max_context=131072"
+     "min_tokens=8192"
     ]
    },
    "16k": {
@@ -284,8 +281,7 @@
     "eval_rows_measured": 40,
     "n_docs": 16384,
     "set": [
-     "min_tokens=16384",
-     "max_context=131072"
+     "min_tokens=16384"
     ]
    },
    "32k": {
@@ -295,8 +291,7 @@
     "eval_rows_measured": 40,
     "n_docs": 32768,
     "set": [
-     "min_tokens=32768",
-     "max_context=131072"
+     "min_tokens=32768"
     ]
    },
    "64k": {
@@ -306,8 +301,7 @@
     "eval_rows_measured": 40,
     "n_docs": 65536,
     "set": [
-     "min_tokens=65536",
-     "max_context=131072"
+     "min_tokens=65536"
     ]
    },
    "128k": {
@@ -317,8 +311,7 @@
     "eval_rows_measured": 40,
     "n_docs": 131072,
     "set": [
-     "min_tokens=131072",
-     "max_context=131072"
+     "min_tokens=131072"
     ]
    },
    "256k": {
@@ -328,8 +321,7 @@
     "eval_rows_measured": 40,
     "n_docs": 251565,
     "set": [
-     "min_tokens=251565",
-     "max_context=251565"
+     "min_tokens=251565"
     ],
     "eval_rendered_tokens_max": 251565
    }
@@ -535,50 +527,35 @@
     "eval_n_docs_med": 38,
     "eval_n_docs_max": 38,
     "eval_rows_measured": 40,
-    "n_docs": 38,
-    "set": [
-     "num_scattered=0"
-    ]
+    "n_docs": 38
    },
    "4k": {
     "eval_n_docs_min": 82,
     "eval_n_docs_med": 82,
     "eval_n_docs_max": 82,
     "eval_rows_measured": 40,
-    "n_docs": 82,
-    "set": [
-     "num_scattered=0"
-    ]
+    "n_docs": 82
    },
    "8k": {
     "eval_n_docs_min": 170,
     "eval_n_docs_med": 170,
     "eval_n_docs_max": 170,
     "eval_rows_measured": 40,
-    "n_docs": 170,
-    "set": [
-     "num_scattered=0"
-    ]
+    "n_docs": 170
    },
    "16k": {
     "eval_n_docs_min": 350,
     "eval_n_docs_med": 350,
     "eval_n_docs_max": 350,
     "eval_rows_measured": 40,
-    "n_docs": 350,
-    "set": [
-     "num_scattered=0"
-    ]
+    "n_docs": 350
    },
    "32k": {
     "eval_n_docs_min": 700,
     "eval_n_docs_med": 700,
     "eval_n_docs_max": 700,
     "eval_rows_measured": 40,
-    "n_docs": 700,
-    "set": [
-     "num_scattered=0"
-    ]
+    "n_docs": 700
    }
   },
   "textgroups": {

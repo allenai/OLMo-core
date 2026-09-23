@@ -38,12 +38,12 @@ import audit_train_eval_iid as A  # noqa: E402  (row loading, ROSTER mapping)
 BUCKET_TOKENS = {b: int(b[:-1]) * 1024 for b in A.BUCKETS}
 #: rendered tokens a training row may use: the 262,144 window minus a margin for the chat wrapper
 #: and document markers the converter adds on top of the rendered prompt
-#: ``-C`` overrides that hold at every rung, read off the eval rows' own metadata.
-CONSTANT_SET = {
-    # every eval row's _meta is {num_hardneg, relation, span_len, str_len}: the pre-migration
-    # construction, which ctc documents as exactly num_scattered=0 (training defaulted to 6)
-    "strmatch": ["num_scattered=0"],
-}
+#: ``-C`` overrides that hold at every rung, read off the eval rows' own metadata. Deliberately
+#: EMPTY for strmatch: the eval's rows are the pre-migration construction (num_scattered=0), and
+#: ctc's shortcut probe refuses it -- overlap_pair_is_gold scores 1.000 against a 0.004 chance
+#: baseline, i.e. the gold pairs are the only pairs sharing words. Training keeps ctc's scattered
+#: decoys at the eval's document counts; the eval's shortcut is reported, not copied.
+CONSTANT_SET: dict = {}
 WINDOW = 262_144
 FIT = WINDOW - 4_096
 
@@ -99,7 +99,7 @@ def main() -> None:
                 # budget goes through n_docs like every other task; min_tokens pins the draw to it
                 t = BUCKET_TOKENS[b]
                 cell["n_docs"] = t
-                cell["set"] = [f"min_tokens={t}", f"max_context={max(131_072, t)}"]
+                cell["set"] = [f"min_tokens={t}"]  # max_context is baked into the pool
             elif task == "rerank":
                 # the eval keeps a fixed candidate set of CE-scored documents at every rung and
                 # pads to the rung with unscored foreign passages (ce_scores None), which the
@@ -118,7 +118,7 @@ def main() -> None:
                     # window once the chat wrapper is added
                     t = min(cell["n_docs"], longest, FIT)
                     cell["n_docs"] = t
-                    cell["set"] = [f"min_tokens={t}", f"max_context={max(131_072, t)}"]
+                    cell["set"] = [f"min_tokens={t}"]  # max_context is baked into the pool
                 elif longest > FIT:
                     ratio = FIT / longest
                     cell["capped"] = round(ratio, 4)
@@ -128,7 +128,7 @@ def main() -> None:
                         cell["n_docs"] = int(cell["n_docs"] * ratio)
                     if task == "oolong":
                         t = cell["n_docs"]
-                        cell["set"] = [f"min_tokens={t}", f"max_context={max(131_072, t)}"]
+                        cell["set"] = [f"min_tokens={t}"]  # max_context is baked into the pool
             if task in CONSTANT_SET:
                 cell["set"] = cell.get("set", []) + CONSTANT_SET[task]
             cells[b] = cell
