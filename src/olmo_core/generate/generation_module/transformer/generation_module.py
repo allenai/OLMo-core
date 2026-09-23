@@ -275,6 +275,23 @@ class TransformerGenerationModule(GenerationModule):
             return env.strip().lower() not in ("0", "false", "no", "off", "")
         return self._generation_config.landmark_sparse_decode
 
+    def _maybe_freeze_fla_autotune(self):
+        """Once per module: stop FLA kernels re-autotuning at every new prompt length.
+
+        See :mod:`olmo_core.nn.attention.fla_autotune` -- on Gated DeltaNet models this was ~95%
+        of eval wall-clock. ``OLMO_FLA_LENGTH_AUTOTUNE=1`` keeps FLA's per-length autotuning.
+        """
+        if getattr(self, "_fla_autotune_frozen", False):
+            return
+        self._fla_autotune_frozen = True
+        if os.environ.get("OLMO_FLA_LENGTH_AUTOTUNE") == "1":
+            return
+        from olmo_core.nn.attention.fla_autotune import freeze_fla_length_autotune
+
+        n = freeze_fla_length_autotune()
+        if n:
+            log.info(f"Froze length-keyed autotuning on {n} FLA kernel(s) for generation.")
+
     def _maybe_enable_sparse_decode(self):
         """Install the genuinely sparse landmark decode (idempotent, inference-only).
 
@@ -349,6 +366,7 @@ class TransformerGenerationModule(GenerationModule):
             - ``logprobs``: Log probabilities of generated tokens if ``return_logprobs=True``, else ``None``. Shape: ``(batch_size, output_length)``.
         """
         start_time = time.perf_counter()
+        self._maybe_freeze_fla_autotune()
 
         # Replace generation config with any overrides.
         generation_config = self._generation_config.replace(**generation_kwargs)
