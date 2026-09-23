@@ -58,8 +58,7 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-from corpus_reasoning.lib.io import save_jsonl, print_dataset_stats
-
+from corpus_reasoning.lib.io import print_dataset_stats, save_jsonl
 
 # ---------- Level configuration ----------
 
@@ -73,10 +72,10 @@ LEVELS = [0, 1, 2, 3]
 # Absolute minimum of 2 groups is enforced; max is capped at n_docs // 2 so
 # every group still has >=2 docs (single-doc groups are degenerate).
 DEFAULT_K_FRAC_PER_LEVEL = {
-    0: (0.05, 0.15),   # ~2-3 of 20, ~5-15 of 100
-    1: (0.10, 0.30),   # ~3-5 of 20, ~10-30 of 100
-    2: (0.10, 0.85),   # ~2-17 of 20, ~10-85 of 100
-    3: (0.25, 0.95),   # ~5-19 of 20, ~25-95 of 100 (near-singleton clusters)
+    0: (0.05, 0.15),  # ~2-3 of 20, ~5-15 of 100
+    1: (0.10, 0.30),  # ~3-5 of 20, ~10-30 of 100
+    2: (0.10, 0.85),  # ~2-17 of 20, ~10-85 of 100
+    3: (0.25, 0.95),  # ~5-19 of 20, ~25-95 of 100 (near-singleton clusters)
 }
 
 QUERY_PHRASINGS = [
@@ -87,6 +86,7 @@ QUERY_PHRASINGS = [
 
 
 # ---------- OpenAlex preprocessing ----------
+
 
 def reconstruct_abstract(inv_index):
     """OpenAlex stores abstracts as {word: [positions]}. Rebuild the string."""
@@ -124,22 +124,21 @@ def project_work(rec, max_words=120):
         if lvl is None or not name:
             continue
         concepts_by_level[lvl].append((score, name))
-    best_concept = {f"concept_L{lvl}": max(items)[1]
-                    for lvl, items in concepts_by_level.items()}
+    best_concept = {f"concept_L{lvl}": max(items)[1] for lvl, items in concepts_by_level.items()}
 
     words = abstract.split()
     if len(words) > max_words:
         abstract = " ".join(words[:max_words]) + " ..."
 
     return {
-        "id":        rec.get("id"),
-        "title":     title,
-        "abstract":  abstract,
-        "year":      year,
-        "topic":     pt.get("display_name"),
-        "subfield":  (pt.get("subfield") or {}).get("display_name"),
-        "field":     (pt.get("field")    or {}).get("display_name"),
-        "domain":    (pt.get("domain")   or {}).get("display_name"),
+        "id": rec.get("id"),
+        "title": title,
+        "abstract": abstract,
+        "year": year,
+        "topic": pt.get("display_name"),
+        "subfield": (pt.get("subfield") or {}).get("display_name"),
+        "field": (pt.get("field") or {}).get("display_name"),
+        "domain": (pt.get("domain") or {}).get("display_name"),
         **best_concept,
     }
 
@@ -172,7 +171,7 @@ def preprocess(works_dir, out_path, max_words):
 # ---------- API-based fetch (no snapshot needed) ----------
 
 OPENALEX_FIELDS_API = "https://api.openalex.org/fields"
-OPENALEX_WORKS_API  = "https://api.openalex.org/works"
+OPENALEX_WORKS_API = "https://api.openalex.org/works"
 
 # Per-page cap is 200; OpenAlex paginates beyond 10k results only via cursor.
 PAGE_SIZE = 200
@@ -185,7 +184,7 @@ def api_get(url, params, email):
         if r.status_code == 200:
             return r.json()
         if r.status_code in (429, 500, 502, 503, 504):
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
             continue
         r.raise_for_status()
     raise RuntimeError(f"OpenAlex API failed: {url} {params}")
@@ -201,21 +200,23 @@ def list_fields(email):
     return [f["id"].rsplit("/", 1)[-1] for f in data["results"]]
 
 
-def fetch_works_for_field(field_id, n_target, email, year_min, year_max,
-                          max_words):
+def fetch_works_for_field(field_id, n_target, email, year_min, year_max, max_words):
     """Pull up to n_target usable papers from one field via cursor pagination."""
     out = []
     cursor = "*"
     pbar = tqdm(total=n_target, desc=field_id.split("/")[-1], leave=False)
     while len(out) < n_target and cursor:
         params = {
-            "filter": (f"primary_topic.field.id:{field_id},"
-                       f"has_abstract:true,"
-                       f"publication_year:{year_min}-{year_max}"),
+            "filter": (
+                f"primary_topic.field.id:{field_id},"
+                f"has_abstract:true,"
+                f"publication_year:{year_min}-{year_max}"
+            ),
             "per_page": PAGE_SIZE,
             "cursor": cursor,
-            "select": ("id,title,abstract_inverted_index,publication_year,"
-                       "primary_topic,concepts"),
+            "select": (
+                "id,title,abstract_inverted_index,publication_year," "primary_topic,concepts"
+            ),
         }
         data = api_get(OPENALEX_WORKS_API, params, email)
         for rec in data["results"]:
@@ -234,14 +235,15 @@ def fetch_works_for_field(field_id, n_target, email, year_min, year_max,
 def fetch_via_api(out_path, email, per_field, year_min, year_max, max_words):
     """Stratified sample: per_field papers from each OpenAlex field."""
     fields = list_fields(email)
-    print(f"fetching from {len(fields)} fields, {per_field} papers each "
-          f"(~{len(fields) * per_field:,} total)")
+    print(
+        f"fetching from {len(fields)} fields, {per_field} papers each "
+        f"(~{len(fields) * per_field:,} total)"
+    )
     seen = set()
     n_written = 0
     with open(out_path, "w") as out:
         for fid in tqdm(fields, desc="fields"):
-            for p in fetch_works_for_field(fid, per_field, email,
-                                           year_min, year_max, max_words):
+            for p in fetch_works_for_field(fid, per_field, email, year_min, year_max, max_words):
                 if p["id"] in seen:
                     continue
                 seen.add(p["id"])
@@ -259,6 +261,7 @@ def load_compact(path):
 
 
 # ---------- Index by level ----------
+
 
 def has_all_levels(paper, levels=LEVELS):
     return all(paper.get(f"concept_L{lvl}") for lvl in levels)
@@ -310,6 +313,7 @@ def build_level_index(papers, level, min_per_value=2):
 #     the second half of why the level-mix drifted (even before the L0
 #     ceiling bites, L1/L2/L3 always had lower raw accept rates than L0).
 
+
 def sample_partition_sizes(total, k, rng, min_per=1):
     """Random partition of `total` into k parts, each >= min_per."""
     assert total >= k * min_per
@@ -340,8 +344,9 @@ def _min_k_by_capacity(pool_sizes_desc, n_docs):
     return 0  # 0 if even ALL eligible values together can't cover n_docs
 
 
-def sample_k_for_level(level, n_docs, rng, level_idx,
-                       k_frac=DEFAULT_K_FRAC_PER_LEVEL, min_per_group=1):
+def sample_k_for_level(
+    level, n_docs, rng, level_idx, k_frac=DEFAULT_K_FRAC_PER_LEVEL, min_per_group=1
+):
     """Sample k (number of groups) for the given level, clamped to what the
     actual concept-value index can support at this n_docs (see module note).
 
@@ -389,8 +394,7 @@ def _choose_group_values(level_idx, k, n_docs, rng, diversity_mult=3):
     values_by_size = sorted(level_idx.keys(), key=lambda v: -len(level_idx[v]))
     if len(values_by_size) < k:
         return None
-    candidate_pool = values_by_size[:min(len(values_by_size),
-                                          max(k * diversity_mult, k + 10))]
+    candidate_pool = values_by_size[: min(len(values_by_size), max(k * diversity_mult, k + 10))]
     weights = [len(level_idx[v]) for v in candidate_pool]
     # NOTE: `chosen` must be an order-preserving list, not a set -- `pool.pop(i)`
     # already guarantees no duplicates, and a set's iteration order depends on
@@ -453,8 +457,7 @@ def _partition_with_capacity(total, caps, rng, min_per=1):
     return None
 
 
-def build_example(level, level_idx, n_docs, k_groups, rng, source_tag,
-                  min_per_group=1):
+def build_example(level, level_idx, n_docs, k_groups, rng, source_tag, min_per_group=1):
     """One grouping example at concept level `level` with `k_groups` clusters.
 
     `k_groups` is expected to already be feasibility-clamped by
@@ -501,12 +504,7 @@ def build_example(level, level_idx, n_docs, k_groups, rng, source_tag,
     gold_clusters = [sorted(inv[i] for i in c) for c in gold_clusters]
 
     query = rng.choice(QUERY_PHRASINGS).format(k=k_groups, n=n_docs)
-    answer = json.dumps({
-        "groups": [
-            {"doc_ids": [i + 1 for i in idxs]}
-            for idxs in gold_clusters
-        ]
-    })
+    answer = json.dumps({"groups": [{"doc_ids": [i + 1 for i in idxs]} for idxs in gold_clusters]})
 
     return {
         "documents": docs,
@@ -522,50 +520,95 @@ def build_example(level, level_idx, n_docs, k_groups, rng, source_tag,
 
 # ---------- Main ----------
 
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--preprocess", action="store_true",
-                    help="Snapshot -> compact JSONL projection and exit.")
-    ap.add_argument("--api-fetch", action="store_true",
-                    help="Fetch papers via OpenAlex API (no snapshot needed).")
-    ap.add_argument("--openalex-dir", default="data/openalex/works",
-                    help="Directory of OpenAlex .gz work shards (snapshot mode).")
+    ap.add_argument(
+        "--preprocess", action="store_true", help="Snapshot -> compact JSONL projection and exit."
+    )
+    ap.add_argument(
+        "--api-fetch",
+        action="store_true",
+        help="Fetch papers via OpenAlex API (no snapshot needed).",
+    )
+    ap.add_argument(
+        "--openalex-dir",
+        default="data/openalex/works",
+        help="Directory of OpenAlex .gz work shards (snapshot mode).",
+    )
     ap.add_argument("--compact-out", default="data/openalex_compact.jsonl")
-    ap.add_argument("--compact-in",  default="data/openalex_compact.jsonl")
-    ap.add_argument("--eval-compact-in", default=None,
-                    help="Optional separate compact pool to draw EVAL examples from "
-                         "(still filtered by --eval-year-min). Use this when the "
-                         "--compact-in pool's held-out (>= --eval-year-min) slice is too "
-                         "small/thin per concept value to support large --docs-per-example "
-                         "at coarse levels (L0 has only ~19 distinct values total -- fetch "
-                         "a bigger, year-restricted pool with --api-fetch "
-                         "--api-year-min/--api-year-max and point this at it). Defaults to "
-                         "--compact-in (old behavior: single pool, split by year).")
+    ap.add_argument("--compact-in", default="data/openalex_compact.jsonl")
+    ap.add_argument(
+        "--eval-compact-in",
+        default=None,
+        help="Optional separate compact pool to draw EVAL examples from "
+        "(still filtered by --eval-year-min). Use this when the "
+        "--compact-in pool's held-out (>= --eval-year-min) slice is too "
+        "small/thin per concept value to support large --docs-per-example "
+        "at coarse levels (L0 has only ~19 distinct values total -- fetch "
+        "a bigger, year-restricted pool with --api-fetch "
+        "--api-year-min/--api-year-max and point this at it). Defaults to "
+        "--compact-in (old behavior: single pool, split by year).",
+    )
     ap.add_argument("--max-abstract-words", type=int, default=120)
-    ap.add_argument("--api-email", default=None,
-                    help="Your email for OpenAlex polite-pool (required for --api-fetch).")
-    ap.add_argument("--api-per-field", type=int, default=2000,
-                    help="Papers per field. ~26 fields x 2000 = ~52k papers (~50MB).")
+    ap.add_argument(
+        "--api-email",
+        default=None,
+        help="Your email for OpenAlex polite-pool (required for --api-fetch).",
+    )
+    ap.add_argument(
+        "--api-per-field",
+        type=int,
+        default=2000,
+        help="Papers per field. ~26 fields x 2000 = ~52k papers (~50MB).",
+    )
     ap.add_argument("--api-year-min", type=int, default=2018)
     ap.add_argument("--api-year-max", type=int, default=2025)
 
     ap.add_argument("--num-train", type=int, default=5000)
-    ap.add_argument("--num-eval",  type=int, default=500)
+    ap.add_argument("--num-eval", type=int, default=500)
     ap.add_argument("--docs-per-example", type=int, default=20)
-    ap.add_argument("--levels", nargs="+", type=int, default=LEVELS,
-                    help="Concept levels to sample examples from.")
-    ap.add_argument("--level-mix", type=float, nargs="+", default=None,
-                    help="Fixed fraction of examples to draw from each of --levels, same "
-                         "order (must sum to ~1). Default: uniform over --levels. This is "
-                         "sampled as an explicit per-level QUOTA -- not `rng.choice` per "
-                         "attempt -- so the realized level-mix no longer depends on each "
-                         "level's differential accept rate (which is what silently drifted "
-                         "the granularity mix across the N ladder before this fix; see the "
-                         "module note above `sample_partition_sizes`).")
-    ap.add_argument("--min-per-group", type=int, default=1,
-                    help="Smallest allowed cluster size (1 = singletons allowed).")
-    ap.add_argument("--eval-year-min", type=int, default=2024,
-                    help="Papers from this year onward go to eval (leak prevention).")
+    ap.add_argument(
+        "--levels",
+        nargs="+",
+        type=int,
+        default=LEVELS,
+        help="Concept levels to sample examples from.",
+    )
+    ap.add_argument(
+        "--level-mix",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Fixed fraction of examples to draw from each of --levels, same "
+        "order (must sum to ~1). Default: uniform over --levels. This is "
+        "sampled as an explicit per-level QUOTA -- not `rng.choice` per "
+        "attempt -- so the realized level-mix no longer depends on each "
+        "level's differential accept rate (which is what silently drifted "
+        "the granularity mix across the N ladder before this fix; see the "
+        "module note above `sample_partition_sizes`).",
+    )
+    ap.add_argument(
+        "--k-frac",
+        nargs="+",
+        default=None,
+        metavar="LEVEL:LO:HI",
+        help="Override the per-level k range as fractions of --docs-per-example, e.g. "
+        "'2:0.69:0.85 3:0.70:0.95'. Levels not named keep DEFAULT_K_FRAC_PER_LEVEL. Used to "
+        "match a reference ladder's measured (level, k) distribution rung by rung.",
+    )
+    ap.add_argument(
+        "--min-per-group",
+        type=int,
+        default=1,
+        help="Smallest allowed cluster size (1 = singletons allowed).",
+    )
+    ap.add_argument(
+        "--eval-year-min",
+        type=int,
+        default=2024,
+        help="Papers from this year onward go to eval (leak prevention).",
+    )
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -577,34 +620,52 @@ def main():
     if args.api_fetch:
         if not args.api_email:
             ap.error("--api-fetch requires --api-email (OpenAlex polite-pool requirement)")
-        fetch_via_api(args.compact_out, args.api_email, args.api_per_field,
-                      args.api_year_min, args.api_year_max, args.max_abstract_words)
+        fetch_via_api(
+            args.compact_out,
+            args.api_email,
+            args.api_per_field,
+            args.api_year_min,
+            args.api_year_max,
+            args.max_abstract_words,
+        )
         return
 
     rng = random.Random(args.seed)
     papers = load_compact(args.compact_in)
     print(f"loaded {len(papers):,} papers from {args.compact_in}")
-    eval_papers = (load_compact(args.eval_compact_in)
-                   if args.eval_compact_in else papers)
+    eval_papers = load_compact(args.eval_compact_in) if args.eval_compact_in else papers
     if args.eval_compact_in:
         print(f"loaded {len(eval_papers):,} papers from {args.eval_compact_in} (eval-only pool)")
 
-    train_pool = [p for p in papers      if p["year"] <  args.eval_year_min]
-    eval_pool  = [p for p in eval_papers if p["year"] >= args.eval_year_min]
+    train_pool = [p for p in papers if p["year"] < args.eval_year_min]
+    eval_pool = [p for p in eval_papers if p["year"] >= args.eval_year_min]
     print(f"train pool: {len(train_pool):,}   eval pool: {len(eval_pool):,}")
 
     print("building per-level concept indices (papers needing all of L0-L3)...")
-    train_idx = {lvl: build_level_index(train_pool, lvl,
-                                        min_per_value=args.min_per_group)
-                 for lvl in args.levels}
-    eval_idx  = {lvl: build_level_index(eval_pool,  lvl,
-                                        min_per_value=args.min_per_group)
-                 for lvl in args.levels}
+    train_idx = {
+        lvl: build_level_index(train_pool, lvl, min_per_value=args.min_per_group)
+        for lvl in args.levels
+    }
+    eval_idx = {
+        lvl: build_level_index(eval_pool, lvl, min_per_value=args.min_per_group)
+        for lvl in args.levels
+    }
     for lvl in args.levels:
         train_cap = sum(len(v) for v in train_idx[lvl].values())
-        eval_cap  = sum(len(v) for v in eval_idx[lvl].values())
-        print(f"  L{lvl}  train values: {len(train_idx[lvl]):>6,} (cap {train_cap:>7,})   "
-              f"eval values: {len(eval_idx[lvl]):>6,} (cap {eval_cap:>7,})")
+        eval_cap = sum(len(v) for v in eval_idx[lvl].values())
+        print(
+            f"  L{lvl}  train values: {len(train_idx[lvl]):>6,} (cap {train_cap:>7,})   "
+            f"eval values: {len(eval_idx[lvl]):>6,} (cap {eval_cap:>7,})"
+        )
+
+    k_frac = dict(DEFAULT_K_FRAC_PER_LEVEL)
+    for spec in args.k_frac or []:
+        lvl, lo, hi = spec.split(":")
+        if not 0.0 < float(lo) <= float(hi) <= 1.0:
+            ap.error(f"--k-frac {spec!r}: need 0 < LO <= HI <= 1")
+        k_frac[int(lvl)] = (float(lo), float(hi))
+    if args.k_frac:
+        print(f"k range per level (fraction of n): {k_frac}")
 
     if args.level_mix is not None:
         if len(args.level_mix) != len(args.levels):
@@ -614,8 +675,10 @@ def main():
         mix = {lvl: 1.0 / len(args.levels) for lvl in args.levels}
     mix_total = sum(mix.values())
     mix = {lvl: w / mix_total for lvl, w in mix.items()}  # normalize
-    print(f"level mix (fixed, independent of N): "
-          f"{ {f'L{l}': round(w, 3) for l, w in mix.items()} }")
+    print(
+        f"level mix (fixed, independent of N): "
+        f"{ {f'L{l}': round(w, 3) for l, w in mix.items()} }"
+    )
 
     def level_quotas(n_examples):
         """Largest-remainder rounding so per-level quotas sum to n_examples exactly."""
@@ -639,34 +702,46 @@ def main():
             max_attempts = max(200, quota * 20)
             while got < quota and attempts < max_attempts:
                 attempts += 1
-                k = sample_k_for_level(level, args.docs_per_example, rng,
-                                       per_level[level],
-                                       min_per_group=args.min_per_group)
+                k = sample_k_for_level(
+                    level,
+                    args.docs_per_example,
+                    rng,
+                    per_level[level],
+                    k_frac=k_frac,
+                    min_per_group=args.min_per_group,
+                )
                 if k is None:
                     continue  # this level is infeasible at this n_docs -- don't spin
-                ex = build_example(level, per_level[level],
-                                   args.docs_per_example, k,
-                                   rng, source_tag=f"openalex_grouping_{tag}",
-                                   min_per_group=args.min_per_group)
+                ex = build_example(
+                    level,
+                    per_level[level],
+                    args.docs_per_example,
+                    k,
+                    rng,
+                    source_tag=f"openalex_grouping_{tag}",
+                    min_per_group=args.min_per_group,
+                )
                 if ex is None:
                     continue
                 examples.append(ex)
                 got += 1
                 pbar.update(1)
             if got < quota:
-                print(f"  ⚠ L{level} {tag}: only got {got}/{quota} "
-                      f"(level infeasible/too-thin at docs-per-example="
-                      f"{args.docs_per_example}; see cap printout above)")
+                print(
+                    f"  ⚠ L{level} {tag}: only got {got}/{quota} "
+                    f"(level infeasible/too-thin at docs-per-example="
+                    f"{args.docs_per_example}; see cap printout above)"
+                )
         pbar.close()
         rng.shuffle(examples)  # de-block the per-level generation order
         return examples
 
     train = gen(train_idx, args.num_train, "train")
-    evals = gen(eval_idx,  args.num_eval,  "eval")
+    evals = gen(eval_idx, args.num_eval, "eval")
 
     base = f"openalex_grouping_n{args.docs_per_example}_levels"
     train_path = Path(args.out_dir) / f"{base}_train_{args.num_train}.jsonl"
-    eval_path  = Path(args.out_dir) / f"{base}_eval_{args.num_eval}.jsonl"
+    eval_path = Path(args.out_dir) / f"{base}_eval_{args.num_eval}.jsonl"
     save_jsonl(train_path, train)
     save_jsonl(eval_path, evals)
     print_dataset_stats(train, "train", train_path)

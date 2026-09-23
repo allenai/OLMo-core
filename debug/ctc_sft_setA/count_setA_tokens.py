@@ -38,7 +38,7 @@ TASK_TO_SPEC = {
 
 TASKS = [
     "nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
-    "absence", "reorder", "rerank", "strmatch", "textgroups", "grouping_labeled",
+    "absence", "reorder", "rerank", "strmatch", "textgroups", "grouping",
 ]
 BUCKETS = ["2k", "4k", "8k", "16k", "32k"]
 

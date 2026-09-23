@@ -55,7 +55,7 @@ TASK_TO_ROW = {
     "rerank": "ctc_rerank",
     "strmatch": "ctc_strmatch",
     "textgroups": "ctc_textgroups",
-    "grouping_labeled": "ctc_grouping",
+    "grouping": "ctc_grouping",
 }
 BUCKETS = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
 #: The training window: eval rungs above it are out of scope, not train gaps.
@@ -162,7 +162,7 @@ def _self_score(sp, ex: dict, answer: str) -> float:
     return float(sp.score(parsed, _gold(sp, ex)).get(sp.primary_metric, 0.0))
 
 
-def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
+def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos, cal=None) -> dict:
     rec: dict = {"task": task, "bucket": bucket, "train_rows": len(train), "eval_rows": len(evalr)}
     fails: List[str] = []
     line_mode = task == "oolong"
@@ -189,6 +189,14 @@ def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
     for key in keys:
         t, e = rec["train"][key], rec["eval"][key]
         if not t or not e:
+            continue
+        if key == "n_docs" and cal and ("capped" in cal or "capped_note" in cal):
+            # a deliberate, recorded cap (the eval's own row overflows the training window):
+            # compare against the calibrated count instead of the eval's
+            want = cal.get("fill_to", cal.get("n_docs"))
+            rec["n_docs_capped_to"] = want
+            if abs(t["med"] - want) > tol[key] * want:
+                fails.append(f"n_docs: train median {t['med']} vs calibrated cap {want}")
             continue
         if abs(t["med"] - e["med"]) > tol[key] * max(e["med"], 1):
             fails.append(f"{key}: train {t['min']}/{t['med']}/{t['max']} vs eval "
@@ -222,7 +230,11 @@ def audit_cell(task, bucket, train, evalr, sp, train_spec, qpos) -> dict:
     tk = set().union(*(r.keys() for r in train))
     missing = sorted(k for k in ek - tk if not k.startswith("_"))
     rec["fields_missing_in_train"] = missing
-    if missing:
+    # A field matters only if something reads it. The prompt and target checks below already prove
+    # the renderer and grader agree, EXCEPT for a spec whose scorer reads the whole example (rerank
+    # reads ce_scores); for everything else a missing field is provenance (outlier `meta` vs
+    # `_meta`, qdmatch counts, reorder offsets) and is recorded, not failed.
+    if missing and sp.extra.get("score_takes_example"):
         fails.append(f"eval rows carry fields the train rows lack: {missing}")
 
     # 5. prompt parity on the SAME eval rows.
@@ -284,6 +296,9 @@ def main() -> None:
     ap.add_argument("--query-position", default="both",
                     help="the eval pins 'both' (olmo-eval QUERY_POSITION)")
     ap.add_argument("--tasks", nargs="*", default=list(TASK_TO_ROW))
+    ap.add_argument("--calibration", default="",
+                    help="eval_calibration.json the set was built with: 256k cells it caps are "
+                         "checked against the cap, not the eval's larger count")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -295,6 +310,7 @@ def main() -> None:
 
     T.load_all()
     builder = _load_builder_roster(args.repo)
+    calib = json.load(open(args.calibration))["tasks"] if args.calibration else {}
     print(f"grading through the VENDORED spec at {args.vendor}; ROSTER from olmo-eval "
           f"{R['olmo_eval_commit']}; eval data {R['hf_dataset']}\n", flush=True)
 
@@ -334,7 +350,8 @@ def main() -> None:
                               "fails": [f"eval parquet {row['subset']}/r{b} missing on HF"]})
                 continue
             train = _train_rows(args.root, task, b, args.sample)
-            rec = audit_cell(task, b, train, evalr, sp, train_spec, args.query_position)
+            rec = audit_cell(task, b, train, evalr, sp, train_spec, args.query_position,
+                             cal=calib.get(task, {}).get(b))
             cells.append(rec)
             t, e = rec.get("train", {}), rec.get("eval", {})
             nd = lambda d, k: (f"{d[k]['med']:g}" if d.get(k) else "-")  # noqa: E731

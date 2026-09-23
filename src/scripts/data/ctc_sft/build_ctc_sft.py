@@ -92,6 +92,9 @@ class Task:
     max_rung_reason: str = ""
     #: Buckets withheld for a data-quality reason, as ``{bucket: why}``. These are deliberate.
     withhold: Dict[str, str] = dataclasses.field(default_factory=dict)
+    #: Build with an in-repo generator (a key of :data:`EXTERNAL`) instead of ``ctc``, for eval
+    #: rows ``ctc`` has no generator for. Its train pool is read from ``--external-pools``.
+    external: Optional[str] = None
 
 
 _TEXTGROUPS_SHORTCUT = (
@@ -116,7 +119,11 @@ SET_A: List[Task] = [
     Task("outlier", "outlier"),
     Task("oolong", "oolong", chunk_by="line"),
     Task("contradiction", "contradiction"),
-    Task("xabsence", "xabsence"),
+    # The suite's xabsence rows are the ONE-SIDED EXACT-COPY Gutenberg construction (orphan_side=A,
+    # P=18/39/81/165/333 at 2k-32k) -- not ctc's PubMed paraphrase generator, which is a different
+    # task under the same name. Built from the disjoint Gutenberg TRAIN pool with the generator the
+    # eval ladder came from.
+    Task("xabsence", "xabsence", external="xabsence_gutenberg_onesided"),
     Task("reorder", "reorder"),
     # Bounded at 32k by the SEED POOL, not by MS MARCO: `msmarco.load_pool` defaults
     # `max_docs=250`, which is exactly the 32k rung, and the per-query fill is drawn and CE-scored
@@ -139,7 +146,11 @@ SET_A: List[Task] = [
     # worse, not unknown. Enumerating {8k,16k,32k} re-admitted it at 64k+ the moment the ladder grew.
     Task("textgroups", "textgroups", pooled=False, max_rung="4k",
          max_rung_reason=_TEXTGROUPS_SHORTCUT),
-    Task("grouping_labeled", "grouping_labeled"),
+    # The suite's ctc_grouping row: UNLABELED OpenAlex partition (k per the concept level, up to
+    # ~1 doc per group at the finest), graded by the `grouping` spec. grouping_labeled -- ctc's only
+    # grouping generator -- asks for coarse named groups instead, so it is not this task. Built by
+    # the generator the eval ladder came from, on papers before its 2024 eval cut-off.
+    Task("grouping", "grouping", external="openalex_grouping"),
 ]
 
 #: CTC-BENCH-10 with the substitutions that keep the FiQA corpus out of training (rerank for fiqa,
@@ -201,6 +212,46 @@ def sha256(path: str) -> str:
 # ---------------------------------------------------------------- the stages
 
 
+#: External generators: ``name -> (pool file under --external-pools, command builder)``. The command
+#: builder gets ``(repo, pool, n_docs, rows, seed, out_dir)`` and returns ``(argv, produced path)``.
+def _xabsence_cmd(repo, pool, n_docs, rows, seed, out_dir):
+    pairs = max(1, (n_docs - 3) // 2)  # one-sided: A holds P + 3 orphans, B holds P
+    argv = [os.path.join(repo, "src", "corpus_reasoning", "data", "generate_xabsence_data.py"),
+            "--pool", pool, "--num-pairs", str(pairs), "--num-unmatched", "3",
+            "--orphan-side", "A", "--src-tag", "gutenberg", "--num-train", str(rows),
+            "--num-eval", "0", "--output-dir", out_dir, "--seed", str(seed)]
+    return argv, os.path.join(out_dir, f"xabsence_train_gutenberg_p{pairs}_k3.jsonl")
+
+
+def _grouping_cmd(repo, pool, n_docs, rows, seed, out_dir):
+    argv = [os.path.join(repo, "src", "corpus_reasoning", "data",
+                         "generate_arxiv_grouping_data.py"),
+            "--compact-in", pool, "--num-train", str(rows), "--num-eval", "0",
+            "--docs-per-example", str(n_docs), "--out-dir", out_dir, "--seed", str(seed)]
+    return argv, os.path.join(
+        out_dir, f"openalex_grouping_n{n_docs}_levels_train_{rows}.jsonl")
+
+
+EXTERNAL = {
+    "xabsence_gutenberg_onesided": ("pool_gutenberg_train.jsonl", _xabsence_cmd),
+    "openalex_grouping": ("openalex_compact.jsonl", _grouping_cmd),
+}
+
+#: ``(documents, rendered Qwen3.5 tokens)`` of the eval's top-rung rows, for extrapolating buckets
+#: the eval does not have. Scaled by MEASURED tokens, not by rung label: grouping's "32k" rows are
+#: 35.6k tokens, so label-scaling would put its 256k rows at ~285k, past the window.
+EXTERNAL_TOP = {"xabsence": (669, 28_588), "grouping": (176, 35_636)}
+#: tokens an extrapolated row may use (the 262,144 window less chat wrapper + boundary markers)
+_FIT_TOKENS = 250_000
+
+
+def _external_n_docs(task: Task, bucket: str, cal: Optional[dict]) -> int:
+    if cal:
+        return int(cal["n_docs"])
+    n, tokens = EXTERNAL_TOP[task.name]
+    return int(n * min(BUCKET_TOKENS[bucket], _FIT_TOKENS) / tokens)
+
+
 def _bucket_allowed(task: Task, bucket: str, cal: Optional[dict] = None) -> Optional[str]:
     """:returns: ``None`` if the bucket should be built, else the reason it is skipped."""
     if bucket in task.withhold:
@@ -216,12 +267,49 @@ def _bucket_allowed(task: Task, bucket: str, cal: Optional[dict] = None) -> Opti
 
 
 def _build_cell(job) -> dict:
-    task, bucket, n, build_root, seed, python, cal = job
+    task, bucket, n, build_root, seed, python, cal, ext_pools, top_cal = job
     out = os.path.join(build_root, f"_b{bucket}")
     target = os.path.join(out, task.name, "train.jsonl")
     rec = {"task": task.name, "bucket": bucket, "want": n, "path": target}
+    # A cell is reused only if it was built the same way. External cells always carry a stamp; a
+    # ctc cell without one predates stamping and is accepted, but a ctc cell is never reused for an
+    # external task (xabsence switched generators under the same name and path).
+    stamp_path = target + ".how.json"
+    how = {"generator": task.external or "ctc", "n_docs": (cal or {}).get("n_docs"),
+           "set": (cal or {}).get("set"), "gen_args": (cal or {}).get("gen_args")}
     if os.path.exists(target) and os.path.getsize(target) > 0:
-        rec.update(status="cached", rows=sum(1 for _ in open(target)))
+        prev = json.load(open(stamp_path)) if os.path.exists(stamp_path) else None
+        if prev == how or (prev is None and not task.external):
+            rec.update(status="cached", rows=sum(1 for _ in open(target)))
+            return rec
+        os.remove(target)
+    if task.external:
+        pool_name, builder = EXTERNAL[task.external]
+        pool = os.path.join(ext_pools or "", pool_name)
+        if not os.path.exists(pool):
+            rec.update(status="FAILED", error=f"external pool missing: {pool} (--external-pools)")
+            return rec
+        n_docs = _external_n_docs(task, bucket, cal)
+        tmp = os.path.join(out, task.name, "_gen")
+        os.makedirs(tmp, exist_ok=True)
+        repo = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            *[os.pardir] * 4))
+        # per-bucket seed so buckets draw different examples, reproducibly
+        argv, produced = builder(repo, pool, n_docs, n, seed * 1000 + BUCKET_TOKENS[bucket] // 1024,
+                                 tmp)
+        # generator settings measured from the eval (level quotas, k ranges); a bucket above the
+        # eval's top rung borrows the top rung's
+        argv += (cal or {}).get("gen_args") or (top_cal or {}).get("gen_args") or []
+        rec["gen_args"] = argv[1:]
+        p = _run([python] + argv)
+        if p.returncode != 0 or not os.path.exists(produced):
+            tail = (p.stdout + p.stderr).strip().splitlines()
+            rec.update(status="FAILED", error=" | ".join(tail[-3:])[:600])
+            return rec
+        os.replace(produced, target)
+        json.dump(how, open(stamp_path, "w"))
+        rec.update(status="built", rows=sum(1 for _ in open(target)), n_docs=n_docs,
+                   generator=task.external)
         return rec
     env = None
     if cal:
@@ -245,6 +333,7 @@ def _build_cell(job) -> dict:
         tail = (p.stdout + p.stderr).strip().splitlines()
         rec.update(status="FAILED", error=" | ".join(tail[-3:])[:600])
         return rec
+    json.dump(how, open(stamp_path, "w"))
     rec.update(status="built", rows=sum(1 for _ in open(target)))
     return rec
 
@@ -272,6 +361,9 @@ def main() -> None:
                     help="eval_calibration.json from measure_eval_ladder.py: size every "
                          "(task, bucket) it names to the EVAL's own rows instead of ctc's ladder "
                          "table. Builds into <set tag>_evaliid so no table-sized cell is reused.")
+    ap.add_argument("--external-pools", default="",
+                    help="dir holding the train pools of the external generators "
+                         f"({', '.join(v[0] for v in EXTERNAL.values())})")
     ap.add_argument("--check", action="store_true",
                     help="re-hash an existing build against its manifest and report drift")
     # this file is <repo>/src/scripts/data/ctc_sft/build_ctc_sft.py -> five levels up
@@ -303,8 +395,8 @@ def main() -> None:
 
     # The roster declares which generators are synthetic; ctc is the authority. Drift between them
     # is exactly the bug that cost 10 builds, so it is a hard failure, not a warning.
-    declared = {t.name for t in tasks if not t.pooled}
-    actual = set(synthetic_tasks([t.name for t in tasks]))
+    declared = {t.name for t in tasks if not t.pooled and not t.external}
+    actual = set(synthetic_tasks([t.name for t in tasks if not t.external]))
     if declared != actual:
         raise SystemExit(
             f"roster/ctc disagree on which tasks are synthetic.\n"
@@ -322,8 +414,10 @@ def main() -> None:
             # A bucket the eval has no rung for keeps ctc's own table: nothing grades it, so there
             # is nothing to match, and dropping it would quietly shrink the long-context mix.
             cal = calibration.get(t.name, {}).get(b)
+            task_cal = calibration.get(t.name, {})
+            top_cal = task_cal[max(task_cal, key=lambda r: BUCKET_TOKENS[r])] if task_cal else None
             jobs.append((t, b, args.tokens_per_bucket // BUCKET_TOKENS[b], build_root,
-                         args.seed, python, cal))
+                         args.seed, python, cal, args.external_pools, top_cal))
 
     print(f"=== {tag} | {len(tasks)} tasks x {len(args.buckets)} buckets "
           f"| {len(jobs)} to build, {len(skipped)} skipped | seed={args.seed} "
@@ -456,10 +550,16 @@ def _foreign_fill(task: str, fills: Dict[str, int], build_root: str, seed: int) 
     for b, raw in sorted(raws.items(), key=lambda kv: BUCKET_TOKENS[kv[0]]):
         rng = random.Random(f"{seed}:foreign_fill:{task}:{b}")
         target = fills[b]
-        rows = short = 0
+        rows = short = unscorable = 0
         with open(raw) as f, open(os.path.join(os.path.dirname(raw), "train.jsonl"), "w") as out:
             for line in f:
                 ex = json.loads(line)
+                # The eval grades rerank on ce_pos_recall: the share of CE-POSITIVE documents in the
+                # first 10 ids. A row with no CE-positive candidate scores 0 for every answer, and
+                # the eval's rows never have one -- so it is filtered out, not trained on.
+                if not any(c is not None and c > 0 for c in (ex.get("ce_scores") or [])):
+                    unscorable += 1
+                    continue
                 docs = list(ex["documents"])
                 own = {d.get("text", "") for d in docs}
                 q = (ex.get("queries") or [""])[0]
@@ -490,6 +590,7 @@ def _foreign_fill(task: str, fills: Dict[str, int], build_root: str, seed: int) 
                 rows += 1
                 short += need < 0
         print(f"  {task}@{b}: {rows} rows filled to {target} docs"
+              + (f"; dropped {unscorable} with no CE-positive document" if unscorable else "")
               + (f"  ⚠ {short} rows already above target" if short else ""), flush=True)
 
 

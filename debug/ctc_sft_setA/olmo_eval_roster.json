@@ -12,7 +12,7 @@
   "r512k": 524288,
   "r1m": 1048576
  },
- "olmo_eval_commit": "5f165a65",
+ "olmo_eval_commit": "de51be6c",
  "roster": {
   "ctc_fiqa": {
    "subset": "fiqa",
@@ -272,7 +272,9 @@
    ],
    "rung_alias": {},
    "eval_size": {},
-   "spec_registered": false
+   "spec_registered": true,
+   "gold_field": "gold_doc_indices",
+   "score_takes_example": false
   },
   "ctc_absence": {
    "subset": "absence_gutenberg",
