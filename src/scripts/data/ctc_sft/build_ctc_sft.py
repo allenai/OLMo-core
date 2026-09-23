@@ -239,6 +239,10 @@ def main() -> None:
     ap.add_argument("--marker-set", default="qwen3_5")
     ap.add_argument("--tokenizer", default="Qwen/Qwen3.5-4B")
     ap.add_argument("--seq-len", type=int, default=40960)
+    ap.add_argument("--shards-dir", default="",
+                    help="shard dir name under the set root; default shards_<marker-set>. Name it "
+                         "when converting at a different --seq-len: the trainer REFUSES a --seq-len "
+                         "below a shard's max_example_len, so one dir cannot serve both windows.")
     ap.add_argument("--query-position", default="both", choices=("before", "after", "both"))
     ap.add_argument("--cot-mode", default="none")
     ap.add_argument("--check", action="store_true",
@@ -369,40 +373,52 @@ def main() -> None:
 def _convert(tasks, root, build_root, args) -> dict:
     conv = os.path.join(args.repo, "src", "scripts", "data",
                         "convert_unified_to_document_landmark.py")
-    out_root = os.path.join(root, f"shards_{args.marker_set}")
+    out_root = os.path.join(root, args.shards_dir or f"shards_{args.marker_set}")
     os.makedirs(out_root, exist_ok=True)
-    print(f"=== tokenizing -> {out_root} ===", flush=True)
+    print(f"=== tokenizing -> {out_root} (parallel) ===", flush=True)
+    jobs = []
     shards = {}
     for t in tasks:
         src = os.path.join(build_root, t.name, "train.jsonl")
         if not os.path.exists(src) or not os.path.getsize(src):
             shards[t.name] = {"status": "SKIPPED_EMPTY"}
             continue
-        d = os.path.join(out_root, t.name)
-        # --emit dense serves BOTH arms: `--variant full` reads these ids directly and
-        # `--variant sparselandmark` inserts landmarks at LOAD time via LandmarkPackingInstanceSource.
-        p = _run([sys.executable, conv, "--emit", "dense", "--task", t.spec,
-                  "--chunk-by", t.chunk_by, "--marker-set", args.marker_set,
-                  "--tokenizer", args.tokenizer, "--query-position", args.query_position,
-                  "--cot-mode", args.cot_mode, "--seq-len", str(args.seq_len),
-                  "--input-jsonl", src, "--out-dir", d])
-        meta_path = os.path.join(d, "metadata.json")
-        if p.returncode != 0 or not os.path.exists(meta_path):
-            tail = (p.stdout + p.stderr).strip().splitlines()
-            shards[t.name] = {"status": "FAILED", "error": " | ".join(tail[-3:])[:600]}
-            print(f"  [FAILED] {t.name}: {shards[t.name]['error']}", flush=True)
-            continue
-        m = json.load(open(meta_path))
-        shards[t.name] = {"status": "ok", "dir": d, "num_instances": m["num_instances"],
-                          "num_dropped": m["num_dropped"], "num_tokens": m["num_tokens"],
-                          "max_example_len": m["max_example_len"],
-                          "num_loss_tokens": m["num_loss_tokens"]}
-        warn = f"  ⚠ {m['num_dropped']:,} dropped > seq-len {args.seq_len}" if m["num_dropped"] else ""
-        print(f"  {t.name}: {m['num_instances']:,} inst, {m['num_tokens']:,} tok{warn}", flush=True)
+        jobs.append((t, src, os.path.join(out_root, t.name)))
+    with cf.ProcessPoolExecutor(max_workers=min(len(jobs) or 1, args.jobs)) as pool:
+        for name, rec in pool.map(_convert_one, [(t, src, d, conv, args) for t, src, d in jobs]):
+            shards[name] = rec
+            if rec["status"] == "ok":
+                warn = (f"  ⚠ {rec['num_dropped']:,} dropped > seq-len {args.seq_len}"
+                        if rec["num_dropped"] else "")
+                print(f"  {name}: {rec['num_instances']:,} inst, {rec['num_tokens']:,} tok{warn}",
+                      flush=True)
+            else:
+                print(f"  [{rec['status']}] {name}: {rec.get('error','')}", flush=True)
     ok = [v for v in shards.values() if v.get("status") == "ok"]
     print(f"  TOTAL {sum(v['num_instances'] for v in ok):,} instances, "
           f"{sum(v['num_tokens'] for v in ok):,} tokens", flush=True)
     return shards
+
+
+def _convert_one(job):
+    """One task -> one shard dir. Module-level so it is picklable for the pool."""
+    t, src, d, conv, args = job
+    # --emit dense serves BOTH arms: `--variant full` reads these ids directly and
+    # `--variant sparselandmark` inserts landmarks at LOAD time via LandmarkPackingInstanceSource.
+    p = _run([sys.executable, conv, "--emit", "dense", "--task", t.spec,
+              "--chunk-by", t.chunk_by, "--marker-set", args.marker_set,
+              "--tokenizer", args.tokenizer, "--query-position", args.query_position,
+              "--cot-mode", args.cot_mode, "--seq-len", str(args.seq_len),
+              "--input-jsonl", src, "--out-dir", d])
+    meta_path = os.path.join(d, "metadata.json")
+    if p.returncode != 0 or not os.path.exists(meta_path):
+        tail = (p.stdout + p.stderr).strip().splitlines()
+        return t.name, {"status": "FAILED", "error": " | ".join(tail[-3:])[:600]}
+    m = json.load(open(meta_path))
+    return t.name, {"status": "ok", "dir": d, "num_instances": m["num_instances"],
+                    "num_dropped": m["num_dropped"], "num_tokens": m["num_tokens"],
+                    "max_example_len": m["max_example_len"],
+                    "num_loss_tokens": m["num_loss_tokens"]}
 
 
 def _check(manifest_path: str) -> None:
