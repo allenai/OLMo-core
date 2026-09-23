@@ -30,3 +30,13 @@ def test_freeze_drops_only_length_keys(monkeypatch):
     # idempotent
     freeze_fla_length_autotune()
     assert mod.conv.keys == ["D", "W"]
+
+
+def test_freeze_reaches_autotuner_behind_heuristics(monkeypatch):
+    mod = types.ModuleType("fla._fake_wrapped")
+    inner = _fake_autotuner(["D", "NB", "IS_RMS_NORM"])
+    mod.kernel = types.SimpleNamespace(fn=inner)  # a Heuristics wrapper exposes the tuner at .fn
+    monkeypatch.setitem(sys.modules, "fla._fake_wrapped", mod)
+
+    freeze_fla_length_autotune()
+    assert inner.keys == ["D", "IS_RMS_NORM"]

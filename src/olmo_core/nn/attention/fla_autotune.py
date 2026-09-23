@@ -41,9 +41,16 @@ def freeze_fla_length_autotune() -> int:
         if module is None or not (name == "fla" or name.startswith("fla.")):
             continue
         for obj in list(vars(module).values()):
-            if isinstance(obj, Autotuner) and _LENGTH_KEYS & set(obj.keys):
-                obj.keys = [k for k in obj.keys if k not in _LENGTH_KEYS]
-                changed += 1
+            # ``@triton.heuristics`` stacked outside ``@triton.autotune`` leaves a Heuristics
+            # wrapper at module level with the Autotuner at ``.fn`` -- causal_conv1d and the gated
+            # norm are built that way, so walk the chain rather than test the top object only.
+            seen = 0
+            while obj is not None and seen < 8:
+                if isinstance(obj, Autotuner) and _LENGTH_KEYS & set(obj.keys):
+                    obj.keys = [k for k in obj.keys if k not in _LENGTH_KEYS]
+                    changed += 1
+                obj = getattr(obj, "fn", None)
+                seen += 1
     if changed:
         log.info(f"FLA: dropped length-derived autotune keys on {changed} kernel(s)")
     return changed
