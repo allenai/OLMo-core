@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Removed the unused `OLMoDDPTrainModule.max_grad_norm` constructor argument and attribute; DDP examples now set `optim.max_grad_norm`. Old train-module configs still accept the legacy field, warn when it is set, and discard it on serialization. The optimizer threshold remains authoritative even when legacy values disagree, preserving prior clipping behavior. Regular transformer gradient clipping is unchanged.
+
 - Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
 
 - Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.

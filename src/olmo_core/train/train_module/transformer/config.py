@@ -1,6 +1,7 @@
 import copy
 import logging
-from dataclasses import dataclass, replace
+import warnings
+from dataclasses import InitVar, dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
@@ -496,7 +497,11 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     # Optimizer settings.
 
     optim: OLMoDDPOptimizerConfig
-    max_grad_norm: Optional[float] = None
+    max_grad_norm: InitVar[Optional[float]] = None
+    """
+    Legacy input accepted for old configs. It was unused; clipping is controlled by
+    :data:`~olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig.max_grad_norm`.
+    """
     scheduler: Optional[Scheduler] = None
 
     # Model settings.
@@ -532,6 +537,16 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     # Other train settings.
 
     label_ignore_index: int = -100
+
+    def __post_init__(self, max_grad_norm: Optional[float] = None):
+        if max_grad_norm is not None:
+            warnings.warn(
+                f"OLMoDDPTrainModuleConfig.max_grad_norm={max_grad_norm} was unused and is "
+                f"ignored; optim.max_grad_norm={self.optim.max_grad_norm} controls clipping. "
+                "Set optim.max_grad_norm explicitly to change the clipping threshold.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     def build(
         self,

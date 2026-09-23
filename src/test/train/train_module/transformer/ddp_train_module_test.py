@@ -107,6 +107,10 @@ def _run_construct_no_ep():
         optim=OLMoDDPOptimizerConfig(lr=1e-3),
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
     )
+    legacy_config = config.as_config_dict()
+    legacy_config["max_grad_norm"] = 0.25
+    with pytest.warns(UserWarning, match="was unused and is ignored"):
+        config = OLMoDDPTrainModuleConfig.from_dict(legacy_config)
     # eval_only=True skips the optimizer build (its fp32-master-param setup is exercised on GPU);
     # this covers the world-mesh build + data-parallel wrapping with no expert parallelism.
     train_module = config.build(model, device=torch.device("cpu"), eval_only=True)
@@ -115,6 +119,7 @@ def _run_construct_no_ep():
     assert train_module.dp_world_size == 2
     assert train_module.world_mesh["dense"] is not None
     assert train_module.moe_mesh is None  # no expert parallelism
+    assert not hasattr(train_module, "max_grad_norm")
 
 
 def test_moe_v2_train_module_construction_no_ep():
@@ -365,3 +370,35 @@ def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
     )
+
+
+@pytest.mark.parametrize("legacy_norm", [None, 1.0, 0.25])
+@pytest.mark.parametrize("optimizer_norm", [None, 1.0, 2.0])
+@pytest.mark.parametrize("with_metadata", [False, True])
+def test_legacy_max_grad_norm_config(legacy_norm, optimizer_norm, with_metadata):
+    """Loading legacy fields preserves the optimizer's effective threshold, even on disagreement."""
+    import json
+    import warnings
+
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=1024,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+    )
+    serialized = config.as_config_dict() if with_metadata else config.as_dict()
+    serialized["max_grad_norm"] = legacy_norm
+    if optimizer_norm is None:
+        serialized["optim"].pop("max_grad_norm")
+    else:
+        serialized["optim"]["max_grad_norm"] = optimizer_norm
+    # Exercise old JSON configs both with and without serialized class metadata.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        restored = OLMoDDPTrainModuleConfig.from_dict(json.loads(json.dumps(serialized)))
+    assert len(caught) == (0 if legacy_norm is None else 1)
+    if caught:
+        assert "was unused and is ignored" in str(caught[0].message)
+    assert restored.optim.max_grad_norm == (1.0 if optimizer_norm is None else optimizer_norm)
+    assert "max_grad_norm" not in restored.as_dict()
+    assert "max_grad_norm" not in restored.as_config_dict()
+    assert OLMoDDPTrainModuleConfig.from_dict(restored.as_config_dict()) == restored

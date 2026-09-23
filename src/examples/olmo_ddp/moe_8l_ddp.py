@@ -270,6 +270,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
         rank_microbatch_size=RANK_MICROBATCH_SEQUENCES * SEQUENCE_LENGTH,
         max_sequence_length=common.max_sequence_length,
         optim=OLMoDDPOptimizerConfig(
+            max_grad_norm=1.0,
             lr=LEARNING_RATE,
             weight_decay=WEIGHT_DECAY,
             betas=BETAS,
@@ -297,7 +298,6 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
         pp_config=None,
         float8_config=None,
         z_loss_multiplier=1e-4,
-        max_grad_norm=1.0,
         scheduler=CosWithWarmup(warmup_steps=WARMUP_STEPS),
     )
 

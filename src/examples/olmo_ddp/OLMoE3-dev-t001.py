@@ -476,6 +476,7 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
         max_sequence_length=common.max_sequence_length,
         # reset_optimizer_states_on_load=True, # TODO: only on first load step0,
         optim=OLMoDDPOptimizerConfig(
+            max_grad_norm=1.0,
             lr=LR,
             weight_decay=0.1,
             betas=(0.9, 0.95),
@@ -547,7 +548,6 @@ def build_train_module_config(common: CommonComponents) -> OLMoDDPTrainModuleCon
         else None,
         float8_config=None,
         z_loss_multiplier=1e-4,
-        max_grad_norm=1.0,
         scheduler=ComposableScheduler(
             units=SchedulerUnits.tokens,
             stages=[
