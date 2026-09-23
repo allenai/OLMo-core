@@ -1,18 +1,17 @@
 """
-Per-(task, context-bucket) TOKEN counts for the setA SFT build.
+Per-(task, context-bucket) TOKEN counts for a setA SFT build -- exactly what the shards hold.
 
-The build is token-BALANCED by construction (a fixed budget per bucket, so example count falls as
-the bucket grows), but the realized token counts are what actually matter and they are not the
-bucket label: rung LABELS are not token counts (contradiction runs ~1.5x under its label, niah
-~2.9x). This measures them with the tokenizer the run will actually use.
+Every row is tokenized through the converter's own ``tokenize_example`` (the function that writes
+the shards: chat template, document boundary markers, EOS, ``--emit dense``), with each task's spec
+and ``chunk_by`` taken from the builder's roster. So a count here is a count of training tokens, not
+of a re-rendering that could drift (an earlier version of this script rendered through the Alpaca
+wrapper and mapped hotpotqa to ``cot_retrieval``, neither of which the shards use).
 
-Renders each row through the SAME entry point the converters use --
-``corpus_reasoning_prompts.build_prompt(..., use_alpaca=True, query_position=...)`` -- so the counts
-are the prompt the model is trained on, not the raw JSON.
+Rows longer than ``--seq-len`` are reported as dropped, as the converter drops them.
 
-    python debug/ctc_sft_setA/count_setA_tokens.py \
-        --root /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_sft_sets/setA_max20 \
-        --tokenizer Qwen/Qwen3.5-4B --out debug/ctc_sft_setA/setA_token_counts.json
+    python debug/ctc_sft_setA/count_setA_tokens.py \\
+        --root /weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_sft_sets/setA_max20_evaliid \\
+        --out .../setA_token_counts.json
 """
 
 from __future__ import annotations
@@ -20,146 +19,113 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
-from typing import List
 
-import numpy as np
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, os.pardir, os.pardir))
+sys.path.insert(0, os.path.join(REPO, "src"))
+sys.path.insert(0, os.path.join(REPO, "src", "scripts", "data"))
+sys.path.insert(0, os.path.join(REPO, "src", "scripts", "data", "ctc_sft"))
 
-from olmo_core.data.corpus_reasoning_prompts import build_prompt
-
-#: Ladder name -> the shared *spec* name that ``build_prompt`` renders. Passing a ladder name where
-#: a spec is expected raises on every row, which surfaces as a 100% error rate rather than a crash.
-TASK_TO_SPEC = {
-    "nq": "retrieval",
-    "hotpotqa": "cot_retrieval",
-    "qdmatch_nq": "qdmatch",
-}
-
-TASKS = [
-    "nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
-    "absence", "reorder", "rerank", "strmatch", "textgroups", "grouping",
-]
-BUCKETS = ["2k", "4k", "8k", "16k", "32k"]
+BUCKETS = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
+_W: dict = {}
 
 
-def _count_one(args_tuple) -> dict:
-    task, bucket, root, tokenizer_id, query_position, cot_mode, limit = args_tuple
+def _init(tokenizer: str, marker_set: str, seq_len: int, query_position: str) -> None:
     from transformers import AutoTokenizer
 
-    path = os.path.join(root, "per_task", f"_b{bucket}", task, "train.jsonl")
-    rec = {"task": task, "bucket": bucket, "path": path}
-    if not os.path.exists(path):
-        rec["status"] = "MISSING"
-        return rec
+    from olmo_core.data.document_chunk_landmark import reserved_ids
 
-    spec = TASK_TO_SPEC.get(task, task)
-    tok = AutoTokenizer.from_pretrained(tokenizer_id)
+    _W.update(tok=AutoTokenizer.from_pretrained(tokenizer), ids=reserved_ids(marker_set),
+              seq_len=seq_len, qpos=query_position)
 
-    texts: List[str] = []
-    n_rows = n_err = 0
-    err_example = None
+
+def _count(job):
+    """One (task, bucket) file -> row / token / drop counts."""
+    from convert_unified_to_document_landmark import tokenize_example
+
+    task, bucket, spec, chunk_by, path = job
+    rows = tokens = dropped = loss = 0
+    longest = 0
     with open(path) as f:
         for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            n_rows += 1
-            if limit and n_rows > limit:
-                n_rows -= 1
-                break
             ex = json.loads(line)
-            if "ex" in ex and "documents" not in ex:
-                ex = ex["ex"]
-            try:
-                prompt, output = build_prompt(
-                    ex, task=spec, query_position=query_position,
-                    use_alpaca=True, cot_mode=cot_mode,
-                )
-            except Exception as e:  # a bad spec name fails on EVERY row -- report, do not crash
-                n_err += 1
-                if err_example is None:
-                    err_example = f"{type(e).__name__}: {e}"
+            ex = ex["ex"] if "ex" in ex and "documents" not in ex else ex
+            rows += 1
+            out = tokenize_example(
+                _W["tok"], ex, spec, emit="dense", query_position=_W["qpos"], cot_mode="none",
+                mem_freq=63, seq_len=10**9, chunk_by=chunk_by, item_regex=r"\|\|",
+                use_titles=False, ids_set=_W["ids"])
+            if out is None:
+                dropped += 1
                 continue
-            texts.append(prompt + output)
-
-    if not texts:
-        rec.update(status="NO_ROWS", n_rows=n_rows, n_err=n_err, error=err_example)
-        return rec
-
-    lens: List[int] = []
-    for i in range(0, len(texts), 256):
-        lens.extend(len(x) for x in tok(texts[i : i + 256], add_special_tokens=False)["input_ids"])
-    a = np.asarray(lens, dtype=np.int64)
-    rec.update(
-        status="ok",
-        n_rows=n_rows,
-        n_measured=int(a.size),
-        n_err=n_err,
-        error=err_example,
-        total_tokens=int(a.sum()),
-        mean=float(a.mean()),
-        p50=int(np.percentile(a, 50)),
-        p90=int(np.percentile(a, 90)),
-        max=int(a.max()),
-        over_40960=int((a > 40960).sum()),
-    )
-    return rec
+            n = int(out[0].shape[0])
+            if n > _W["seq_len"]:
+                dropped += 1
+                continue
+            tokens += n
+            loss += int(out[1].sum())
+            longest = max(longest, n)
+    return task, bucket, {"rows": rows, "kept": rows - dropped, "dropped": dropped,
+                          "tokens": tokens, "loss_tokens": loss, "max_len": longest}
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", required=True)
-    p.add_argument("--tokenizer", default="Qwen/Qwen3.5-4B")
-    p.add_argument("--query-position", default="both", choices=("before", "after", "both"))
-    p.add_argument("--cot-mode", default="none")
-    p.add_argument("--limit", type=int, default=0, help="rows per (task,bucket); 0 = all")
-    p.add_argument("--workers", type=int, default=min(32, (os.cpu_count() or 8)))
-    p.add_argument("--out", required=True)
-    args = p.parse_args()
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", required=True, help="set root holding per_task/_b<bucket>/<task>/")
+    ap.add_argument("--tokenizer", default="Qwen/Qwen3.5-4B")
+    ap.add_argument("--marker-set", default="qwen3_5")
+    ap.add_argument("--seq-len", type=int, default=262_144)
+    ap.add_argument("--query-position", default="both")
+    ap.add_argument("--workers", type=int, default=min(64, os.cpu_count() or 8))
+    ap.add_argument("--out", required=True)
+    args = ap.parse_args()
 
-    jobs = [
-        (t, b, args.root, args.tokenizer, args.query_position, args.cot_mode, args.limit)
-        for t in TASKS for b in BUCKETS
-    ]
-    print(f"=== {len(jobs)} (task,bucket) cells | workers={args.workers} | "
-          f"tokenizer={args.tokenizer} | query_position={args.query_position} ===", flush=True)
+    import build_ctc_sft as B
 
-    results, t0 = [], time.time()
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        for i, rec in enumerate(pool.map(_count_one, jobs), 1):
-            results.append(rec)
-            if i <= 2 or i % 5 == 0 or i == len(jobs):
-                el = time.time() - t0
-                eta = el / i * (len(jobs) - i)
-                print(f"  [{i}/{len(jobs)}] {rec['task']}@{rec['bucket']} {rec['status']} "
-                      f"tok={rec.get('total_tokens', 0):,} p50={rec.get('p50', 0)} "
-                      f"| {el:.0f}s elapsed, ETA {eta:.0f}s", flush=True)
+    jobs = []
+    for t in B.SET_A:
+        for b in BUCKETS:
+            p = os.path.join(args.root, "per_task", f"_b{b}", t.name, "train.jsonl")
+            if os.path.exists(p) and os.path.getsize(p):
+                jobs.append((t.name, b, t.spec, t.chunk_by, p))
+    # longest files first so the pool does not finish on one straggler
+    jobs.sort(key=lambda j: -os.path.getsize(j[4]))
+    print(f"counting {len(jobs)} (task, bucket) files with {args.workers} workers", flush=True)
 
-    os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
-    with open(args.out, "w") as f:
-        json.dump({"root": args.root, "tokenizer": args.tokenizer,
-                   "query_position": args.query_position, "cells": results}, f, indent=2)
-    print(f"wrote {args.out}", flush=True)
+    t0, res = time.time(), {}
+    with ProcessPoolExecutor(args.workers, initializer=_init,
+                             initargs=(args.tokenizer, args.marker_set, args.seq_len,
+                                       args.query_position)) as pool:
+        for i, (task, bucket, r) in enumerate(pool.map(_count, jobs), 1):
+            res.setdefault(task, {})[bucket] = r
+            if i <= 2 or i % 10 == 0 or i == len(jobs):
+                print(f"  [{i}/{len(jobs)}] {task}@{bucket} {r['tokens']:,} tok "
+                      f"({time.time() - t0:.0f}s)", flush=True)
 
-    bad = [r for r in results if r["status"] != "ok" or r.get("n_err")]
-    if bad:
-        print("\n=== CELLS NEEDING ATTENTION ===", flush=True)
-        for r in bad:
-            print(f"  {r['task']}@{r['bucket']}: {r['status']} n_err={r.get('n_err')} "
-                  f"{r.get('error') or ''}", flush=True)
+    json.dump({"root": args.root, "tokenizer": args.tokenizer, "seq_len": args.seq_len,
+               "counts": res}, open(args.out, "w"), indent=1)
 
-    print("\n=== TOTAL TOKENS BY TASK x BUCKET ===", flush=True)
-    hdr = f"{'task':<18}" + "".join(f"{b:>12}" for b in BUCKETS) + f"{'TOTAL':>14}"
-    print(hdr, flush=True)
-    grand = 0
-    for t in TASKS:
-        row = {r["bucket"]: r for r in results if r["task"] == t}
-        tot = sum(row.get(b, {}).get("total_tokens", 0) for b in BUCKETS)
-        grand += tot
-        print(f"{t:<18}" + "".join(f"{row.get(b, {}).get('total_tokens', 0):>12,}" for b in BUCKETS)
-              + f"{tot:>14,}", flush=True)
-    print(f"{'GRAND TOTAL':<18}" + " " * (12 * len(BUCKETS)) + f"{grand:>14,}", flush=True)
+    def m(x):
+        return f"{x / 1e6:.1f}M" if x else "-"
+
+    print(f"\n{'task':<17}" + "".join(f"{b:>8}" for b in BUCKETS) + f"{'TOTAL':>9}{'rows':>9}")
+    col = {b: 0 for b in BUCKETS}
+    for t in B.SET_A:
+        row = res.get(t.name, {})
+        tot = sum(v["tokens"] for v in row.values())
+        for b in BUCKETS:
+            col[b] += row.get(b, {}).get("tokens", 0)
+        print(f"{t.name:<17}" + "".join(f"{m(row.get(b, {}).get('tokens', 0)):>8}" for b in BUCKETS)
+              + f"{m(tot):>9}{sum(v['kept'] for v in row.values()):>9,}")
+    print(f"{'TOTAL':<17}" + "".join(f"{m(col[b]):>8}" for b in BUCKETS)
+          + f"{m(sum(col.values())):>9}")
+    drops = {f"{t}@{b}": v["dropped"] for t, r in res.items() for b, v in r.items() if v["dropped"]}
+    print(f"dropped (> seq-len {args.seq_len}): {drops or 'none'}")
+    print(f"wrote {args.out}")
 
 
 if __name__ == "__main__":
