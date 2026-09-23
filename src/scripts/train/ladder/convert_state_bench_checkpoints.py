@@ -34,6 +34,7 @@ then::
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import sys
@@ -52,6 +53,9 @@ log = logging.getLogger(__name__)
 DEFAULT_CHECKPOINT_ROOT = "/weka/oe-training-default/ai2-llm/model-ladders/state-bench"
 
 _STEP_DIR_RE = re.compile(r"^step(\d+)$")
+# Directory names never descended into during discovery: converted outputs and
+# in-progress conversions.
+_SKIP_DIR_SUFFIXES = ("-hf", "-hf.tmp")
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,6 +71,17 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="List which checkpoints would be converted or skipped, then exit.",
+    )
+    parser.add_argument(
+        "--filter",
+        action="append",
+        default=[],
+        metavar="SUBSTRING",
+        help=(
+            "Only consider checkpoints whose path relative to the root contains this "
+            "substring (e.g. 'hybrid-sdp' or 'integer-code-modular--solvable'). May be "
+            "repeated; a checkpoint is kept if it matches any filter."
+        ),
     )
     parser.add_argument(
         "--min-step",
@@ -112,14 +127,39 @@ def parse_args() -> argparse.Namespace:
 
 
 def find_checkpoint_dirs(root: Path) -> list[Path]:
-    """Return every saved checkpoint step directory under ``root``, sorted by path."""
-    step_dirs = []
-    for metadata in root.rglob("model_and_optim/.metadata"):
-        step_dir = metadata.parent.parent
-        if _STEP_DIR_RE.match(step_dir.name):
-            step_dirs.append(step_dir)
-        else:
-            log.warning(f"Ignoring checkpoint in unrecognized directory layout: {step_dir}")
+    """Return every saved checkpoint step directory under ``root``, sorted by path.
+
+    Walks run directories only: a ``stepN`` directory is recorded when it holds
+    ``model_and_optim/.metadata`` and is never descended into, and converted
+    ``stepN-hf`` outputs are skipped outright. On a network filesystem this avoids
+    listing every weight shard of every checkpoint, which a recursive glob would do.
+    """
+    step_dirs: list[Path] = []
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = [
+                entry for entry in os.scandir(directory) if entry.is_dir(follow_symlinks=False)
+            ]
+        except PermissionError as error:
+            log.warning(f"Skipping unreadable directory {directory}: {error}")
+            continue
+        for entry in entries:
+            if entry.name.endswith(_SKIP_DIR_SUFFIXES):
+                continue
+            path = Path(entry.path)
+            if _STEP_DIR_RE.match(entry.name):
+                if (path / "model_and_optim" / ".metadata").is_file():
+                    step_dirs.append(path)
+                continue
+            if entry.name == "model_and_optim":
+                if (path / ".metadata").is_file():
+                    log.warning(
+                        f"Ignoring checkpoint in unrecognized directory layout: {directory}"
+                    )
+                continue
+            pending.append(path)
     return sorted(step_dirs)
 
 
@@ -219,6 +259,12 @@ def main() -> int:
         for d in step_dirs
         if int(_STEP_DIR_RE.match(d.name).group(1)) >= args.min_step  # type: ignore[union-attr]
     ]
+    if args.filter:
+        step_dirs = [
+            d
+            for d in step_dirs
+            if any(needle in str(d.relative_to(root)) for needle in args.filter)
+        ]
     if args.final_only:
         step_dirs = keep_final_steps(step_dirs)
     if not step_dirs:
