@@ -1,7 +1,6 @@
 import copy
 import logging
-import warnings
-from dataclasses import InitVar, dataclass, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
@@ -497,10 +496,11 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     # Optimizer settings.
 
     optim: OLMoDDPOptimizerConfig
-    max_grad_norm: InitVar[Optional[float]] = None
+    max_grad_norm: Optional[float] = None
     """
-    Legacy input accepted for old configs. It was unused; clipping is controlled by
+    Override the optimizer's gradient clipping threshold when set. If ``None``, use
     :data:`~olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig.max_grad_norm`.
+    Clipping is performed by the optimizer.
     """
     scheduler: Optional[Scheduler] = None
 
@@ -538,16 +538,6 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
 
     label_ignore_index: int = -100
 
-    def __post_init__(self, max_grad_norm: Optional[float] = None):
-        if max_grad_norm is not None:
-            warnings.warn(
-                f"OLMoDDPTrainModuleConfig.max_grad_norm={max_grad_norm} was unused and is "
-                f"ignored; optim.max_grad_norm={self.optim.max_grad_norm} controls clipping. "
-                "Set optim.max_grad_norm explicitly to change the clipping threshold.",
-                UserWarning,
-                stacklevel=2,
-            )
-
     def build(
         self,
         model: Transformer,
@@ -564,6 +554,8 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
         from .ddp_train_module import OLMoDDPTrainModule
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
+        if (max_grad_norm := kwargs.pop("max_grad_norm", None)) is not None:
+            kwargs["optim"] = replace(self.optim, max_grad_norm=max_grad_norm)
 
         if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
             kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
