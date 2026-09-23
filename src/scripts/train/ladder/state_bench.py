@@ -128,8 +128,9 @@ STATE_BENCH_DISTRIBUTION_TOKENS: dict[str, int | None] = {
     # documents (same documents, same tokenizer), so they retain its token count.
     "integer-code--periodic--sens-shuffled": 30_842_931_386,
     "integer-code--periodic--sens-curriculum": 30_842_931_386,
-    # state-tracking-solvable-v2 has not been counted yet.
-    "integer-code-modular--solvable-v2": None,
+    # state-tracking-solvable-v2: every copy (TMP included) becomes an increment,
+    # `x <- (x + d) mod 100;`, about twice the tokens of `x <- y;`.
+    "integer-code-modular--solvable-v2": 67_304_711_308,
 }
 STATE_BENCH_DISTRIBUTION_ALIASES = {
     "r-trivial": "integer-code--r-trivial",
