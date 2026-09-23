@@ -1,4 +1,6 @@
 import contextlib
+import dataclasses
+import json
 import logging
 import math
 import os
@@ -46,6 +48,7 @@ from olmo_core.distributed.checkpoint import (
     RemoteFileSystemReader,
     RemoteFileSystemWriter,
     _prepare_env_for_save,
+    contiguous_planner,
 )
 from olmo_core.distributed.parallel import (
     DataParallelType,
@@ -88,6 +91,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .objective import Objective, train_batch_with_loss
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +110,34 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
 
 
 class FlatSavePlanner(DefaultSavePlanner):
-    pass
+    """Default planner with separately observable metadata planning cost."""
+
+    def __init__(self, *, constant_memory_planning=False, **kwargs):
+        super().__init__(**kwargs)
+        if constant_memory_planning and getattr(self, "_enable_plan_caching", False):
+            raise ValueError("Constant-memory planner does not support plan caching")
+        self.constant_memory_planning = constant_memory_planning
+        self.timings: Dict[str, float] = {}
+
+    def create_local_plan(self):
+        start = time.perf_counter()
+        if self.constant_memory_planning:
+            result = contiguous_planner.create_contiguous_local_save_plan(
+                self.state_dict, self.is_coordinator
+            )
+            if self.flatten_state_dict:
+                result = dataclasses.replace(result, planner_data=self.mappings)
+            self.plan = result
+        else:
+            result = super().create_local_plan()
+        self.timings["local_plan_seconds"] = time.perf_counter() - start
+        return result
+
+    def create_global_plan(self, all_plans):
+        start = time.perf_counter()
+        result = super().create_global_plan(all_plans)
+        self.timings["global_plan_seconds"] = time.perf_counter() - start
+        return result
 
 
 class OLMoDDPTrainModule(TrainModule):
@@ -1122,52 +1153,77 @@ class OLMoDDPTrainModule(TrainModule):
         process_group: Optional[dist.ProcessGroup] = None,
         save_overwrite: bool = False,
         thread_count: Optional[int] = None,
+        process_count: Optional[int] = None,
         throttle_uploads: bool = False,
-    ):
+        compact_storage: bool = False,
+        dedup_save_to_lowest_rank: bool = True,
+        constant_memory_planning: bool = False,
+        profile: bool = False,
+    ) -> Optional[Dict[str, float]]:
+        """Save native optimizer/model state and restore the live optimizer's storage.
+
+        Defaults preserve the existing writer policy. ``compact_storage`` skips copies only
+        for compact CPU storage; ``process_count`` selects the writer's existing spawn pool.
+        ``constant_memory_planning`` computes metadata for ordinary contiguous shards
+        arithmetically, with the default planner as fallback for other layouts.
+        ``profile`` logs per-rank phases and summed worker time separately from wall time.
+        Profiling returns durations in seconds plus writer byte/item counts; otherwise returns None.
+        """
+
+        def timestamp():
+            if profile:
+                torch.cuda.synchronize()
+            return time.perf_counter()
+
+        start = timestamp()
+        timings: Dict[str, float] = {}
         optim = self._require_optimizer()
-        state_dict = optim.state_dict()  # this will free optim states, need to load back after save
-
-        # this is count the param size of the global dtensor, not the local shard
-        main_param_sz = 0
-        for key, value in state_dict.items():
-            if key.endswith(".main"):
-                main_param_sz += value.numel()
-
-        # this is the theretical model param size calculated from config before PP split
-        # model_param_sz = self.model_parts[0].num_params
-
-        # assert main_param_sz == model_param_sz, f"Main param size {main_param_sz} != model param size {model_param_sz}"
-
-        # Persistent model buffers (e.g. the router's aux-loss-free score_bias) are not optimizer
-        # state, so they must be added to the checkpoint explicitly; optim.load_state_dict() below
-        # only round-trips the optimizer keys.
-        save_dict = dict(state_dict)
-        for key, buffer in self._persistent_model_buffer_state_dict().items():
-            assert key not in save_dict, f"Buffer key '{key}' collides with an optimizer state key"
-            save_dict[key] = buffer
-
+        # Validate the path and writer options before state_dict releases optimizer storage.
         dir = _prepare_env_for_save(dir, process_group=process_group, save_overwrite=save_overwrite)
-        planner = FlatSavePlanner(dedup_save_to_lowest_rank=True)
-        dist_cp.state_dict_saver.save(
-            save_dict,
-            storage_writer=RemoteFileSystemWriter(
-                dir,
-                thread_count=thread_count,
-                process_group=process_group,
-                throttle_uploads=throttle_uploads,
-            ),
+        writer = RemoteFileSystemWriter(
+            dir,
+            thread_count=thread_count,
+            process_count=process_count,
             process_group=process_group,
-            planner=planner,
+            throttle_uploads=throttle_uploads,
+            compact_storage=compact_storage,
+            profile=profile,
         )
-
-        optim.load_state_dict(
-            state_dict,
-            reset_optimizer_moments_on_load=False,
-        )  # load back the optim state after save
-
-        torch.cuda.empty_cache()
-
-        return
+        planner = FlatSavePlanner(
+            dedup_save_to_lowest_rank=dedup_save_to_lowest_rank,
+            constant_memory_planning=constant_memory_planning,
+        )
+        timings["prepare_seconds"] = timestamp() - start
+        phase_start = timestamp()
+        state_dict = optim.state_dict()
+        timings["state_dict_seconds"] = timestamp() - phase_start
+        try:
+            phase_start = timestamp()
+            save_dict = dict(state_dict)
+            for key, buffer in self._persistent_model_buffer_state_dict().items():
+                assert (
+                    key not in save_dict
+                ), f"Buffer key '{key}' collides with an optimizer state key"
+                save_dict[key] = buffer
+            timings["buffers_seconds"] = timestamp() - phase_start
+            phase_start = timestamp()
+            dist_cp.state_dict_saver.save(
+                save_dict, storage_writer=writer, process_group=process_group, planner=planner
+            )
+            timings["distributed_save_seconds"] = timestamp() - phase_start
+            timings.update(writer.timings)
+            timings.update(planner.timings)
+        finally:
+            phase_start = timestamp()
+            optim.load_state_dict(state_dict, reset_optimizer_moments_on_load=False)
+            timings["optimizer_reload_seconds"] = timestamp() - phase_start
+            phase_start = timestamp()
+            torch.cuda.empty_cache()
+            timings["empty_cache_seconds"] = timestamp() - phase_start
+            timings["total_seconds"] = timestamp() - start
+            if profile:
+                log.info("checkpoint_save %s", json.dumps(timings, sort_keys=True))
+        return timings if profile else None
 
     def load_state_dict_direct(
         self,
@@ -1179,8 +1235,24 @@ class OLMoDDPTrainModule(TrainModule):
         thread_count: Optional[int] = None,
         load_optim_state: Optional[bool] = True,
         reset_optimizer_states_on_load: Optional[bool] = None,
+        constant_memory_planning: bool = False,
+        profile: bool = False,
     ):
         from olmo_core.io import normalize_path
+
+        if profile:
+            torch.cuda.synchronize()
+        load_start = time.perf_counter()
+        load_pass_seconds = []
+
+        def load_pass(*args, **kwargs):
+            if profile:
+                torch.cuda.synchronize()
+            phase_start = time.perf_counter()
+            dist_cp.state_dict_loader.load(*args, **kwargs)
+            if profile:
+                torch.cuda.synchronize()
+            load_pass_seconds.append(time.perf_counter() - phase_start)
 
         dir = normalize_path(dir)
         reader = RemoteFileSystemReader(
@@ -1192,11 +1264,14 @@ class OLMoDDPTrainModule(TrainModule):
 
         if self.eval_only:
             sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-            dist_cp.state_dict_loader.load(
+            load_pass(
                 sd_to_load,
                 checkpoint_id=dir,
                 storage_reader=reader,
                 process_group=process_group,
+                planner=(
+                    contiguous_planner.ContiguousLoadPlanner() if constant_memory_planning else None
+                ),
             )
         else:
             optim = self._require_optimizer()
@@ -1221,11 +1296,16 @@ class OLMoDDPTrainModule(TrainModule):
                     "Skipping optimizer state during checkpoint load; loading model weights directly"
                 )
                 sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-                dist_cp.state_dict_loader.load(
+                load_pass(
                     sd_to_load,
                     checkpoint_id=dir,
                     storage_reader=reader,
                     process_group=process_group,
+                    planner=(
+                        contiguous_planner.ContiguousLoadPlanner()
+                        if constant_memory_planning
+                        else None
+                    ),
                 )
                 optim._copy_model_params_to_main_params()
                 optim._copy_main_params_to_mxfp8_weights()
@@ -1296,12 +1376,16 @@ class OLMoDDPTrainModule(TrainModule):
                         if name.endswith((".q_norm.weight", ".k_norm.weight")) and param.ndim == 2
                     }
                     expansions = prepare_qk_expansion(sd_to_load, metadata, gain_shapes)
-                dist_cp.state_dict_loader.load(
+                load_pass(
                     sd_to_load,
                     checkpoint_id=dir,
                     storage_reader=reader,
                     process_group=process_group,
-                    # planner=FlatLoadPlanner(),
+                    planner=(
+                        contiguous_planner.ContiguousLoadPlanner()
+                        if constant_memory_planning
+                        else None
+                    ),
                 )
 
                 finish_qk_expansion(sd_to_load, expansions)
@@ -1325,16 +1409,32 @@ class OLMoDDPTrainModule(TrainModule):
             buffer_reader = RemoteFileSystemReader(
                 dir, thread_count=thread_count, pre_download=pre_download, work_dir=work_dir
             )
-            dist_cp.state_dict_loader.load(
+            load_pass(
                 buffers_to_load,
                 checkpoint_id=dir,
                 storage_reader=buffer_reader,
                 process_group=process_group,
+                planner=(
+                    contiguous_planner.ContiguousLoadPlanner() if constant_memory_planning else None
+                ),
             )
 
         torch.cuda.empty_cache()
 
-        return
+        if profile:
+            torch.cuda.synchronize()
+            log.info(
+                "checkpoint_load %s",
+                json.dumps(
+                    {
+                        "total_seconds": time.perf_counter() - load_start,
+                        "distributed_load_seconds": sum(load_pass_seconds),
+                        "load_pass_seconds": load_pass_seconds,
+                        "constant_memory_planning": constant_memory_planning,
+                    },
+                    sort_keys=True,
+                ),
+            )
 
     def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
         model_state: Dict[str, Any] = {}
@@ -1522,6 +1622,10 @@ class OLMoDDPTrainModule(TrainModule):
                 f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
                 flush=True,
             )
+
+    def train_batch_with_loss(self, micro_batches, objective: Objective, context_factory=None):
+        """Accumulate a caller-normalized objective with Core gradient synchronization."""
+        return train_batch_with_loss(self, micro_batches, objective, context_factory)
 
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
@@ -2274,12 +2378,12 @@ class OLMoDDPTrainModule(TrainModule):
             "labels": None if labels is None else self._debug_tensor_payload(labels),
             "loss": self._debug_tensor_payload(lm_output.loss),
             "ce_loss": self._debug_tensor_payload(lm_output.ce_loss),
-            "z_loss": None
-            if lm_output.z_loss is None
-            else self._debug_tensor_payload(lm_output.z_loss),
-            "logits": None
-            if lm_output.logits is None
-            else self._debug_tensor_payload(lm_output.logits),
+            "z_loss": (
+                None if lm_output.z_loss is None else self._debug_tensor_payload(lm_output.z_loss)
+            ),
+            "logits": (
+                None if lm_output.logits is None else self._debug_tensor_payload(lm_output.logits)
+            ),
         }
         torch.save(payload, self._debug_dump_path("logits", f"mb{micro_batch_idx:03d}"))
 

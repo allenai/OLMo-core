@@ -56,7 +56,9 @@ class Olmo3MoeConfig(PretrainedConfig):
         rms_norm_eps=1e-5,
         sliding_window=4096,
         use_head_qk_norm=False,
+        qk_norm_per_head_gains=False,
         use_rope=True,
+        scalable_softmax=False,
         attention_gate_type=None,
         attention_gate_full_precision=True,
         linear_num_key_heads=None,
@@ -154,7 +156,11 @@ class Olmo3MoeConfig(PretrainedConfig):
 
         self.rms_norm_eps = rms_norm_eps
         self.use_head_qk_norm = use_head_qk_norm
+        if qk_norm_per_head_gains and not use_head_qk_norm:
+            raise ValueError("qk_norm_per_head_gains requires use_head_qk_norm=True")
+        self.qk_norm_per_head_gains = qk_norm_per_head_gains
         self.use_rope = use_rope
+        self.scalable_softmax = scalable_softmax
         self.attention_gate_type = attention_gate_type
         self.attention_gate_full_precision = attention_gate_full_precision
 

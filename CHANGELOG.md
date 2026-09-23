@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Port the MILES RL adapter onto the production MoE integration: custom objectives, router replay/count controls, streaming HF interchange, bounded checkpoint planning and scoring kernels. Preserve the inherited HF per-head Q/K gains and scalable-softmax execution and EP checkpoint-resharding coverage.
+
 - Added opt-in hybrid latent-MoE production recipe builders, independent per-head Q/K norm gains and scalable softmax, EMO document-pool routing/global load balancing, and qualified expert-backward and FP32 gradient-accumulation fast paths. Fast-path hardware/version guards remain explicit; current-main production configurations require fresh GPU qualification.
 - Extended hybrid MoE HF state conversion for KDA, latent experts and headwise normalization, with legacy configuration migration.
 - Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.

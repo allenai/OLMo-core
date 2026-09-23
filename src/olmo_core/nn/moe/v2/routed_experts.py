@@ -406,6 +406,8 @@ class RoutedExpertsConfig(Config):
     activation: ExpertActivation = ExpertActivation.swiglu
     activation_alpha: float = 1.702
     activation_limit: Optional[float] = None
+    # Forward valid-prefix kernel only; direct wave/backward callers keep their defaults.
+    row_specialization: str = "static"
 
     def build(
         self,
@@ -476,8 +478,12 @@ class RoutedExperts(nn.Module):
         activation_alpha: float = 1.702,
         activation_limit: Optional[float] = None,
         init_device: str = "cpu",
+        row_specialization: str = "static",
     ):
         super().__init__()
+        if row_specialization not in ("static", "dynamic"):
+            raise ValueError("row_specialization must be static or dynamic")
+        self.row_specialization = row_specialization
         self.d_model = d_model
         self.hidden_size = hidden_size
         self.num_experts = num_experts
@@ -1124,7 +1130,13 @@ class RoutedExperts(nn.Module):
                 and num_elements.device == up_gate.device
                 and not torch.is_grad_enabled()
             ):
-                return swiglu_valid_prefix(up_gate, num_elements, start=start)
+                return swiglu_valid_prefix(
+                    up_gate,
+                    num_elements,
+                    start=start,
+                    match_eager_rounding=True,
+                    row_specialization=self.row_specialization,
+                )
             up, gate = up_gate.chunk(2, dim=-1)
             h = up * F.silu(gate)  # -> (BS, H)
         elif self.activation == ExpertActivation.gpt_oss_swiglu:

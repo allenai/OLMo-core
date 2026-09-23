@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union, cast
 
 import torch
 import torch.distributed as dist
@@ -56,6 +56,8 @@ class MoERouterConfigV2(Config):
     dtype: Optional[DType] = None
     record_routing_batch_size: bool = False
     lb_loss_weight: Optional[float] = None
+    lb_loss_count_source: Literal["dispatch", "current"] = "dispatch"
+    """Use actual dispatch counts (including replay), or current router top-k for balancing only."""
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
         MoELoadBalancingLossGranularity.local_batch
     )
@@ -107,6 +109,8 @@ class MoERouterConfigV2(Config):
             kwargs["dtype"] = self.dtype.as_pt()
 
         if self.emo is not None:
+            if self.lb_loss_count_source == "current":
+                raise OLMoConfigurationError("Current balancing counts do not support EMO routing")
             from .emo_router import EmoRouterV2
 
             return EmoRouterV2(**kwargs, init_device=init_device)
@@ -143,6 +147,7 @@ class MoERouterV2(nn.Module):
         bias_gamma: Optional[float] = None,
         gating_function: MoERouterGatingFunction = MoERouterGatingFunction.softmax,
         lb_loss_weight: Optional[float] = None,
+        lb_loss_count_source: Literal["dispatch", "current"] = "dispatch",
         lb_loss_granularity: MoELoadBalancingLossGranularity = MoELoadBalancingLossGranularity.local_batch,
         z_loss_weight: Optional[float] = None,
         orth_loss_weight: Optional[float] = None,
@@ -172,6 +177,7 @@ class MoERouterV2(nn.Module):
         self.bias_gamma = bias_gamma
         self.gating_function = gating_function
         self.lb_loss_weight = lb_loss_weight
+        self.lb_loss_count_source = lb_loss_count_source
         self.lb_loss_granularity = lb_loss_granularity
         self.z_loss_weight = z_loss_weight
         self.orth_loss_weight = orth_loss_weight
@@ -189,6 +195,24 @@ class MoERouterV2(nn.Module):
         self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
         self.global_load_balancing = global_load_balancing
         self.lb_process_group: Optional[dist.ProcessGroup] = None
+
+        if self.lb_loss_count_source not in ("dispatch", "current"):
+            raise OLMoConfigurationError("lb_loss_count_source must be 'dispatch' or 'current'")
+        if self.lb_loss_count_source == "current" and (
+            self.global_load_balancing
+            or self.gating_function != MoERouterGatingFunction.softmax
+            or self.bias_gamma is not None
+            or self.score_correction_bias
+            or self.n_group is not None
+            or self.topk_group is not None
+            or self.uniform_expert_assignment
+            or self.random_expert_assignment
+        ):
+            raise OLMoConfigurationError(
+                "Current-count balancing currently requires plain softmax routing and local "
+                "balancing; global counts, routing biases, groups and assignment overrides "
+                "are not supported"
+            )
 
         if (
             self.global_load_balancing
@@ -662,8 +686,20 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
+        replay_indices = getattr(self, "replay_expert_indices", None)
+        if replay_indices is not None:
+            if replay_indices.shape != (*scores.shape[:-1], self.top_k):
+                raise ValueError("Replay expert indices do not match the router input shape")
+            expert_indices = replay_indices.to(device=scores.device, dtype=torch.long)
+            if self.gating_function == MoERouterGatingFunction.topk_softmax:
+                expert_weights = logits.gather(-1, expert_indices).softmax(dim=-1)
+            else:
+                expert_weights = scores.gather(-1, expert_indices)
+
         UES_QUANT_SCORES = False
-        if UES_QUANT_SCORES:
+        if replay_indices is not None:
+            pass
+        elif UES_QUANT_SCORES:
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
             scores_sel = self._break_ties(scores_sel)
@@ -690,7 +726,7 @@ class MoERouterV2(nn.Module):
 
         # TODO: verify the recompute-index cache is correct under activation checkpointing;
         # known-broken under pipeline parallelism (the cached indices don't survive PP microbatching).
-        if self.use_recompute_cache:
+        if self.use_recompute_cache and replay_indices is None:
             if self._recompute_cache is None:  # first forward
                 if torch.is_grad_enabled():
                     self._recompute_cache = expert_indices.detach()  # save for recompute
@@ -812,13 +848,24 @@ class MoERouterV2(nn.Module):
                     if global_batch_size_per_expert is not None
                     else batch_size_per_expert
                 )
+                lb_batched_batch_size_per_expert = batched_batch_size_per_expert
+                if self.lb_loss_count_source == "current":
+                    # Keep replayed dispatch, selected weights, load metrics and z-loss intact.
+                    # Compute fresh nondifferentiable counts from this forward's scores, not
+                    # router-local replay state that may have changed before recomputation.
+                    with torch.no_grad():
+                        current_indices = self.get_top_k(scores.detach())[1]
+                        lb_batched_batch_size_per_expert = ops.batched_histc(
+                            current_indices, self.num_experts
+                        ).sum(dim=1)
+                        lb_batch_size_per_expert = lb_batched_batch_size_per_expert.sum(dim=0)
 
                 lb_loss = load_balancing_loss(
                     num_experts=self.num_experts,
                     top_k=self.top_k,
                     expert_scores=scores,
                     batch_size_per_expert=lb_batch_size_per_expert,
-                    batched_batch_size_per_expert=batched_batch_size_per_expert,
+                    batched_batch_size_per_expert=lb_batched_batch_size_per_expert,
                     granularity=self.lb_loss_granularity,
                     loss_div_factor=loss_div_factor,
                     tp_mesh=self.tp_mesh,

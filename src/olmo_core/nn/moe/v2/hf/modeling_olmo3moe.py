@@ -697,6 +697,7 @@ class Olmo3MoeAttention(nn.Module):
         self.attention_dropout = config.attention_dropout
         self.is_causal = True
         self.use_head_qk_norm = config.use_head_qk_norm
+        self.scalable_softmax = config.scalable_softmax
         self.gate_type = config.attention_gate_type
         self.gate_full_precision = config.attention_gate_full_precision
 
@@ -738,8 +739,24 @@ class Olmo3MoeAttention(nn.Module):
         else:
             raise ValueError(f"Unsupported attention_gate_type={self.gate_type!r}")
         if config.use_head_qk_norm:
-            self.q_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
-            self.k_norm = Olmo3MoeRMSNorm(self.head_dim, config.rms_norm_eps)
+            self.q_norm = Olmo3MoeRMSNorm(
+                self.head_dim,
+                config.rms_norm_eps,
+                weight_shape=(
+                    (config.num_attention_heads, self.head_dim)
+                    if config.qk_norm_per_head_gains
+                    else None
+                ),
+            )
+            self.k_norm = Olmo3MoeRMSNorm(
+                self.head_dim,
+                config.rms_norm_eps,
+                weight_shape=(
+                    (config.num_key_value_heads, self.head_dim)
+                    if config.qk_norm_per_head_gains
+                    else None
+                ),
+            )
         else:
             self.q_norm = Olmo3MoeRMSNorm(
                 config.num_attention_heads * self.head_dim, config.rms_norm_eps
@@ -747,11 +764,39 @@ class Olmo3MoeAttention(nn.Module):
             self.k_norm = Olmo3MoeRMSNorm(
                 config.num_key_value_heads * self.head_dim, config.rms_norm_eps
             )
+        self.ssmax_scale: Optional[nn.Parameter]
+        if self.scalable_softmax:
+            self.ssmax_scale = nn.Parameter(torch.ones(config.num_attention_heads))
+        else:
+            self.register_parameter("ssmax_scale", None)
         assert config.layer_types is not None
         self.attention_type = config.layer_types[layer_idx]
         self.sliding_window = (
             config.sliding_window if self.attention_type == "sliding_attention" else None
         )
+
+    def _apply_scalable_softmax(
+        self,
+        query_states: torch.Tensor,
+        position_ids: Optional[torch.LongTensor],
+        cache_position: Optional[torch.LongTensor],
+    ) -> torch.Tensor:
+        if not self.scalable_softmax:
+            return query_states
+        if position_ids is None:
+            if cache_position is None:
+                raise ValueError("Scalable-Softmax requires position_ids or cache_position")
+            position_ids = cache_position.unsqueeze(0)
+        assert self.ssmax_scale is not None
+
+        # Preserve OLMo-core's bf16 operation order exactly: first form the combined
+        # per-token/per-head scale, then multiply Q once. Applying the two factors to Q
+        # sequentially is algebraically equivalent in real arithmetic but introduces a
+        # different bf16 rounding point and breaks strict conversion parity.
+        visible_scale = (position_ids + 1).log().to(query_states.dtype)
+        scale = visible_scale[:, None, :, None]
+        scale = scale * self.ssmax_scale.to(query_states.dtype)[None, :, None, None]
+        return query_states * scale
 
     @deprecate_kwarg("past_key_value", new_name="past_key_values", version="4.58")
     def forward(
@@ -761,6 +806,7 @@ class Olmo3MoeAttention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_values: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         input_shape = hidden_states.shape[:-1]
@@ -777,8 +823,10 @@ class Olmo3MoeAttention(nn.Module):
             query_states = self.q_norm(query_states)
             key_states = self.k_norm(key_states)
 
-        query_states = query_states.view(hidden_shape).transpose(1, 2)  # (B, n_heads, T, head_dim)
-        key_states = key_states.view(hidden_shape).transpose(1, 2)  # (B, n_kv_heads, T, head_dim)
+        # Normalize only D, with independent [H,D] gains when configured. Apply
+        # before the transpose so the gain's head axis cannot broadcast onto T.
+        query_states = query_states.view(hidden_shape)
+        key_states = key_states.view(hidden_shape)
         value_states = value_states.view(hidden_shape).transpose(
             1, 2
         )  # (B, n_kv_heads, T, head_dim)
@@ -786,12 +834,16 @@ class Olmo3MoeAttention(nn.Module):
         if self.use_head_qk_norm:
             query_states = self.q_norm(query_states.contiguous())
             key_states = self.k_norm(key_states.contiguous())
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
 
         cos: Optional[torch.Tensor] = None
         sin: Optional[torch.Tensor] = None
         if position_embeddings is not None:
             cos, sin = position_embeddings
             query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        query_states = self._apply_scalable_softmax(query_states, position_ids, cache_position)
 
         if past_key_values is not None:
             cache_kwargs = {"cache_position": cache_position}
@@ -855,9 +907,9 @@ class Olmo3MoePreTrainedModel(PreTrainedModel):
 
 
 class Olmo3MoeRMSNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-6):
+    def __init__(self, hidden_size, eps=1e-6, weight_shape=None):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = nn.Parameter(torch.ones(weight_shape or (hidden_size,)))
         self.variance_epsilon = eps
 
     def forward(self, hidden_states):
