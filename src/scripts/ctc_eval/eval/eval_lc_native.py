@@ -336,7 +336,9 @@ def main():
                 input_ids=ids,
                 attention_mask=mask,
                 completions_only=False,
-                log_timing=False,
+                # OLMO_GEN_LOG_TIMING=1 prints setup/prefill/decode seconds and tokens generated
+                # per batch -- the only way to tell a prefill-bound rung from a decode-bound one.
+                log_timing=os.environ.get("OLMO_GEN_LOG_TIMING") == "1",
                 max_new_tokens=max_new_tokens,
                 **gen_kw,
             )
