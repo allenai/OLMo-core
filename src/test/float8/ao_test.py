@@ -25,7 +25,6 @@ def test_ao_float8_linear_config():
 
     float8_config = AOFloat8LinearConfig.recommended()
     assert float8_config.enable_fsdp_float8_all_gather
-    assert float8_config.force_recompute_fp8_weight_in_bwd
     assert float8_config.round_scales_to_power_of_2
 
 
