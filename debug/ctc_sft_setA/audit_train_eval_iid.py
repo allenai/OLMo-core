@@ -37,7 +37,11 @@ import statistics
 import sys
 from typing import Dict, List
 
-TASK_TO_SPEC = {"nq": "retrieval", "hotpotqa": "cot_retrieval", "qdmatch_nq": "qdmatch"}
+#: Ladder -> spec, taken from olmo-eval's own ROSTER (the `spec=` field of each RosterRow), which
+#: is the only authority: the suite grades ctc_hpqa with `retrieval`, and the eval registry has no
+#: `cot_retrieval` at all. Do NOT copy this mapping from a converter -- converters render through
+#: olmo_core's build_prompt, which accepts names the grader has never heard of.
+TASK_TO_SPEC = {"nq": "retrieval", "hotpotqa": "retrieval", "qdmatch_nq": "qdmatch"}
 TASKS = ["nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
          "reorder", "rerank", "strmatch", "textgroups", "grouping_labeled"]
 BUCKETS = ["2k", "4k", "8k", "16k", "32k", "64k", "128k", "256k"]
@@ -54,8 +58,15 @@ def audit_cell(task: str, bucket: str, root: str, sample: int, qpos: str) -> dic
         rec["status"] = "absent"
         return rec
 
-    sp = registry.get(spec_name)
-    mod = importlib.import_module(f"ctc.tasks.{spec_name}.spec")
+    try:
+        sp = registry.get(spec_name)
+        mod = importlib.import_module(f"ctc.tasks.{spec_name}.spec")
+    except (KeyError, ModuleNotFoundError) as e:
+        # An unregistered spec means the GRADER cannot render or score this task at all -- report it
+        # per-cell instead of aborting the run and losing every other task's verdict.
+        rec.update(status="FAIL", rows=0, n_docs_min=0, n_docs_med=0, n_docs_max=0,
+                   fails=[f"spec {spec_name!r} is not registered in the eval: {e}"])
+        return rec
 
     # 3. Does the EVAL have this rung at all?
     rec["eval_has_rung"] = bucket in set(sp.rungs or ())
@@ -159,8 +170,8 @@ def main() -> None:
     for r in results:
         if r["status"] == "absent":
             continue
-        nd = f"{r['n_docs_min']}/{r['n_docs_med']}/{r['n_docs_max']}"
-        print(f"{r['task']:<18}{r['bucket']:>7}{r['rows']:>6}{nd:>24}"
+        nd = f"{r.get('n_docs_min',0)}/{r.get('n_docs_med',0)}/{r.get('n_docs_max',0)}"
+        print(f"{r['task']:<18}{r['bucket']:>7}{r.get('rows',0):>6}{nd:>24}"
               f"{str(r.get('eval_n_docs') or '-'):>8}{str(r.get('self_score')):>7}  {r['status']}")
 
     if fails:

@@ -105,7 +105,13 @@ _TEXTGROUPS_SHORTCUT = (
 #: 1,367. Reaching it means exporting a larger pool, which was judged not worth it.
 SET_A: List[Task] = [
     Task("nq", "retrieval"),
-    Task("hotpotqa", "cot_retrieval"),
+    # `retrieval`, NOT `cot_retrieval`: the suite grades ctc_hpqa with spec="retrieval", and the
+    # eval's registry has no cot_retrieval at all. The two are not interchangeable -- cot_retrieval
+    # PREFIXES its target (ctc calls the pair "inconsistent" in qa/spec.py), so rendering training
+    # targets through it teaches a CoT prefix the eval's retrieval parser never expects. The
+    # converter accepts either name silently, because it renders via olmo_core's build_prompt
+    # rather than the eval's registry.
+    Task("hotpotqa", "retrieval"),
     Task("qdmatch_nq", "qdmatch"),
     Task("outlier", "outlier"),
     Task("oolong", "oolong", chunk_by="line"),
