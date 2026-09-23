@@ -455,8 +455,8 @@
     "n_docs": 116
    },
    "256k": {
-    "n_docs": 1600,
-    "capped_note": "no eval rung; ctc table 1730 overflowed 76/76 at 262,144"
+    "n_docs": 1450,
+    "capped_note": "no eval rung; ctc table 1730 overflowed 76/76, 1600 overflowed 36/76 at 262,144"
    }
   },
   "rerank": {
