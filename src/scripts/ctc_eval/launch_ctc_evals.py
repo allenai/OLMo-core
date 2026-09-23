@@ -31,6 +31,8 @@ import datetime
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from typing import Dict, List
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # src/scripts/ctc_eval
@@ -149,7 +151,21 @@ def main() -> None:
     ap.add_argument("--run-name", required=True)
     ap.add_argument("--arm", default="auto", choices=["auto", *VARIANTS],
                     help="default: inferred from the run name, the emitter's own convention")
-    ap.add_argument("--backend", default="native", choices=["native", "vllm"])
+    ap.add_argument("--backend", default="native", choices=["native", "vllm", "olmo-eval"],
+                    help="olmo-eval = grade on the suite's own data/graders via its native "
+                         "olmo_core provider, prompts rendered as the SFT data (chat); IID with "
+                         "setA by construction. See olmo_eval_backend.py.")
+    ap.add_argument("--budget-hours", type=float, default=1.5,
+                    help="olmo-eval backend: wall-clock budget per single-GPU job")
+    ap.add_argument("--policy", default="",
+                    help="olmo-eval backend: eval sizes per rung, e.g. "
+                         "'r2k-r32k:500,r64k:100,r128k:50,r256k:50' (the default)")
+    ap.add_argument("--rows", default="setA",
+                    help="olmo-eval backend: 'setA' (12 IID rows + 2 OOD) or a comma list")
+    ap.add_argument("--olmo-eval-dataset", default="prasanns/olmo-eval-src-37563d01-1790134494",
+                    help="Beaker dataset holding the olmo-eval source (branch commits not on PyPI)")
+    ap.add_argument("--setup-minutes", type=float, default=8.0,
+                    help="olmo-eval backend: per-job install + model load, off the budget")
     ap.add_argument("--cluster", default="ai2/jupiter-cirrascale-2")
     ap.add_argument("--no-xlong", dest="xlong", action="store_false",
                     help="override standing rule 1; recorded in the ledger")
@@ -191,6 +207,9 @@ def main() -> None:
             "vllm[runai]==0.19.1, which predates Qwen3.5/GDN and cannot serve this model family;\n"
             "it needs overriding to 0.25.1 first. See records/ctc-fast-suite-eval.md.\n"
             "The validated drivers meanwhile are debug/ctc_vllm_validation/run_vllm_eval*.py.")
+
+    if args.backend == "olmo-eval":
+        return _run_olmo_eval(args, variant)
 
     if args.query_position != "both":
         print(f"NOTE  query_position={args.query_position}: numbers are NOT comparable with "
@@ -248,6 +267,46 @@ def main() -> None:
 
     print(f"\n{len(passes)} passes {'planned' if args.dry_run else 'submitted'}. "
           f"Score them with the `pull-evals` skill, which reads the ledger back.")
+
+
+def _run_olmo_eval(args, variant: str) -> None:
+    """Plan, pack, ledger and submit the olmo-eval backend (see olmo_eval_backend.py)."""
+    import olmo_eval_backend as OE
+
+    rows = (OE.SETA_ROWS + list(OE.OOD_ROWS)) if args.rows == "setA" else [
+        r.strip() for r in args.rows.split(",") if r.strip()]
+    policy = OE.parse_policy(args.policy or OE.DEFAULT_POLICY)
+    budget_s = args.budget_hours * 3600 - args.setup_minutes * 60
+    cells = OE.plan(rows, policy)
+    bins = OE.pack(cells, budget_s)
+    print(f"=== {args.run_name} | arm={variant} | backend=olmo-eval (native olmo_core, chat) ===")
+    print(OE.describe(bins, budget_s))
+
+    out_root = os.path.join("/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_olmoeval_ctc",
+                            args.run_name)
+    git_commit = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"],
+                                capture_output=True, text=True).stdout.strip() or "unknown"
+    passes = [{"tag": f"olmoeval_job{i:02d}", "tasks": [c.task for c in b], "rungs": [],
+               "yarn": 1} for i, b in enumerate(bins)]
+    args.eval_bundle = "hf://PrasannSinghal/ctc-suite-eval (olmo-eval, CTC_SUITE_PROMPT_FORMAT=chat)"
+    text = ledger(args, variant, passes, git_commit) + (
+        f"olmo_eval:\n  results_root: {out_root}\n  policy: {args.policy or OE.DEFAULT_POLICY}\n"
+        f"  budget_hours: {args.budget_hours}\n  source_dataset: {args.olmo_eval_dataset}\n")
+    led_dir = os.path.join(REPO, "records", "eval_launches")
+    led_path = os.path.join(led_dir, f"{datetime.date.today().isoformat()}_{args.run_name}.yaml")
+    if args.dry_run:
+        print(f"\n--- ledger (NOT written; --dry-run) -> {led_path}")
+    else:
+        os.makedirs(led_dir, exist_ok=True)
+        with open(led_path, "w") as f:
+            f.write(text)
+        print(f"\nledger -> {led_path}")
+    names = OE.submit(args.run_name, bins, args.ckpt, out_root,
+                      tokenizer=args.tokenizer or "Qwen/Qwen3.5-0.8B", max_model_len=262144,
+                      olmo_eval_dataset=args.olmo_eval_dataset, cluster=args.cluster,
+                      priority=args.priority, dry_run=args.dry_run)
+    print(f"\n{len(names)} jobs {'planned' if args.dry_run else 'submitted'}: "
+          f"{names[0]} .. {names[-1]}")
 
 
 if __name__ == "__main__":
