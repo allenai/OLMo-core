@@ -24,8 +24,7 @@ Every step runs on Beaker and is pinned to a pushed commit. The jobs are unalloc
 
 ```bash
 L=src/scripts/train/memexpress/sft_ctc_setA/launch_setA_sft.py
-python $L tokenize   # CPU: setA JSONL -> marker-free shards on weka (once)
-python $L prep       # CPU: shard checks, drops per window, base ckpt, packed windows/steps (once)
+python $L prep       # CPU: shard checks, drops per window, base ckpt + marker audit, packed windows/steps
 python $L 32k        # 1 x 8 H100
 python $L 256k       # 1 x 8 H100   (or: python $L 256k-2node)
 ```
@@ -34,10 +33,10 @@ Add `--dry-run` to print the gantry command without submitting.
 
 - Checkpoints go to `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/<run-name>/`.
 - Logs go to wandb `prasanns-allen-institute-for-ai/memory-networks`, grouped by run name.
-- Evaluate with the olmo-eval launcher:
-  `scripts/ctc_suite/launch_ctc_suite.py --arm full --ckpt <step dir>` (branch
-  `prasann/ctc-suite-launcher`). It renders prompts in the chat template (`CTC_SUITE_PROMPT_FORMAT=chat`),
-  IID with this data.
+- Evaluate with the olmo-eval launcher, **with `--doc-markers`**:
+  `scripts/ctc_suite/launch_ctc_suite.py --arm full --doc-markers --ckpt <step dir>` (branch
+  `prasann/ctc-suite-launcher`). It renders prompts in the chat template, with each document
+  wrapped in the same markers as these shards, and is token-identical to the training prompts.
 
 ## Recipe source
 
@@ -58,8 +57,7 @@ layout at the same batch and LR.
 
 ## Data
 
-`/weka/.../prasanns/ctc_sft_sets/setA_max20_evaliid/shards_qwen35_256k_nomarkers/<task>/` holds 11
-tasks:
+`/weka/.../prasanns/ctc_sft_sets/setA_max20_evaliid/shards_qwen35_256k/<task>/` holds 11 tasks:
 
 - nq, hotpotqa, qdmatch_nq, outlier, oolong, contradiction;
 - xabsence (one-sided exact-copy);
@@ -70,11 +68,13 @@ textgroups is excluded because of its shortest-document shortcut. The shards are
 `src/scripts/data/ctc_sft/build_ctc_sft.py` on `prasann/landmark` (see `records/ctc-fast-suite-eval.md`
 for the IID audit against the eval's own rows).
 
-- **No document markers.** The earlier `shards_qwen35_256k` wraps each document in
-  `<|box_start|>`/`<|box_end|>` for the chunked/landmark arms. olmo-eval's prompts carry no
-  markers, and Qwen's marker embeddings are untrained (see CLAUDE.md), so the dense arms use a
-  `--no-doc-markers` re-tokenization. The rest of the rendering is the same: chat template, query
-  position `both`, no CoT. `prep` fails if any marker id appears in a shard.
+- **Document markers.** The shards wrap each document in `<|box_start|>`/`<|box_end|>`; oolong wraps
+  each `||` item line instead. The eval matches this through olmo-eval's `CTC_SUITE_DOC_MARKERS=1`
+  (the launcher's `--doc-markers`). On real eval rows of all 11 tasks, its prompts are
+  token-identical to the converter's (66/66, `debug/ctc_sft_setA/check_doc_marker_parity.py` on
+  `prasann/landmark`). Without the flag, the eval prompts would be out of format for these models.
+- **Marker embeddings.** Qwen never trains the marker rows (see CLAUDE.md). `prep` audits the base's
+  rows with `fix_marker_embeddings.py`'s cosine/norm gates and prints the verdict.
 - **Packing.** Whole examples are packed Best-Fit-Decreasing into windows, across all tasks, with
   block-diagonal masking at EOS. `LongDocStrategy.exclude` drops over-window examples, which is how
   the 32k arm caps length.

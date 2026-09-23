@@ -26,12 +26,12 @@ replaces only the data, the budget and (for 32k) the parallelism. See her
 not ring CP for GDN, sqrt-scaled LR, fused-linear loss, flash_3, expandable_segments).
 
 DATA
-  ``/weka/.../prasanns/ctc_sft_sets/setA_max20_evaliid/shards_qwen35_256k_nomarkers/<task>/``,
-  tokenized by ``src/scripts/data/ctc_sft/build_ctc_sft.py --no-doc-markers`` on
-  ``prasann/landmark`` (``launch_setA_sft.py tokenize``). No ``<|box_start|>``/``<|box_end|>``
-  markers: the olmo-eval CTC prompts carry none, and Qwen's marker embeddings are untrained
-  (CLAUDE.md), so a dense run must not see them. Chat template, query position ``both``, no CoT --
-  the rendering olmo-eval uses under ``CTC_SUITE_PROMPT_FORMAT=chat``.
+  ``/weka/.../prasanns/ctc_sft_sets/setA_max20_evaliid/shards_qwen35_256k/<task>/``, the setA
+  shards as built (``src/scripts/data/ctc_sft/build_ctc_sft.py`` on ``prasann/landmark``): chat
+  template, query position ``both``, no CoT, each document wrapped in ``<|box_start|>``/
+  ``<|box_end|>``. Evaluate with the olmo-eval launcher's ``--doc-markers``
+  (``CTC_SUITE_DOC_MARKERS=1``), which renders those markers token-identically (checked on real
+  eval rows of all 11 tasks: ``debug/ctc_sft_setA/check_doc_marker_parity.py`` on prasann/landmark).
 """
 
 from dataclasses import replace
@@ -51,7 +51,7 @@ from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
 from olmo_core.train.train_module import TransformerDataParallelConfig
 
 SET_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_sft_sets/setA_max20_evaliid"
-SHARDS_DIR = "shards_qwen35_256k_nomarkers"
+SHARDS_DIR = "shards_qwen35_256k"
 DATA_ROOT = f"{SET_ROOT}/{SHARDS_DIR}"
 
 #: The 11 setA tasks (textgroups dropped: shortest-document shortcut, see build_ctc_sft.py).

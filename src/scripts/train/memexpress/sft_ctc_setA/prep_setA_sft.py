@@ -3,11 +3,12 @@ CPU pre-flight for the setA dense SFT pair -- run before any GPU job (``launch_s
 
 Fails if an input is missing or wrong; otherwise prints, per arm, exactly what training will see:
 
-  * every task shard has ``metadata.json`` and NO document-marker ids (the dense arms must be
-    marker-free to match olmo-eval's prompts);
+  * every task shard has ``metadata.json`` and carries the document markers (the eval must then
+    run with ``--doc-markers``);
   * per task, examples / tokens kept and dropped at each arm's window (``LongDocStrategy.exclude``),
     counted from the EOS-separated shard files themselves;
-  * the base checkpoint exists;
+  * the base checkpoint exists, and its marker embedding rows pass the cosine/norm audit of
+    ``src/scripts/data/fix_marker_embeddings.py`` (reported; see CLAUDE.md);
   * packed windows and steps per epoch from the real packer, which also warms the packing cache.
 """
 
@@ -63,7 +64,7 @@ def scan_task(task: str, windows: dict, marker_ids: tuple, eos: int) -> dict:
 
 
 def main():
-    """Fail before GPU submission if the inputs are missing, marker-wrapped or oversized."""
+    """Fail before GPU submission if an input is missing or not the marker-wrapped build."""
     prepare_cli_environment()
     ids = reserved_ids("qwen3_5")
     windows = {arm: spec["sequence_length"] for arm, spec in ARMS.items()}
@@ -78,11 +79,11 @@ def main():
         meta = json.load(open(meta_path))
         if meta.get("marker_set") != "qwen3_5":
             bad.append(f"{task}: marker_set {meta.get('marker_set')!r} != 'qwen3_5'")
-        if meta.get("doc_markers", True):
-            bad.append(f"{task}: built WITH document markers (need --no-doc-markers)")
+        if not meta.get("doc_markers", True):
+            bad.append(f"{task}: built WITHOUT document markers; the eval flag expects them")
         stats[task] = scan_task(task, windows, (ids.doc_start, ids.doc_end), ids.eos)
-        if stats[task]["marker_tokens"]:
-            bad.append(f"{task}: {stats[task]['marker_tokens']} marker tokens in the shard")
+        if not stats[task]["marker_tokens"]:
+            bad.append(f"{task}: no marker tokens in the shard")
         print("TASK", task, json.dumps(stats[task]), flush=True)
     extra = sorted(set(os.listdir(DATA_ROOT)) - set(TASKS)) if os.path.isdir(DATA_ROOT) else []
     if extra:
@@ -91,6 +92,16 @@ def main():
         bad.append(f"base checkpoint missing: {BASE_CHECKPOINT}/.metadata")
     if bad:
         raise SystemExit("PREP FAILED:\n  " + "\n  ".join(bad))
+
+    # Marker embeddings (CLAUDE.md): Qwen never trains the <|box_start|>/<|box_end|> rows. Measured
+    # here, read-only, so a degenerate base is visible before GPU time is spent on it.
+    sys.path.insert(0, os.path.join(_HERE, *[os.pardir] * 3, "data"))
+    import fix_marker_embeddings as fme
+
+    emb = next(iter(fme.load_keys(BASE_CHECKPOINT, [fme.EMB_KEY]))).float()
+    report = fme.audit(emb, ids, fme._marker_ids(ids, ["doc_start", "doc_end"]))
+    fme.print_audit(report)
+    print("MARKER_AUDIT", json.dumps(report), flush=True)
 
     print(
         f"\n{'task':<15}{'examples':>10}{'tokens':>15}"
