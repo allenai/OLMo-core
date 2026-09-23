@@ -68,3 +68,7 @@ sdcpt-q35-4b-sd20-u256M-seed1	sd20	256M	ai2/jupiter-cirrascale-2	2026-09-22 14:5
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
 sdcpt-q35-4b-sd20-u128M-s1B	sd20	128M	ai2/jupiter-cirrascale-2	2026-09-22 15:00	LAUNCHED	"01M35J4SKD0X5Z3ADWD711B4TV   warnings.warn(msg, UserWarning)
 Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20p32-u256M	sd20p32	256M	ai2/jupiter-cirrascale-2	2026-09-22 16:08	LAUNCHED	"01M35P03BF9XJVT9SPERRHK5B9   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+sdcpt-q35-4b-sd20p32-u512M	sd20p32	512M	ai2/jupiter-cirrascale-2	2026-09-22 16:08	LAUNCHED	"01M35P1A4R42PZYJ178VPHCBME   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

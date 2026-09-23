@@ -135,7 +135,35 @@ deficit vs dense grows with target position (long-range), not uniformly.
 | (2) sd20-256M, seed 1 (`--seed 1`, run `sdcpt-q35-4b-sd20-u256M-seed1`) | `01M35J1RBX4KQWXCBD99QC7D30`, eval `01M35J3QVGDSSXMCQA0CRF4NE7` | run-to-run seed variance at the crossover budget |
 | (3) paired per-row Δ between sd20-128M/256M/512M/1B (+dense) on the shared 32 dev rows, with SE | `dump_sd20_pairs_beaker.sh` → job `01M35NSJRYB348Y92QBQSHGMK9` (first attempt `01M35J1JYARW6KK7TTD36Y75HR` ran with `--no-logs`, output lost) | whether the flat step is inside ~2σ of paired noise |
 
-_(results pending)_
+**Results.** (full-attention dev CE; paired per-row Δ on the shared 32 rows from
+`dump_sd20_pairs_beaker.sh`, jobs `01M35NSJRYB348Y92QBQSHGMK9` / `01M35TFHKRZ45QV65RGBC7X5EE`)
+
+| point | shard | seed | full CE | paired Δ (se) |
+|---|---|---|---|---|
+| sd20-128M (763 PF) | 128M | 0 | 1.2720 | — |
+| **sd20-128M-s1B** (763 PF) | **1B** | 0 | **1.2812** | +0.009 vs sd20-128M (old shard) |
+| sd20-256M (1523 PF) | 1B | 0 | 1.2725 | −0.0002 (0.0005) vs sd20-128M old shard, −0.4σ |
+| **sd20-256M-seed1** | 1B | 1 | **1.2682** | −0.004 vs seed 0 |
+| sd20-512M (3043 PF) | 1B | 0 | 1.2634 | −0.0091 (0.0019) vs sd20-256M, −4.8σ |
+| sd20-1B (5942 PF) | 1B | 0 | 1.2585 | −0.0048 (0.0010) vs sd20-512M, −5.1σ |
+
+**Verdict: the plateau is a shard/order artefact, and the seed spread is the same size as the step.**
+(1) The true prefix of the 256M run — sd20-128M trained on the 1B shard — lands at **1.2812**, i.e.
+0.009 *above* the old-shard 128M point; from there the 1B-shard segment is monotone: 1.2812 →
+1.2725 → 1.2634 → 1.2585 (−0.009 / −0.009 / −0.005 per doubling). The two shard families are
+offset by ~0.009 at 128M (the 1B shard's early rows are harder / differently ordered), so joining
+"old-shard 128M" to "1B-shard 256M" hides one doubling of progress. (2) A second seed at 256M
+gives 1.2682, 0.004 below seed 0 — run-to-run seed variance is ±~0.003, comparable to the
+between-budget steps at this end of the curve, so single runs cannot resolve 0.005-size features.
+(3) The between-budget paired Δs are all >4σ except the 128M(old)→256M(new) step (−0.4σ), which
+is exactly the cross-shard comparison. Consequence for the main table: on a single shard the sd20
+slope is ~−0.009 per doubling at 128M–512M, vs dense's −0.013 (1.283 → 1.256 → 1.245 is −0.027,
+−0.011 per doubling). The crossover stands — dense-64M vs sd20-512M is −0.0078 (0.0017) paired,
+4.6σ in dense's favour; dense-128M vs sd20-1B −0.0139 (0.0011), 12.8σ — but the low-end sd20 curve
+(old shard) and the high-end one (1B shard) should not be drawn as one line: the honest sd20 curve
+from the 1B shard alone is 1.2812 / 1.2725 / 1.2634 / 1.2585 at 763 / 1523 / 3043 / 5942 PF, which
+beats dense at 763 (1.296) and 1523 (1.283, paired −0.0109 (0.0051), 2.2σ) and loses at 3043 and
+5942. Same conclusion, crossover still ~2k PF.
 
 ## Part B — tweaks (launched at the crossover budgets, compared at equal PF)
 
@@ -146,4 +174,37 @@ _(results pending)_
 
 Loss-normalisation "fix" (B.i) is not run: A.1 shows it cannot move the curve under Adam.
 
-_(results pending)_
+### Results
+
+| arm | tokens | actual PF | full CE | 0–2k | 2–8k | 8–16k | 16–32k | 32k–64k | vs dense at equal PF |
+|---|---|---|---|---|---|---|---|---|---|
+| sd20mix | 256M | 1945 | **1.2668** | 1.386 | 1.290 | 1.245 | 1.211 | 1.289 | dense interpolated at 1945 PF ≈ 1.273 (32M 1.283 @1518, 64M 1.256 @3011, log-linear) → **−0.006**; vs sd20-256M (1523 PF) −0.006 at 1.28× the PF |
+| sd20mix | 512M | 5122 | **1.2527** | 1.367 | 1.274 | 1.230 | 1.197 | 1.275 | dense interpolated at 5122 PF ≈ 1.248 → **+0.005**; vs sd20-512M (3043 PF) −0.011 at 1.68× the PF |
+| sd20p32 | 256M / 512M | — | launched `01M35P03BF9XJVT9SPERRHK5B9` / `01M35P1A4R42PZYJ178VPHCBME`, position evals `01M35P1G5B5DHJPE6GMW2P31PS` / `01M35P1MG0BJV93YEZ9NN2QPJ9` | | | | | | pending |
+
+The mix curriculum (mean p_full 0.25 → the runs cost 1.28×/1.68× the PF of plain sd20 — more than
+the nominal 0.35× because uncompressed rows are ~7.7× the FLOPs of a compacted one) buys
+−0.006/−0.011 nats over plain sd20 at the same tokens and lands **on the dense curve, not below
+it** at its actual PF: −0.006 at 1.9k PF (inside the ~0.005 interpolation/seed noise), +0.005 at
+5.1k. Per position it closes the long-range half of the gap (32k–64k bin: 1.289 at 1945 PF vs
+plain sd20-256M 1.295, dense-32M 1.301; 1.275 at 5122 PF vs sd20-512M 1.287, dense-64M 1.277,
+dense-128M 1.266) at the price of the compute it spends dense. It does not restore a Pareto margin.
+
+## Diagnosis
+
+The crossover is not an optimizer artefact (A.1), not the shard switch (A.5 — the plateau is, but
+the crossover survives on a single shard), and not eval-side drift (A.3). It is a **regime trade**:
+soft-detached pooling gives each real token a cheap short-context prediction problem, so per FLOP
+it sees ~5× more of them and learns the short-range regime fast — its entire advantage at ≤1.5k PF
+is the 0–2k-position bin (−0.06 to −0.07 nats), with every bin past 8k at parity. Dense's tokens
+see full context and keep learning long-range use of it; once dense has enough tokens to saturate
+the short-range regime (its 0–2k CE reaches sd20-1B's 1.369 at 128M tokens) the only thing left to
+learn is long-range, and sd20 cannot learn it from a context that is 80 % slots. Every high-end
+pair shows the deficit growing monotonically with position (32k–64k: +0.011 at 3k PF, +0.017 at
+6k). A "small tweak" that keeps sd20 ahead therefore has to restore long-range signal *inside the
+compaction budget*: the dense-mix curriculum restores it but pays dense FLOPs for it and only
+reaches the dense curve; the remaining candidate is `sd20p32` (a real 32-token prefix in every
+pooled block at ~0.17×), pending. If that does not hold a margin either, the honest statement is
+that soft-detached CPT is a **cheap-end** technique — a 4× FLOP saving up to roughly the budget
+where dense saturates short context (~1–2k PF here, i.e. 32M dense tokens on this 4B model) — and
+not a replacement for dense at scale.
