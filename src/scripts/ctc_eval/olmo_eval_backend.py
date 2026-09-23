@@ -50,7 +50,7 @@ RERANK_DECODE_TOKENS = 160
 #: Rungs whose eval rows can exceed Qwen3.5's 262,144 positions for some rows (measured).
 OVERFLOW_256K = {"ctc_hpqa", "ctc_outlier", "ctc_qdmatch_nq", "ctc_rerank"}
 
-DEFAULT_POLICY = "r2k-r32k:500,r64k:100,r128k:50,r256k:50"
+DEFAULT_POLICY = "r2k-r32k:300,r64k:100,r128k:100,r256k:100"
 
 
 @dataclass

@@ -159,7 +159,7 @@ def main() -> None:
                     help="olmo-eval backend: wall-clock budget per single-GPU job")
     ap.add_argument("--policy", default="",
                     help="olmo-eval backend: eval sizes per rung, e.g. "
-                         "'r2k-r32k:500,r64k:100,r128k:50,r256k:50' (the default)")
+                         "'r2k-r32k:300,r64k:100,r128k:100,r256k:100' (the default)")
     ap.add_argument("--rows", default="setA",
                     help="olmo-eval backend: 'setA' (12 IID rows + 2 OOD) or a comma list")
     ap.add_argument("--olmo-eval-dataset", default="prasanns/olmo-eval-src-37563d01-1790134494",
