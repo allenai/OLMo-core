@@ -336,10 +336,12 @@ class PixMoCountDataset:
 # CoSyn point (document pointing; multi-branch, prompt = the question)
 # ---------------------------------------------------------------------------
 
-#: The style CoSyn pointing is tagged with. It is a pointing task whose question is an English
-#: sentence stored in the data rather than a bare label, and it shares the ``pointing`` tag so
-#: that stage 1 has one pointing tag. mm_olmo tags it ``cosyn_point`` instead.
-COSYN_POINT_STYLE = "pointing"
+#: The style CoSyn pointing is tagged with, as in mm_olmo. Its question is an English request stored
+#: in the data (e.g. "Highlight the period that shows the largest five-year increase..."), not an
+#: object name: the ``names`` column is a short summary written for the answer's label and drops
+#: most of what the request asks. A tag of its own keeps ``pointing:`` meaning "an object name
+#: follows".
+COSYN_POINT_STYLE = "cosyn_point"
 
 
 @dataclass
@@ -357,7 +359,7 @@ class CoSynPointDatasetConfig(Config):
     same kwargs as the other pointing sources."""
     system_prompt: str = "demo_or_style_v2"
     """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``, which prefixes
-    the question with ``"pointing:"`` (:data:`COSYN_POINT_STYLE`)."""
+    the question with ``"cosyn_point:"`` (:data:`COSYN_POINT_STYLE`)."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)

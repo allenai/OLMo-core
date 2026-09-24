@@ -64,7 +64,7 @@ def test_stage2_family_is_unchanged(style: str):
 
 
 # ---------------------------------------------------------------------------
-# CoSyn pointing: the same `pointing:` tag, on a question instead of a label
+# CoSyn pointing: its own `cosyn_point:` tag, on a question instead of a label
 # ---------------------------------------------------------------------------
 
 
@@ -95,14 +95,16 @@ def _cosyn_turn(tmp_path, **family):
     return [p for p in tok.prompts if p]
 
 
-def test_cosyn_point_carries_the_pointing_tag_in_stage1(tmp_path):
-    """CoSyn pointing is a pointing task whose question is an English sentence from the data.
-    Under the stage-1 family it gets the same `pointing:` tag as every other pointing source,
-    so stage 1 has one pointing tag; mm_olmo tags it `cosyn_point:` instead."""
+def test_cosyn_point_carries_its_own_tag_in_stage1(tmp_path):
+    """CoSyn pointing's question is an English request from the data, not an object name, so
+    under the stage-1 family it gets mm_olmo's `cosyn_point:` tag, and `pointing:` is always
+    followed by an object name."""
     from olmo_core.data.multimodal.pixmo_points import COSYN_POINT_STYLE
 
-    assert COSYN_POINT_STYLE == "pointing"
-    assert _cosyn_turn(tmp_path, **STAGE1) == ["pointing: Find the button that submits the form."]
+    assert COSYN_POINT_STYLE == "cosyn_point"
+    assert _cosyn_turn(tmp_path, **STAGE1) == [
+        "cosyn_point: Find the button that submits the form."
+    ]
 
 
 def test_target_never_carries_the_prefix():
