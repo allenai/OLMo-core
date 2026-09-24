@@ -331,10 +331,12 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
         short-conv kernels (:func:`kernel_fun.cconv.causal_conv1d`) for the layer's three
         causal convolutions. This single flag controls both. Requires the package,
         installed with the ``kernel-fun`` extra (``pip install
-        'ai2-olmo-core[kernel-fun]'``). This extra installs the CUDA 13 CuTe DSL build
-        (4.5.3), which needs a CUDA 13-compatible NVIDIA driver. The CUDA 12 compiler
-        libraries cannot lower the KDA MMA backward; building the layer with those
-        libraries raises an installation error before training starts. Each kernel
+        'ai2-olmo-core[kernel-fun]'``). The training image must also provide the CUDA 13
+        CuTe DSL build (tested with ``nvidia-cutlass-dsl[cu13]==4.5.3``), which needs a
+        CUDA 13-compatible NVIDIA driver. Install it explicitly with ``pip install
+        'nvidia-cutlass-dsl[cu13]==4.5.3'`` when preparing the image; the extra leaves
+        the image's CUDA stack unchanged. The CUDA 12 compiler cannot lower the KDA
+        MMA backward; building the layer with it raises before training starts. Each kernel
         only takes effect on the hardware/shapes it supports (Blackwell, chunk-size-64, no
         packed-document ``cu_seqlens`` for KDA; Hopper and up, no bias, no packed-document
         ``cu_seqlens`` for the conv); otherwise the layer silently falls back to FLA.

@@ -214,6 +214,7 @@ jobs:
 
           - name: Test experimental KDA (GPU)
             image: akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11
+            torch_backend: cu130
             gpus: 1
             clusters: --cluster ai2/holmes
             task_timeout: 25m
@@ -221,7 +222,7 @@ jobs:
             # support. Use CUDA 13 on Blackwell and reject a silently skipped suite.
             run: |
               bash -ec '
-                python -m pip install ".[kernel-fun]"
+                python -m pip install ".[kernel-fun]" "nvidia-cutlass-dsl[cu13]==4.5.3"
                 pytest -v --color=yes --durations=3 -m gpu \
                   -k experimental_kernels src/test/nn/attention/kda_test.py \
                   --junitxml=/tmp/experimental-kda.xml
@@ -334,6 +335,8 @@ jobs:
             --host-networking \
             ${{ matrix.task.clusters || '--cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn' }} \
             --system-python \
+            --uv-extra all \
+            --uv-torch-backend ${{ matrix.task.torch_backend || 'cu129' }} \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \

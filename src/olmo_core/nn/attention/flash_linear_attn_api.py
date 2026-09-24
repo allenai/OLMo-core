@@ -34,7 +34,7 @@ def require_kernel_fun() -> None:
         raise RuntimeError(
             "Experimental KDA requires the CUDA 13 CuTe DSL libraries; the CUDA 12 "
             "compiler cannot lower its MMA backward. On a CUDA 13-compatible driver, "
-            "install with: pip install 'ai2-olmo-core[kernel-fun]'"
+            "install with: pip install 'nvidia-cutlass-dsl[cu13]==4.5.3'"
         )
 
 
