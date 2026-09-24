@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from olmo_core.ops import rounded_wgrad
+from olmo_core.testing import requires_gpu
 
 
 def test_rounded_wgrad_rejects_unsupported_backend(monkeypatch):
@@ -20,7 +21,7 @@ def test_rounded_wgrad_rejects_unsupported_backend(monkeypatch):
         rounded_wgrad._compile((10, 3), ())
 
 
-@pytest.mark.gpu
+@requires_gpu
 @pytest.mark.parametrize("counts", [(0, 0, 0, 0), (1, 15, 0, 65), (64, 64, 64, 64)])
 @pytest.mark.parametrize("m,n", [(64, 128), (128, 64)])
 def test_rounded_wgrad_accumulation(counts, m, n):

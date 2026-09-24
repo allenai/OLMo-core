@@ -17,7 +17,7 @@ from olmo_core.config import DType
 from olmo_core.nn.moe.v2.routed_experts import RoutedExperts
 from olmo_core.nn.parallel import MultiGroupDistributedDataParallel
 from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
-from olmo_core.testing import run_distributed_test
+from olmo_core.testing import requires_gpu, run_distributed_test
 
 
 def _activation(x):
@@ -26,13 +26,14 @@ def _activation(x):
 
 
 def test_pairwise_requires_compilation():
+    pytest.importorskip("triton")
     from olmo_core.ops.swiglu_pairwise import pairwise_swiglu
 
     with pytest.raises(RuntimeError, match="requires torch.compile"):
         pairwise_swiglu(torch.ones(2, 4))
 
 
-@pytest.mark.gpu
+@requires_gpu
 def test_pairwise_flag_preserves_eager_activation():
     torch.manual_seed(179)
     experts = RoutedExperts(
@@ -69,7 +70,7 @@ class _RecomputedExperts(torch.nn.Module):
         return checkpoint(self.experts, x, counts, use_reentrant=False)
 
 
-@pytest.mark.gpu
+@requires_gpu
 def test_compiled_pairwise_activation():
     if not torch.cuda.is_available():
         pytest.skip("requires CUDA")
@@ -109,7 +110,7 @@ def _assert_activation_parity(source, grad):
     torch.testing.assert_close(outputs[0], outputs[1], rtol=0, atol=0, equal_nan=True)
 
 
-@pytest.mark.gpu
+@requires_gpu
 @pytest.mark.parametrize("rows,hidden", [(0, 128), (1, 128), (17, 129), (513, 1536)])
 def test_pairwise_activation_shapes(rows, hidden):
     torch.manual_seed(987)
@@ -118,7 +119,7 @@ def test_pairwise_activation_shapes(rows, hidden):
     _assert_activation_parity(source, grad)
 
 
-@pytest.mark.gpu
+@requires_gpu
 def test_pairwise_activation_all_bf16_gates():
     # Includes the cancellation-sensitive -1.28125 gate from the Torch 2.13
     # regression, all finite BF16 values, signed zeros, infinities and NaNs.
@@ -131,7 +132,7 @@ def test_pairwise_activation_all_bf16_gates():
     _assert_activation_parity(source, grad)
 
 
-@pytest.mark.gpu
+@requires_gpu
 @pytest.mark.skipif(
     os.environ.get("OLMO_TEST_LARGE_SWIGLU") != "1", reason="opt-in large allocation"
 )
@@ -261,14 +262,14 @@ def _run_routed_adam_parity(
             ddp.zero_grad(set_to_none=(step == 1))
 
 
-@pytest.mark.gpu
+@requires_gpu
 def test_pairwise_routed_experts_sharded_adam():
     if torch.cuda.device_count() < 2:
         pytest.skip("requires two CUDA devices")
     run_distributed_test(_run_routed_adam_parity, backend="nccl", start_method="spawn")
 
 
-@pytest.mark.gpu
+@requires_gpu
 @pytest.mark.parametrize(
     "reduction", ("all-reduce", "reduce-scatter-packed", "reduce-scatter-direct")
 )
@@ -285,7 +286,7 @@ def test_rounded_wgrad_routed_experts_sharded_adam(reduction, recompute):
     )
 
 
-@pytest.mark.gpu
+@requires_gpu
 def test_rounded_wgrad_checkpoint_resume():
     if torch.cuda.device_count() < 2 or torch.cuda.get_device_capability()[0] != 10:
         pytest.skip("requires two Blackwell GPUs")

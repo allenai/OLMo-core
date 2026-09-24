@@ -6,7 +6,7 @@
    :member-order: bysource
 
 Optional OLMoDDP expert optimizations
-------------------------------------
+-------------------------------------
 
 Set these environment variables before constructing ``RoutedExperts``:
 
