@@ -219,12 +219,21 @@ def save_hf_model(
     hf_model.generation_config.do_sample = True
 
     if huggingface_tokenizer is not None:
-        hf_model.config.bos_token_id = huggingface_tokenizer.bos_token_id
-        hf_model.generation_config.bos_token_id = huggingface_tokenizer.bos_token_id
-        hf_model.generation_config.eos_token_id = huggingface_tokenizer.convert_tokens_to_ids(
-            ["<|im_end|>", "<|endoftext|>"]
-        )
-        hf_model.generation_config.pad_token = huggingface_tokenizer.pad_token_id
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+            value = getattr(huggingface_tokenizer, name)
+            setattr(hf_model.config, name, value)
+            setattr(hf_model.generation_config, name, value)
+        # Preserve recognized chat stopping tokens, but never turn an absent
+        # token into an accidental stop at the tokenizer's unknown-token ID.
+        if huggingface_tokenizer.eos_token_id is not None:
+            stop_ids = [huggingface_tokenizer.eos_token_id]
+            for token in ("<|im_end|>", "<|endoftext|>"):
+                if token in huggingface_tokenizer.all_special_tokens:
+                    token_id = huggingface_tokenizer.convert_tokens_to_ids(token)
+                    if token_id not in stop_ids:
+                        stop_ids.append(token_id)
+            if len(stop_ids) > 1:
+                hf_model.generation_config.eos_token_id = stop_ids
 
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):

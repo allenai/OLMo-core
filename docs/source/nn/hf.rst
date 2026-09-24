@@ -11,8 +11,10 @@ Saved identifiers, including ``allenai/dolma2-tokenizer``, remain supported.
 For SFT, select the tokenizer and chat template actually used in training.
 An unspecified BOS in the training config preserves the source tokenizer's BOS;
 explicit special-token IDs in the config take precedence.
-Model and generation configurations use the resolved BOS ID as well, so
-generation without input IDs starts with the same token as the exported tokenizer.
+Model and generation configurations use the resolved BOS, EOS, and padding IDs,
+including ID 0. Generation without input IDs starts with the exported BOS.
+Recognized chat stop tokens are also retained for generation; absent token names
+are never mapped to an unknown-token ID and used as stop tokens.
 
 The exporter requires a fast ``tokenizer.json`` and preserves its encoding
 backend with a generic fast tokenizer. An independent AutoTokenizer reload
@@ -31,10 +33,15 @@ layer's evaluation pool must span all experts. Restricted evaluation pools are
 rejected because the HF router does not implement document-pool selection.
 
 Both export paths require bias-free, full-precision ``RMSNorm`` or ``FusedRMSNorm``
-for every Q/K norm, with the same epsilon as the model norms. Other normalization
+with one shared epsilon for Q/K, block pre/post, embedding, LM-head, and latent
+input norms. Other normalization
 operations and variants with different rounding behavior are rejected. All KDA
 output norms must share one epsilon, which is preserved as ``linear_norm_eps``;
 it may differ from the model RMSNorm epsilon.
+
+Headwise and elementwise attention gates are preserved in both export paths,
+including their precision setting. HF supports one shared expert per block
+without a shared-expert router; other shared-expert configurations are rejected.
 
 Scalable-softmax exports set ``use_cache=False`` for generation. The HF model
 rejects both ``use_cache=True`` and supplied ``past_key_values`` for these models.

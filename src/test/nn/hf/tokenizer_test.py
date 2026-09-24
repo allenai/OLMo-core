@@ -119,11 +119,30 @@ def test_exported_model_generates_with_resolved_bos(
         pad_token_id=2,
         bos_token_id=bos_override,
     )
+    export_small_model(output, tokenizer_config, entry_point)
+
+    expected_bos = source_bos if bos_override is None else bos_override
+    reloaded = AutoModelForCausalLM.from_pretrained(output).eval()
+    if expected_bos is None:
+        with pytest.raises(ValueError, match="bos_token_id"):
+            reloaded.generate(max_new_tokens=1, do_sample=False)
+    else:
+        # No input_ids or explicit BOS override: generation must use the saved metadata.
+        with torch.no_grad():
+            generated = reloaded.generate(max_new_tokens=1, do_sample=False)
+        assert generated.shape == (1, 2)
+        assert generated[0, 0].item() == expected_bos
+    assert AutoTokenizer.from_pretrained(output).bos_token_id == expected_bos
+    assert AutoConfig.from_pretrained(output).bos_token_id == expected_bos
+    assert GenerationConfig.from_pretrained(output).bos_token_id == expected_bos
+
+
+def export_small_model(output, tokenizer_config, entry_point):
     model_config = TransformerConfig.llama_like(
         d_model=32,
         n_layers=1,
         n_heads=4,
-        vocab_size=len(tokenizer),
+        vocab_size=tokenizer_config.vocab_size,
         block_name=TransformerBlockType.reordered_norm,
         qk_norm=True,
         attn_backend=AttentionBackendName.torch,
@@ -147,20 +166,64 @@ def test_exported_model_generates_with_resolved_bos(
             output, model.state_dict(), model, huggingface_tokenizer=resolved, save_overwrite=True
         )
 
-    expected_bos = source_bos if bos_override is None else bos_override
-    reloaded = AutoModelForCausalLM.from_pretrained(output).eval()
-    if expected_bos is None:
-        with pytest.raises(ValueError, match="bos_token_id"):
-            reloaded.generate(max_new_tokens=1, do_sample=False)
-    else:
-        # No input_ids or explicit BOS override: generation must use the saved metadata.
-        with torch.no_grad():
-            generated = reloaded.generate(max_new_tokens=1, do_sample=False)
-        assert generated.shape == (1, 2)
-        assert generated[0, 0].item() == expected_bos
-    assert AutoTokenizer.from_pretrained(output).bos_token_id == expected_bos
-    assert AutoConfig.from_pretrained(output).bos_token_id == expected_bos
-    assert GenerationConfig.from_pretrained(output).bos_token_id == expected_bos
+
+@pytest.mark.parametrize(
+    "entry_point,source_ids,overrides",
+    [
+        ("save", (1, 2), (None, None)),
+        ("save", (None, None), (None, None)),
+        ("save", (1, 2), (0, 0)),
+        ("convert", (1, 2), (0, 0)),
+        ("convert", (1, 2), (1, 2)),
+    ],
+)
+def test_export_preserves_resolved_eos_and_padding(tmp_path, entry_point, source_ids, overrides):
+    src, output = tmp_path / "source", tmp_path / "hf"
+    tokenizer, _ = source(src)
+    tokenizer.eos_token_id, tokenizer.pad_token_id = source_ids
+    tokenizer.save_pretrained(src)
+    config = TokenizerConfig(
+        identifier=str(src),
+        vocab_size=len(tokenizer),
+        eos_token_id=overrides[0],
+        pad_token_id=overrides[1],
+    )
+    export_small_model(output, config, entry_point)
+    expected = tuple(
+        original if override is None else override
+        for original, override in zip(source_ids, overrides)
+    )
+    for metadata in (
+        AutoTokenizer.from_pretrained(output),
+        AutoConfig.from_pretrained(output),
+        GenerationConfig.from_pretrained(output),
+    ):
+        assert (metadata.eos_token_id, metadata.pad_token_id) == expected
+    if expected[0] is not None:
+        # Force the resolved EOS on the first step. Saved generation metadata
+        # must stop immediately, without an explicit EOS argument to generate().
+        hf = AutoModelForCausalLM.from_pretrained(output).eval()
+        generated = hf.generate(
+            torch.tensor([[3]]),
+            max_new_tokens=3,
+            do_sample=False,
+            suppress_tokens=[i for i in range(len(tokenizer)) if i != expected[0]],
+        )
+        assert generated.tolist() == [[3, expected[0]]]
+
+
+def test_export_preserves_known_chat_stop_without_unknown_token_fallback(tmp_path):
+    src, output = tmp_path / "source", tmp_path / "hf"
+    tokenizer, _ = source(src)
+    tokenizer.add_special_tokens({"additional_special_tokens": ["<|im_end|>"]})
+    tokenizer.save_pretrained(src)
+    config = TokenizerConfig(
+        identifier=str(src), vocab_size=len(tokenizer), eos_token_id=1, pad_token_id=2
+    )
+    export_small_model(output, config, "save")
+    generation = GenerationConfig.from_pretrained(output)
+    assert set(generation.eos_token_id) == {1, tokenizer.convert_tokens_to_ids("<|im_end|>")}
+    assert AutoConfig.from_pretrained(output).eos_token_id == 1
 
 
 def test_same_vocabulary_wrong_segmentation_rejected(tmp_path):

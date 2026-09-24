@@ -6,7 +6,7 @@ from transformers import Olmo2Config, PretrainedConfig
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
-from olmo_core.nn.layer_norm import FusedRMSNorm, RMSNorm
+from olmo_core.nn.layer_norm import FusedRMSNorm, LayerNorm, RMSNorm
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
 from olmo_core.nn.rope import RoPEScalingConfig
@@ -157,6 +157,62 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
+def _validate_olmo3moe_norm(
+    norm: Optional[LayerNorm], *, name: str, eps: float, weight_shape: tuple
+) -> None:
+    # HF applies both normalization and gains in FP32 before casting back. Other
+    # RMSNorm variants can round activations or gains earlier in the computation.
+    if norm is None or type(norm) not in (RMSNorm, FusedRMSNorm) or not norm.full_precision:
+        raise NotImplementedError(f"HF {name} requires full-precision RMSNorm or FusedRMSNorm.")
+    assert norm is not None
+    if norm.weight is None or tuple(norm.weight.shape) != weight_shape or norm.bias is not None:
+        raise NotImplementedError(
+            f"HF {name} requires bias-free RMSNorm with gains {weight_shape}."
+        )
+    if norm.eps != eps:
+        raise NotImplementedError(f"HF {name} requires the model RMSNorm epsilon ({eps}).")
+
+
+def _validate_olmo3moe_model_norms(model: "OLMoDDPModel", eps: float) -> None:
+    norms = [("lm_head.norm", model.lm_head.norm, model.d_model)]
+    if model.embedding_norm is not None:
+        norms.append(("embedding_norm", model.embedding_norm, model.d_model))
+    for idx, block in model.blocks.items():
+        for name in ("attention_norm", "feed_forward_norm"):
+            norms.append((f"blocks.{idx}.{name}", getattr(block, name), model.d_model))
+        for name in (
+            "attention_input_norm",
+            "feed_forward_input_norm",
+            "latent_up_proj_input_norm",
+        ):
+            norm = getattr(block, name, None)
+            if norm is not None:
+                width = (
+                    block.latent_up_proj.in_features
+                    if name == "latent_up_proj_input_norm"
+                    else model.d_model
+                )
+                norms.append((f"blocks.{idx}.{name}", norm, width))
+    for name, norm, width in norms:
+        _validate_olmo3moe_norm(norm, name=name, eps=eps, weight_shape=(width,))
+
+
+def _validate_olmo3moe_shared_experts(block: Any) -> None:
+    shared = getattr(block, "shared_experts", None)
+    if shared is not None and shared.num_experts != 1:
+        raise NotImplementedError("HF export supports exactly one shared expert per block.")
+    if getattr(block, "shared_experts_router", None) is not None:
+        raise NotImplementedError("HF export does not support a shared expert router.")
+
+
+def _olmo3moe_attention_gate(attention: Attention) -> tuple[Optional[str], bool]:
+    if attention.gate is None:
+        return None, True
+    if attention.gate.granularity not in (GateGranularity.headwise, GateGranularity.elementwise):
+        raise NotImplementedError(f"Unsupported attention gate {attention.gate.granularity!r}.")
+    return str(attention.gate.granularity), attention.gate.full_precision
+
+
 def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> tuple:
     """Validate Q/K normalization and describe the HF model's attention configuration."""
     if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
@@ -166,17 +222,8 @@ def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> 
         (attention.q_norm, attention.n_heads),
         (attention.k_norm, attention.n_kv_heads),
     ):
-        # Other RMSNorm variants round before multiplying by the gain, whereas the HF
-        # implementation normalizes and applies the gain in FP32 before casting back.
-        if type(norm) not in (RMSNorm, FusedRMSNorm) or not norm.full_precision:
-            raise NotImplementedError(
-                "HF export requires Q/K norms to use full-precision RMSNorm or FusedRMSNorm."
-            )
         shape = (heads, attention.head_dim) if per_head else (attention.head_dim,)
-        if norm.weight is None or tuple(norm.weight.shape) != shape or norm.bias is not None:
-            raise NotImplementedError("Unsupported Q/K norm gain layout or bias for HF export.")
-        if norm.eps != rms_norm_eps:
-            raise NotImplementedError("HF export requires the same Q/K and model RMSNorm epsilon.")
+        _validate_olmo3moe_norm(norm, name="Q/K norm", eps=rms_norm_eps, weight_shape=shape)
     return (
         attention.n_heads,
         attention.n_kv_heads,
@@ -185,8 +232,7 @@ def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> 
         attention.scalable_softmax,
         attention.q_norm.eps,
         attention.k_norm.eps,
-        str(attention.gate.granularity) if attention.gate is not None else None,
-        attention.gate.full_precision if attention.gate is not None else True,
+        *_olmo3moe_attention_gate(attention),
     )
 
 
@@ -270,8 +316,10 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
             "QK-norm configurations are not supported."
         )
     rms_norm_eps = moe_block.feed_forward_norm.eps
+    _validate_olmo3moe_model_norms(model, rms_norm_eps)
     attention_signature = _olmo3moe_attention_signature(attention, rms_norm_eps)
     for block in blocks:
+        _validate_olmo3moe_shared_experts(block)
         if not isinstance(block.attention, Attention):
             raise NotImplementedError("HF export requires Attention in every non-KDA layer.")
         if _olmo3moe_attention_signature(block.attention, rms_norm_eps) != attention_signature:
@@ -353,6 +401,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     sliding_window = (window_sizes.pop() + 1) if window_sizes else attention.head_dim
 
     attention_hidden_size = attention.n_heads * attention.head_dim
+    gate_type, gate_full_precision = _olmo3moe_attention_gate(attention)
 
     return Olmo3MoeConfig(
         vocab_size=model.vocab_size,
@@ -380,6 +429,8 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         use_head_qk_norm=attention.use_head_qk_norm,
         qk_norm_per_head_gains=attention.q_norm.weight.ndim == 2,
         scalable_softmax=attention.scalable_softmax,
+        attention_gate_type=gate_type,
+        attention_gate_full_precision=gate_full_precision,
         use_cache=not attention.scalable_softmax,
         sliding_window=sliding_window,
         layer_types=layer_types,
@@ -417,6 +468,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         )
 
     representative = sparse_blocks[0]
+    _validate_olmo3moe_model_norms(model, representative.feed_forward_norm.eps)
     routed_experts = representative.routed_experts
     router = representative.routed_experts_router
     assert routed_experts is not None and router is not None
@@ -429,12 +481,6 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         emo = getattr(block_router, "emo", None)
         latent = block.latent_down_proj
         latent_norm = block.latent_up_proj_input_norm
-        if latent_norm is not None and (
-            latent_norm.bias is not None or latent_norm.eps != block.feed_forward_norm.eps
-        ):
-            raise NotImplementedError(
-                "HF latent input norm requires the model RMSNorm epsilon and no bias."
-            )
         if block_router.bias is not None:
             raise NotImplementedError("Exporting KDA + EMo with a biased router is unsupported.")
         if block_experts.bias:
@@ -471,6 +517,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             raise NotImplementedError("Heterogeneous sparse EMo layers are unsupported.")
 
     for block in blocks:
+        _validate_olmo3moe_shared_experts(block)
         if block.shared_experts is not None and block.shared_experts.activation.value != "swiglu":
             raise NotImplementedError(
                 "Exporting KDA + EMo requires SwiGLU shared experts, got "
@@ -537,16 +584,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     ):
         raise NotImplementedError("Biased full-attention projections are unsupported.")
 
-    gate_type: Optional[str] = None
-    gate_full_precision = True
-    if attention.gate is not None:
-        gate_type = str(attention.gate.granularity)
-        if attention.gate.granularity not in (
-            GateGranularity.headwise,
-            GateGranularity.elementwise,
-        ):
-            raise NotImplementedError(f"Unsupported attention gate {attention.gate.granularity!r}.")
-        gate_full_precision = attention.gate.full_precision
+    gate_type, gate_full_precision = _olmo3moe_attention_gate(attention)
 
     if any(not block.use_peri_norm or block.use_pre_norm for block in blocks):
         raise NotImplementedError("KDA + EMo export requires peri-norm without pre-norm.")

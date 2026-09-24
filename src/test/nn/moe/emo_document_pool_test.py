@@ -58,16 +58,20 @@ def test_mixed_document_masks():
             scores = (
                 torch.randint(-2, 3, (4, length, 512), device="cuda").float()
                 if tied
-                else torch.rand(4, length, 512, device="cuda")
+                # Multiples of 2^-10 have exact FP32 sums here: at most 8192
+                # terms with integer numerators <= 1023 stay below 2^24.
+                # Unrestricted floats make even reference/reference masks
+                # sensitive to atomic scatter order near the pool cutoff.
+                else torch.randint(0, 1024, (4, length, 512), device="cuda").float() / 1024
             )
             old = torch.compile(
                 lambda x, s, p: pool_keep_mask_inverse_scatter(doc_sum_scatter(x, s), p),
                 fullgraph=True,
             )
             new = torch.compile(document_pool_keep_mask, fullgraph=True)
-            torch.testing.assert_close(
-                old(scores, segments, pools), new(scores, segments, pools), rtol=0, atol=0
-            )
+            expected = old(scores, segments, pools)
+            torch.testing.assert_close(expected, old(scores, segments, pools), rtol=0, atol=0)
+            torch.testing.assert_close(expected, new(scores, segments, pools), rtol=0, atol=0)
 
 
 @pytest.mark.gpu

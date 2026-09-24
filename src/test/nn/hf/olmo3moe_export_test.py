@@ -29,6 +29,7 @@ from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
 from olmo_core.nn.rope import RoPEConfig
 from olmo_core.nn.transformer import (
     OLMoDDPModelConfig,
+    TransformerBlockConfig,
     TransformerBlockType,
     TransformerType,
 )
@@ -46,6 +47,8 @@ def build_hybrid(
     window=None,
     device="cpu",
     kda_norm_eps=1e-5,
+    latent_norm=None,
+    shared_override=None,
 ):
     """Small generic fixture with a dense KDA layer and both sparse attention types."""
     width, experts = 128, 4
@@ -107,7 +110,13 @@ def build_hybrid(
             if emo
             else None,
         ),
-        latent_moe=LatentMoEConfig(latent_dim=64) if latent else None,
+        latent_moe=LatentMoEConfig(
+            latent_dim=64,
+            up_proj_input_norm=latent_norm,
+            up_proj_input_norm_enabled=latent_norm is not None,
+        )
+        if latent
+        else None,
         use_peri_norm=True,
         use_pre_norm=False,
     )
@@ -115,13 +124,22 @@ def build_hybrid(
     dense.routed_experts = dense.routed_experts_router = dense.latent_moe = None
     full = deepcopy(sparse)
     full.sequence_mixer = attention
+    overrides: dict[int, TransformerBlockConfig] = {0: dense, 1: deepcopy(sparse), 2: full}
+    if shared_override is not None:
+        layer, count = shared_override
+        block = overrides[layer]
+        assert isinstance(block, OLMoDDPTransformerBlockConfig) and block.shared_experts is not None
+        block.shared_experts.num_experts = count
+        block.shared_experts_router = MoERouterConfigV2(
+            d_model=width, num_experts=count, top_k=count
+        )
     model = OLMoDDPModelConfig(
         name=TransformerType.moe_fused_v2,
         d_model=width,
         n_layers=3,
         vocab_size=64,
         block=sparse,
-        block_overrides={0: dense, 2: full},
+        block_overrides=overrides,
         lm_head=LMHeadConfig(layer_norm=deepcopy(norm), bias=False),
         embedding_norm=deepcopy(norm),
         embed_scale=width**0.5,
@@ -138,7 +156,7 @@ def build_hybrid(
     return model.eval()
 
 
-def build_attention_only(*, scalable=False, emo=False):
+def build_attention_only(*, scalable=False, emo=False, gate=None):
     """Small core-built MoE exercising the non-KDA HF exporter on CPU."""
     norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False)
     model = OLMoDDPModelConfig(
@@ -157,6 +175,7 @@ def build_attention_only(*, scalable=False, emo=False):
                 qk_norm=deepcopy(norm),
                 use_head_qk_norm=True,
                 scalable_softmax=scalable,
+                gate=gate,
                 backend=AttentionBackendName.torch,
             ),
             layer_norm=norm,
@@ -270,12 +289,103 @@ def test_hybrid_export_preserves_nondefault_kda_norm_eps(tmp_path):
 
 
 @requires_fla
+@pytest.mark.parametrize("norm_type", [LayerNormType.default, LayerNormType.qwen_rms])
+@pytest.mark.parametrize("layer", ["1", "2"])
+def test_hybrid_export_rejects_incompatible_latent_norm(norm_type, layer):
+    model = build_hybrid(latent_norm=LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False))
+    model.blocks[layer].latent_up_proj_input_norm = LayerNormConfig(
+        name=norm_type, eps=1e-6, bias=False
+    ).build(size=64)
+    with pytest.raises(NotImplementedError, match="latent.*RMSNorm"):
+        get_hf_config(model)
+
+
+@pytest.mark.parametrize(
+    "builder,path",
+    [
+        (build_attention_only, "lm_head.norm"),
+        (build_attention_only, "blocks.1.attention_norm"),
+        (build_attention_only, "blocks.1.feed_forward_norm"),
+    ]
+    + [
+        pytest.param(build_hybrid, path, marks=requires_fla)
+        for path in (
+            "embedding_norm",
+            "lm_head.norm",
+            "blocks.0.attention_norm",
+            "blocks.1.feed_forward_norm",
+            "blocks.2.attention_norm",
+            "blocks.0.attention_input_norm",
+            "blocks.2.feed_forward_input_norm",
+            "blocks.2.latent_up_proj_input_norm",
+        )
+    ],
+)
+@pytest.mark.parametrize("change", ["epsilon", "operation", "precision"])
+def test_export_rejects_incompatible_model_norms(builder, path, change):
+    model = builder(
+        **(
+            {"latent_norm": LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False)}
+            if builder is build_hybrid
+            else {}
+        )
+    )
+    norm = model.get_submodule(path)
+    if change == "epsilon":
+        norm.eps = 1e-3
+    elif change == "precision":
+        norm.full_precision = False
+    else:
+        parent, _, name = path.rpartition(".")
+        replacement = LayerNormConfig(name=LayerNormType.default, eps=1e-6, bias=False).build(
+            size=norm.weight.numel()
+        )
+        replacement.load_state_dict(norm.state_dict())
+        setattr(model.get_submodule(parent), name, replacement)
+    with pytest.raises(NotImplementedError, match="RMSNorm"):
+        get_hf_config(model)
+
+
+@requires_fla
+@pytest.mark.parametrize("layer", [0, 1, 2])
+@pytest.mark.parametrize("count", [1, 2])
+def test_hybrid_export_rejects_shared_expert_routing(layer, count):
+    model = build_hybrid(shared_override=(layer, count))
+    with pytest.raises(NotImplementedError, match="shared expert"):
+        get_hf_config(model)
+
+
+@pytest.mark.parametrize("granularity", [GateGranularity.headwise, GateGranularity.elementwise])
+@pytest.mark.parametrize("full_precision", [False, True])
+def test_attention_only_export_preserves_gate(tmp_path, granularity, full_precision):
+    model = build_attention_only(
+        gate=GateConfig(granularity=granularity, full_precision=full_precision)
+    )
+    save_hf_model(tmp_path / "hf", model.state_dict(), model)
+    hf = Olmo3MoeForCausalLM.from_pretrained(tmp_path / "hf")
+    assert hf.config.attention_gate_type == str(granularity)
+    assert hf.config.attention_gate_full_precision == full_precision
+    for idx, block in enumerate(model.blocks.values()):
+        torch.testing.assert_close(
+            hf.model.layers[idx].self_attn.g_proj.weight, block.attention.w_g.weight
+        )
+
+
+@requires_fla
 @pytest.mark.parametrize("latent,emo", [(False, True), (True, True), (True, False)])
 @pytest.mark.parametrize(
     "per_head,scalable", [(False, False), (True, False), (False, True), (True, True)]
 )
 def test_core_hybrid_exports_and_reloads(tmp_path, latent, emo, per_head, scalable):
-    model = build_hybrid(latent=latent, emo=emo, per_head=per_head, scalable=scalable)
+    model = build_hybrid(
+        latent=latent,
+        emo=emo,
+        per_head=per_head,
+        scalable=scalable,
+        latent_norm=LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False)
+        if latent
+        else None,
+    )
     config = get_hf_config(model)
     assert config.latent_moe_dim == (64 if latent else None)
     assert config.qk_norm_per_head_gains == per_head and config.scalable_softmax == scalable
