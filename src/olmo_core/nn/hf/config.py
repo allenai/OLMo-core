@@ -218,6 +218,8 @@ def _olmo3moe_attention_gate(attention: Attention) -> tuple[Optional[str], bool]
 
 def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> tuple:
     """Validate Q/K normalization and describe the HF model's attention configuration."""
+    if attention.clip_qkv is not None:
+        raise NotImplementedError("HF export does not support attention clip_qkv.")
     if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
         raise NotImplementedError("HF export requires head-wise QK norm.")
     per_head = attention.q_norm.weight is not None and attention.q_norm.weight.ndim == 2

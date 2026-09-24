@@ -305,6 +305,24 @@ def test_hybrid_export_rejects_biased_kda_convolutions(layer, conv_name):
         get_hf_config(model)
 
 
+@pytest.mark.parametrize(
+    "builder,layers",
+    [
+        (build_attention_only, ("0", "1")),
+        pytest.param(build_hybrid, ("2", "3"), marks=requires_fla),
+    ],
+)
+@pytest.mark.parametrize("clip_qkv", [0.0, 1.0])
+def test_export_rejects_clipped_attention(builder, layers, clip_qkv):
+    for layer in layers:
+        model = builder()
+        if builder is build_hybrid:
+            model.blocks["3"] = deepcopy(model.blocks["2"])
+        model.blocks[layer].attention.clip_qkv = clip_qkv
+        with pytest.raises(NotImplementedError, match="clip_qkv"):
+            get_hf_config(model)
+
+
 @requires_fla
 def test_hybrid_export_preserves_nondefault_kda_norm_eps(tmp_path):
     model = build_hybrid(kda_norm_eps=1e-3)
