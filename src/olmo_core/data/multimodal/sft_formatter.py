@@ -486,11 +486,9 @@ class SftFormatter:
                         example["label"].lower() if "label" in example else example["label_cased"]
                     )
                 else:
-                    # An ``aux_*`` style draws from its base style's pool (the marker only
-                    # changes the style token).
                     pool = (
                         POINT_COUNT_PROMPTS
-                        if base_pointing_style(style) in ("point_count", "point_then_count")
+                        if style in ("point_count", "point_then_count")
                         else POINTING_PROMPTS
                     )
                     prompt = pool[rng.randint(len(pool))].format(label=label)

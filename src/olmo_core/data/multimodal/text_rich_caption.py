@@ -41,7 +41,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
 from .paths import TEXT_RICH_CAPTION
-from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
+from .pixmo_cap import style_tag_prompt
 from .pixmo_points import _load_split, _open_image
 from .sft_common import EpochSeededExamples, get_example_with_skip, truncate_example
 
@@ -95,10 +95,6 @@ class TextRichCaptionDatasetConfig(Config):
 
     seed: int = 0
 
-    system_prompt: str = "style_and_length_v3"
-    """How the style is shown in the user turn: the bare ``"figure_caption_<level>:"`` under every
-    ``style_and_length`` family, or no prefix under ``none``."""
-
     def validate(self):
         if self.category not in CATEGORIES:
             raise OLMoConfigurationError(f"category={self.category!r} is not one of {CATEGORIES}")
@@ -112,10 +108,6 @@ class TextRichCaptionDatasetConfig(Config):
             )
         if len(set(self.levels)) != len(self.levels):
             raise OLMoConfigurationError(f"levels has duplicates: {self.levels}")
-        if self.system_prompt not in STYLE_TAG_FAMILIES:
-            raise OLMoConfigurationError(
-                f"system_prompt={self.system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
-            )
 
     @property
     def hf_path(self) -> str:
@@ -176,7 +168,7 @@ class TextRichCaptionDataset(EpochSeededExamples):
             text = row[level]
             if not isinstance(text, str) or not text.strip():
                 continue
-            prompt = style_tag_prompt(level_style(level), cfg.system_prompt)
+            prompt = style_tag_prompt(level_style(level))
             turns.append((prompt, text))
         if not turns:
             raise ValueError(f"row {row.get('id')!r} has no non-empty caption in {cfg.levels}")

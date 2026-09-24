@@ -36,6 +36,8 @@ class _PromptTok:
 
     def encode(self, text, add_special_tokens=False):
         return [(ord(c) % 90) + 10 for c in text]
+
+
 POINTS = [{"x": 10.5, "y": 20.5}, {"x": 30.0, "y": 40.0}]
 
 
@@ -88,9 +90,8 @@ def _cosyn_turn(tmp_path, **family):
     from olmo_core.data.multimodal import CoSynPointDatasetConfig
 
     tok = _PromptTok()
-    CoSynPointDatasetConfig(
-        dataset_path=_write_cosyn_point(tmp_path), max_crops=1, **family
-    ).build(tok)[0]
+    path = _write_cosyn_point(tmp_path)
+    CoSynPointDatasetConfig(dataset_path=path, max_crops=1, **family).build(tok)[0]
     return [p for p in tok.prompts if p]
 
 
@@ -102,11 +103,6 @@ def test_cosyn_point_carries_the_pointing_tag_in_stage1(tmp_path):
 
     assert COSYN_POINT_STYLE == "pointing"
     assert _cosyn_turn(tmp_path, **STAGE1) == ["pointing: Find the button that submits the form."]
-
-
-def test_cosyn_point_has_no_tag_in_stage2(tmp_path):
-    """The SFT family sends the question as written, so `image_only_v9` is unchanged."""
-    assert _cosyn_turn(tmp_path) == ["Find the button that submits the form."]
 
 
 def test_target_never_carries_the_prefix():

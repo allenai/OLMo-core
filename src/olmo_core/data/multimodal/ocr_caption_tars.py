@@ -35,7 +35,7 @@ from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
-from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
+from .pixmo_cap import style_tag_prompt
 from .sft_common import EpochSeededExamples, get_example_with_skip, truncate_example
 
 __all__ = [
@@ -274,9 +274,6 @@ class OcrCaptionTarsDatasetConfig(Config):
     """``"none"`` weights every response token equally, like the stage-1 caption source."""
     message_weight: Optional[float] = None
     seed: int = 0
-    system_prompt: str = "style_and_length_v3"
-    """Prefix family for the style tag (:func:`~.pixmo_cap.style_tag_prompt`); the default renders the
-    bare ``"<style>:"``, as mm_olmo's molmo3 stage 1 does for its OCR sources."""
 
     def validate(self):
         if not self.dataset_path:
@@ -285,10 +282,6 @@ class OcrCaptionTarsDatasetConfig(Config):
             raise OLMoConfigurationError("style must be a non-empty style name")
         if not self.text_field:
             raise OLMoConfigurationError("text_field must be a JSON field name")
-        if self.system_prompt not in STYLE_TAG_FAMILIES:
-            raise OLMoConfigurationError(
-                f"system_prompt={self.system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
-            )
         if self.index_threads < 1:
             raise OLMoConfigurationError("index_threads must be >= 1")
 
@@ -358,7 +351,7 @@ class OcrCaptionTarsDataset(EpochSeededExamples):
         text = self.text(json.loads(json_bytes))
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         rng = self.epoch_rng(i)
-        prompt = style_tag_prompt(cfg.style, cfg.system_prompt)
+        prompt = style_tag_prompt(cfg.style)
         seq = encode_sft_example(
             self.tokenizer,
             image,

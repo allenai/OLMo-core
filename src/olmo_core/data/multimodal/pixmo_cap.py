@@ -40,7 +40,6 @@ __all__ = [
     "CAPTION_PROMPTS",
     "TRANSCRIPT_PROMPTS",
     "style_tag_prompt",
-    "STYLE_TAG_FAMILIES",
 ]
 
 # Natural-language prompt pools mirroring mm_olmo's ``GENERAL_PROMPTS_V1`` (data_formatter.py).
@@ -73,32 +72,10 @@ CAPTION_STYLE = "long_caption"
 TRANSCRIPT_STYLE = "transcript"
 
 
-#: mm_olmo ``system_prompt`` families accepted by :func:`style_tag_prompt`
-#: (``DataFormatter.get_system_prompt``, data_formatter.py:1690-1756). Pretraining families only:
-#: the sources that use this are stage-1 sources, so the SFT-stage ``demo_or_style`` families
-#: are not accepted. The three ``style_and_length`` families render identically here, because
-#: this repo puts no length number in any tag; ``none`` renders no tag.
-STYLE_TAG_FAMILIES = frozenset(
-    {
-        "style_and_length",
-        "style_and_length_v2",
-        "style_and_length_v3",
-        "none",
-    }
-)
-
-
-def style_tag_prompt(style: str, system_prompt: str) -> str:
+def style_tag_prompt(style: str) -> str:
     """The user turn of a free-text response source that has no question of its own (the OCR
-    sources): the bare ``"<style>:"`` tag, or nothing under the ``none`` family. No family puts
-    a length number in the tag in this repo (see the module docstring).
+    sources): the bare ``"<style>:"`` tag, with no length number (see the module docstring).
     """
-    if system_prompt not in STYLE_TAG_FAMILIES:
-        raise ValueError(
-            f"system_prompt={system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
-        )
-    if system_prompt == "none":
-        return ""
     return f"{style}:"
 
 
@@ -289,7 +266,7 @@ class PixMoCapDataset:
                 prompt = cfg.fixed_prompt
             elif cfg.style_tag:
                 # The tag is the entire user turn: no instruction after it, no length number.
-                prompt = f"{style}:"
+                prompt = style_tag_prompt(style)
             else:
                 prompt = self._sample_prompt(style, rng)
             response_ids = self.tokenizer.encode(text, add_special_tokens=False)

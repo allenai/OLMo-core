@@ -155,10 +155,6 @@ def test_config_validation():
         OlmOcrMixDatasetConfig(target_longest_image_dim_range=(2048, 1024)).validate()
     with pytest.raises(OLMoConfigurationError):
         OlmOcrMixDatasetConfig(languages=()).validate()
-    # Pretraining families only: an unknown name and the SFT-stage family are both refused.
-    for family in ("uber_model_v2", "demo_or_style_v2"):
-        with pytest.raises(OLMoConfigurationError):
-            OlmOcrMixDatasetConfig(system_prompt=family).validate()
     OlmOcrMixDatasetConfig(languages=None, split="validation").validate()
 
 
@@ -200,12 +196,11 @@ def test_render_size_sampled_on_train_fixed_on_eval(tmp_path, stub_renderer):
     assert ev.target_dim_for(np.random.RandomState(0)) == 1536
 
 
-def test_default_prompt_family_is_the_bare_molmo3_tag(tmp_path, stub_renderer):
-    """mm_olmo trains olmOCR-mix only under molmo3's ``style_and_length_v3``: user turn ``olmocr:``."""
+def test_user_prompt_is_the_bare_tag(tmp_path, stub_renderer):
+    """As in mm_olmo's molmo3 stage 1, the user turn is ``olmocr:`` alone, with no length number."""
     root = _write_root(tmp_path)
     ds = _cfg(root).build(_FakeTok())
-    assert ds.config.system_prompt == "style_and_length_v3"
-    assert ds.user_prompt() == "olmocr:"
+    assert ds.user_prompt() == f"{OLMOCR_STYLE}:" == "olmocr:"
 
 
 def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):
@@ -222,16 +217,6 @@ def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):
     ds.set_epoch(2)
     ds[0]
     assert stub_renderer[-1][1] == dims[2]  # deterministic per (row, epoch)
-
-
-def test_user_prompt_per_prompt_family(tmp_path, stub_renderer):
-    """No family puts a length number in the tag: v2 and v3 both give the bare tag."""
-    root = _write_root(tmp_path)
-    for family in ("style_and_length", "style_and_length_v2", "style_and_length_v3"):
-        ds = _cfg(root, system_prompt=family).build(_FakeTok())
-        assert ds.user_prompt() == f"{OLMOCR_STYLE}:", family
-    none = _cfg(root, system_prompt="none").build(_FakeTok())
-    assert none.user_prompt() == ""
 
 
 def test_blank_page_transcribes_as_no_text_found(tmp_path, stub_renderer):
@@ -372,7 +357,6 @@ def test_stage1_ocr_group_is_opt_in_and_sqrt_split():
         "olmocr_loc_transcripts",
         "olmocr_national_archives",
     } <= set(mod.OCR_SOURCES)
-    assert mod.OCR_SYSTEM_PROMPT == "style_and_length_v3"
     fields = {f.name for f in mod.ExperimentConfig.__dataclass_fields__.values()}
     assert {"ocr_rate", "olmocr", "ocr_sources"} <= fields
     np.testing.assert_allclose(

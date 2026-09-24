@@ -35,7 +35,7 @@ from olmo_core.exceptions import OLMoConfigurationError
 
 from .message_sequence import encode_sft_example
 from .paths import OLMOCR_MIX
-from .pixmo_cap import STYLE_TAG_FAMILIES, style_tag_prompt
+from .pixmo_cap import style_tag_prompt
 from .sft_common import (
     EpochSeededExamples,
     get_example_with_skip,
@@ -56,7 +56,7 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: mm_olmo style name; the prefix families below decide how it is shown to the model.
+#: mm_olmo style name; the user turn is this tag alone, ``"olmocr:"``.
 OLMOCR_STYLE = "olmocr"
 
 #: Hub config names. The numeric prefix is part of the parquet / tarball filenames.
@@ -197,11 +197,6 @@ class OlmOcrMixDatasetConfig(Config):
 
     seed: int = 0
 
-    system_prompt: str = "style_and_length_v3"
-    """How the ``olmocr`` style is shown in the user turn: the bare ``"olmocr:"`` under every
-    ``style_and_length`` family (mm_olmo's molmo3 stage 1 trains this source under ``_v3``),
-    or no prefix under ``none``."""
-
     def validate(self):
         canonical_subset(self.subset)
         canonical_split(self.split)
@@ -217,10 +212,6 @@ class OlmOcrMixDatasetConfig(Config):
         if self.languages is not None and len(self.languages) == 0:
             raise OLMoConfigurationError(
                 "languages=() would filter out every row; use None to keep all languages"
-            )
-        if self.system_prompt not in STYLE_TAG_FAMILIES:
-            raise OLMoConfigurationError(
-                f"system_prompt={self.system_prompt!r} is not one of {sorted(STYLE_TAG_FAMILIES)}"
             )
 
     def build(self, tokenizer) -> "OlmOcrMixDataset":
@@ -296,7 +287,7 @@ class OlmOcrMixDataset(EpochSeededExamples):
     def user_prompt(self) -> str:
         """The user turn: only the style tag, since the ``olmocr`` style has no question
         (:func:`~.pixmo_cap.style_tag_prompt`)."""
-        return style_tag_prompt(OLMOCR_STYLE, self.config.system_prompt)
+        return style_tag_prompt(OLMOCR_STYLE)
 
     # -- example ---------------------------------------------------------------------------
 
@@ -305,7 +296,7 @@ class OlmOcrMixDataset(EpochSeededExamples):
 
         A page whose PDF fails to render, or whose transcription leaves no loss tokens after
         truncation, must not raise out of here: it would spend the mixture loader's error budget
-        and a run of them would abort training. Same policy as the other SFT sources; see
+        and a run of them would abort training. Same policy as the other sources; see
         :func:`~olmo_core.data.multimodal.sft_common.get_example_with_skip`.
         """
         return get_example_with_skip(self, index, len(self))

@@ -233,10 +233,6 @@ def test_config_validation(tmp_path):
         OcrCaptionTarsDatasetConfig().validate()  # no dataset_path
     with pytest.raises(OLMoConfigurationError):
         OcrCaptionTarsDatasetConfig(dataset_path="/x", style="").validate()
-    # Pretraining families only: an unknown name and the SFT-stage family are both refused.
-    for family in ("uber_model_v2", "demo_or_style_v2"):
-        with pytest.raises(OLMoConfigurationError):
-            OcrCaptionTarsDatasetConfig(dataset_path="/x", system_prompt=family).validate()
     OcrCaptionTarsDatasetConfig(dataset_path="/x").validate()
 
 
@@ -256,14 +252,10 @@ def test_dataset_text_and_prompt(tmp_path):
         ds.text({"caption": "<text></text>"})
     with pytest.raises(ValueError):
         ds.text({"dense_caption": "x"})
-    # Every style_and_length family -> the bare tag, with no length number; none -> nothing.
+    # The user turn is the bare tag, with no length number.
     from olmo_core.data.multimodal.pixmo_cap import style_tag_prompt
 
-    for family in ("style_and_length", "style_and_length_v2", "style_and_length_v3"):
-        assert style_tag_prompt("scene_text", family) == "scene_text:", family
-    assert style_tag_prompt("scene_text", "none") == ""
-    with pytest.raises(ValueError):
-        style_tag_prompt("scene_text", "bogus")
+    assert style_tag_prompt("scene_text") == "scene_text:"
 
 
 # ---------------------------------------------------------------------------
@@ -364,9 +356,7 @@ def test_build_ocr_source_fills_tar_template(tmp_path):
     root = tmp_path / "oe"
     (root / "scene_text_tars").mkdir(parents=True)
     os.rename(_write_tars(tmp_path), str(root / "scene_text_tars" / "cocotext_v6_tars"))
-    tars = OcrCaptionTarsDatasetConfig(
-        max_crops=1, index_cache_dir=str(tmp_path / "cache"), system_prompt="style_and_length_v3"
-    )
+    tars = OcrCaptionTarsDatasetConfig(max_crops=1, index_cache_dir=str(tmp_path / "cache"))
     ds = ocr_mix.build_ocr_source(
         "cocotext",
         _FakeTok(),
@@ -402,7 +392,6 @@ def test_stage1_ocr_group_wiring():
     mod = _load_stage1_module()
     assert mod.OCR_RATE == 0.0
     assert mod.OCR_SOURCES == ocr_mix.DEFAULT_OCR_SOURCES
-    assert mod.OCR_SYSTEM_PROMPT == "style_and_length_v3"
     fields = {f.name for f in mod.ExperimentConfig.__dataclass_fields__.values()}
     assert {"ocr_rate", "ocr_sources", "olmocr", "ocr_tars", "ocr_data_root"} <= fields
 

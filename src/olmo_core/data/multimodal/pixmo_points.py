@@ -356,9 +356,8 @@ class CoSynPointDatasetConfig(Config):
     """Unused: the question is always the one stored in the data. Kept so the source takes the
     same kwargs as the other pointing sources."""
     system_prompt: str = "demo_or_style_v2"
-    """Prompt family for the style prefix. Under the stage-1 ``style_and_length_v2`` family the
-    question is prefixed with ``"pointing:"``; under the SFT ``demo_or_style_v2`` family it is
-    sent as written (:data:`COSYN_POINT_STYLE`)."""
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``, which prefixes
+    the question with ``"pointing:"`` (:data:`COSYN_POINT_STYLE`)."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)

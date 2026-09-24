@@ -165,32 +165,6 @@ def test_row_with_no_caption_is_skipped_not_raised(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Prompt families
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "family, expected",
-    [
-        ("style_and_length_v2", "figure_caption_high_level:"),
-        ("style_and_length_v3", "figure_caption_high_level:"),
-        ("none", ""),
-    ],
-)
-def test_style_tag_per_prompt_family(tmp_path, family, expected):
-    """No family puts a length number in the tag; ``none`` renders no tag."""
-    ds = _cfg(_write_corpus(tmp_path), levels=("high_level",), system_prompt=family).build(
-        _FakeTok()
-    )
-    assert ds.turns(ds._data[0])[0][0] == expected
-
-
-def test_sft_stage_family_is_refused():
-    with pytest.raises(OLMoConfigurationError):
-        TextRichCaptionDatasetConfig(system_prompt="demo_or_style_v2").validate()
-
-
-# ---------------------------------------------------------------------------
 # Train split only
 # ---------------------------------------------------------------------------
 
@@ -243,7 +217,6 @@ def test_every_category_builds(tmp_path, category):
         {"levels": ()},
         {"levels": ("medium_level",)},
         {"levels": ("mid_level", "mid_level")},
-        {"system_prompt": "style_and_length_v9"},
     ],
 )
 def test_config_validation_rejects_bad_values(kw):

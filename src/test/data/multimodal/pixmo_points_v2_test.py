@@ -244,7 +244,7 @@ def test_points_v2_config_validation(tmp_path):
 @pytest.mark.parametrize("knob", ["prompt_templates", "system_prompt", "p_high_res"])
 def test_v2_configs_are_stage1_only(config_cls, knob):
     """The prompt family is fixed to the released pretrain's (bare label behind ``"<style>:"``),
-    so a run cannot be pointed at the SFT-stage templates by a default or an override."""
+    so no default or override can change it."""
     assert STAGE1_PROMPT_FAMILY == {
         "prompt_templates": "none",
         "system_prompt": "style_and_length_v2",
@@ -252,7 +252,7 @@ def test_v2_configs_are_stage1_only(config_cls, knob):
     assert knob not in config_cls.__dataclass_fields__
     assert config_cls().loss_token_weighting == "none"
     with pytest.raises(Exception):
-        config_cls().merge([f"{knob}=uber_model_v2"])
+        config_cls().merge([f"{knob}=x"])
 
 
 def test_points_v2_config_tuple_fields_merge_from_cli():

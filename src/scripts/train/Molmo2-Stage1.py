@@ -300,13 +300,6 @@ NLP_RATE = 0.10
 # which needs `pypdfium2` (installed by the launch `post_setup` below).
 OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
-# The OCR user turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
-# `figure_caption_{high,mid,low}_level:`),
-# mm_olmo's molmo3 stage-1 `style_and_length_v3` family, the one mm_olmo trains olmOCR-mix
-# under. In this repo every `style_and_length` family renders the same bare tag, since no tag
-# carries a length number (captions dropped theirs too), so the family choice only records
-# which mm_olmo run the form is taken from.
-OCR_SYSTEM_PROMPT = "style_and_length_v3"
 
 # Which sources `POINTING_RATE` buys.
 #   "v1": the released Molmo2 pretrain's group (mm_olmo train_captioner.py `--pointing`):
@@ -618,9 +611,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
 
     # The v2 pointing sources (mm_olmo `_base_mixture`); only built when `pointing_data == "v2"`.
-    # Unlike the v1 classes, which are shared with the SFT stage and so take their prompt family
-    # from POINTING_DATASET_KWARGS, these are stage-1 sources with the stage-1 family built in:
-    # only the loss weighting is passed through.
+    # Unlike the v1 classes, which take their prompt family from POINTING_DATASET_KWARGS, these
+    # have the stage-1 family built in: only the loss weighting is passed through.
     pointing_v2_config = PixMoPointsV2DatasetConfig(
         p_paired_negatives=POINTING_V2_P_PAIRED_NEGATIVES,
         n_easy_samples=POINTING_V2_N_EASY_NEGATIVES,
@@ -637,26 +629,24 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
     # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
     # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user
-    # turn is the bare `<style>:` tag (OCR_SYSTEM_PROMPT). Long pages are tail-truncated to the
+    # turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
+    # `figure_caption_{high,mid,low}_level:`), as in mm_olmo's molmo3 stage 1. Long pages are tail-truncated to the
     # sequence length.
     olmocr_config = OlmOcrMixDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="none",
-        system_prompt=OCR_SYSTEM_PROMPT,
     )
     ocr_tars_config = OcrCaptionTarsDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="none",
-        system_prompt=OCR_SYSTEM_PROMPT,
     )
     # mm_olmo's `figure_ocr` group: three captions per image, as three branches.
     text_rich_config = TextRichCaptionDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="none",
-        system_prompt=OCR_SYSTEM_PROMPT,
     )
 
     # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a

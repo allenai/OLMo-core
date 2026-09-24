@@ -76,8 +76,8 @@ log = logging.getLogger(__name__)
 #: question is the bare lowercased label behind a ``"<style>:"`` prefix, as recorded in the
 #: released ``Molmo2-4B-Pretrain`` ``data_formatter`` (``prompt_templates: none``,
 #: ``system_prompt: style_and_length_v2``). mm_olmo's molmo3 stage 1 (``style_and_length_v3``)
-#: renders pointing styles identically. These are stage-1 sources, so the natural-language
-#: template family of the SFT stage is deliberately not reachable from here.
+#: renders pointing styles identically. These are stage-1 sources, so no other family is
+#: reachable from here.
 STAGE1_PROMPT_FAMILY = {"prompt_templates": "none", "system_prompt": "style_and_length_v2"}
 
 #: Held-out sets the v2 points source must share no image with: the validation splits of the
@@ -313,9 +313,7 @@ class PixMoPointsV2Dataset(EpochSeededExamples):
         source = _KIND_TO_SOURCE[cfg.kind]
         if source is not None:
             rows &= _bool_np(pc.equal(table.column("source"), source))
-        train_only = _not_heldout(
-            table, "image_url", heldout_ids(cfg.heldout_paths, "image_url")
-        )
+        train_only = _not_heldout(table, "image_url", heldout_ids(cfg.heldout_paths, "image_url"))
         self.n_heldout_dropped = int((rows & ~train_only).sum())
         return np.flatnonzero(rows & train_only)
 
