@@ -6,6 +6,7 @@ from transformers import Olmo2Config, PretrainedConfig
 from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.attention import Attention, GateGranularity, KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
+from olmo_core.nn.layer_norm import FusedRMSNorm, RMSNorm
 from olmo_core.nn.moe.mlp import DroplessMoEMLP, MoEMLP
 from olmo_core.nn.moe.router import MoERouterGatingFunction
 from olmo_core.nn.rope import RoPEScalingConfig
@@ -156,18 +157,26 @@ def _register_olmo3moe_auto_classes() -> None:
     Olmo3MoeForCausalLM.register_for_auto_class("AutoModelForCausalLM")
 
 
-def _olmo3moe_attention_signature(attention: Attention) -> tuple:
-    """Validate the norm layout and describe the HF model's full-attention configuration."""
+def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> tuple:
+    """Validate Q/K normalization and describe the HF model's attention configuration."""
     if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
         raise NotImplementedError("HF export requires head-wise QK norm.")
-    per_head = attention.q_norm.weight.ndim == 2
+    per_head = attention.q_norm.weight is not None and attention.q_norm.weight.ndim == 2
     for norm, heads in (
         (attention.q_norm, attention.n_heads),
         (attention.k_norm, attention.n_kv_heads),
     ):
+        # Other RMSNorm variants round before multiplying by the gain, whereas the HF
+        # implementation normalizes and applies the gain in FP32 before casting back.
+        if type(norm) not in (RMSNorm, FusedRMSNorm) or not norm.full_precision:
+            raise NotImplementedError(
+                "HF export requires Q/K norms to use full-precision RMSNorm or FusedRMSNorm."
+            )
         shape = (heads, attention.head_dim) if per_head else (attention.head_dim,)
-        if tuple(norm.weight.shape) != shape or norm.bias is not None:
+        if norm.weight is None or tuple(norm.weight.shape) != shape or norm.bias is not None:
             raise NotImplementedError("Unsupported Q/K norm gain layout or bias for HF export.")
+        if norm.eps != rms_norm_eps:
+            raise NotImplementedError("HF export requires the same Q/K and model RMSNorm epsilon.")
     return (
         attention.n_heads,
         attention.n_kv_heads,
@@ -179,6 +188,13 @@ def _olmo3moe_attention_signature(attention: Attention) -> tuple:
         str(attention.gate.granularity) if attention.gate is not None else None,
         attention.gate.full_precision if attention.gate is not None else True,
     )
+
+
+def _olmo3moe_kda_norm_eps(attention: KimiDeltaAttention) -> float:
+    eps = getattr(attention.o_norm, "eps", getattr(attention.o_norm, "variance_epsilon", None))
+    if eps is None:
+        raise NotImplementedError("Unable to determine the KDA output-norm epsilon for HF export.")
+    return float(eps)
 
 
 def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
@@ -253,6 +269,13 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
             "Exporting olmo3moe requires head-wise QK-norm (use_head_qk_norm=True); other "
             "QK-norm configurations are not supported."
         )
+    rms_norm_eps = moe_block.feed_forward_norm.eps
+    attention_signature = _olmo3moe_attention_signature(attention, rms_norm_eps)
+    for block in blocks:
+        if not isinstance(block.attention, Attention):
+            raise NotImplementedError("HF export requires Attention in every non-KDA layer.")
+        if _olmo3moe_attention_signature(block.attention, rms_norm_eps) != attention_signature:
+            raise NotImplementedError("Heterogeneous attention configurations are unsupported.")
 
     if moe_block.routed_experts is None or moe_block.routed_experts_router is None:
         raise NotImplementedError("MoE block is missing routed experts or its router.")
@@ -456,6 +479,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     kda = kda_blocks[0].attention
     assert isinstance(kda, KimiDeltaAttention)
+    kda_norm_eps = _olmo3moe_kda_norm_eps(kda)
     kda_signature = (
         kda.n_heads,
         kda.n_v_heads,
@@ -463,6 +487,7 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         kda.head_v_dim,
         kda.conv_size,
         kda.allow_neg_eigval,
+        kda_norm_eps,
     )
     for block in kda_blocks[1:]:
         other = block.attention
@@ -474,25 +499,24 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
             other.head_v_dim,
             other.conv_size,
             other.allow_neg_eigval,
+            _olmo3moe_kda_norm_eps(other),
         ) != kda_signature:
-            raise NotImplementedError("Heterogeneous KDA layer shapes are unsupported.")
+            raise NotImplementedError(
+                "Heterogeneous KDA layer shapes or output-norm epsilons are unsupported."
+            )
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
     if any(block.attention.backend.window_size != (-1, -1) for block in attention_blocks):
         raise NotImplementedError("Hybrid KDA HF export does not support sliding-window attention.")
-    attention_signature = _olmo3moe_attention_signature(attention)
+    rms_norm_eps = representative.feed_forward_norm.eps
+    attention_signature = _olmo3moe_attention_signature(attention, rms_norm_eps)
     assert attention.q_norm is not None and attention.k_norm is not None
     if any(
-        _olmo3moe_attention_signature(block.attention) != attention_signature
+        _olmo3moe_attention_signature(block.attention, rms_norm_eps) != attention_signature
         for block in attention_blocks
     ):
         raise NotImplementedError("Heterogeneous full-attention configurations are unsupported.")
-    if (
-        attention.q_norm.eps != representative.feed_forward_norm.eps
-        or attention.k_norm.eps != representative.feed_forward_norm.eps
-    ):
-        raise NotImplementedError("HF export requires the same Q/K and model RMSNorm epsilon.")
     ropes = [block.attention.rope for block in attention_blocks]
     if any(rope is None for rope in ropes) != all(rope is None for rope in ropes):
         raise NotImplementedError("Full-attention layers must consistently enable or disable RoPE.")
@@ -543,7 +567,6 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         "linear_attention" if isinstance(block.attention, KimiDeltaAttention) else "full_attention"
         for block in blocks
     ]
-    kda_norm_eps = float(getattr(kda.o_norm, "eps", getattr(kda.o_norm, "variance_epsilon", 1e-5)))
     latent = representative.latent_down_proj
     emo = getattr(router, "emo", None)
 

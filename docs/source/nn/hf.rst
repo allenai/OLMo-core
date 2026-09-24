@@ -30,6 +30,12 @@ layers are rejected. In both hybrid and attention-only EMO models, every routed
 layer's evaluation pool must span all experts. Restricted evaluation pools are
 rejected because the HF router does not implement document-pool selection.
 
+Both export paths require bias-free, full-precision ``RMSNorm`` or ``FusedRMSNorm``
+for every Q/K norm, with the same epsilon as the model norms. Other normalization
+operations and variants with different rounding behavior are rejected. All KDA
+output norms must share one epsilon, which is preserved as ``linear_norm_eps``;
+it may differ from the model RMSNorm epsilon.
+
 Scalable-softmax exports set ``use_cache=False`` for generation. The HF model
 rejects both ``use_cache=True`` and supplied ``past_key_values`` for these models.
 Ordinary attention-only exports retain KV caching. Hybrid KDA exports also

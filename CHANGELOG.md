@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
 - Preserve the resolved tokenizer BOS ID in exported model and generation configs, including when the training config leaves BOS unspecified.
 - Reject hybrid KDA HF exports with sliding-window attention and EMO exports with restricted evaluation pools in any routed layer. Disable scalable-softmax HF generation caching and reject explicit cache use.
 - Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.

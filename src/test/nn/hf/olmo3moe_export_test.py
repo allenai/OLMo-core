@@ -38,7 +38,14 @@ requires_fla = pytest.mark.skipif(not has_fla, reason="Requires flash-linear-att
 
 
 def build_hybrid(
-    *, latent=True, emo=False, per_head=True, scalable=True, window=None, device="cpu"
+    *,
+    latent=True,
+    emo=False,
+    per_head=True,
+    scalable=True,
+    window=None,
+    device="cpu",
+    kda_norm_eps=1e-5,
 ):
     """Small generic fixture with a dense KDA layer and both sparse attention types."""
     width, experts = 128, 4
@@ -49,6 +56,7 @@ def build_hybrid(
         head_dim=64,
         expand_v=2.0,
         allow_neg_eigval=True,
+        norm_eps=kda_norm_eps,
         use_experimental_kernels=False,
     )
     attention = AttentionConfig(
@@ -207,6 +215,60 @@ def test_attention_only_export_rejects_restricted_emo_pool_in_every_layer(layer,
         get_hf_config(model)
 
 
+@pytest.mark.parametrize(
+    "builder,layer",
+    [
+        (build_attention_only, "0"),
+        (build_attention_only, "1"),
+        pytest.param(build_hybrid, "2", marks=requires_fla),
+    ],
+)
+@pytest.mark.parametrize("norm_name", ["q_norm", "k_norm"])
+@pytest.mark.parametrize(
+    "norm_type,full_precision",
+    [
+        (LayerNormType.default, True),
+        (LayerNormType.qwen_rms, True),
+        (LayerNormType.nemotron_rms, True),
+        (LayerNormType.rms, False),
+    ],
+)
+def test_export_rejects_incompatible_qk_norms(builder, layer, norm_name, norm_type, full_precision):
+    model = builder()
+    attention = model.blocks[layer].attention
+    original = getattr(attention, norm_name)
+    replacement = LayerNormConfig(
+        name=norm_type,
+        eps=original.eps,
+        bias=False,
+        full_precision=full_precision,
+    ).build(size=attention.head_dim, weight_shape=tuple(original.weight.shape))
+    # The parameters round-trip exactly, but the normalization operation differs.
+    replacement.load_state_dict(original.state_dict(), strict=True)
+    setattr(attention, norm_name, replacement)
+    with pytest.raises(NotImplementedError, match="Q/K.*RMSNorm"):
+        get_hf_config(model)
+
+
+@requires_fla
+@pytest.mark.parametrize("layer", ["0", "1"])
+def test_hybrid_export_rejects_heterogeneous_kda_norm_eps(layer):
+    model = build_hybrid()
+    model.blocks[layer].attention.o_norm.eps = 1e-3
+    with pytest.raises(NotImplementedError, match="KDA.*epsilon"):
+        get_hf_config(model)
+
+
+@requires_fla
+def test_hybrid_export_preserves_nondefault_kda_norm_eps(tmp_path):
+    model = build_hybrid(kda_norm_eps=1e-3)
+    save_hf_model(tmp_path / "hf", model.state_dict(), model)
+    hf = Olmo3MoeForCausalLM.from_pretrained(tmp_path / "hf")
+    assert hf.config.linear_norm_eps == 1e-3
+    for layer in (0, 1):
+        assert hf.model.layers[layer].self_attn.o_norm.eps == 1e-3
+
+
 @requires_fla
 @pytest.mark.parametrize("latent,emo", [(False, True), (True, True), (True, False)])
 @pytest.mark.parametrize(
@@ -238,8 +300,9 @@ def test_core_hybrid_exports_and_reloads(tmp_path, latent, emo, per_head, scalab
 @requires_fla
 @requires_gpu
 @pytest.mark.parametrize("emo", [False, True])
-def test_core_hybrid_hf_forward_parity(emo):
-    model = build_hybrid(emo=emo, device="cuda")
+@pytest.mark.parametrize("kda_norm_eps", [1e-5, 1e-3])
+def test_core_hybrid_hf_forward_parity(emo, kda_norm_eps):
+    model = build_hybrid(emo=emo, device="cuda", kda_norm_eps=kda_norm_eps)
     config = get_hf_config(model)
     config._attn_implementation = "eager"
     hf = Olmo3MoeForCausalLM(config).to(device="cuda", dtype=torch.bfloat16).eval()
