@@ -5,7 +5,7 @@ question, no instruction. There are two tasks, and the group's rate is divided b
 before it is divided among sources (:data:`OCR_TASK_SHARES`):
 
 * **transcription** -- write out the text in the image.
-  The four olmOCR-mix-1025 subsets (style ``olmocr``; PDF pages rendered at load time, see
+  The four olmOCR-mix-1025 subsets (style ``ocr``; PDF pages rendered at load time, see
   :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), and the scene-text tars
   (style ``scene_text``; TextOCR, plus HierText / COCO-Text / UberText).
 * **figure captions** -- describe a text-rich figure at three altitudes.
@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
-from olmo_core.data.multimodal.olmocr import OLMOCR_STYLE, OlmOcrMixDatasetConfig
+from olmo_core.data.multimodal.olmocr import OCR_STYLE, OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
 from olmo_core.data.multimodal.text_rich_caption import (
     CATEGORIES as TEXT_RICH_CATEGORIES,
@@ -71,7 +71,7 @@ __all__ = [
     "OCR_TASK_SHARES",
     "ocr_task",
     "ocr_task_shares",
-    "OLMOCR_STYLE",
+    "OCR_STYLE",
     "SCENE_TEXT_STYLE",
     "build_ocr_source",
 ]
@@ -93,8 +93,8 @@ class OcrTarSource:
 #: Transcription tars: the target is the text visible in the image, ``<text>``-wrapped.
 OCR_TAR_SOURCES: Dict[str, OcrTarSource] = {
     # olmOCR pages, pre-rendered; duplicates of olmOCR-mix documents / books (see module doc).
-    "s2pdf": OcrTarSource("olmocr_v6_tars/s2pdf", OLMOCR_STYLE, True),
-    "iabooks": OcrTarSource("olmocr_v6_tars/iabooks", OLMOCR_STYLE, True),
+    "s2pdf": OcrTarSource("olmocr_v6_tars/s2pdf", OCR_STYLE, True),
+    "iabooks": OcrTarSource("olmocr_v6_tars/iabooks", OCR_STYLE, True),
     # Scene text.
     "textocr": OcrTarSource("textocr_v6_tars", SCENE_TEXT_STYLE, True),
     "hiertext": OcrTarSource("scene_text_tars/hiertext_v6_tars", SCENE_TEXT_STYLE, True),

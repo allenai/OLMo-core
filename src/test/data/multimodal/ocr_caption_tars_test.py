@@ -340,7 +340,7 @@ def test_ocr_registry_shape():
     )
     # Every tar source is a transcription source: <text>-wrapped text under one of two styles.
     styles = {src.style for src in ocr_mix.OCR_TAR_SOURCES.values()}
-    assert styles == {ocr_mix.OLMOCR_STYLE, ocr_mix.SCENE_TEXT_STYLE}
+    assert styles == {ocr_mix.OCR_STYLE, ocr_mix.SCENE_TEXT_STYLE}
     assert all(src.strip_text_tags for src in ocr_mix.OCR_TAR_SOURCES.values())
     with pytest.raises(OLMoConfigurationError):
         ocr_mix.build_ocr_source(

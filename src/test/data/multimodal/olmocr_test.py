@@ -17,7 +17,7 @@ import pytest
 from olmo_core.data.multimodal import OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal import olmocr as olmocr_mod
 from olmo_core.data.multimodal.olmocr import (
-    OLMOCR_STYLE,
+    OCR_STYLE,
     canonical_split,
     canonical_subset,
     pdf_path_for,
@@ -197,10 +197,10 @@ def test_render_size_sampled_on_train_fixed_on_eval(tmp_path, stub_renderer):
 
 
 def test_user_prompt_is_the_bare_tag(tmp_path, stub_renderer):
-    """As in mm_olmo's molmo3 stage 1, the user turn is ``olmocr:`` alone, with no length number."""
+    """The user turn is the ``ocr:`` tag alone, with no question and no length number."""
     root = _write_root(tmp_path)
     ds = _cfg(root).build(_FakeTok())
-    assert ds.user_prompt() == f"{OLMOCR_STYLE}:" == "olmocr:"
+    assert ds.user_prompt() == f"{OCR_STYLE}:" == "ocr:"
 
 
 def test_render_size_rotates_across_epochs(tmp_path, stub_renderer):

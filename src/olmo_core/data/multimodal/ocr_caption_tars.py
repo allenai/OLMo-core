@@ -253,7 +253,7 @@ class OcrCaptionTarsDatasetConfig(Config):
 
     style: str = "scene_text"
     """mm_olmo-style name shown in the user turn's tag; see :mod:`.mixtures.ocr` for the ones the
-    tar sources use (``olmocr`` / ``scene_text``)."""
+    tar sources use (``ocr`` / ``scene_text``)."""
 
     text_field: str = "caption"
     """JSON field holding the target text."""
