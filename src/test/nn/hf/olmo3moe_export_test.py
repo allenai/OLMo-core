@@ -323,6 +323,44 @@ def test_export_rejects_clipped_attention(builder, layers, clip_qkv):
             get_hf_config(model)
 
 
+@pytest.mark.parametrize(
+    "builder,layers",
+    [
+        (build_attention_only, ("0", "1")),
+        pytest.param(build_hybrid, ("2", "3"), marks=requires_fla),
+    ],
+)
+@pytest.mark.parametrize("change", ["scale_zero", "scale_one", "w_q", "w_k", "w_v", "w_out"])
+def test_export_rejects_unrepresented_attention_operations(builder, layers, change):
+    for layer in layers:
+        model = builder()
+        if builder is build_hybrid:
+            model.blocks["3"] = deepcopy(model.blocks["2"])
+        attention = model.blocks[layer].attention
+        if change.startswith("scale"):
+            attention.backend.scale = 0.0 if change == "scale_zero" else 1.0
+            message = "softmax scale"
+        else:
+            projection = getattr(attention, change)
+            projection.bias = torch.nn.Parameter(torch.ones(projection.weight.shape[0]))
+            message = "attention.*bias"
+        with pytest.raises(NotImplementedError, match=message):
+            get_hf_config(model)
+
+
+@pytest.mark.parametrize(
+    "builder", [build_attention_only, pytest.param(build_hybrid, marks=requires_fla)]
+)
+def test_export_accepts_explicit_default_attention_scale(builder):
+    model = builder()
+    expected = get_hf_config(model).to_dict()
+    for block in model.blocks.values():
+        attention = block.attention
+        if hasattr(attention, "backend"):
+            attention.backend.scale = attention.head_dim**-0.5
+    assert get_hf_config(model).to_dict() == expected
+
+
 @requires_fla
 def test_hybrid_export_preserves_nondefault_kda_norm_eps(tmp_path):
     model = build_hybrid(kda_norm_eps=1e-3)

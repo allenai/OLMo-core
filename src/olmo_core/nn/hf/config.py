@@ -220,6 +220,13 @@ def _olmo3moe_attention_signature(attention: Attention, rms_norm_eps: float) -> 
     """Validate Q/K normalization and describe the HF model's attention configuration."""
     if attention.clip_qkv is not None:
         raise NotImplementedError("HF export does not support attention clip_qkv.")
+    if attention.backend.scale not in (None, attention.head_dim**-0.5):
+        raise NotImplementedError("HF export does not support a custom attention softmax scale.")
+    if any(
+        projection.bias is not None
+        for projection in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
+    ):
+        raise NotImplementedError("HF export does not support attention projection biases.")
     if not attention.use_head_qk_norm or attention.q_norm is None or attention.k_norm is None:
         raise NotImplementedError("HF export requires head-wise QK norm.")
     per_head = attention.q_norm.weight is not None and attention.q_norm.weight.ndim == 2
@@ -310,11 +317,6 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     # attention; reject anything else rather than silently exporting a divergent model.
     if attention.rope.scaling is not None:
         raise NotImplementedError("Exporting olmo3moe with scaled RoPE is not supported.")
-    if any(
-        proj.bias is not None
-        for proj in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
-    ):
-        raise NotImplementedError("Exporting olmo3moe with attention biases is not supported.")
     if not attention.use_head_qk_norm or attention.q_norm is None:
         raise NotImplementedError(
             "Exporting olmo3moe requires head-wise QK-norm (use_head_qk_norm=True); other "
@@ -588,11 +590,6 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         rope_scaling = _get_and_validate_rope_scaling_config(attention_blocks)
     if attention.q_norm is None or attention.k_norm is None or not attention.use_head_qk_norm:
         raise NotImplementedError("HF export requires head-wise QK norm.")
-    if any(
-        projection.bias is not None
-        for projection in (attention.w_q, attention.w_k, attention.w_v, attention.w_out)
-    ):
-        raise NotImplementedError("Biased full-attention projections are unsupported.")
 
     gate_type, gate_full_precision = _olmo3moe_attention_gate(attention)
 
