@@ -278,6 +278,33 @@ def test_hybrid_export_rejects_heterogeneous_kda_norm_eps(layer):
         get_hf_config(model)
 
 
+@pytest.mark.parametrize(
+    "builder,layers",
+    [
+        (build_attention_only, ("0", "1")),
+        pytest.param(build_hybrid, ("1", "2"), marks=requires_fla),
+    ],
+)
+@pytest.mark.parametrize("flag", ["uniform_expert_assignment", "random_expert_assignment"])
+def test_export_rejects_forced_expert_assignments(builder, layers, flag):
+    for layer in layers:
+        model = builder(emo=False)
+        setattr(model.blocks[layer].routed_experts_router, flag, True)
+        with pytest.raises(NotImplementedError, match=flag):
+            get_hf_config(model)
+
+
+@requires_fla
+@pytest.mark.parametrize("layer", ["0", "1"])
+@pytest.mark.parametrize("conv_name", ["q_conv1d", "k_conv1d", "v_conv1d"])
+def test_hybrid_export_rejects_biased_kda_convolutions(layer, conv_name):
+    model = build_hybrid()
+    conv = getattr(model.blocks[layer].attention, conv_name)
+    conv.bias = torch.nn.Parameter(torch.zeros(conv.weight.shape[0]))
+    with pytest.raises(NotImplementedError, match="KDA.*convolution.*bias"):
+        get_hf_config(model)
+
+
 @requires_fla
 def test_hybrid_export_preserves_nondefault_kda_norm_eps(tmp_path):
     model = build_hybrid(kda_norm_eps=1e-3)

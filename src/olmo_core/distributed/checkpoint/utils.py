@@ -15,8 +15,10 @@ def prepare_qk_expansion(
 ) -> dict[str, torch.Tensor]:
     """Replace only old shared QK gains/moments with tiny replicated load destinations.
 
-    ``gain_shapes`` must come from the live model's two-dimensional Q/K RMSNorm weights.
-    Optimizer checkpoint tensors are flattened. Every other tensor shape must match exactly.
+    ``gain_shapes`` must come from the live model's two-dimensional Q/K RMSNorm weights,
+    keyed by the direct model checkpoint key or by the optimizer parameter name.
+    Optimizer checkpoint tensors are flattened; direct model tensors retain their shape.
+    Every other tensor shape must match exactly.
     """
     expansions = {}
     for key, target in state.items():
@@ -25,15 +27,18 @@ def prepare_qk_expansion(
             continue
         if tuple(saved.size) == tuple(target.shape):
             continue
-        name, suffix = key.rsplit(".", 1)
+        direct_model = key in gain_shapes
+        name, _, suffix = key.rpartition(".")
+        if direct_model:
+            name = key
         shape = gain_shapes.get(name)
         if (
             shape is None
             or len(shape) != 2
             or not name.endswith((".q_norm.weight", ".k_norm.weight"))
-            or suffix not in ("main", "exp_avg", "exp_avg_sq")
+            or (not direct_model and suffix not in ("main", "exp_avg", "exp_avg_sq"))
             or tuple(saved.size) != (shape[1],)
-            or tuple(target.shape) != (shape[0] * shape[1],)
+            or tuple(target.shape) != (shape if direct_model else (shape[0] * shape[1],))
         ):
             raise ValueError(
                 f"Unsupported checkpoint shape change: {key}: {saved.size} -> {target.shape}"

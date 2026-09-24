@@ -31,6 +31,8 @@ Hybrid KDA exports require full attention in every non-KDA layer; sliding-window
 layers are rejected. In both hybrid and attention-only EMO models, every routed
 layer's evaluation pool must span all experts. Restricted evaluation pools are
 rejected because the HF router does not implement document-pool selection.
+Forced uniform/random expert assignment and KDA convolution biases are also
+unsupported and rejected before conversion.
 
 Both export paths require bias-free, full-precision ``RMSNorm`` or ``FusedRMSNorm``
 with one shared epsilon for Q/K, block pre/post, embedding, LM-head, and latent

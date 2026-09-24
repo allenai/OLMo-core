@@ -524,7 +524,10 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
     reset_optimizer_states_on_load: bool = False
     reset_optimizer_states_on_resume: bool = False
     expand_shared_qk_norm_on_load: bool = False
-    """Opt in to expanding shared Q/K norm gains and Adam moments to independent head gains."""
+    """Opt in to expanding shared Q/K gains and Adam moments to independent head gains.
+
+    Applies to optimizer restores, model-only training loads, and eval-only loads.
+    """
 
     # Other train settings.
 

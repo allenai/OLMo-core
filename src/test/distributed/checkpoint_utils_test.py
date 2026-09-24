@@ -50,6 +50,22 @@ def test_noop_matching_shape():
     assert not prepare_qk_expansion(state, metadata, {key.rsplit(".", 1)[0]: (8, 128)})
 
 
+@pytest.mark.parametrize("prefix", ["", "model.", "model.module."])
+@pytest.mark.parametrize("heads", [1, 4])
+def test_expand_direct_model_qk_state(tmp_path, prefix, heads):
+    key = f"{prefix}blocks.7.attention.k_norm.weight"
+    source = torch.linspace(0.5, 1.5, 16)
+    dcp.save({key: source}, checkpoint_id=tmp_path)
+    target = torch.zeros(heads, 16)
+    state = {key: target}
+    metadata = dcp.FileSystemReader(tmp_path).read_metadata()
+    expansions = prepare_qk_expansion(state, metadata, {key: tuple(target.shape)})
+    dcp.load(state, checkpoint_id=tmp_path)
+    finish_qk_expansion(state, expansions)
+    assert state[key] is target
+    torch.testing.assert_close(target, source.expand(heads, 16), rtol=0, atol=0)
+
+
 def _distributed_roundtrip(path):
     mesh = init_device_mesh("cpu", (2,))
     name = "blocks.7.sequence_mixer.q_norm.weight"

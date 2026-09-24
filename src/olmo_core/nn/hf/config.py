@@ -51,6 +51,9 @@ def _validate_olmo3moe_router_selection(router: Any) -> None:
             "HF EMo export currently requires eval_document_expert_pool=num_experts."
         )
     unsupported_modifiers = []
+    for flag in ("uniform_expert_assignment", "random_expert_assignment"):
+        if getattr(router, flag, False):
+            unsupported_modifiers.append(flag)
     if router.bias_gamma is not None:
         unsupported_modifiers.append("bias_gamma")
     if router.score_correction_bias:
@@ -526,6 +529,11 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     kda = kda_blocks[0].attention
     assert isinstance(kda, KimiDeltaAttention)
+    for block in kda_blocks:
+        mixer = block.attention
+        assert isinstance(mixer, KimiDeltaAttention)
+        if any(conv.bias is not None for conv in (mixer.q_conv1d, mixer.k_conv1d, mixer.v_conv1d)):
+            raise NotImplementedError("KDA HF export does not support convolution bias.")
     kda_norm_eps = _olmo3moe_kda_norm_eps(kda)
     kda_signature = (
         kda.n_heads,
