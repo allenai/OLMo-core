@@ -8,7 +8,7 @@ import sys
 import time
 
 from olmoe3_profile_node import resolve_ready_leader
-from olmoe3_small_hero_plan import ROOT, find_run, runs
+from olmoe3_small_hero_plan import GPUS, ROOT, find_run, runs
 from olmoe3_small_hero_runtime import verify_runtime
 
 
@@ -23,7 +23,7 @@ def main():
     assert (
         int(os.environ["BEAKER_REPLICA_COUNT"]),
         int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]),
-    ) == (8, 8)
+    ) == (GPUS // 8, 8)
     subprocess.run(
         [
             sys.executable,
@@ -38,7 +38,7 @@ def main():
     with Beaker.from_env(check_for_upgrades=False) as beaker:
         deadline = time.monotonic() + 900
         while time.monotonic() < deadline:
-            leader = resolve_ready_leader(beaker, beaker.workload.get(experiment), ready, 8)
+            leader = resolve_ready_leader(beaker, beaker.workload.get(experiment), ready, GPUS // 8)
             if leader:
                 break
             print(f"Node {rank}: waiting for current replica assignments", flush=True)
@@ -63,7 +63,7 @@ def main():
                 sys.executable,
                 "-m",
                 "torch.distributed.run",
-                "--nnodes=8",
+                f"--nnodes={GPUS // 8}",
                 "--nproc-per-node=8",
                 f"--node-rank={rank}",
                 "--rdzv-backend=static",

@@ -4,7 +4,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import ClassVar
@@ -29,6 +29,7 @@ from olmoe3_small_hero_plan import (
     DATA_ROOT,
     DOLMA_MOUNT,
     FINAL_STEPS,
+    GPUS,
     INITIAL_STOP,
     LR,
     MOUNT,
@@ -51,6 +52,8 @@ from olmo_core.train.callbacks.checkpoint_ready_notifier import (
     CheckpointReadyNotifierCallback,
 )
 from olmo_core.train.common import LoadStrategy
+
+qualified.SYSTEM = replace(qualified.SYSTEM, num_nodes=GPUS // 8)
 
 
 def state_sample(trainer):
@@ -90,6 +93,16 @@ class HeroAudit(qualified.IntegrationAudit):
     run_id: str = ""
 
     def post_checkpoint_loaded(self, path):
+        source = json.loads((Path(path) / "resume_audit" / "rank0.json").read_text())
+        if source["gpus"] != get_world_size():
+            from olmoe3_hero_reshard_audit import verify_doubled_dp
+
+            proof = verify_doubled_dp(self.trainer, path, state_sample(self.trainer))
+            atomic_json(
+                Path(self.output_dir) / f"restore-step{self.step}-rank{get_rank()}.json",
+                {"source": str(path), "step": self.step, "sampled_state_exact": True, **proof},
+            )
+            return
         expected = Path(path) / "resume_audit" / f"rank{get_rank()}.json"
         # The audit is part of the immutable uploaded checkpoint, so HF rehydration
         # does not depend on a side file that was only present on the original Weka mount.
@@ -111,7 +124,7 @@ class HeroAudit(qualified.IntegrationAudit):
         assert reg["bucket_id"] == r.bucket and reg["remote_prefix"] == r.prefix
         assert reg["enabled"] and reg["deletion_mode"] == "apply"
         assert reg["min_local_checkpoints"] >= 2 and reg["delete_grace_seconds"] >= 3600
-        assert get_world_size() == 64
+        assert get_world_size() == GPUS
         assert MOUNT.is_mount() and DOLMA_MOUNT.is_mount()
         assert self.trainer.global_train_tokens_seen == self.step * BATCH
         assert self.trainer.data_loader.tokens_processed == self.step * BATCH
@@ -304,10 +317,10 @@ def trainer_config(common):
     wb.group = CAMPAIGN + ("-smoke" if r.smoke else "")
     wb.tags = [
         r.arm,
-        "small-64g",
+        f"small-{GPUS}g",
         "16mi",
         "mb4",
-        "ga8",
+        f"ga{BATCH // (GPUS * 4 * 8192)}",
         "qknorm-pr855",
         "qualified-optimized100b",
         "local-dolma3p5",
@@ -326,7 +339,7 @@ def config_builder():
         build_config,
         global_batch_size=BATCH,
         max_sequence_length=8192,
-        num_nodes=8,
+        num_nodes=GPUS // 8,
         common_config_builder=common_components,
         data_config_builder=data_components,
         model_config_builder=model_config,

@@ -1,5 +1,6 @@
 """Approved small hero pair; dependency-free schedule and storage policy."""
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -28,6 +29,8 @@ EXCLUDED_HOSTNAMES = {
     "holmes-cs-aus-550.reviz.ai2.in",  # Beaker interconnect healthcheck ALLREDUCE timeout.
 }
 BATCH = 16_777_216
+GPUS = int(os.environ.get("OLMO35_HERO_GPUS", "64"))
+assert GPUS in (64, 128)
 LR = 1.1e-3
 WARMUP = 2000
 EARLY_SWITCH_STEP = 18_000
