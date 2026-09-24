@@ -247,7 +247,8 @@ def convert_checkpoint_to_hf(
     huggingface_config = AutoConfig.from_pretrained(output_path)
     huggingface_config.max_position_embeddings = max_sequence_length
     huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
+    # The exported tokenizer resolves an unspecified BOS from its source metadata.
+    huggingface_config.bos_token_id = huggingface_tokenizer.bos_token_id
     huggingface_config.eos_token_id = tokenizer_config.eos_token_id
     huggingface_config.save_pretrained(output_path)
     log.info(

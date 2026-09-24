@@ -219,6 +219,8 @@ def save_hf_model(
     hf_model.generation_config.do_sample = True
 
     if huggingface_tokenizer is not None:
+        hf_model.config.bos_token_id = huggingface_tokenizer.bos_token_id
+        hf_model.generation_config.bos_token_id = huggingface_tokenizer.bos_token_id
         hf_model.generation_config.eos_token_id = huggingface_tokenizer.convert_tokens_to_ids(
             ["<|im_end|>", "<|endoftext|>"]
         )

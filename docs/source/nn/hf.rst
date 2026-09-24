@@ -11,6 +11,8 @@ Saved identifiers, including ``allenai/dolma2-tokenizer``, remain supported.
 For SFT, select the tokenizer and chat template actually used in training.
 An unspecified BOS in the training config preserves the source tokenizer's BOS;
 explicit special-token IDs in the config take precedence.
+Model and generation configurations use the resolved BOS ID as well, so
+generation without input IDs starts with the same token as the exported tokenizer.
 
 The exporter requires a fast ``tokenizer.json`` and preserves its encoding
 backend with a generic fast tokenizer. An independent AutoTokenizer reload
