@@ -146,6 +146,23 @@ def test_olmo3moe_logprobs_match_after_conversion_roundtrip():
 
 
 @requires_olmo3moe
+@pytest.mark.parametrize("use_cache", [None, False, True])
+def test_scalable_softmax_rejects_supplied_cache(use_cache):
+    from transformers.cache_utils import DynamicCache
+
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    config = _small_config()
+    config.scalable_softmax = True
+    config.layer_types = ["full_attention"] * config.num_hidden_layers
+    model = Olmo3MoeForCausalLM(config).eval()
+    cache = DynamicCache(config=config)
+    with pytest.raises(NotImplementedError, match="[Ss]calable.softmax.*cach"):
+        model(torch.tensor([[1, 2, 3]]), past_key_values=cache, use_cache=use_cache)
+    assert cache.get_seq_length() == 0
+
+
+@requires_olmo3moe
 def test_olmo3moe_kda_rejects_padding_mask_before_attention():
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import _validate_linear_attention_mask
 

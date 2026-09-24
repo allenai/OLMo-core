@@ -44,6 +44,11 @@ except ImportError:
 
 def _validate_olmo3moe_router_selection(router: Any) -> None:
     """Reject router behavior that the HF Olmo3Moe implementation cannot reproduce."""
+    emo = getattr(router, "emo", None)
+    if emo is not None and emo.eval_pool_size() != router.num_experts:
+        raise NotImplementedError(
+            "HF EMo export currently requires eval_document_expert_pool=num_experts."
+        )
     unsupported_modifiers = []
     if router.bias_gamma is not None:
         unsupported_modifiers.append("bias_gamma")
@@ -257,7 +262,9 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
     # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
     # path, so exporting any of these would silently diverge (or crash on the first HF forward).
-    _validate_olmo3moe_router_selection(router)
+    for block in blocks:
+        if isinstance(block, OLMoDDPTransformerBlock) and block.routed_experts_router is not None:
+            _validate_olmo3moe_router_selection(block.routed_experts_router)
 
     # The HF olmo3moe router/expert linears are bias-free and the converter only copies
     # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
@@ -350,6 +357,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         use_head_qk_norm=attention.use_head_qk_norm,
         qk_norm_per_head_gains=attention.q_norm.weight.ndim == 2,
         scalable_softmax=attention.scalable_softmax,
+        use_cache=not attention.scalable_softmax,
         sliding_window=sliding_window,
         layer_types=layer_types,
         dense_layers_indices=dense_layers_indices,
@@ -396,10 +404,6 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
         block_experts = block.routed_experts
         _validate_olmo3moe_router_selection(block_router)
         emo = getattr(block_router, "emo", None)
-        if emo is not None and emo.eval_pool_size() != block_experts.num_experts:
-            raise NotImplementedError(
-                "HF EMo export currently requires eval_document_expert_pool=num_experts."
-            )
         latent = block.latent_down_proj
         latent_norm = block.latent_up_proj_input_norm
         if latent_norm is not None and (
@@ -475,6 +479,8 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     attention = attention_blocks[0].attention
     assert isinstance(attention, Attention)
+    if any(block.attention.backend.window_size != (-1, -1) for block in attention_blocks):
+        raise NotImplementedError("Hybrid KDA HF export does not support sliding-window attention.")
     attention_signature = _olmo3moe_attention_signature(attention)
     assert attention.q_norm is not None and attention.k_norm is not None
     if any(

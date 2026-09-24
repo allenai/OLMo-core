@@ -20,6 +20,20 @@ are normalized for comparison. A mismatch fails conversion even when numerical
 model validation is disabled. ``tokenizer-export-audit.json`` records provenance.
 This does not repair training data that was tokenized incorrectly.
 
+OLMoDDP MoE export constraints
+------------------------------
+
+Hybrid KDA exports require full attention in every non-KDA layer; sliding-window
+layers are rejected. In both hybrid and attention-only EMO models, every routed
+layer's evaluation pool must span all experts. Restricted evaluation pools are
+rejected because the HF router does not implement document-pool selection.
+
+Scalable-softmax exports set ``use_cache=False`` for generation. The HF model
+rejects both ``use_cache=True`` and supplied ``past_key_values`` for these models.
+Ordinary attention-only exports retain KV caching. Hybrid KDA exports also
+require uncached input because the HF reference does not implement recurrent-state
+caching.
+
 .. automodule:: olmo_core.nn.hf
    :members:
    :member-order: bysource
