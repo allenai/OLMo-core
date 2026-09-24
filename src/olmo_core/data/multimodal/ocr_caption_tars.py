@@ -251,9 +251,9 @@ class OcrCaptionTarsDatasetConfig(Config):
     dataset_path: str = ""
     """Directory of ``.tar`` shards (see :mod:`.mixtures.ocr` for the known sources)."""
 
-    style: str = "scene_text"
-    """mm_olmo-style name shown in the user turn's tag; see :mod:`.mixtures.ocr` for the ones the
-    tar sources use (``ocr`` / ``scene_text``)."""
+    style: str = "textocr"
+    """Style name shown in the user turn's tag; see :mod:`.mixtures.ocr` for the ones the tar
+    sources use (``olmocr`` / ``textocr``)."""
 
     text_field: str = "caption"
     """JSON field holding the target text."""

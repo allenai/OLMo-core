@@ -5,9 +5,10 @@ question, no instruction. There are two tasks, and the group's rate is divided b
 before it is divided among sources (:data:`OCR_TASK_SHARES`):
 
 * **transcription** -- write out the text in the image.
-  The four olmOCR-mix-1025 subsets (style ``ocr``; PDF pages rendered at load time, see
+  The four olmOCR-mix-1025 subsets (style ``olmocr``; PDF pages rendered at load time, see
   :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), and the scene-text tars
-  (style ``scene_text``; TextOCR, plus HierText / COCO-Text / UberText).
+  (style ``textocr``; TextOCR, plus HierText / COCO-Text / UberText, which take TextOCR's form:
+  the text in a photo as snippets joined by spaces).
 * **figure captions** -- describe a text-rich figure at three altitudes.
   The five ``text_rich_*`` categories (styles ``fig_caption_{high,mid,low}``; see
   :class:`~olmo_core.data.multimodal.text_rich_caption.TextRichCaptionDatasetConfig`).
@@ -49,7 +50,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Sequence, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
-from olmo_core.data.multimodal.olmocr import OCR_STYLE, OlmOcrMixDatasetConfig
+from olmo_core.data.multimodal.olmocr import OLMOCR_STYLE, OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
 from olmo_core.data.multimodal.text_rich_caption import (
     CATEGORIES as TEXT_RICH_CATEGORIES,
@@ -71,12 +72,14 @@ __all__ = [
     "OCR_TASK_SHARES",
     "ocr_task",
     "ocr_task_shares",
-    "OCR_STYLE",
-    "SCENE_TEXT_STYLE",
+    "OLMOCR_STYLE",
+    "TEXTOCR_STYLE",
     "build_ocr_source",
 ]
 
-SCENE_TEXT_STYLE = "scene_text"
+#: Scene-text transcription in TextOCR's form: every piece of text in a photo, joined by spaces,
+#: with no layout. The non-default scene-text sources are tagged the same way.
+TEXTOCR_STYLE = "textocr"
 
 
 @dataclass(frozen=True)
@@ -93,13 +96,13 @@ class OcrTarSource:
 #: Transcription tars: the target is the text visible in the image, ``<text>``-wrapped.
 OCR_TAR_SOURCES: Dict[str, OcrTarSource] = {
     # olmOCR pages, pre-rendered; duplicates of olmOCR-mix documents / books (see module doc).
-    "s2pdf": OcrTarSource("olmocr_v6_tars/s2pdf", OCR_STYLE, True),
-    "iabooks": OcrTarSource("olmocr_v6_tars/iabooks", OCR_STYLE, True),
+    "s2pdf": OcrTarSource("olmocr_v6_tars/s2pdf", OLMOCR_STYLE, True),
+    "iabooks": OcrTarSource("olmocr_v6_tars/iabooks", OLMOCR_STYLE, True),
     # Scene text.
-    "textocr": OcrTarSource("textocr_v6_tars", SCENE_TEXT_STYLE, True),
-    "hiertext": OcrTarSource("scene_text_tars/hiertext_v6_tars", SCENE_TEXT_STYLE, True),
-    "cocotext": OcrTarSource("scene_text_tars/cocotext_v6_tars", SCENE_TEXT_STYLE, True),
-    "ubertext": OcrTarSource("scene_text_tars/ubertext_v6_tars", SCENE_TEXT_STYLE, True),
+    "textocr": OcrTarSource("textocr_v6_tars", TEXTOCR_STYLE, True),
+    "hiertext": OcrTarSource("scene_text_tars/hiertext_v6_tars", TEXTOCR_STYLE, True),
+    "cocotext": OcrTarSource("scene_text_tars/cocotext_v6_tars", TEXTOCR_STYLE, True),
+    "ubertext": OcrTarSource("scene_text_tars/ubertext_v6_tars", TEXTOCR_STYLE, True),
 }
 
 #: olmOCR-mix sources: group name -> ``OlmOcrMixDatasetConfig.subset``.

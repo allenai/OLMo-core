@@ -86,7 +86,7 @@ def _write_tars(tmp_path, extra_key: str = ""):
 
 
 def _cfg(root, tmp_path, **kw):
-    kw.setdefault("style", "scene_text")
+    kw.setdefault("style", "textocr")
     kw.setdefault("max_crops", 1)
     kw.setdefault("index_cache_dir", str(tmp_path / "index_cache"))
     return OcrCaptionTarsDatasetConfig(dataset_path=root, **kw)
@@ -255,7 +255,7 @@ def test_dataset_text_and_prompt(tmp_path):
     # The user turn is the bare tag, with no length number.
     from olmo_core.data.multimodal.pixmo_cap import style_tag_prompt
 
-    assert style_tag_prompt("scene_text") == "scene_text:"
+    assert style_tag_prompt("textocr") == "textocr:"
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ def test_example_layout(tmp_path):
         assert key in ex
     assert "subsegment_ids" not in ex
     text_ids = ex["input_ids"][ex["token_type_ids"] == 0].tolist()
-    prompt_ids = tok.encode("scene_text:")
+    prompt_ids = tok.encode("textocr:")
     assert any(text_ids[i : i + len(prompt_ids)] == prompt_ids for i in range(len(text_ids)))
     resp = tok.encode("FELIX PRIVAT DBU 889")  # tags stripped
     assert ex["loss_masks"].sum() == pytest.approx(len(resp) + 1)
@@ -340,7 +340,7 @@ def test_ocr_registry_shape():
     )
     # Every tar source is a transcription source: <text>-wrapped text under one of two styles.
     styles = {src.style for src in ocr_mix.OCR_TAR_SOURCES.values()}
-    assert styles == {ocr_mix.OCR_STYLE, ocr_mix.SCENE_TEXT_STYLE}
+    assert styles == {ocr_mix.OLMOCR_STYLE, ocr_mix.TEXTOCR_STYLE}
     assert all(src.strip_text_tags for src in ocr_mix.OCR_TAR_SOURCES.values())
     with pytest.raises(OLMoConfigurationError):
         ocr_mix.build_ocr_source(
@@ -365,7 +365,7 @@ def test_build_ocr_source_fills_tar_template(tmp_path):
         text_rich=TextRichCaptionDatasetConfig(),
         data_root=str(root),
     )
-    assert ds.config.style == "scene_text" and ds.config.strip_text_tags is True
+    assert ds.config.style == "textocr" and ds.config.strip_text_tags is True
     assert ds.config.dataset_path == str(root / "scene_text_tars" / "cocotext_v6_tars")
     assert ds.config.max_crops == 1 and len(ds) == 5
 

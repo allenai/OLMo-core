@@ -9,8 +9,8 @@ into ``pdfs/<chunk>/<arcname>``; this module reads that layout -- already materi
 at :data:`~olmo_core.data.multimodal.paths.OLMOCR_MIX` -- and does not download.
 
 Each example is one rendered page and its ``natural_text`` transcription. There is no question:
-the user turn is just the style tag, the bare ``"ocr:"`` (mm_olmo's formatter has no template for
-this style, which it names ``olmocr``), and the assistant turn is the transcription
+the user turn is just the style tag, the bare ``"olmocr:"`` (mm_olmo's name; its formatter has no
+template for this style), and the assistant turn is the transcription
 (``"No text found"`` for blank pages). Pages are rasterised on the fly with ``pypdfium2`` at a
 longest side sampled from ``target_longest_image_dim_range`` for training (mm_olmo: 1024-2048)
 and fixed (1536) otherwise, following olmOCR's own per-page DPI rule.
@@ -44,7 +44,7 @@ from .sft_common import (
 )
 
 __all__ = [
-    "OCR_STYLE",
+    "OLMOCR_STYLE",
     "OLMOCR_SUBSETS",
     "OLMOCR_SPLITS",
     "OlmOcrMixDatasetConfig",
@@ -56,9 +56,9 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: Style of page transcription; the user turn is this tag alone, ``"ocr:"``. mm_olmo names it
-#: ``olmocr``, after the dataset; the tag here names the task.
-OCR_STYLE = "ocr"
+#: Style of page transcription in olmOCR's output form (reading order, HTML tables, ``\( \)`` /
+#: ``\[ \]`` math); the user turn is this tag alone, ``"olmocr:"``, mm_olmo's name for it.
+OLMOCR_STYLE = "olmocr"
 
 #: Hub config names. The numeric prefix is part of the parquet / tarball filenames.
 OLMOCR_SUBSETS: Tuple[str, ...] = (
@@ -286,9 +286,9 @@ class OlmOcrMixDataset(EpochSeededExamples):
         return row["natural_text"] or "No text found"
 
     def user_prompt(self) -> str:
-        """The user turn: only the style tag, since the ``ocr`` style has no question
+        """The user turn: only the style tag, since the ``olmocr`` style has no question
         (:func:`~.pixmo_cap.style_tag_prompt`)."""
-        return style_tag_prompt(OCR_STYLE)
+        return style_tag_prompt(OLMOCR_STYLE)
 
     # -- example ---------------------------------------------------------------------------
 
