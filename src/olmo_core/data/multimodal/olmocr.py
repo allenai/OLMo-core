@@ -11,8 +11,9 @@ at :data:`~olmo_core.data.multimodal.paths.OLMOCR_MIX` -- and does not download.
 Each example is one rendered page and its ``natural_text`` transcription. There is no question:
 the user turn is just the style tag, the bare ``"ocr:"`` (mm_olmo's formatter has no template for
 this style, which it names ``olmocr``), and the assistant turn is the transcription
-(``"No text found"`` for blank pages). Pages are rasterised on the fly with ``pypdfium2`` at a longest side sampled from ``target_longest_image_dim_range`` for training
-(mm_olmo: 1024-2048) and fixed (1536) otherwise, following olmOCR's own per-page DPI rule.
+(``"No text found"`` for blank pages). Pages are rasterised on the fly with ``pypdfium2`` at a
+longest side sampled from ``target_longest_image_dim_range`` for training (mm_olmo: 1024-2048)
+and fixed (1536) otherwise, following olmOCR's own per-page DPI rule.
 
 Transcriptions run long (documents pages: median ~580 tokens, p99 ~2900 with the Molmo2
 tokenizer), so ``max_sequence_length`` should be set to the training sequence length; the
