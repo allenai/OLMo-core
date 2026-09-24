@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.
 - Keep legacy fused attention configs compatible when the new attention options are disabled. Reject unsupported scalable-softmax context parallelism and KV caching at setup.
 - Assign EOS tokens to their preceding document for EMO routing, matching attention document boundaries.
 - Preserve serialized tokenizer behavior during HF export, including source BOS settings when the training config leaves BOS unspecified.

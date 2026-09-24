@@ -207,9 +207,26 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/titan
+            # Experimental KDA needs the CUDA 13 CuTe compiler; exercised below.
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
-                src/test/nn/attention*
+                -k 'not experimental_kernels' src/test/nn/attention*
+
+          - name: Test experimental KDA (GPU)
+            image: akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11
+            gpus: 1
+            clusters: --cluster ai2/holmes
+            task_timeout: 25m
+            # CUDA 12 CuTe fails to lower KDA's MMA backward, despite reporting
+            # support. Use CUDA 13 on Blackwell and reject a silently skipped suite.
+            run: |
+              bash -ec '
+                python -m pip install ".[kernel-fun]"
+                pytest -v --color=yes --durations=3 -m gpu \
+                  -k experimental_kernels src/test/nn/attention/kda_test.py \
+                  --junitxml=/tmp/experimental-kda.xml
+                python -c "import xml.etree.ElementTree as E; r = E.parse(\"/tmp/experimental-kda.xml\"); assert r.findall(\".//testcase\"); assert not r.findall(\".//skipped\"), \"Experimental KDA tests must execute on Blackwell\""
+              '
 
           - name: Test MoE (GPU)
             image: *gpu_test_image

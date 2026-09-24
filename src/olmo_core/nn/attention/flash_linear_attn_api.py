@@ -1,3 +1,4 @@
+from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 import torch
@@ -13,6 +14,28 @@ try:
     import kernel_fun
 except ImportError:
     kernel_fun = None
+
+
+try:
+    version("nvidia-cutlass-dsl-libs-cu13")
+    _has_cuda13_cute = True
+except PackageNotFoundError:
+    _has_cuda13_cute = False
+
+
+def require_kernel_fun() -> None:
+    """Validate the optional KDA backend before launching kernels or tracing it."""
+    if kernel_fun is None:
+        raise RuntimeError(
+            "use_experimental_kernels=True requires the kernel-fun package; "
+            "install it with: pip install 'ai2-olmo-core[kernel-fun]'"
+        )
+    if not _has_cuda13_cute:
+        raise RuntimeError(
+            "Experimental KDA requires the CUDA 13 CuTe DSL libraries; the CUDA 12 "
+            "compiler cannot lower its MMA backward. On a CUDA 13-compatible driver, "
+            "install with: pip install 'ai2-olmo-core[kernel-fun]'"
+        )
 
 
 def has_fla() -> bool:
@@ -81,11 +104,7 @@ def dispatch_chunk_kda(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     assert has_fla()
     if use_experimental_kernels:
-        if not has_kernel_fun():
-            raise RuntimeError(
-                "use_experimental_kernels=True requires the kernel-fun package; "
-                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
-            )
+        require_kernel_fun()
         from kernel_fun.kda import chunk_kda as experimental_chunk_kda
 
         return experimental_chunk_kda(

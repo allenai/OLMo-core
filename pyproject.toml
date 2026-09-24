@@ -79,7 +79,12 @@ fa4 = [
 # `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13. The <2.14 ceiling matches the
 # torch we build/test images with and stops `.[all]` from floating up to an unshipped torch (2.14).
 fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0,<2.14"]
-kernel-fun = ["kernel-fun==0.2.0 ; sys_platform == 'linux'"]
+# KDA's MMA backward fails to lower with the CUDA 12 CuTe compiler libraries.
+# The CUDA 13 build is tested with Torch 2.13 and remains compatible with QuACK 0.5.
+kernel-fun = [
+    "kernel-fun[cu13]==0.2.0 ; sys_platform == 'linux'",
+    "nvidia-cutlass-dsl[cu13]==4.5.3 ; sys_platform == 'linux'",
+]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
 transformers = ["transformers>=5.4.0"]
