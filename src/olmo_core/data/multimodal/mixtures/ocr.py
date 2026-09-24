@@ -9,7 +9,7 @@ before it is divided among sources (:data:`OCR_TASK_SHARES`):
   :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), and the scene-text tars
   (style ``scene_text``; TextOCR, plus HierText / COCO-Text / UberText).
 * **figure captions** -- describe a text-rich figure at three altitudes.
-  The five ``text_rich_*`` categories (styles ``figure_caption_{high,mid,low}_level``; see
+  The five ``text_rich_*`` categories (styles ``fig_caption_{high,mid,low}``; see
   :class:`~olmo_core.data.multimodal.text_rich_caption.TextRichCaptionDatasetConfig`).
 
 olmOCR-mix and the figure captions are mm_olmo's two molmo3 stage-1 OCR groups

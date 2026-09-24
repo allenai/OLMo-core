@@ -6,13 +6,13 @@ the two OCR groups its molmo3 stage-1 mixture spends 0.075 on each
 :mod:`.olmocr`). One row is one rendered chart / diagram / document / graphic / table, and it
 carries three captions of decreasing altitude, which become the three branches of one example:
 
-===============  ==============================  ==========================================
-field            style                           what it is
-===============  ==============================  ==========================================
-``high_level``   ``figure_caption_high_level``   one- or two-sentence summary (~150 chars)
-``mid_level``    ``figure_caption_mid_level``    layout and content description (~700 chars)
-``low_level``    ``figure_caption_low_level``    dense description quoting the text (2-4k chars)
-===============  ==============================  ==========================================
+===============  ======================  ==========================================
+field            style                   what it is
+===============  ======================  ==========================================
+``high_level``   ``fig_caption_high``    one- or two-sentence summary (~150 chars)
+``mid_level``    ``fig_caption_mid``     layout and content description (~700 chars)
+``low_level``    ``fig_caption_low``     dense description quoting the text (2-4k chars)
+===============  ======================  ==========================================
 
 The style names are this repo's. mm_olmo calls them ``ocr_caption_<level>``; they were renamed
 because all three are descriptions of a figure, not OCR of it, and the name should say so.
@@ -64,8 +64,8 @@ CAPTION_LEVELS: Tuple[str, ...] = ("high_level", "mid_level", "low_level")
 
 
 def level_style(level: str) -> str:
-    """The style name of one caption level, e.g. ``figure_caption_high_level``."""
-    return f"figure_caption_{level}"
+    """The style name of one caption level: ``high_level`` -> ``fig_caption_high``."""
+    return f"fig_caption_{level.removesuffix('_level')}"
 
 
 @dataclass

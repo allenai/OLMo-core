@@ -106,9 +106,9 @@ def _cfg(root, **kw):
 def test_level_styles_are_mm_olmo_names():
     assert CAPTION_LEVELS == ("high_level", "mid_level", "low_level")
     assert [level_style(lvl) for lvl in CAPTION_LEVELS] == [
-        "figure_caption_high_level",
-        "figure_caption_mid_level",
-        "figure_caption_low_level",
+        "fig_caption_high",
+        "fig_caption_mid",
+        "fig_caption_low",
     ]
 
 
@@ -117,9 +117,9 @@ def test_emits_one_branch_per_level_in_order(tmp_path):
     turns = ds.turns(ds._data[0])
     assert [t[1] for t in turns] == [HIGH, MID, LOW]
     assert [t[0] for t in turns] == [
-        "figure_caption_high_level:",
-        "figure_caption_mid_level:",
-        "figure_caption_low_level:",
+        "fig_caption_high:",
+        "fig_caption_mid:",
+        "fig_caption_low:",
     ]
 
 

@@ -629,9 +629,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
     # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
     # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user
-    # turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` /
-    # `figure_caption_{high,mid,low}_level:`), as in mm_olmo's molmo3 stage 1. Long pages are tail-truncated to the
-    # sequence length.
+    # turn is the bare `<style>:` tag (`olmocr:` / `scene_text:` / `fig_caption_{high,mid,low}:`),
+    # as in mm_olmo's molmo3 stage 1. Long pages are tail-truncated to the sequence length.
     olmocr_config = OlmOcrMixDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
