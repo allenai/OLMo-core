@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `OLMoDDPModel.apply_ddp()` now raises `NotImplementedError` directing callers to `apply_dp()`, including under `python -O`. Removed its unreachable legacy DDP implementation.
+
+- `OLMoDDPTrainModuleConfig.max_grad_norm` now overrides the optimizer clipping threshold when set, matching the train-module configuration API used by `TransformerTrainModuleConfig`. When unset, the optimizer threshold is retained. Previously this field was ignored, so old configs with differing values now use the train-module value. The supplied optimizer config is not mutated. Removed the unused `OLMoDDPTrainModule.max_grad_norm` constructor argument and attribute; clipping remains inside the DDP optimizer.
+
 - Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
 
 - Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.
