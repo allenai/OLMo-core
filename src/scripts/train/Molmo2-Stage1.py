@@ -294,8 +294,8 @@ NLP_RATE = 0.10
 # in and its text (or a description of a text-rich figure) out, with no question in the prompt.
 # It is mm_olmo's two molmo3 stage-1 OCR groups (`train_molmo3_stage1._base_mixture`, 0.075 each)
 # -- olmOCR-mix page transcription and the three-level figure captions -- plus TextOCR scene
-# text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`textocr`) and
-# thermal receipts (`olmocr`). The rate is split evenly between the two tasks, transcription and
+# text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`synthdog`) and
+# thermal receipts (`receipt`). The rate is split evenly between the two tasks, transcription and
 # figure captions, as mm_olmo's two groups are, then by sqrt(size) within a task (mm_olmo's
 # `root_size_factor`).
 # Paid for out of the caption group. Off by default so the default run stays the released
@@ -641,8 +641,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
     # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
     # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user
-    # turn is the bare `<style>:` tag (`olmocr:` / `textocr:` / `fig_caption_{high,mid,low}:`),
-    # as in mm_olmo's molmo3 stage 1. Long pages are tail-truncated to the sequence length.
+    # turn is the bare `<style>:` tag (`olmocr:` / `textocr:` / `synthdog:` / `receipt:` /
+    # `fig_caption_{high,mid,low}:`), as in mm_olmo's molmo3 stage 1. Long pages are
+    # tail-truncated to the sequence length.
     olmocr_config = OlmOcrMixDatasetConfig(
         max_crops=MAX_CROPS,
         max_sequence_length=SEQUENCE_LENGTH,
