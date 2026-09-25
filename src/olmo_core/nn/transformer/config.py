@@ -1710,9 +1710,11 @@ class TransformerConfig(ModelConfig):
         att_type = AttentionType.default
         if rope_type is None:
             rope_type = RoPEType.default
-            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-                att_type = AttentionType.fused
-                rope_type = RoPEType.fused
+            if fused_ops and n_kv_heads is None:
+                att_type = AttentionType.fused_v2
+                use_flash = None  # The original fused implementation ignored this flag.
+                if attn_backend is None:
+                    attn_backend = AttentionBackendName.flash_2
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:

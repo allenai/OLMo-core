@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced `FusedAttention` with `FusedAttentionV2` and migrated its applicable tests to V2. Legacy `AttentionConfig(name="fused")` configs still load through V2 with the same packed QKV parameter names and shapes, preserving model and optimizer checkpoint compatibility. Legacy fused RoPE is mapped to regular RoPE: floating-point results (especially low-precision RoPE gradients) differ, so resumed training is not numerically identical. `TransformerConfig.llama_like(fused_ops=True)` now selects V2 with regular RoPE when it previously selected fused attention.
+
 - Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.
 
 ## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
