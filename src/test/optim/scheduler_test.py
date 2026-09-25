@@ -762,26 +762,20 @@ def test_exponential_scheduler_integration(tiny_model):
     assert optimizer.param_groups[0]["lr"] == pytest.approx(lr_max, rel=1e-6)
 
 
-@pytest.mark.parametrize(
-    "scheduler_cls",
-    [
-        ConstantWithWarmup,
-        scheduler_module.WSD,
-        PowerLR,
-        LinearWithWarmup,
-        InvSqrtWithWarmup,
-        CosWithWarmup,
-        scheduler_module.HalfCosWithWarmup,
-        scheduler_module.CosWithWarmupAndLinearDecay,
-        SequentialScheduler,
-    ],
-)
-@pytest.mark.parametrize("units", list(scheduler_module.SchedulerUnits))
-def test_legacy_scheduler_config_schedule_parity(scheduler_cls, units):
-    """Legacy JSON aliases preserve LR curves, units, and nested scheduler boundaries."""
-    import json
-    from unittest.mock import Mock
+_LEGACY_SCHEDULER_CLASSES = [
+    ConstantWithWarmup,
+    scheduler_module.WSD,
+    PowerLR,
+    LinearWithWarmup,
+    InvSqrtWithWarmup,
+    CosWithWarmup,
+    scheduler_module.HalfCosWithWarmup,
+    scheduler_module.CosWithWarmupAndLinearDecay,
+    SequentialScheduler,
+]
 
+
+def _legacy_scheduler_example(scheduler_cls, units):
     scale = 1_000 if units == scheduler_module.SchedulerUnits.tokens else 1
     if scheduler_cls is SequentialScheduler:
         canonical = SequentialScheduler(
@@ -801,6 +795,19 @@ def test_legacy_scheduler_config_schedule_parity(scheduler_cls, units):
         ):
             kwargs.update(decay=20 * scale, decay_fraction=None)
         canonical = scheduler_cls(**kwargs)
+
+    return canonical
+
+
+@pytest.mark.parametrize("scheduler_cls", _LEGACY_SCHEDULER_CLASSES)
+@pytest.mark.parametrize("units", list(scheduler_module.SchedulerUnits))
+def test_legacy_scheduler_config_schedule_parity(scheduler_cls, units):
+    """Legacy JSON aliases preserve LR curves, units, and nested scheduler boundaries."""
+    import json
+    from unittest.mock import Mock
+
+    scale = 1_000 if units == scheduler_module.SchedulerUnits.tokens else 1
+    canonical = _legacy_scheduler_example(scheduler_cls, units)
 
     aliases = {
         "warmup": "warmup_steps",
@@ -839,3 +846,57 @@ def test_legacy_scheduler_config_schedule_parity(scheduler_cls, units):
         assert canonical.set_lr(canonical_group, trainer) == expected
         assert restored.set_lr(legacy_group, trainer) == expected
         assert legacy_group == canonical_group
+
+
+@pytest.mark.parametrize("scheduler_cls", _LEGACY_SCHEDULER_CLASSES)
+@pytest.mark.parametrize("units", list(scheduler_module.SchedulerUnits))
+def test_legacy_scheduler_cli_overrides(scheduler_cls, units):
+    """Legacy CLI fields override canonical recipe values and are cleared after loading."""
+    from olmo_core.optim import AdamWConfig
+    from olmo_core.train.train_module import TransformerTrainModuleConfig
+
+    scheduler = _legacy_scheduler_example(scheduler_cls, units)
+    config = TransformerTrainModuleConfig(
+        rank_microbatch_size=1,
+        max_sequence_length=1,
+        optim=AdamWConfig(),
+        scheduler=scheduler,
+    )
+    scale = 1_000 if units == scheduler_module.SchedulerUnits.tokens else 1
+    original = config.as_dict()
+    aliases = {"warmup_steps": "warmup", "decay_steps": "decay"}
+    changes: List[Tuple[str, str, Any]] = [
+        (alias, name, 5 * scale) for alias, name in aliases.items() if hasattr(scheduler, name)
+    ]
+    if scheduler_cls is SequentialScheduler:
+        changes = [
+            ("schedulers_max_steps", "schedulers_max", [50 * scale]),
+            ("schedulers.0.warmup_steps", "schedulers.0.warmup", 5 * scale),
+            ("schedulers.0.warmup_steps", "schedulers.0.warmup", 0),
+        ]
+    else:
+        changes.append(("warmup_steps", "warmup", 0))
+
+    for alias, name, value in changes:
+        # Match launch CLI syntax and nested config reconstruction, including prefix stripping.
+        with pytest.warns(DeprecationWarning, match=alias.split(".")[-1]):
+            restored = config.merge(
+                [f"--train_module.scheduler.{alias}={value}"], prefix="train_module"
+            )
+        expected = config.merge([f"scheduler.{name}={value}"])
+        assert restored == expected
+        assert config.as_dict() == original
+        assert restored.scheduler is not None
+        assert expected.scheduler is not None
+        assert restored.scheduler.units == units
+        # Zero must still migrate, but some schedulers do not define an LR at zero warmup.
+        if value != 0:
+            for step in range(101):
+                assert restored.scheduler.get_lr(0.01, step * scale, 100 * scale) == (
+                    expected.scheduler.get_lr(0.01, step * scale, 100 * scale)
+                )
+        # No stale legacy value can shadow subsequent canonical overrides.
+        next_value = [60 * scale] if isinstance(value, list) else 3 * scale
+        assert restored.merge([f"scheduler.{name}={next_value}"]) == config.merge(
+            [f"scheduler.{name}={next_value}"]
+        )
