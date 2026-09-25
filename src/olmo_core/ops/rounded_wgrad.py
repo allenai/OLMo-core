@@ -1,0 +1,198 @@
+"""Experimental BF16-rounded weight GEMM into an owned FP32 DDP bucket.
+
+Restricted to BF16 and exclusive one-use-per-forward expert parameters.
+Each training forward must complete its backward before the next forward;
+pipeline schedules with multiple outstanding forwards are unsupported.
+The opt-in EP qualification also supports the existing rowwise output/dgrad buffers.
+Never fabricates a dummy gradient to trigger autograd hooks.
+The explicit DDP completion callback runs after the real accumulation is enqueued.
+"""
+
+import importlib.metadata
+import weakref
+from functools import lru_cache
+
+import torch
+import torch.nn.functional as F
+
+
+@lru_cache(None)
+def _compile(device_capacity, majors):
+    if device_capacity[0] != 10:
+        raise RuntimeError("Rounded weight-gradient accumulation requires a Blackwell GPU")
+    if importlib.metadata.version("quack-kernels") != "0.5.0":
+        raise RuntimeError("Rounded weight-gradient accumulation requires quack-kernels==0.5.0")
+    if tuple(torch.__version__.split("+")[0].split(".")[:2]) not in (
+        ("2", "11"),
+        ("2", "13"),
+    ):
+        raise RuntimeError("Rounded weight-gradient accumulation requires Torch 2.11 or 2.13")
+
+    import cutlass
+    import cutlass.cute as cute
+    from quack.gemm_default_epi import GemmDefaultEpiMixin, GemmDefaultSm100
+    from quack.gemm_tvm_ffi_utils import (
+        compile_gemm_kernel,
+        make_fake_gemm_tensors,
+        make_fake_scheduler_args,
+        make_fake_varlen_args,
+    )
+
+    class RoundedGradientGemm(GemmDefaultSm100):
+        @cute.jit
+        def epi_visit_subtile(self, params, epi_loop_tensors, tRS_rD, tRS_rC=None):
+            tRS_rD.store(tRS_rD.load().to(cutlass.BFloat16).to(cutlass.Float32))
+            return GemmDefaultEpiMixin.epi_visit_subtile(
+                self, params, epi_loop_tensors, tRS_rD, tRS_rC
+            )
+
+    a, b, d, c, _, _, k, groups = make_fake_gemm_tensors(
+        cutlass.BFloat16,
+        cutlass.BFloat16,
+        cutlass.Float32,
+        cutlass.Float32,
+        *majors,
+        varlen_k=True,
+    )
+    # A dedicated compiler/cache: never patch QuACK's global class or cache.
+    return compile_gemm_kernel(
+        RoundedGradientGemm,
+        cutlass.BFloat16,
+        (256, 256),
+        (2, 1, 1),
+        False,
+        True,
+        False,
+        True,
+        device_capacity,
+        a,
+        b,
+        d,
+        c,
+        RoundedGradientGemm.EpilogueArguments(),
+        make_fake_scheduler_args(False, False, groups),
+        make_fake_varlen_args(False, True, False, k),
+    )
+
+
+def rounded_wgrad_add(a, b, output, cumulative):
+    """output += BF16(a @ b.T), with per-expert variable reduction lengths."""
+    from quack.cute_dsl_utils import get_device_capacity, get_max_active_clusters
+    from quack.gemm_default_epi import GemmDefaultEpiMixin
+    from quack.gemm_tvm_ffi_utils import (
+        get_majors,
+        make_scheduler_args,
+        make_varlen_args,
+        perm3d,
+    )
+
+    if (
+        not a.is_cuda
+        or a.device != b.device
+        or a.device != output.device
+        or a.device != cumulative.device
+        or a.ndim != 2
+        or b.ndim != 2
+        or output.ndim != 3
+        or cumulative.ndim != 1
+        or a.shape[1] != b.shape[1]
+        or output.shape != (cumulative.numel() - 1, a.shape[0], b.shape[0])
+        or cumulative.dtype != torch.int32
+        or not cumulative.is_contiguous()
+        or a.dtype != torch.bfloat16
+        or b.dtype != torch.bfloat16
+        or output.dtype != torch.float32
+        or not output.is_contiguous()
+        or a.stride(0) != 1
+        or b.stride(0) != 1
+    ):
+        raise ValueError("Unsupported rounded weight-gradient shape/dtype/layout")
+    capacity = get_device_capacity(a.device)
+    tensors = perm3d(a, b, output, output, varlen_k=True)
+    compiled = _compile(capacity, get_majors(*tensors))
+    compiled(
+        *tensors,
+        GemmDefaultEpiMixin.EpilogueArguments(add_to_output=None, rounding_mode=None),
+        make_scheduler_args(get_max_active_clusters(2, device_capacity=capacity), 8, None),
+        make_varlen_args(None, cumulative, None),
+        None,
+        None,
+        None,
+    )
+
+
+class _RoundedWeightGemm(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, weight, cumulative, transpose, out, input_grad_out):
+        from olmo_core.kernels.grouped_mm import (
+            _check_input_grad_out_buffer,
+            _check_out_buffer,
+            _grouped_mm_out_cuda,
+        )
+
+        ctx.save_for_backward(x, weight, cumulative)
+        # Checkpoint/saved-tensor hooks may unpack `weight` as a Tensor wrapper
+        # without its Python attributes or Parameter identity. DDP owns the
+        # original leaf and keys its bucket/epoch checks by that exact object.
+        # Keep bookkeeping separate from the saved tensor used for dgrad and
+        # version checks; do not retain another activation or weight allocation.
+        ctx.weight_owner = weakref.ref(weight)
+        ctx.begin_external_grad = weight._olmo_profile_begin_external_grad
+        ctx.transpose = transpose
+        ctx.input_grad_out = input_grad_out
+        rhs = weight.transpose(1, 2) if transpose else weight
+        if input_grad_out is not None:
+            _check_input_grad_out_buffer(input_grad_out=input_grad_out, mat_a=x)
+        if out is not None:
+            _check_out_buffer(out=out, mat_a=x, mat_b=rhs, offs=cumulative[1:], out_dtype=None)
+            result = _grouped_mm_out_cuda(x, rhs, out=out, offs=cumulative[1:], bias=None)
+            if result is not out:
+                raise RuntimeError("Rounded weight GEMM did not preserve output-buffer identity")
+            ctx.mark_dirty(out)
+            return out
+        return F.grouped_mm(x, rhs, offs=cumulative[1:])
+
+    @staticmethod
+    def backward(ctx, grad):
+        x, weight, cumulative = ctx.saved_tensors
+        if torch.is_grad_enabled():
+            raise RuntimeError(
+                "Rounded weight-gradient accumulation does not support higher derivatives"
+            )
+        grad = grad.contiguous()
+        owner = ctx.weight_owner()
+        if owner is None:
+            raise RuntimeError("Rounded weight GEMM lost its original DDP parameter owner")
+        destination, done = ctx.begin_external_grad(owner)
+        if ctx.transpose:
+            rounded_wgrad_add(grad.T, x.T, destination, cumulative)
+        else:
+            rounded_wgrad_add(x.T, grad.T, destination, cumulative)
+        done()
+        dx = None
+        if ctx.needs_input_grad[0]:
+            rhs = weight if ctx.transpose else weight.transpose(1, 2)
+            if ctx.input_grad_out is None:
+                dx = F.grouped_mm(grad, rhs, offs=cumulative[1:])
+            else:
+                from olmo_core.kernels.grouped_mm import _grouped_mm_out_cuda
+
+                # Rowwise EP deliberately aliases this buffer with x. Wgrad must
+                # consume x first, on this same stream, before dgrad overwrites it.
+                dx = _grouped_mm_out_cuda(
+                    grad, rhs, out=ctx.input_grad_out, offs=cumulative[1:], bias=None
+                )
+                if dx is not ctx.input_grad_out:
+                    raise RuntimeError("Rounded weight GEMM did not preserve dgrad-buffer identity")
+        return dx, None, None, None, None, None
+
+
+@torch.compiler.disable
+def rounded_weight_gmm(x, weight, counts, transpose, *, out=None, input_grad_out=None):
+    """Accumulate owned expert gradients across an explicit compiler boundary."""
+    if not hasattr(weight, "_olmo_profile_begin_external_grad"):
+        raise RuntimeError("Rounded weight GEMM requires explicit FP32 DDP bucket ownership")
+    if not weight.is_leaf or not weight.requires_grad:
+        raise RuntimeError("Rounded weight GEMM requires an exclusive trainable leaf parameter")
+    cumulative = torch.cat((counts.new_zeros(1), counts.cumsum(0, dtype=torch.int32)))
+    return _RoundedWeightGemm.apply(x, weight, cumulative, transpose, out, input_grad_out)

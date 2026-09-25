@@ -150,6 +150,13 @@ class MultiGroupDistributedDataParallel(Module):
         self._reduce_scatter_configured = not use_reduce_scatter
         self._reduce_scatter_params: set[torch.nn.Parameter] = set()
         self._reduce_scatter_pack_scratch: Dict[tuple[torch.device, torch.dtype], torch.Tensor] = {}
+        # Opt-in profiling experiment; leave the existing production path unchanged.
+        self._reduce_scatter_single_param_fast_path = (
+            os.environ.get("OLMO_PROFILE_RS_SINGLE_PARAM_FAST_PATH", "0") == "1"
+        )
+        self._vectorized_fp32_grad_add = (
+            os.environ.get("OLMO_PROFILE_FP32_GRAD_ADD_VECTORIZE", "0") == "1"
+        )
 
         if self._accumulate_grads_in_fp32 and not self._reduce_grads_in_fp32:
             raise ValueError("accumulate_grads_in_fp32 requires reduce_grads_in_fp32 to be True")
@@ -226,6 +233,8 @@ class MultiGroupDistributedDataParallel(Module):
         self._grad_views_need_rebind = False
         self._warned_grad_view_rebind = False
         self._forwards_since_finalize = 0
+        self._profile_forward_epoch = 0
+        self._profile_external_written = {}
         self._has_started_forward = False
 
         self._build_grad_buckets()
@@ -251,6 +260,17 @@ class MultiGroupDistributedDataParallel(Module):
 
         # Hooks that control bucketed gradient reduction.
         self._register_accum_grad_hook()
+        # Experimental, explicitly exclusive expert-leaf accumulation. Bind after
+        # materialization so meta->CUDA parameter replacement cannot lose ownership.
+        for child in module.modules():
+            if getattr(child, "_profile_rounded_wgrad", False):
+                if not self._accumulate_grads_in_fp32 or not self._reduce_grads_in_fp32:
+                    raise RuntimeError("Rounded wgrad probe requires FP32 accumulation/reduction")
+                for param in (child.w_up_gate, child.w_down):
+                    if param not in self._param_to_bucket_view:
+                        raise RuntimeError("Rounded wgrad parameter is not managed by this DDP")
+                    self._profile_external_written[param] = -1
+                    param._olmo_profile_begin_external_grad = self._profile_begin_external_grad
 
     def __getattr__(self, name: str) -> Any:
         """Forward missing attributes to the wrapped module."""
@@ -547,6 +567,8 @@ class MultiGroupDistributedDataParallel(Module):
         g = param.grad
         if g is None:
             return
+        if param in self._profile_external_written:
+            raise RuntimeError("External-accumulation parameter also received a native gradient")
 
         expected_view = self._param_to_bucket_view[param]
         main_grad = getattr(param, "_main_grad_fp32", None)
@@ -561,7 +583,20 @@ class MultiGroupDistributedDataParallel(Module):
                 "External grad buffer replacement is not supported in bucket-view mode."
             )
 
-        main_grad.add_(g)
+        if (
+            self._vectorized_fp32_grad_add
+            and g.is_cuda
+            and g.dtype == torch.bfloat16
+            and main_grad.dtype == torch.float32
+            and g.numel() >= 64 * 1024 * 1024
+            and g.is_contiguous()
+            and main_grad.is_contiguous()
+        ):
+            from olmo_core.ops.grad_accum import gradient_add
+
+            gradient_add(main_grad, g)
+        else:
+            main_grad.add_(g)
         param.grad = None
 
     def _get_reduce_scatter_pack_scratch(self, bucket: _GradBucket) -> torch.Tensor:
@@ -587,27 +622,48 @@ class MultiGroupDistributedDataParallel(Module):
         # the optimizer applies the remaining EP-MP factor when building main_grad.
         if bucket.reduce_scatter:
             assert bucket.flat_reduced_storage is not None
-            scratch = self._get_reduce_scatter_pack_scratch(bucket)
-            packed = scratch.view(world_size, bucket.local_numel)
-
-            for (full_start, full_end), (local_start, local_end) in zip(
-                bucket.ranges, bucket.local_ranges
-            ):
-                local_numel = local_end - local_start
-                packed[:, local_start:local_end].copy_(
-                    bucket.flat_storage[full_start:full_end].view(world_size, local_numel)
-                )
-
-            if bucket.storage_dtype == bucket.comm_dtype:
-                bucket.flat_storage.copy_(scratch)
-                tensor_for_reduce = bucket.flat_storage
-                tensor_for_output = bucket.flat_reduced_storage
+            if self._reduce_scatter_single_param_fast_path and len(bucket.params) == 1:
+                # A single parameter is already rank-major. In particular, an expert
+                # parameter larger than the soft bucket cap needs no packing/copy-back.
+                # Keep the collective input in per-bucket storage: shared scratch cannot
+                # be reused until an asynchronous collective has finished reading it.
+                if bucket.ranges != [(0, bucket.numel)] or bucket.local_ranges != [
+                    (0, bucket.local_numel)
+                ]:
+                    raise RuntimeError(
+                        "Single-parameter reduce-scatter requires contiguous bucket ranges"
+                    )
+                if bucket.storage_dtype == bucket.comm_dtype:
+                    tensor_for_reduce = bucket.flat_storage
+                    tensor_for_output = bucket.flat_reduced_storage
+                else:
+                    assert bucket.flat_comm is not None
+                    assert bucket.flat_reduced_comm is not None
+                    bucket.flat_comm.copy_(bucket.flat_storage)
+                    tensor_for_reduce = bucket.flat_comm
+                    tensor_for_output = bucket.flat_reduced_comm
             else:
-                assert bucket.flat_comm is not None
-                assert bucket.flat_reduced_comm is not None
-                bucket.flat_comm.copy_(scratch)
-                tensor_for_reduce = bucket.flat_comm
-                tensor_for_output = bucket.flat_reduced_comm
+                scratch = self._get_reduce_scatter_pack_scratch(bucket)
+                packed = scratch.view(world_size, bucket.local_numel)
+
+                for (full_start, full_end), (local_start, local_end) in zip(
+                    bucket.ranges, bucket.local_ranges
+                ):
+                    local_numel = local_end - local_start
+                    packed[:, local_start:local_end].copy_(
+                        bucket.flat_storage[full_start:full_end].view(world_size, local_numel)
+                    )
+
+                if bucket.storage_dtype == bucket.comm_dtype:
+                    bucket.flat_storage.copy_(scratch)
+                    tensor_for_reduce = bucket.flat_storage
+                    tensor_for_output = bucket.flat_reduced_storage
+                else:
+                    assert bucket.flat_comm is not None
+                    assert bucket.flat_reduced_comm is not None
+                    bucket.flat_comm.copy_(scratch)
+                    tensor_for_reduce = bucket.flat_comm
+                    tensor_for_output = bucket.flat_reduced_comm
 
             tensor_for_reduce.div_(world_size)
             handle = torch.distributed.reduce_scatter_tensor(
@@ -644,26 +700,32 @@ class MultiGroupDistributedDataParallel(Module):
             self._launch_bucket_grad_reduce(self._next_reduce_bucket_idx)
             self._next_reduce_bucket_idx += 1
 
-    def _register_accum_grad_hook(self):
-        def notify_grad_ready(
-            param,
+    def _notify_grad_ready(self, param):
+        if not self.require_backward_grad_sync or self._param_grad_ready[param]:
+            return
+        self._param_grad_ready[param] = True
+        bucket_idx = self._param_to_bucket_idx[param]
+        self._bucket_ready_count[bucket_idx] += 1
+        if self.overlap_grad_reduce:
+            self._maybe_kick_start_grad_reduce()
+
+    def _profile_begin_external_grad(self, param):
+        """Fail closed on duplicate uses, detached buffers, or mixed native gradients."""
+        if self._forwards_since_finalize < 1 or param.grad is not None:
+            raise RuntimeError("External gradient outside a clean DDP accumulation window")
+        if self._profile_external_written[param] == self._profile_forward_epoch:
+            raise RuntimeError("External gradient parameter reused within one forward")
+        if self._param_grad_ready[param]:
+            raise RuntimeError("External gradient write after gradient reduction was scheduled")
+        destination = getattr(param, "_main_grad_fp32", None)
+        if destination is None or not self._is_expected_grad_view(
+            destination, self._param_to_bucket_view[param]
         ):
-            if not self.require_backward_grad_sync:
-                return
+            raise RuntimeError("External gradient destination is not the owned FP32 bucket view")
+        self._profile_external_written[param] = self._profile_forward_epoch
+        return destination, lambda: self._notify_grad_ready(param)
 
-            if self._param_grad_ready[param]:
-                return
-
-            self._param_grad_ready[param] = True
-            bucket_idx = self._param_to_bucket_idx[param]
-            self._bucket_ready_count[bucket_idx] += 1
-
-            # do this in backward
-            if self.overlap_grad_reduce:
-                self._maybe_kick_start_grad_reduce()
-
-            # Otherwise, leave the collective to finalize_grad_reduce().
-
+    def _register_accum_grad_hook(self):
         for index, param in enumerate(self._module_parameters):
             if not param.requires_grad:
                 continue
@@ -675,7 +737,7 @@ class MultiGroupDistributedDataParallel(Module):
             # hook only reports readiness. The AR or RS collective is launched
             # later in bucket order.
             self._accum_grad_hooks.append(
-                param.register_post_accumulate_grad_hook(notify_grad_ready)
+                param.register_post_accumulate_grad_hook(self._notify_grad_ready)
             )
 
     def finalize_grad_reduce(self):
@@ -788,9 +850,26 @@ class MultiGroupDistributedDataParallel(Module):
                 "use_reduce_scatter=True requires optimizer placement to be "
                 "configured before the first forward pass."
             )
+        # This opt-in path owns one expert-gradient write per forward. Require its
+        # backward to finish before starting another forward; interleaved pipeline
+        # schedules would otherwise attribute recomputation to the newest epoch.
+        if (
+            torch.is_grad_enabled()
+            and self._profile_forward_epoch > 0
+            and any(
+                epoch != self._profile_forward_epoch
+                for epoch in self._profile_external_written.values()
+            )
+        ):
+            raise RuntimeError(
+                "Rounded wgrad requires backward after each forward; multiple outstanding "
+                "forwards are unsupported"
+            )
         self._ensure_grad_views_bound(allow_none_rebind=True, where="forward")
         self._has_started_forward = True
         self._forwards_since_finalize += 1
+        if torch.is_grad_enabled():
+            self._profile_forward_epoch += 1
         return inputs, kwargs
 
     def _post_forward(self, output):

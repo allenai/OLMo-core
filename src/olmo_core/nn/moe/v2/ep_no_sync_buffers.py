@@ -19,6 +19,19 @@ except ImportError:
     _symm_mem = None  # type: ignore[assignment]
 
 
+_FORBID_RUNTIME_SYMM_ALLOC_ENV = "OLMO_EP_NO_SYNC_FORBID_RUNTIME_SYMM_ALLOC"
+_SYMM_INIT_COMPLETE_GLOBAL = "ep_no_sync_symm_initialization_complete"
+
+
+def _runtime_symm_alloc_forbidden() -> bool:
+    enabled = os.getenv(_FORBID_RUNTIME_SYMM_ALLOC_ENV, "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return False
+    from olmo_core.train.globals import get_global_arg
+
+    return bool(get_global_arg(_SYMM_INIT_COMPLETE_GLOBAL, default=False))
+
+
 def _rowwise_buffer_debug_enabled() -> bool:
     verbose = os.getenv("OLMO_ROWWISE_VERBOSE_DEBUG_PRINT") or os.getenv(
         "OLMO_TBO_VERBOSE_DEBUG_PRINT", "0"
@@ -86,6 +99,12 @@ def _alloc_ep_symm_tensor(
     device: torch.device,
     group: dist.ProcessGroup,
 ) -> torch.Tensor:
+    if _runtime_symm_alloc_forbidden():
+        raise RuntimeError(
+            "Attempted to allocate EP symmetric memory after initialization completed: "
+            f"shape={shape}, dtype={dtype}, device={device}. Prewarm must cover every "
+            "symmetric allocation used by the training step."
+        )
     _rowwise_buffer_debug_print(f"symm_alloc:enter shape={shape} dtype={dtype} device={device}")
     if olmo_symm_mem.is_enabled():
         symm_tensor = olmo_symm_mem.empty(shape, dtype=dtype, device=device, group=group)

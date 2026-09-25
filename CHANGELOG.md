@@ -10,11 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `use_array_if_local` to `pack_documents_into_instances`, `segment_documents_into_instances`, `NumpyPackedFSLDataset` and `NumpyPackedFSLDatasetConfig`, forwarded to `iter_document_indices`. Set it to `False` to take document boundaries from the source metadata file instead of inferring them by scanning the token array for the EOS token. Inferring is only correct when every document is EOS-terminated: a producer that truncates documents and drops the terminator with the tail causes the affected document to merge with the one after it, and `LongDocStrategy.truncate` then keeps only the head of the merged span, so the following document never reaches training. Measured on an SFT cache, 97.98% of tokens reached instances via the inferred path versus 100.00% via the metadata file, with an identical maximum document length. Whenever the metadata boundaries are the effective source -- set explicitly, or because the source is a URL, for which `iter_document_indices` always reads the metadata -- `doc_lens` is derived from them rather than by rescanning the packed tokens for EOS, so the block-diagonal attention mask cannot merge an unterminated document into the one after it. The hazard is now documented on `iter_document_indices`. Default behavior is unchanged.
+- Added opt-in paired SwiGLU backward and BF16-rounded weight-gradient accumulation for OLMoDDP experts, including Torch 2.13 support, checkpoint/recomputation coverage, and explicit backend and bucket-ownership guards.
+- Added independent per-head Q/K norm gains and scalable softmax, EMO document-pool routing/global load balancing, and opt-in FP32 gradient-accumulation/reduce-scatter fast paths with explicit hardware/version guards.
+- Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
+- Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
 
 ### Fixed
 
 - Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/OLMo-core/pull/843).
-
+- Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
+- Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
+- Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
+- Preserve the resolved tokenizer BOS ID in exported model and generation configs, including when the training config leaves BOS unspecified.
+- Reject hybrid KDA HF exports with sliding-window attention and EMO exports with restricted evaluation pools in any routed layer. Disable scalable-softmax HF generation caching and reject explicit cache use.
+- Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.
+- Keep legacy fused attention configs compatible when the new attention options are disabled. Reject unsupported scalable-softmax context parallelism and KV caching at setup.
+- Assign EOS tokens to their preceding document for EMO routing, matching attention document boundaries.
+- Preserve serialized tokenizer behavior during HF export, including source BOS settings when the training config leaves BOS unspecified.
+- Preserve FP32 router probabilities and accumulation when combining BF16 experts in the HF reference model.
+- Avoid graph breaks from no-op profiling decorators, including compiled router load-balancing collectives.
 - `dispatch_flash_attn_4` passed `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q` and `max_seqlen_k` positionally. flash-attn 4 inserted a `qv` parameter at position 3 (present from ~`4.0.0b19` onward), which shifts every following argument by one, so `max_seqlen_q` — an `int` — lands where `cu_seqlens_k` is expected and the call fails with `AttributeError: 'int' object has no attribute 'shape'`. These are now passed by keyword; the parameter names are unchanged across flash-attn 4 releases, so this is correct against both old and new versions. Only reachable on Blackwell, where `has_flash_attn_4()` returns True.
 
 ### Changed

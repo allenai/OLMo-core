@@ -4,6 +4,7 @@ from typing import Optional
 
 import pytest
 import torch
+import torch.distributed.checkpoint as dcp
 
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
@@ -62,6 +63,7 @@ def _tiny_model_config(
     n_layers: int = 2,
     dtype: DType = DType.float32,
     router_bias_gamma: Optional[float] = None,
+    per_head_qk: Optional[bool] = None,
 ) -> OLMoDDPModelConfig:
     layer_norm = LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False, dtype=dtype)
     return OLMoDDPModelConfig(
@@ -74,7 +76,15 @@ def _tiny_model_config(
         block=OLMoDDPTransformerBlockConfig(
             name=TransformerBlockType.moe_fused_v2,
             attention=AttentionConfig(
-                name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype
+                name=AttentionType.default,
+                n_heads=4,
+                bias=False,
+                use_flash=False,
+                dtype=dtype,
+                n_kv_heads=2 if per_head_qk is not None else None,
+                qk_norm=layer_norm if per_head_qk is not None else None,
+                use_head_qk_norm=per_head_qk is not None,
+                qk_norm_per_head_gains=bool(per_head_qk),
             ),
             routed_experts=RoutedExpertsConfig(
                 d_model=d_model, hidden_size=128, num_experts=4, bias=False, dtype=dtype
@@ -112,6 +122,77 @@ def test_moe_v2_train_module_construction_no_ep():
         _run_construct_no_ep,
         world_size=2,
         backend="gloo",
+        start_method="spawn",
+    )
+
+
+def _run_load_shared_qk_checkpoint(path, key_format, eval_only=True):
+    device = "cpu" if eval_only else "cuda"
+    dtype = DType.float32 if eval_only else DType.bfloat16
+    source = _tiny_model_config(dtype=dtype, per_head_qk=False).build(init_device=device)
+    source.init_weights(max_seq_len=32)
+    with torch.no_grad():
+        for name, param in source.named_parameters():
+            if name.endswith((".q_norm.weight", ".k_norm.weight")):
+                param.copy_(torch.arange(param.numel(), device=device).reshape(param.shape) + 1)
+    saved = {
+        (f"model.{name}" if key_format == "model" else f"{name}.main"): (
+            param.detach() if key_format == "model" else param.detach().flatten()
+        )
+        for name, param in source.named_parameters()
+    }
+    dcp.save(saved, checkpoint_id=path)
+    target = _tiny_model_config(dtype=dtype, per_head_qk=True).build(init_device=device)
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=512,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
+        expand_shared_qk_norm_on_load=True,
+    )
+    tm = config.build(target, device=torch.device(device), eval_only=eval_only)
+    # Without the opt-in, a shared/per-head shape mismatch must remain an error.
+    tm.expand_shared_qk_norm_on_load = False
+    with pytest.raises(RuntimeError, match="shape mismatch"):
+        tm.load_state_dict_direct(path, load_optim_state=False)
+    tm.expand_shared_qk_norm_on_load = True
+    tm.load_state_dict_direct(path, load_optim_state=False)
+    expected = dict(source.named_parameters())
+    for part in tm.model_parts:
+        for name, param in part.named_parameters():
+            original = expected[tm._strip_wrapper_prefixes(name)]
+            if original.shape != param.shape:
+                original = original.expand_as(param)
+            torch.testing.assert_close(param, original, rtol=0, atol=0)
+    if not eval_only:
+        assert tm.optim is not None
+        state = tm.optim.state_dict()
+        for group in tm.optim.param_groups:
+            for name, param in group["named_params"].items():
+                main = state[f"{name}.main"]
+                torch.testing.assert_close(
+                    main.full_tensor(), param.float().flatten(), rtol=0, atol=0
+                )
+
+
+@pytest.mark.parametrize("key_format", ["model", "main"])
+def test_eval_load_expands_shared_qk_gains(tmp_path, key_format):
+    run_distributed_test(
+        _run_load_shared_qk_checkpoint,
+        func_args=(str(tmp_path / "checkpoint"), key_format),
+        world_size=2,
+        backend="gloo",
+        start_method="spawn",
+    )
+
+
+@requires_multi_gpu
+def test_model_only_training_load_expands_shared_qk_gains(tmp_path):
+    run_distributed_test(
+        _run_load_shared_qk_checkpoint,
+        func_args=(str(tmp_path / "checkpoint"), "model", False),
+        world_size=2,
+        backend="nccl",
         start_method="spawn",
     )
 

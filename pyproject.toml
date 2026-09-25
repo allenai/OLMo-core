@@ -79,6 +79,10 @@ fa4 = [
 # `all` pulls in `fla`, this also makes `.[all]` require torch>=2.13. The <2.14 ceiling matches the
 # torch we build/test images with and stops `.[all]` from floating up to an unshipped torch (2.14).
 fla = ["flash-linear-attention==0.5.2", "torch>=2.13.0,<2.14"]
+# The training image owns the CUDA stack. KDA additionally needs the CUDA 13 CuTe
+# compiler (tested with 4.5.3); see KimiDeltaAttentionConfig for installation. Keep
+# CUDA-specific extras out of this requirement so Gantry's all-extras resolution
+# cannot replace a CUDA 12 PyTorch build with CUDA 13.
 kernel-fun = ["kernel-fun==0.2.0 ; sys_platform == 'linux'"]
 profiling = ["nvtx"]
 torchao = ["torchao==0.15.0"]
