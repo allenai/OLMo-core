@@ -6,9 +6,11 @@ before it is divided among sources (:data:`OCR_TASK_SHARES`):
 
 * **transcription** -- write out the text in the image.
   The four olmOCR-mix-1025 subsets (style ``olmocr``; PDF pages rendered at load time, see
-  :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), and the scene-text tars
+  :class:`~olmo_core.data.multimodal.olmocr.OlmOcrMixDatasetConfig`), the scene-text tars
   (style ``textocr``; TextOCR, plus HierText / COCO-Text / UberText, which take TextOCR's form:
-  the text in a photo as snippets joined by spaces).
+  the text in a photo as snippets joined by spaces), and two synthetic English sets (see
+  :mod:`~olmo_core.data.multimodal.synthetic_ocr`): NVIDIA's SynthDoG-style scattered text
+  (style ``textocr``) and thermal-printer receipts (style ``olmocr``).
 * **figure captions** -- describe a text-rich figure at three altitudes.
   The five ``text_rich_*`` categories (styles ``fig_caption_{high,mid,low}``; see
   :class:`~olmo_core.data.multimodal.text_rich_caption.TextRichCaptionDatasetConfig`).
@@ -47,11 +49,15 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from olmo_core.data.multimodal.ocr_caption_tars import OcrCaptionTarsDatasetConfig
 from olmo_core.data.multimodal.olmocr import OLMOCR_STYLE, OlmOcrMixDatasetConfig
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA
+from olmo_core.data.multimodal.synthetic_ocr import (
+    NvidiaSynthOcrDatasetConfig,
+    SyntheticReceiptsDatasetConfig,
+)
 from olmo_core.data.multimodal.text_rich_caption import (
     CATEGORIES as TEXT_RICH_CATEGORIES,
 )
@@ -63,6 +69,7 @@ __all__ = [
     "OCR_TAR_SOURCES",
     "OLMOCR_MIX_SOURCES",
     "TEXT_RICH_SOURCES",
+    "SYNTHETIC_OCR_SOURCES",
     "OCR_SOURCE_NAMES",
     "DUPLICATE_OLMOCR_SOURCES",
     "SPLIT_UNVERIFIED_SOURCES",
@@ -116,8 +123,14 @@ OLMOCR_MIX_SOURCES: Dict[str, str] = {
 #: Figure-caption sources: group name -> ``TextRichCaptionDatasetConfig.category``.
 TEXT_RICH_SOURCES: Dict[str, str] = {f"text_rich_{c}": c for c in TEXT_RICH_CATEGORIES}
 
+#: Synthetic transcription sources (English train splits); each has its own config template.
+SYNTHETIC_OCR_SOURCES: Tuple[str, ...] = ("nvidia_synth_en", "synth_receipts_en")
+
 OCR_SOURCE_NAMES: Tuple[str, ...] = (
-    tuple(OLMOCR_MIX_SOURCES) + tuple(TEXT_RICH_SOURCES) + tuple(OCR_TAR_SOURCES)
+    tuple(OLMOCR_MIX_SOURCES)
+    + tuple(TEXT_RICH_SOURCES)
+    + tuple(OCR_TAR_SOURCES)
+    + SYNTHETIC_OCR_SOURCES
 )
 
 #: Tar sources whose pages are already in an olmOCR-mix train subset (see module doc).
@@ -145,7 +158,7 @@ def ocr_task(name: str) -> str:
     """The task (:data:`TRANSCRIPTION` or :data:`FIGURE_CAPTION`) of an OCR source."""
     if name in TEXT_RICH_SOURCES:
         return FIGURE_CAPTION
-    if name in OLMOCR_MIX_SOURCES or name in OCR_TAR_SOURCES:
+    if name in OLMOCR_MIX_SOURCES or name in OCR_TAR_SOURCES or name in SYNTHETIC_OCR_SOURCES:
         return TRANSCRIPTION
     raise OLMoConfigurationError(f"Unknown OCR source {name!r}; expected one of {OCR_SOURCE_NAMES}")
 
@@ -173,16 +186,24 @@ def build_ocr_source(
     olmocr: OlmOcrMixDatasetConfig,
     tars: OcrCaptionTarsDatasetConfig,
     text_rich: TextRichCaptionDatasetConfig,
+    nvidia_synth: Optional[NvidiaSynthOcrDatasetConfig] = None,
+    receipts: Optional[SyntheticReceiptsDatasetConfig] = None,
     data_root: str = OE_ENCODER_DATA,
 ):
-    """Build one OCR source by name from the three template configs.
+    """Build one OCR source by name from the template configs.
 
     :param olmocr: template for the olmOCR-mix sources; its ``subset`` is overridden.
     :param tars: template for the caption-tars sources; ``dataset_path``, ``style`` and
         ``strip_text_tags`` are overridden from :data:`OCR_TAR_SOURCES`.
     :param text_rich: template for the figure-caption sources; its ``category`` is overridden.
+    :param nvidia_synth: config of ``nvidia_synth_en``; defaults if not given.
+    :param receipts: config of ``synth_receipts_en``; defaults if not given.
     :param data_root: where the oe-encoder tar directories live.
     """
+    if name == "nvidia_synth_en":
+        return (nvidia_synth or NvidiaSynthOcrDatasetConfig()).build(tokenizer)
+    if name == "synth_receipts_en":
+        return (receipts or SyntheticReceiptsDatasetConfig()).build(tokenizer)
     if name in OLMOCR_MIX_SOURCES:
         return olmocr.replace(subset=OLMOCR_MIX_SOURCES[name]).build(tokenizer)
     if name in TEXT_RICH_SOURCES:

@@ -35,6 +35,19 @@ PIXMO_POINTS_V2 = os.environ.get(
     "PIXMO_POINTS_V2_DIR", "/weka/oe-training-default/chrisc/pixmo-points-with-masks-v17"
 )
 
+# HARDCODED personal datasets (jasonr's downloads of two synthetic OCR sets on weka), read by
+# :mod:`.synthetic_ocr`. Override with the env vars, or per run through the dataset configs
+# (``--nvidia_synth.dataset_path=...`` / ``--receipts.dataset_path=...`` in Molmo2-Stage1.py).
+# nvidia/OCR-Synthetic-Multilingual-v1, ``en/train/*.h5`` only:
+NVIDIA_SYNTH_OCR = os.environ.get(
+    "NVIDIA_SYNTH_OCR_DIR",
+    "/weka/oe-training-default/jasonr/dataset/ocr/nvidia-ocr-synthetic-multilingual-v1",
+)
+# albertobarnabo/synthetic-receipts-ocr, ``data/train-*.parquet`` only:
+SYNTH_RECEIPTS_OCR = os.environ.get(
+    "SYNTH_RECEIPTS_OCR_DIR", "/weka/oe-training-default/jasonr/dataset/ocr/synthetic-receipts-ocr"
+)
+
 __all__ = [
     "MOLMO_DATA_DIR",
     "TORCH_DATASETS",
@@ -45,4 +58,6 @@ __all__ = [
     "OLMOCR_MIX",
     "OE_ENCODER_DATA",
     "TEXT_RICH_CAPTION",
+    "NVIDIA_SYNTH_OCR",
+    "SYNTH_RECEIPTS_OCR",
 ]

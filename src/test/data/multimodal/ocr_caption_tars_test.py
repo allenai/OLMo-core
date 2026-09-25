@@ -327,7 +327,7 @@ def test_message_weight_and_truncation(tmp_path):
 
 def test_ocr_registry_shape():
     names = ocr_mix.OCR_SOURCE_NAMES
-    assert len(names) == len(set(names)) == 4 + 5 + 6
+    assert len(names) == len(set(names)) == 4 + 5 + 6 + 2
     assert set(ocr_mix.OLMOCR_MIX_SOURCES) <= set(names)
     assert set(ocr_mix.TEXT_RICH_SOURCES) == {
         f"text_rich_{c}" for c in ("chart", "diagram", "doc", "graphic", "table")
@@ -336,7 +336,10 @@ def test_ocr_registry_shape():
     # Default = train splits only: no re-rendered duplicates, no source of unverifiable split.
     assert set(ocr_mix.SPLIT_UNVERIFIED_SOURCES) == {"hiertext", "cocotext", "ubertext"}
     assert set(ocr_mix.DEFAULT_OCR_SOURCES) == (
-        set(ocr_mix.OLMOCR_MIX_SOURCES) | set(ocr_mix.TEXT_RICH_SOURCES) | {"textocr"}
+        set(ocr_mix.OLMOCR_MIX_SOURCES)
+        | set(ocr_mix.TEXT_RICH_SOURCES)
+        | {"textocr"}
+        | set(ocr_mix.SYNTHETIC_OCR_SOURCES)
     )
     # Every tar source is a transcription source: <text>-wrapped text under one of two styles.
     styles = {src.style for src in ocr_mix.OCR_TAR_SOURCES.values()}

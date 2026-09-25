@@ -23,14 +23,16 @@ PixMo-Points build with sub-sampled absence queries, plus the audited PixMo-Coun
 knobs are the ``pointing_v2`` / ``count_v2`` config fields, e.g. ``--pointing_v2.filter_audit=true``.
 
 ``--ocr_rate`` (default 0) adds the OCR group, paid for by the caption group: olmOCR-mix page
-transcription (rendered from PDFs, needs ``pypdfium2``), TextOCR scene text, and mm_olmo's
-three-level captions of text-rich figures. The user turn of every OCR source is a style tag with
-no question. The rate is split evenly between transcription and figure captions, then by
-sqrt(size) within each. Every default source is a train split only; the scene-text tars whose
-split cannot be verified are selectable but not default. ``--ocr_sources=[...]`` picks the
+transcription (rendered from PDFs, needs ``pypdfium2``), TextOCR scene text, two synthetic
+English sets (NVIDIA's scattered scene-style text, needs ``h5py``, and thermal receipts), and
+mm_olmo's three-level captions of text-rich figures. The user turn of every OCR source is a
+style tag with no question. The rate is split evenly between transcription and figure captions,
+then by sqrt(size) within each. Every default source is a train split only; the scene-text tars
+whose split cannot be verified are selectable but not default. ``--ocr_sources=[...]`` picks the
 sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``ocr_tars`` /
 ``text_rich`` config fields are the three source templates, e.g. ``--olmocr.languages=null``,
-and ``--ocr_data_root`` relocates the tar tree.
+``nvidia_synth`` / ``receipts`` configure the synthetic sets, and ``--ocr_data_root`` relocates
+the tar tree.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -56,6 +58,7 @@ from olmo_core.data.multimodal import (
     MixtureDataLoader,
     MultimodalCollatorConfig,
     MultimodalDataLoader,
+    NvidiaSynthOcrDatasetConfig,
     OcrCaptionTarsDatasetConfig,
     OlmOcrMixDatasetConfig,
     PixMoCapDatasetConfig,
@@ -63,6 +66,7 @@ from olmo_core.data.multimodal import (
     PixMoCountV2DatasetConfig,
     PixMoPointsDatasetConfig,
     PixMoPointsV2DatasetConfig,
+    SyntheticReceiptsDatasetConfig,
     TextRichCaptionDatasetConfig,
     Tulu4DatasetConfig,
 )
@@ -290,8 +294,10 @@ NLP_RATE = 0.10
 # in and its text (or a description of a text-rich figure) out, with no question in the prompt.
 # It is mm_olmo's two molmo3 stage-1 OCR groups (`train_molmo3_stage1._base_mixture`, 0.075 each)
 # -- olmOCR-mix page transcription and the three-level figure captions -- plus TextOCR scene
-# text. The rate is split evenly between the two tasks, transcription and figure captions, as
-# mm_olmo's two groups are, then by sqrt(size) within a task (mm_olmo's `root_size_factor`).
+# text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`textocr`) and
+# thermal receipts (`olmocr`). The rate is split evenly between the two tasks, transcription and
+# figure captions, as mm_olmo's two groups are, then by sqrt(size) within a task (mm_olmo's
+# `root_size_factor`).
 # Paid for out of the caption group. Off by default so the default run stays the released
 # Molmo2 pretrain mixture; `--ocr_rate=0.15` enables it at mm_olmo's total.
 # `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
@@ -368,6 +374,12 @@ class ExperimentConfig(Config):
     ``--ocr_data_root`` instead."""
     text_rich: TextRichCaptionDatasetConfig
     """Template for the figure-caption OCR sources (``category`` is set per source); used when
+    ``ocr_rate > 0``."""
+    nvidia_synth: NvidiaSynthOcrDatasetConfig
+    """The ``nvidia_synth_en`` OCR source; used when it is in ``ocr_sources`` and
+    ``ocr_rate > 0``."""
+    receipts: SyntheticReceiptsDatasetConfig
+    """The ``synth_receipts_en`` OCR source; used when it is in ``ocr_sources`` and
     ``ocr_rate > 0``."""
     model_size: str = MODEL_SIZE
     """``"4b"`` or ``"8b"`` — selects the architecture, the base LM to initialise from, and
@@ -647,6 +659,17 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         max_sequence_length=SEQUENCE_LENGTH,
         loss_token_weighting="none",
     )
+    # The synthetic English transcription sets (see `synthetic_ocr`).
+    nvidia_synth_config = NvidiaSynthOcrDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+    )
+    receipts_config = SyntheticReceiptsDatasetConfig(
+        max_crops=MAX_CROPS,
+        max_sequence_length=SEQUENCE_LENGTH,
+        loss_token_weighting="none",
+    )
 
     # Pad token: Molmo2/Qwen2.5 EOS (151643). Fixed-length padding so every batch has a
     # constant token count for the token-based Trainer.
@@ -774,9 +797,10 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     # The pointing/counting Arrow datasets on weka were saved with `datasets >= 4`, whose
     # `List` feature type the image's older `datasets` can't deserialize. Upgrade after the
     # package install (olmo-core does not pin `datasets`, so this is not clobbered).
-    # `pypdfium2` renders the olmOCR-mix PDF pages at load time (`--ocr_rate > 0`); a small
-    # self-contained wheel, so it is installed unconditionally.
-    launch_config.post_setup = "pip install -U 'datasets>=4,<6' pypdfium2"
+    # `pypdfium2` renders the olmOCR-mix PDF pages and `h5py` reads the NVIDIA synthetic OCR
+    # files at load time (`--ocr_rate > 0`); small self-contained wheels, so they are installed
+    # unconditionally.
+    launch_config.post_setup = "pip install -U 'datasets>=4,<6' pypdfium2 h5py"
     # Optionally use the fused FlexAttention backend for the multimodal masks (~+8% MFU on
     # the stage-1 mixture vs the dense `torch` backend; see USE_FLEX_ATTN).
     if USE_FLEX_ATTN:
@@ -796,6 +820,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         olmocr=olmocr_config,
         ocr_tars=ocr_tars_config,
         text_rich=text_rich_config,
+        nvidia_synth=nvidia_synth_config,
+        receipts=receipts_config,
     ).merge(overrides)
 
     validate_data_config(config)
@@ -1088,6 +1114,8 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                 olmocr=config.olmocr,
                 tars=config.ocr_tars,
                 text_rich=config.text_rich,
+                nvidia_synth=config.nvidia_synth,
+                receipts=config.receipts,
                 data_root=config.ocr_data_root,
             )
             for name in config.ocr_sources
