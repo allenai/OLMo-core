@@ -850,10 +850,26 @@ class MultiGroupDistributedDataParallel(Module):
                 "use_reduce_scatter=True requires optimizer placement to be "
                 "configured before the first forward pass."
             )
+        # This opt-in path owns one expert-gradient write per forward. Require its
+        # backward to finish before starting another forward; interleaved pipeline
+        # schedules would otherwise attribute recomputation to the newest epoch.
+        if (
+            torch.is_grad_enabled()
+            and self._profile_forward_epoch > 0
+            and any(
+                epoch != self._profile_forward_epoch
+                for epoch in self._profile_external_written.values()
+            )
+        ):
+            raise RuntimeError(
+                "Rounded wgrad requires backward after each forward; multiple outstanding "
+                "forwards are unsupported"
+            )
         self._ensure_grad_views_bound(allow_none_rebind=True, where="forward")
         self._has_started_forward = True
         self._forwards_since_finalize += 1
-        self._profile_forward_epoch += 1
+        if torch.is_grad_enabled():
+            self._profile_forward_epoch += 1
         return inputs, kwargs
 
     def _post_forward(self, output):

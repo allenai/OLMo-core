@@ -66,3 +66,59 @@ def test_rounded_wgrad_preserves_parameter_owner(monkeypatch, mode, transpose):
         torch.testing.assert_close(destination, reference.grad, rtol=0, atol=0)
         assert weight.grad is None
     assert events == ["begin", "done"] * 3
+
+
+@pytest.mark.parametrize("recompute", [False, True])
+def test_rounded_wgrad_rejects_outstanding_forwards(monkeypatch, tmp_path, recompute):
+    import torch.distributed as dist
+
+    from olmo_core.nn.parallel import MultiGroupDistributedDataParallel
+
+    def grouped(x, weight, *, offs):
+        starts = [0, *offs.tolist()]
+        return torch.cat([x[a:b] @ w for a, b, w in zip(starts, starts[1:], weight)])
+
+    def accumulate(a, b, output, cumulative):
+        for i, (start, end) in enumerate(zip(cumulative[:-1], cumulative[1:])):
+            output[i].add_(a[:, start:end] @ b[:, start:end].T)
+
+    monkeypatch.setattr(torch.nn.functional, "grouped_mm", grouped)
+    monkeypatch.setattr(rounded_wgrad, "rounded_wgrad_add", accumulate)
+
+    class Experts(torch.nn.Module):
+        _profile_rounded_wgrad = True
+
+        def __init__(self):
+            super().__init__()
+            self.w_up_gate = torch.nn.Parameter(torch.randn(2, 3, 3))
+            self.w_down = torch.nn.Parameter(torch.randn(2, 3, 3))
+
+        def forward(self, x):
+            counts = torch.tensor([2, 3], dtype=torch.int32)
+
+            def layers(x):
+                x = rounded_wgrad.rounded_weight_gmm(x, self.w_up_gate, counts, False)
+                return rounded_wgrad.rounded_weight_gmm(x, self.w_down, counts, False)
+
+            return checkpoint(layers, x, use_reentrant=False) if recompute else layers(x)
+
+    dist.init_process_group("gloo", init_method=f"file://{tmp_path}/dist", rank=0, world_size=1)
+    try:
+        ddp = MultiGroupDistributedDataParallel(
+            Experts(), accumulate_grads_in_fp32=True, reduce_grads_in_fp32=True
+        )
+        x = torch.randn(5, 3, requires_grad=True)
+        # No-grad evaluation must not consume a training forward's epoch.
+        with torch.no_grad():
+            ddp(x)
+        with ddp.no_sync():
+            output = ddp(x)
+            with pytest.raises(RuntimeError, match="multiple outstanding forwards"):
+                ddp(x)
+            output.sum().backward()
+        # Sequential microbatch accumulation and checkpoint recomputation remain valid.
+        ddp(x).sum().backward()
+        ddp.finalize_grad_reduce()
+        assert all(torch.isfinite(p._main_grad_fp32).all() for p in ddp.parameters())
+    finally:
+        dist.destroy_process_group()

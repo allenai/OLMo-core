@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+import torch.nn.functional as F
 from transformers import Olmo2Config, PretrainedConfig
 
 from olmo_core.doc_utils import beta_feature
@@ -329,6 +330,9 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         _validate_olmo3moe_shared_experts(block)
         if not isinstance(block.attention, Attention):
             raise NotImplementedError("HF export requires Attention in every non-KDA layer.")
+        rope = block.attention.rope
+        if rope is None or rope.theta != attention.rope.theta or rope.scaling is not None:
+            raise NotImplementedError("Non-KDA HF export requires identical unscaled RoPE.")
         if _olmo3moe_attention_signature(block.attention, rms_norm_eps) != attention_signature:
             raise NotImplementedError("Heterogeneous attention configurations are unsupported.")
 
@@ -340,9 +344,23 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
     # Selection modifiers change which experts a token routes to at inference. The HF Olmo3Moe
     # router only implements plain softmax/sigmoid gating with no score-bias or group-masking
     # path, so exporting any of these would silently diverge (or crash on the first HF forward).
+    router_signature = None
     for block in blocks:
         if isinstance(block, OLMoDDPTransformerBlock) and block.routed_experts_router is not None:
-            _validate_olmo3moe_router_selection(block.routed_experts_router)
+            block_router = block.routed_experts_router
+            _validate_olmo3moe_router_selection(block_router)
+            signature = (
+                block_router.num_experts,
+                block_router.top_k,
+                block_router.original_top_k,
+                block_router.gating_function,
+                block_router.normalize_expert_weights,
+                block_router.restore_weight_scale,
+            )
+            if router_signature is None:
+                router_signature = signature
+            elif signature != router_signature:
+                raise NotImplementedError("Heterogeneous router configurations are unsupported.")
 
     # The HF olmo3moe router/expert linears are bias-free and the converter only copies
     # contiguous SwiGLU up/gate weights, so biased or non-SwiGLU experts can't be represented.
@@ -364,19 +382,20 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
 
     # Dense MLP intermediate size, if there are any dense layers.
     dense_mlp_intermediate_size: Optional[int] = None
-    if dense_block is not None:
+    for idx in dense_layers_indices:
+        feed_forward = blocks[idx].feed_forward
+        if feed_forward.activation_fn is not F.silu:
+            raise NotImplementedError("HF export requires SiLU in every dense feed-forward layer.")
         if any(
-            proj.bias is not None
-            for proj in (
-                dense_block.feed_forward.w1,
-                dense_block.feed_forward.w2,
-                dense_block.feed_forward.w3,
-            )
+            proj.bias is not None for proj in (feed_forward.w1, feed_forward.w2, feed_forward.w3)
         ):
             raise NotImplementedError(
                 "Exporting olmo3moe with biased dense feed-forward layers is not supported."
             )
-        dense_mlp_intermediate_size = dense_block.feed_forward.hidden_size
+        if dense_mlp_intermediate_size is None:
+            dense_mlp_intermediate_size = feed_forward.hidden_size
+        elif feed_forward.hidden_size != dense_mlp_intermediate_size:
+            raise NotImplementedError("Heterogeneous dense feed-forward sizes are unsupported.")
 
     # Shared experts (optional). The HF model has a single shared expert.
     shared_expert_intermediate_size: Optional[int] = None

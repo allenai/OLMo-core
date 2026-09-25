@@ -1,6 +1,8 @@
 """Experimental BF16-rounded weight GEMM into an owned FP32 DDP bucket.
 
 Restricted to BF16 and exclusive one-use-per-forward expert parameters.
+Each training forward must complete its backward before the next forward;
+pipeline schedules with multiple outstanding forwards are unsupported.
 The opt-in EP qualification also supports the existing rowwise output/dgrad buffers.
 Never fabricates a dummy gradient to trigger autograd hooks.
 The explicit DDP completion callback runs after the real accumulation is enqueued.

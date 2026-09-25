@@ -624,6 +624,8 @@ class Transformer(nn.Module):
                     "EMO routing does not currently support pipeline parallelism because "
                     "token-derived segment IDs are not carried between pipeline stages"
                 )
+            if self._tp_enabled:
+                raise OLMoConfigurationError("EMO routing does not support tensor parallelism")
             if self._cp_load_balancer is not None:
                 raise OLMoConfigurationError(
                     "EMO routing does not currently support context parallelism"
@@ -785,6 +787,14 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support tensor parallelism because "
+                    "document pools require the complete token sequence"
+                )
+
         if self.tie_word_embeddings and (
             self.lm_head is None
             or self.lm_head.loss_implementation == LMLossImplementation.fused_linear

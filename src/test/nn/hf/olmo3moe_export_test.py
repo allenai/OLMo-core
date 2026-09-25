@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from olmo_core.config import DType
+from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.attention import (
     AttentionConfig,
     GateConfig,
@@ -15,6 +16,7 @@ from olmo_core.nn.attention import (
 )
 from olmo_core.nn.attention.backend import AttentionBackendName
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
+from olmo_core.nn.feed_forward import ActivationFunction, FeedForwardConfig
 from olmo_core.nn.hf.checkpoint import save_hf_model
 from olmo_core.nn.hf.config import get_hf_config
 from olmo_core.nn.hf.convert import convert_state_from_hf, convert_state_to_hf
@@ -26,13 +28,14 @@ from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
-from olmo_core.nn.rope import RoPEConfig
+from olmo_core.nn.rope import PIRoPEScalingConfig, RoPEConfig
 from olmo_core.nn.transformer import (
     OLMoDDPModelConfig,
     TransformerBlockConfig,
     TransformerBlockType,
     TransformerType,
 )
+from olmo_core.nn.transformer.block import ReorderedNormTransformerBlock
 from olmo_core.testing.utils import has_fla, requires_gpu
 
 requires_fla = pytest.mark.skipif(not has_fla, reason="Requires flash-linear-attention")
@@ -555,3 +558,66 @@ def test_hybrid_hf_rejects_packed_positions():
     hf = Olmo3MoeForCausalLM(get_hf_config(model))
     with pytest.raises(NotImplementedError, match="Packed/reset"):
         hf(torch.ones(1, 4, dtype=torch.long), position_ids=torch.tensor([[0, 1, 0, 1]]))
+
+
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("top_k", 1),
+        ("original_top_k", 3),
+        ("normalize_expert_weights", False),
+        ("restore_weight_scale", True),
+        ("gating_function", "sigmoid"),
+    ],
+)
+def test_attention_only_rejects_later_router_settings(setting, value):
+    model = build_attention_only()
+    router = model.blocks["1"].routed_experts_router
+    if getattr(router, setting) == value:
+        value = not value
+    setattr(router, setting, value)
+    with pytest.raises(NotImplementedError, match="Heterogeneous router"):
+        get_hf_config(model)
+
+
+@pytest.mark.parametrize("change", ["disabled", "theta", "scaling"])
+def test_attention_only_rejects_later_rope_settings(change):
+    model = build_attention_only()
+    attention = model.blocks["1"].attention
+    if change == "disabled":
+        attention.rope = None
+    elif change == "theta":
+        attention.rope.theta *= 2
+    else:
+        attention.rope.scaling = PIRoPEScalingConfig(factor=2)
+    with pytest.raises(NotImplementedError, match="RoPE"):
+        get_hf_config(model)
+
+
+@pytest.mark.parametrize("layer", ["2", "3"])
+def test_attention_only_rejects_non_silu_dense_layers(layer):
+    model = build_attention_only()
+    for idx in ("2", "3"):
+        model.blocks[idx] = ReorderedNormTransformerBlock(
+            d_model=32,
+            block_idx=int(idx),
+            n_layers=4,
+            sequence_mixer=AttentionConfig(n_heads=4, head_dim=8, bias=False),
+            feed_forward=FeedForwardConfig(hidden_size=32, bias=False),
+            layer_norm=LayerNormConfig(name=LayerNormType.rms, eps=1e-6, bias=False),
+        )
+        model.blocks[idx].attention = deepcopy(model.blocks["0"].attention)
+    get_hf_config(model)
+    model.blocks[layer].feed_forward.activation_fn = ActivationFunction.gelu_tanh.build()
+    with pytest.raises(NotImplementedError, match="SiLU"):
+        get_hf_config(model)
+
+
+def test_emo_tp_rejected_before_mutating_model():
+    model = build_attention_only(emo=True)
+    parameters = dict(model.named_parameters())
+    with pytest.raises(OLMoConfigurationError, match="tensor parallelism"):
+        model.apply_tp(None)
+    assert not model._tp_enabled
+    for name, parameter in model.named_parameters():
+        assert parameter is parameters[name]
