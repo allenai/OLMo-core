@@ -5,7 +5,7 @@ import torch
 
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import (
     OLMoDDPTransformerBlock,
     OLMoDDPTransformerBlockConfig,
@@ -30,7 +30,11 @@ def _block_config(
     return OLMoDDPTransformerBlockConfig(
         name=TransformerBlockType.moe_fused_v2,
         attention=AttentionConfig(
-            name=AttentionType.default, n_heads=4, bias=False, use_flash=False, dtype=dtype
+            name=AttentionType.default,
+            n_heads=4,
+            bias=False,
+            backend=AttentionBackendName.torch,
+            dtype=dtype,
         ),
         routed_experts=RoutedExpertsConfig(
             d_model=routed_dim, hidden_size=128, num_experts=4, bias=False, dtype=dtype

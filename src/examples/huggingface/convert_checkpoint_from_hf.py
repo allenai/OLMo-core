@@ -166,7 +166,8 @@ def convert_checkpoint_from_hf(
                 f"Overriding attention backend from {backend_name} to torch for {block_label} conversion and validation to make validation less likely to fail."
             )
             attention_config.backend = AttentionBackendName.torch
-            attention_config.use_flash = False
+            # Clear the legacy flag so an old config cannot conflict with the backend override.
+            attention_config.use_flash = None
 
     for block_label, block_config in block_entries:
         prepare_block_for_conversion(block_label, block_config)

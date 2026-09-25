@@ -14,7 +14,7 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
-from olmo_core.nn.attention import AttentionConfig
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
@@ -69,7 +69,12 @@ def test_generation_module_basic(compile_model: bool, use_cache: bool):
     )
 
     # Build generation module
-    transformer_config = small_transformer_config(use_flash=flash_attn_available, dtype=dtype)
+    transformer_config = small_transformer_config(
+        attn_backend=(
+            AttentionBackendName.flash_2 if flash_attn_available else AttentionBackendName.torch
+        ),
+        dtype=dtype,
+    )
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model,
@@ -274,7 +279,9 @@ def test_generation_with_attention_mask():
     pad_token_id = 0
 
     generation_module = TransformerGenerationModule(
-        model=small_transformer_config(use_flash=True, dtype=DType.bfloat16).build(),
+        model=small_transformer_config(
+            attn_backend=AttentionBackendName.flash_2, dtype=DType.bfloat16
+        ).build(),
         generation_config=GenerationConfig(
             max_length=20, temperature=0.0, pad_token_id=pad_token_id, eos_token_id=1
         ),
@@ -312,7 +319,10 @@ def test_left_padded_attention_mask_equivalence(use_rope):
     )
 
     transformer_config = small_transformer_config(
-        use_flash=True, n_layers=2, dtype=DType.bfloat16, use_rope=use_rope
+        attn_backend=AttentionBackendName.flash_2,
+        n_layers=2,
+        dtype=DType.bfloat16,
+        use_rope=use_rope,
     )
     generation_module = TransformerGenerationModule(
         model=transformer_config.build(), generation_config=generation_config, device=device
@@ -351,7 +361,9 @@ def test_generation_cache_consistency(batch_size: int):
         pytest.skip("flash-attn is required for KV cache usage")
 
     device = torch.device("cuda")
-    model = small_transformer_config(dtype=DType.bfloat16, n_layers=1, use_flash=True).build()
+    model = small_transformer_config(
+        dtype=DType.bfloat16, n_layers=1, attn_backend=AttentionBackendName.flash_2
+    ).build()
     gen_config = GenerationConfig(max_length=128, pad_token_id=0, eos_token_id=1, use_cache=False)
     generation_module = TransformerGenerationModule(
         model=model, generation_config=gen_config, device=device
@@ -430,7 +442,12 @@ def test_generation_module_distributed_fsdp(
     generation_config = GenerationConfig(
         max_length=16, do_sample=False, pad_token_id=0, eos_token_id=1, use_cache=use_cache
     )
-    transformer_config = small_transformer_config(dtype=DType.bfloat16, use_flash=has_flash_attn_2)
+    transformer_config = small_transformer_config(
+        dtype=DType.bfloat16,
+        attn_backend=(
+            AttentionBackendName.flash_2 if has_flash_attn_2 else AttentionBackendName.torch
+        ),
+    )
     model = transformer_config.build()
     generation_module = TransformerGenerationModule(
         model=model, generation_config=generation_config, device=torch.device("cuda")

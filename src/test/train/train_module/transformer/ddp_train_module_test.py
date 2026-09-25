@@ -9,7 +9,7 @@ import torch.distributed.checkpoint as dcp
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -79,7 +79,7 @@ def _tiny_model_config(
                 name=AttentionType.default,
                 n_heads=4,
                 bias=False,
-                use_flash=False,
+                backend=AttentionBackendName.torch,
                 dtype=dtype,
                 n_kv_heads=2 if per_head_qk is not None else None,
                 qk_norm=layer_norm if per_head_qk is not None else None,
