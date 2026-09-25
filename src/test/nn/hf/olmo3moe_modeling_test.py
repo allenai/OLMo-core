@@ -310,3 +310,56 @@ def test_router_matches_core_fp32_scores(dtype, gating, normalization):
         assert weights.dtype == torch.float32
         torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
         torch.testing.assert_close(weights, expected_weights, rtol=0, atol=0)
+
+
+@requires_olmo3moe
+@pytest.mark.parametrize("side", ["left", "right"])
+@pytest.mark.parametrize("backend", ["eager", "sdpa"])
+def test_scalable_softmax_padding_matches_individual_sequences(side, backend):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    torch.manual_seed(831)
+    config = _small_config()
+    config.scalable_softmax = True
+    config.use_cache = False
+    config._attn_implementation = backend
+    model = Olmo3MoeForCausalLM(config).eval()
+    with torch.no_grad():
+        for layer in model.model.layers:
+            layer.self_attn.ssmax_scale.fill_(1.3)
+    sequences = [torch.tensor([3, 4, 5]), torch.tensor([6, 7, 8, 9, 10])]
+    ids = torch.zeros(2, 5, dtype=torch.long)
+    mask = torch.zeros_like(ids)
+    for row, sequence in enumerate(sequences):
+        start = 5 - len(sequence) if side == "left" else 0
+        ids[row, start : start + len(sequence)] = sequence
+        mask[row, start : start + len(sequence)] = 1
+    with torch.no_grad():
+        batched = model(ids, attention_mask=mask).logits
+        for row, sequence in enumerate(sequences):
+            expected = model(sequence[None]).logits[0]
+            torch.testing.assert_close(
+                batched[row, mask[row].bool()], expected, atol=1e-6, rtol=1e-5
+            )
+
+
+@requires_olmo3moe
+@pytest.mark.parametrize("as_mapping", [False, True])
+def test_scalable_softmax_prepared_masks_require_positions(as_mapping):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+
+    config = _small_config()
+    config.scalable_softmax = True
+    config.use_cache = False
+    config._attn_implementation = "eager"
+    model = Olmo3MoeForCausalLM(config).eval()
+    ids = torch.tensor([[3, 4, 5]])
+    mask = torch.full((1, 1, 3, 3), float("-inf")).triu(1)
+    if as_mapping:
+        mask = {layer_type: mask for layer_type in config.layer_types}
+    with pytest.raises(ValueError, match="explicit position_ids"):
+        model(ids, attention_mask=mask)
+    with torch.no_grad():
+        actual = model(ids, attention_mask=mask, position_ids=torch.arange(3)[None]).logits
+        expected = model(ids).logits
+    torch.testing.assert_close(actual, expected)

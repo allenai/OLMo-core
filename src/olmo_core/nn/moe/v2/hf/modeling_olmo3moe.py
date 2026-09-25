@@ -986,7 +986,8 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
         cache_position (`torch.Tensor`, *optional*):
             Indices describing the positions of input tokens in the sequence. This is used to
             update a static cache in the correct position and to infer `position_ids` when those
-            are not provided.
+            are not provided. Scalable softmax instead infers visible-token positions from a
+            supplied 2D padding mask. Prepared masks require explicit `position_ids`.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
@@ -1038,7 +1039,19 @@ class Olmo3MoeModel(Olmo3MoePreTrainedModel):
             )
 
         if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+            if self.config.scalable_softmax and attention_mask is not None:
+                if not isinstance(attention_mask, torch.Tensor) or attention_mask.ndim != 2:
+                    raise ValueError(
+                        "Scalable softmax requires explicit position_ids with prepared attention "
+                        "masks; supply a 2D padding mask to infer visible token positions."
+                    )
+                # Padding must not increase log(context length). Use the same visible-token
+                # positions for query scaling and RoPE; cache slots still use cache_position.
+                padding_mask = attention_mask.to(device=inputs_embeds.device, dtype=torch.long)
+                position_ids = (padding_mask.cumsum(-1) - 1).masked_fill(padding_mask == 0, 0)
+                position_ids = position_ids[:, -inputs_embeds.shape[1] :]
+            else:
+                position_ids = cache_position.unsqueeze(0)
 
         # It may already have been prepared by e.g. `generate`
         if not isinstance(causal_mask_mapping := attention_mask, dict):
