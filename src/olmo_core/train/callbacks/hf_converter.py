@@ -69,8 +69,11 @@ class HFConverterCallback(Callback):
     tokenizer_id: Optional[str] = None
     """
     The HuggingFace tokenizer identifier to save with the model.
-    If not specified, uses the tokenizer from the experiment config.
+    An explicit identifier wins over checkpoint-side files and the experiment config.
     """
+
+    tokenizer_revision: Optional[str] = None
+    """Immutable HF revision of the tokenizer to export."""
 
     max_sequence_length: Optional[int] = None
     """
@@ -185,7 +188,7 @@ class HFConverterCallback(Callback):
             if tokenizer_config_dict is None:
                 log.warning(
                     "Tokenizer config not found in experiment config, "
-                    "conversion will proceed without tokenizer"
+                    "conversion will fail closed without an explicit valid tokenizer configuration"
                 )
                 tokenizer_config_dict = {}
 
@@ -205,6 +208,7 @@ class HFConverterCallback(Callback):
                     model_state_dict=model_state_dict,
                     dtype=self.dtype,
                     tokenizer_id=self.tokenizer_id,
+                    tokenizer_revision=self.tokenizer_revision,
                     max_sequence_length=self.max_sequence_length,
                     validate=self.validate,
                     debug=self.debug,

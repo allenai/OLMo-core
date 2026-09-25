@@ -25,6 +25,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+import olmo_core.ops.moe as moe_ops
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
@@ -610,6 +611,33 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
+        emo_blocks = []
+        emo_eos_token_ids = set()
+        for block_idx, block in self.blocks.items():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                emo_blocks.append(int(block_idx))
+                emo_eos_token_ids.add(router.eos_token_id)
+        if emo_blocks:
+            if self._pp_enabled:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
+            if self._tp_enabled:
+                raise OLMoConfigurationError("EMO routing does not support tensor parallelism")
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support context parallelism"
+                )
+            if len(emo_eos_token_ids) != 1:
+                raise OLMoConfigurationError(
+                    "All EMO routers in a model must use the same eos_token_id"
+                )
+            segment_ids = moe_ops.segment_ids_from_eos(input_ids, emo_eos_token_ids.pop())
+            for block_idx in emo_blocks:
+                per_block_kwargs[block_idx]["segment_ids"] = segment_ids
+
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
 
@@ -740,6 +768,13 @@ class Transformer(nn.Module):
         Prepare the model for pipeline parallelism after it's been split into stages.
         """
         for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
+        for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
         self._pp_enabled = True
@@ -752,6 +787,14 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support tensor parallelism because "
+                    "document pools require the complete token sequence"
+                )
+
         if self.tie_word_embeddings and (
             self.lm_head is None
             or self.lm_head.loss_implementation == LMLossImplementation.fused_linear
@@ -869,8 +912,17 @@ class Transformer(nn.Module):
         if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
-        # TODO: only preserve RNG state if dropout is active
-        preserve_rng_state = False
+        # EMO samples a routed-expert pool size for each document. Recompute must replay those
+        # samples so it routes through the same experts as the original checkpointed forward.
+        # TODO: also preserve RNG state if dropout is active.
+        preserve_rng_state = any(
+            getattr(
+                getattr(block, "routed_experts_router", None),
+                "requires_segment_ids",
+                False,
+            )
+            for block in self.blocks.values()
+        )
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch

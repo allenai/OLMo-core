@@ -134,6 +134,7 @@ class OLMoDDPTrainModule(TrainModule):
         load_key_mapping: Optional[Dict[str, str]] = None,
         reset_optimizer_states_on_load: bool = False,
         reset_optimizer_states_on_resume: bool = False,
+        expand_shared_qk_norm_on_load: bool = False,
         label_ignore_index: int = -100,
         eval_only: bool = False,
     ):
@@ -149,6 +150,7 @@ class OLMoDDPTrainModule(TrainModule):
         self.max_sequence_length = max_sequence_length
         self.rank_microbatch_size = rank_microbatch_size
         self.eval_only = eval_only
+        self.expand_shared_qk_norm_on_load = expand_shared_qk_norm_on_load
         # Build world mesh.
         self.device = device or get_default_device()
         self.world_mesh: Dict[str, Optional[DeviceMesh]] = {}
@@ -752,6 +754,7 @@ class OLMoDDPTrainModule(TrainModule):
                     rank_microbatch_size=self.rank_microbatch_size,
                     rowwise_lifetime_lease_slots=self._estimate_pp_rowwise_lifetime_lease_slots_for_model_parts(),
                 )
+            self._set_ep_no_sync_symm_initialization_complete(True)
 
     @staticmethod
     def _rowwise_lifetime_lease_slots_env_is_set() -> bool:
@@ -1188,13 +1191,7 @@ class OLMoDDPTrainModule(TrainModule):
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
 
         if self.eval_only:
-            sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-            dist_cp.state_dict_loader.load(
-                sd_to_load,
-                checkpoint_id=dir,
-                storage_reader=reader,
-                process_group=process_group,
-            )
+            self._load_model_state_dict_direct(metadata, dir, reader, process_group)
         else:
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
@@ -1217,13 +1214,7 @@ class OLMoDDPTrainModule(TrainModule):
                 log.info(
                     "Skipping optimizer state during checkpoint load; loading model weights directly"
                 )
-                sd_to_load = self._get_model_state_dict_for_eval_load(metadata)
-                dist_cp.state_dict_loader.load(
-                    sd_to_load,
-                    checkpoint_id=dir,
-                    storage_reader=reader,
-                    process_group=process_group,
-                )
+                self._load_model_state_dict_direct(metadata, dir, reader, process_group)
                 optim._copy_model_params_to_main_params()
                 optim._copy_main_params_to_mxfp8_weights()
                 optim._refresh_rowwise_fp8_caches_from_model_params()
@@ -1279,6 +1270,20 @@ class OLMoDDPTrainModule(TrainModule):
                             sd_to_load.pop(key)
 
             if not loaded_model_directly:
+                from olmo_core.distributed.checkpoint.utils import (
+                    finish_qk_expansion,
+                    prepare_qk_expansion,
+                )
+
+                expansions = {}
+                if self.expand_shared_qk_norm_on_load:
+                    gain_shapes = {
+                        name: tuple(param.shape)
+                        for group in optim.param_groups
+                        for name, param in group["named_params"].items()
+                        if name.endswith((".q_norm.weight", ".k_norm.weight")) and param.ndim == 2
+                    }
+                    expansions = prepare_qk_expansion(sd_to_load, metadata, gain_shapes)
                 dist_cp.state_dict_loader.load(
                     sd_to_load,
                     checkpoint_id=dir,
@@ -1286,6 +1291,8 @@ class OLMoDDPTrainModule(TrainModule):
                     process_group=process_group,
                     # planner=FlatLoadPlanner(),
                 )
+
+                finish_qk_expansion(sd_to_load, expansions)
 
                 optim.load_state_dict(sd_to_load)
 
@@ -1317,6 +1324,35 @@ class OLMoDDPTrainModule(TrainModule):
 
         return
 
+    def _load_model_state_dict_direct(
+        self,
+        metadata: Metadata,
+        checkpoint_id: PathOrStr,
+        reader: RemoteFileSystemReader,
+        process_group: Optional[ProcessGroup],
+    ) -> None:
+        from olmo_core.distributed.checkpoint.utils import (
+            finish_qk_expansion,
+            prepare_qk_expansion,
+        )
+
+        state = self._get_model_state_dict_for_eval_load(metadata)
+        expansions = {}
+        if self.expand_shared_qk_norm_on_load:
+            gain_shapes = {}
+            for part in self.model_parts:
+                for name, param in part.named_parameters():
+                    if param.ndim != 2 or not name.endswith((".q_norm.weight", ".k_norm.weight")):
+                        continue
+                    key = self._resolve_model_checkpoint_key(name, state.keys())
+                    if key is not None:
+                        gain_shapes[key.removesuffix(".main")] = tuple(param.shape)
+            expansions = prepare_qk_expansion(state, metadata, gain_shapes)
+        dist_cp.state_dict_loader.load(
+            state, checkpoint_id=checkpoint_id, storage_reader=reader, process_group=process_group
+        )
+        finish_qk_expansion(state, expansions)
+
     def _get_model_state_dict_for_eval_load(self, metadata: Metadata) -> Dict[str, Any]:
         model_state: Dict[str, Any] = {}
         checkpoint_keys = set(metadata.state_dict_metadata.keys())
@@ -1336,6 +1372,17 @@ class OLMoDDPTrainModule(TrainModule):
                 global_shape = (
                     (global_numel,) if is_optimizer_main_param else tuple(tensor_meta.size)
                 )
+
+                if (
+                    self.expand_shared_qk_norm_on_load
+                    and name.endswith((".q_norm.weight", ".k_norm.weight"))
+                    and param.ndim == 2
+                    and tuple(tensor_meta.size) == (param.shape[1],)
+                ):
+                    # Replicated Q/K gains are not EP shards. Keep the live destination;
+                    # the load wrapper reads a temporary shared vector and expands it.
+                    model_state[checkpoint_key] = local_tensor
+                    continue
 
                 if local_numel == global_numel:
                     model_state[checkpoint_key] = local_tensor
@@ -2817,6 +2864,8 @@ class OLMoDDPTrainModule(TrainModule):
     ):
         from olmo_core.nn.ddp import OLMoDDPModel
 
+        self._set_ep_no_sync_symm_initialization_complete(False)
+
         # Materialize and init parameters.
         log.info("Initializing model weights...")
         for model_part_idx, m in enumerate(model_parts):
@@ -2842,7 +2891,18 @@ class OLMoDDPTrainModule(TrainModule):
         for m in model_parts:
             m.refresh_rowwise_fp8_cache()
 
+        # PP needs one additional, schedule-aware prewarm in on_attach(). PP1 is
+        # fully initialized here, so any later symmetric allocation is a bug.
+        if not self.pp_enabled:
+            self._set_ep_no_sync_symm_initialization_complete(True)
+
         return
+
+    @staticmethod
+    def _set_ep_no_sync_symm_initialization_complete(value: bool) -> None:
+        from olmo_core.train.globals import set_global_arg
+
+        set_global_arg("ep_no_sync_symm_initialization_complete", value)
 
     def _cp_local_rank_microbatch_size(self, rank_microbatch_size: int) -> int:
         if self._cp_config is None:

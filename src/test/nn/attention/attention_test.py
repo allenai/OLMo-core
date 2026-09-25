@@ -2,6 +2,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import pytest
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.tensor import Shard, init_device_mesh
 
@@ -31,6 +32,7 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.transformer.init import InitMethod
 from olmo_core.testing import (
     BACKENDS,
     DEVICES,
@@ -137,6 +139,14 @@ def test_attention_backend(
         pytest.param({"rope": RoPEConfig(name=RoPEType.complex)}, id="complex-rope"),
         pytest.param({"qk_norm": LayerNormConfig()}, id="qk-norm"),
         pytest.param({"qk_norm": LayerNormConfig(), "use_head_qk_norm": True}, id="head-qk-norm"),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "qk_norm_per_head_gains": True,
+            },
+            id="head-qk-norm-per-head-gains",
+        ),
     ],
 )
 def test_attention(
@@ -901,6 +911,38 @@ def test_attention_leftpad_shift_equivalence(use_rope):
             ),
             id="headwise-gating",
         ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                bias=False,
+                scalable_softmax=True,
+            ),
+            id="scalable-softmax",
+        ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                use_head_qk_norm=True,
+            ),
+            id="GQA-head-qk-norm",
+        ),
+        pytest.param(
+            AttentionConfig(
+                name=AttentionType.default,
+                n_heads=8,
+                n_kv_heads=2,
+                bias=False,
+                qk_norm=LayerNormConfig(),
+                use_head_qk_norm=True,
+                qk_norm_per_head_gains=True,
+            ),
+            id="GQA-head-qk-norm-per-head-gains",
+        ),
     ],
 )
 def test_attention_builder_config(attn_config: AttentionConfig):
@@ -912,6 +954,188 @@ def test_attention_builder_config(attn_config: AttentionConfig):
     # Make sure the estimated number of params matches the actual number of params.
     n_params = sum(p.numel() for p in attn.parameters())
     assert attn_config.num_params(d_model) == n_params
+
+
+def test_qk_norm_per_head_gains():
+    d_model, n_heads, n_kv_heads = 128, 8, 2
+    head_dim = d_model // n_heads
+
+    attn = Attention(
+        d_model=d_model,
+        n_heads=n_heads,
+        n_kv_heads=n_kv_heads,
+        qk_norm=LayerNormConfig(),
+        use_head_qk_norm=True,
+        qk_norm_per_head_gains=True,
+    )
+    assert attn.q_norm is not None and attn.k_norm is not None
+    assert attn.q_norm.weight.shape == (n_heads, head_dim)
+    assert attn.k_norm.weight.shape == (n_kv_heads, head_dim)
+    # Statistics should still be computed per-head over 'head_dim'.
+    assert attn.q_norm.normalized_shape == (head_dim,)
+    assert attn.k_norm.normalized_shape == (head_dim,)
+
+    with pytest.raises(OLMoConfigurationError, match="use_head_qk_norm"):
+        Attention(
+            d_model=d_model,
+            n_heads=n_heads,
+            qk_norm=LayerNormConfig(),
+            qk_norm_per_head_gains=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "cu_doc_lens,expected_lengths",
+    [
+        pytest.param(None, [[1, 2, 3, 4], [1, 2, 3, 4]], id="causal"),
+        pytest.param(
+            torch.tensor([0, 2, 4, 7, 8], dtype=torch.int32),
+            [[1, 2, 1, 2], [1, 2, 3, 1]],
+            id="packed-documents",
+        ),
+    ],
+)
+def test_scalable_softmax_query_scaling(cu_doc_lens, expected_lengths):
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.copy_(torch.tensor([0.5, 2.0]))
+
+    q = torch.ones(2, 4, 2, 4)
+    scaled_q = attention._apply_scalable_softmax(q, cu_doc_lens)
+    expected = torch.tensor(expected_lengths, dtype=q.dtype).log()
+    expected = expected[:, :, None, None] * torch.tensor([0.5, 2.0])[None, None, :, None]
+
+    torch.testing.assert_close(scaled_q, expected.expand_as(q))
+    scaled_q.sum().backward()
+    assert attention.ssmax_scale.grad is not None
+    assert torch.all(attention.ssmax_scale.grad > 0)
+
+
+def test_scalable_softmax_disabled_is_identity():
+    attention = Attention(d_model=8, n_heads=2, head_dim=4, bias=False)
+    q = torch.randn(2, 4, 2, 4)
+
+    assert attention.ssmax_scale is None
+    assert attention._apply_scalable_softmax(q, None) is q
+
+
+def test_scalable_softmax_scale_is_initialized_to_one():
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.fill_(float("nan"))
+
+    attention.init_weights(
+        init_method=InitMethod.normal,
+        d_model=8,
+        block_idx=0,
+        num_blocks=1,
+    )
+
+    torch.testing.assert_close(attention.ssmax_scale, torch.ones(2))
+
+
+@pytest.mark.parametrize("flag", ["scalable_softmax", "qk_norm_per_head_gains"])
+@pytest.mark.parametrize("name", [AttentionType.normalized, AttentionType.fused_v2])
+def test_attention_rejects_unsupported_hybrid_extensions(flag, name):
+    config = AttentionConfig(name=name, n_heads=2)
+    setattr(config, flag, True)
+    with pytest.raises(OLMoConfigurationError, match=f"not supported with {name} attention"):
+        config.build(d_model=8, layer_idx=0, n_layers=1)
+
+
+@pytest.mark.parametrize("mode", ["context-parallel", "kv-cache"])
+def test_scalable_softmax_rejects_unsupported_setup(mode):
+    attention = Attention(d_model=8, n_heads=2, scalable_softmax=True)
+    with pytest.raises(OLMoConfigurationError, match="Scalable-Softmax"):
+        if mode == "context-parallel":
+            attention.apply_cp(None)
+        else:
+            attention.init_kv_cache_manager(1, 8)
+
+
+def test_scalable_softmax_is_applied_after_qk_norm(monkeypatch):
+    class ConstantNorm(nn.Module):
+        def forward(self, x):
+            return torch.full_like(x, 3.0)
+
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        qk_norm=LayerNormConfig(),
+        use_head_qk_norm=True,
+        scalable_softmax=True,
+    )
+    attention.q_norm = ConstantNorm()
+    attention.k_norm = ConstantNorm()
+    assert attention.ssmax_scale is not None
+    with torch.no_grad():
+        attention.ssmax_scale.fill_(2.0)
+
+    captured_q = None
+
+    def capture_sdpa(q, k, v, **kwargs):
+        nonlocal captured_q
+        captured_q = q
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(attention, "sdpa", capture_sdpa)
+    attention(torch.randn(1, 3, 8))
+
+    assert captured_q is not None
+    expected = 6.0 * torch.arange(1, 4, dtype=captured_q.dtype).log()
+    expected = expected.view(1, 3, 1, 1).expand_as(captured_q)
+    torch.testing.assert_close(captured_q, expected)
+
+
+@pytest.mark.parametrize("unsupported_mode", ["kv-cache", "context-parallel"])
+def test_scalable_softmax_rejects_unsupported_runtime_modes(unsupported_mode):
+    attention = Attention(
+        d_model=8,
+        n_heads=2,
+        head_dim=4,
+        bias=False,
+        scalable_softmax=True,
+    )
+    if unsupported_mode == "kv-cache":
+        attention.kv_cache_manager = nn.Identity()
+        match = "KV caching"
+    else:
+        attention.backend.cp_enabled = True
+        match = "context parallelism"
+
+    with pytest.raises(NotImplementedError, match=match):
+        attention._apply_scalable_softmax(torch.ones(1, 2, 2, 4), None)
+
+
+def test_scalable_softmax_rejects_sliding_window_attention():
+    config = AttentionConfig(
+        n_heads=2,
+        scalable_softmax=True,
+        sliding_window=SlidingWindowAttentionConfig(
+            pattern=[128],
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=False,
+        ),
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="scalable_softmax"):
+        config.build(d_model=8, layer_idx=0, n_layers=2)
 
 
 @pytest.mark.parametrize(
@@ -1125,8 +1349,24 @@ def _run_tensor_parallel_attention(
             id="headwise-qk-layernorm-rope",
         ),
         pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "qk_norm_per_head_gains": True,
+            },
+            id="headwise-qk-layernorm-per-head-gains",
+        ),
+        pytest.param(
             {"gate": GateConfig(granularity=GateGranularity.headwise)},
             id="headwise-gating",
+        ),
+        pytest.param(
+            {
+                "qk_norm": LayerNormConfig(),
+                "use_head_qk_norm": True,
+                "scalable_softmax": True,
+            },
+            id="scalable-softmax",
         ),
     ],
 )

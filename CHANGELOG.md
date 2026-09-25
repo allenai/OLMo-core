@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added opt-in paired SwiGLU backward and BF16-rounded weight-gradient accumulation for OLMoDDP experts, including Torch 2.13 support, checkpoint/recomputation coverage, and explicit backend and bucket-ownership guards.
+- Added independent per-head Q/K norm gains and scalable softmax, EMO document-pool routing/global load balancing, and opt-in FP32 gradient-accumulation/reduce-scatter fast paths with explicit hardware/version guards.
+- Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
+- Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
+
 ### Fixed
 
+- Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
+- Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
+- Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
+- Preserve the resolved tokenizer BOS ID in exported model and generation configs, including when the training config leaves BOS unspecified.
+- Reject hybrid KDA HF exports with sliding-window attention and EMO exports with restricted evaluation pools in any routed layer. Disable scalable-softmax HF generation caching and reject explicit cache use.
+- Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.
+- Keep legacy fused attention configs compatible when the new attention options are disabled. Reject unsupported scalable-softmax context parallelism and KV caching at setup.
+- Assign EOS tokens to their preceding document for EMO routing, matching attention document boundaries.
+- Preserve serialized tokenizer behavior during HF export, including source BOS settings when the training config leaves BOS unspecified.
+- Preserve FP32 router probabilities and accumulation when combining BF16 experts in the HF reference model.
+- Avoid graph breaks from no-op profiling decorators, including compiled router load-balancing collectives.
 - `dispatch_flash_attn_4` passed `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q` and `max_seqlen_k` positionally. flash-attn 4 inserted a `qv` parameter at position 3 (present from ~`4.0.0b19` onward), which shifts every following argument by one, so `max_seqlen_q` — an `int` — lands where `cu_seqlens_k` is expected and the call fails with `AttributeError: 'int' object has no attribute 'shape'`. These are now passed by keyword; the parameter names are unchanged across flash-attn 4 releases, so this is correct against both old and new versions. Only reachable on Blackwell, where `has_flash_attn_4()` returns True.
 
 ### Changed

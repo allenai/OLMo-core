@@ -23,7 +23,7 @@ import torch
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn.functional as F
 from cached_path import cached_path
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
@@ -39,8 +39,30 @@ from olmo_core.nn.transformer.model import Transformer
 from .checkpoint import save_hf_hybrid_model, save_hf_model
 from .config import is_olmo_hybrid_model
 from .convert import get_converter_to_hf
+from .tokenizer import export_checkpoint_tokenizer
 
 log = logging.getLogger(__name__)
+
+
+def _normalize_legacy_latent_moe_config(value: Any) -> None:
+    """Normalize legacy LatentMoE and experimental KDA keys in saved configs."""
+    if isinstance(value, dict):
+        if "use_cute_kernel" in value:
+            if "use_experimental_kernels" in value:
+                raise ValueError("Config contains both legacy and current KDA kernel flags.")
+            value["use_experimental_kernels"] = value.pop("use_cute_kernel")
+        latent = value.get("latent_moe")
+        if isinstance(latent, dict) and "routed_expert_dim" in latent:
+            if "latent_dim" in latent:
+                raise ValueError(
+                    "LatentMoE config contains both 'routed_expert_dim' and 'latent_dim'."
+                )
+            latent["latent_dim"] = latent.pop("routed_expert_dim")
+        for child in value.values():
+            _normalize_legacy_latent_moe_config(child)
+    elif isinstance(value, list):
+        for child in value:
+            _normalize_legacy_latent_moe_config(child)
 
 
 def convert_checkpoint_to_hf(
@@ -52,6 +74,7 @@ def convert_checkpoint_to_hf(
     model_state_dict: Optional[Dict[str, Any]] = None,
     dtype: Optional[DType] = None,
     tokenizer_id: str | None = None,
+    tokenizer_revision: str | None = None,
     max_sequence_length: int | None = None,
     validate: bool = True,
     debug: bool = False,
@@ -86,6 +109,7 @@ def convert_checkpoint_to_hf(
     if "float8_config" in transformer_config_dict:
         del transformer_config_dict["float8_config"]
 
+    _normalize_legacy_latent_moe_config(transformer_config_dict)
     model_config = TransformerConfig.from_dict(transformer_config_dict)
     rich.print(model_config)
 
@@ -129,46 +153,22 @@ def convert_checkpoint_to_hf(
     for block_label, block_config in block_entries:
         prepare_block_for_conversion(block_label, block_config)
 
-    model = model_config.build(init_device="meta")
-    model.to_empty(device=device or torch.device("cpu"))
-
     tokenizer_config = TokenizerConfig.from_dict(tokenizer_config_dict)
     vocab_size = tokenizer_config.vocab_size
 
-    tokenizer_path = (
-        Path(original_checkpoint_path).parent / "tokenizer"
-        if original_checkpoint_path is not None
-        else None
+    huggingface_tokenizer = export_checkpoint_tokenizer(
+        original_checkpoint_path,
+        output_path,
+        tokenizer_config,
+        override=tokenizer_id,
+        revision=tokenizer_revision,
+        max_sequence_length=max_sequence_length,
     )
-    huggingface_tokenizer = None
-    if tokenizer_path is not None and tokenizer_path.exists():
-        log.info(f"Saving preexisting tokenizer from {tokenizer_path}")
-        huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-        huggingface_tokenizer.save_pretrained(output_path)
-        print(f"Successfully saved model tokenizer to '{output_path}'")
-        max_sequence_length = max_sequence_length or getattr(
-            huggingface_tokenizer, "model_max_length", None
-        )
-    else:
-        tokenizer_id = tokenizer_id or tokenizer_config.identifier
-        if tokenizer_id is not None:
-            log.info(
-                f"Saving HF tokenizer {tokenizer_id}, using updated config from tokenizer config data and script arguments"
-            )
-            huggingface_tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-            max_sequence_length = max_sequence_length or getattr(
-                huggingface_tokenizer, "model_max_length", None
-            )
-            huggingface_tokenizer.model_max_length = max_sequence_length
-            huggingface_tokenizer.pad_token_id = tokenizer_config.pad_token_id
-            huggingface_tokenizer.bos_token_id = tokenizer_config.bos_token_id
-            huggingface_tokenizer.eos_token_id = tokenizer_config.eos_token_id
-            huggingface_tokenizer.save_pretrained(output_path)
-            log.info(f"Successfully saved tokenizer {tokenizer_id}")
-        else:
-            log.info(
-                "No tokenizer passed in script arguments or in experiment config, skipping saving tokenizer"
-            )
+    max_sequence_length = max_sequence_length or huggingface_tokenizer.model_max_length
+
+    # Tokenizer errors must fail before expensive checkpoint reads/model allocation.
+    model = model_config.build(init_device="meta")
+    model.to_empty(device=device or torch.device("cpu"))
 
     with TemporaryDirectory() as work_dir:
         if model_state_dict is None:
@@ -246,9 +246,10 @@ def convert_checkpoint_to_hf(
     )
     huggingface_config = AutoConfig.from_pretrained(output_path)
     huggingface_config.max_position_embeddings = max_sequence_length
-    huggingface_config.pad_token_id = tokenizer_config.pad_token_id
-    huggingface_config.bos_token_id = tokenizer_config.bos_token_id
-    huggingface_config.eos_token_id = tokenizer_config.eos_token_id
+    # Resolve all special IDs from the exported tokenizer, including source
+    # metadata preserved when the training config leaves an ID unspecified.
+    for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+        setattr(huggingface_config, name, getattr(huggingface_tokenizer, name))
     huggingface_config.save_pretrained(output_path)
     log.info(
         "Successfully fixed config using updated config from tokenizer config data and script arguments"
