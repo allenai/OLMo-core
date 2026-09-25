@@ -621,3 +621,15 @@ def test_emo_tp_rejected_before_mutating_model():
     assert not model._tp_enabled
     for name, parameter in model.named_parameters():
         assert parameter is parameters[name]
+
+
+@requires_fla
+@pytest.mark.parametrize("layer", ["0", "1"])
+def test_hybrid_export_reports_experimental_backend_change(caplog, layer):
+    model = build_hybrid()
+    expected = get_hf_config(model).to_dict()
+    # Config/export coverage only; GPU KDA tests exercise the actual supported shapes.
+    model.blocks[layer].attention.use_experimental_kernels = True
+    assert get_hf_config(model).to_dict() == expected
+    assert f"source experimental layers [{layer}]" in caplog.text
+    assert "representative production lengths" in caplog.text

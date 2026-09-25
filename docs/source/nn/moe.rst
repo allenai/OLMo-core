@@ -49,3 +49,16 @@ SwiGLU forward/backward at 524,288 rows and hidden size 1,024 took
 on H100. On B300, two isolated weight-gradient shapes with 512 experts
 and 131,072 rows took 2.08 ms versus 0.86 ms and 1.05 ms versus 0.43 ms.
 These measurements describe those regions, not whole-training throughput.
+
+
+HF export and kernel backends
+-----------------------------
+
+Hybrid HF exports use standard FLA KDA and causal-convolution kernels even when
+training used ``use_experimental_kernels=True``. This backend choice does not
+change the checkpoint architecture or tensors, but the kernels are not bit
+identical. Export logs the affected source layers. Validate full-model forward
+agreement at representative production lengths and shapes; exact tensor round
+trips and short sequences that exercise only the training kernel's FLA fallback
+do not establish numerical equivalence. The experimental KDA GPU tests compare
+forward/backward arithmetic at shapes that engage the experimental kernels.

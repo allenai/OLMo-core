@@ -550,6 +550,24 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
                 f"{block.shared_experts.activation.value!r}."
             )
 
+    experimental_layers = [
+        idx
+        for idx, block in enumerate(blocks)
+        if isinstance(block.attention, KimiDeltaAttention)
+        and block.attention.use_experimental_kernels
+    ]
+    if experimental_layers:
+        # Kernel choice is an execution backend, not a different model architecture.
+        # Export intentionally uses portable FLA; exact state conversion does not
+        # certify forward equivalence at shapes that engage experimental kernels.
+        log.warning(
+            "HF export uses standard FLA KDA/convolution kernels for source experimental "
+            "layers %s. Kernels are not numerically identical; validate full-model forward "
+            "agreement at representative production lengths, not only tensor round trips "
+            "or short fallback sequences.",
+            experimental_layers,
+        )
+
     kda = kda_blocks[0].attention
     assert isinstance(kda, KimiDeltaAttention)
     for block in kda_blocks:
