@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
 - Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
 
+### Removed
+
+- Removed the `src/scripts/train/private-olmo.py` training script.
+
+- Removed the `olmo_core.model_ladder` API, its internal CLI wrapper, all eleven ladder training scripts (including the standalone Gemma-like ladder), two Slurm launchers, and the API documentation. Existing ladder orchestration configs and commands require an earlier revision; this does not change the model or optimizer checkpoint formats. The internal experiment framework remains available.
+
 ### Fixed
 
 - Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
