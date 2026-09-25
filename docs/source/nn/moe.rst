@@ -27,7 +27,8 @@ Set these environment variables before constructing ``RoutedExperts``:
   tested EP path.
 
 Rounded accumulation requires each expert parameter to be used exactly once
-per forward. Duplicate uses, native gradients on the same parameter, writes
+per forward, with backward completed before starting the next training forward.
+Pipeline schedules with multiple outstanding forwards are rejected. Duplicate uses, native gradients on the same parameter, writes
 after reduction has been scheduled, and detached destination buckets raise
 errors. Saved-tensor hooks and activation recomputation retain the original
 parameter's ownership. Higher-order derivatives are unsupported.

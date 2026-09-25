@@ -430,7 +430,10 @@ class Olmo3MoeRouter(nn.Module):
         self.restore_weight_scale = config.restore_weight_scale
 
     def forward(self, x):
-        logits = self.gate(x)
+        # Match core routing even when model.to(bfloat16) casts the router weight.
+        # Rounding logits/probabilities can change both top-k membership and mixing.
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            logits = F.linear(x.float(), self.gate.weight.float())
 
         if self.gating_function == "softmax":
             scores = logits.softmax(dim=-1)

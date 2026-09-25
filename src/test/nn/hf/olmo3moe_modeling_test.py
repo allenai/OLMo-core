@@ -272,3 +272,41 @@ def test_expert_combination_matches_core_unpermute():
         merging_probs=weights,
     )
     torch.testing.assert_close(experts._forward_loop(x, indices, weights), combined, rtol=0, atol=0)
+
+
+@requires_olmo3moe
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+@pytest.mark.parametrize("gating", ["softmax", "sigmoid"])
+@pytest.mark.parametrize("normalization", [None, 1.0])
+def test_router_matches_core_fp32_scores(dtype, gating, normalization):
+    from olmo_core.nn.moe.router import MoERouterGatingFunction
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeRouter
+    from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+
+    torch.manual_seed(824)
+    config = _small_config()
+    config.gating_function = gating
+    config.normalize_expert_weights = normalization
+    hf = Olmo3MoeRouter(config).to(dtype).eval()
+    core = (
+        MoERouterConfigV2(
+            d_model=config.hidden_size,
+            num_experts=config.n_routed_experts,
+            top_k=config.num_experts_per_tok,
+            gating_function=MoERouterGatingFunction(gating),
+            normalize_expert_weights=normalization,
+            restore_weight_scale=config.restore_weight_scale,
+        )
+        .build()
+        .eval()
+    )
+    with torch.no_grad():
+        core.weight.copy_(hf.gate.weight.flatten())
+    x = torch.randn(1, 513, config.hidden_size).to(dtype)
+    expected_weights, expected_indices, _, _ = core(x, False)
+    for autocast in (False, True):
+        with torch.autocast("cpu", dtype=torch.bfloat16, enabled=autocast):
+            weights, indices = hf(x)
+        assert weights.dtype == torch.float32
+        torch.testing.assert_close(indices, expected_indices, rtol=0, atol=0)
+        torch.testing.assert_close(weights, expected_weights, rtol=0, atol=0)
