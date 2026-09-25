@@ -11,7 +11,7 @@ import time
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path
 from typing import (
     Any,
@@ -44,6 +44,7 @@ from ..io import (
     get_file_size,
     is_url,
     normalize_path,
+    resource_path,
 )
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
@@ -1227,6 +1228,8 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # other boundary source would be reused.
         if self._use_array_if_local is not None:
             fields = fields + ("use_array_if_local",)
+        if self._packed_from_metadata_boundaries(self.paths):
+            fields = fields + ("_metadata_fingerprint",)
         return fields
 
     @property
@@ -1409,12 +1412,19 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 # document boundary. The loaded documents give the lengths exactly.
                 doc_lens = [document.numel() for document in document_token_ids]
                 if (padding := input_ids.numel() - sum(doc_lens)) > 0:
-                    # Match `get_document_lengths`, which reports trailing padding as its own
-                    # segment but folds it into the final document when `bos_token_id` is set.
+                    # Keep the scanner's padding segmentation, including one segment per EOS
+                    # padding token. With BOS, include the final real token to detect a boundary
+                    # between the last document and padding (e.g. when padding is BOS).
                     if self.bos_token_id is None:
-                        doc_lens.append(padding)
+                        doc_lens.extend(
+                            get_document_lengths(input_ids[-padding:], self.eos_token_id).tolist()
+                        )
                     else:
-                        doc_lens[-1] += padding
+                        tail_lens = get_document_lengths(
+                            input_ids[-padding - 1 :], self.eos_token_id, self.bos_token_id
+                        ).tolist()
+                        doc_lens[-1] += tail_lens[0] - 1
+                        doc_lens.extend(tail_lens[1:])
                 out["doc_lens"] = torch.tensor(doc_lens, dtype=torch.int32)
             else:
                 out["doc_lens"] = get_document_lengths(
@@ -1432,8 +1442,35 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         """
         return self._use_array_if_local is False or any(is_url(path) for path in source_paths)
 
+    def _get_metadata_hash(self, source_path: PathOrStr, _: int) -> Optional[str]:
+        if not self._packed_from_metadata_boundaries([source_path]):
+            return None
+        metadata_path = resource_path(
+            os.path.dirname(source_path), os.path.basename(source_path).replace(".npy", ".csv.gz")
+        )
+        digest = hashlib.sha256()
+        with metadata_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @cached_property
+    def _metadata_hashes(self) -> Dict[PathOrStr, str]:
+        # Snapshot once per dataset, like file_sizes: no metadata I/O in __getitem__.
+        # Hash contents so same-size corrections also invalidate cached packing results.
+        return {
+            path: digest
+            for path, digest in zip(self.paths, self.map(self._get_metadata_hash))
+            if digest is not None
+        }
+
     @property
-    def _packing_cache_extra_ids(self) -> Tuple[str, ...]:
+    def _metadata_fingerprint(self) -> Tuple[Tuple[str, str], ...]:
+        return tuple(
+            (os.path.basename(path), digest) for path, digest in self._metadata_hashes.items()
+        )
+
+    def _packing_cache_extra_ids(self, source_paths: Sequence[PathOrStr]) -> Tuple[str, ...]:
         # These key the on-disk packing caches, which are looked up by path and never compared
         # against `fingerprint`. Anything that changes the packing result therefore has to appear
         # here as well, or a stale cache from a previous run would be reused.
@@ -1442,27 +1479,33 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # built before the option existed are still found.
         if self._use_array_if_local is not None:
             extra_ids = extra_ids + (f"use_array_if_local={self._use_array_if_local}",)
+        if self._packed_from_metadata_boundaries(source_paths):
+            extra_ids += tuple(
+                f"metadata={path},sha256={self._metadata_hashes[path]}"
+                for path in source_paths
+                if path in self._metadata_hashes
+            )
         return extra_ids
 
     def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "document-indices",
             *source_paths,
-            extra_ids=self._packing_cache_extra_ids,
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _get_instance_offsets_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "instance-offsets",
             *source_paths,
-            extra_ids=self._packing_cache_extra_ids,
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _get_docs_by_instance_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "documents-by-instance",
             *source_paths,
-            extra_ids=self._packing_cache_extra_ids,
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _pack_documents_from_source_into_instances(
