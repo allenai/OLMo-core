@@ -296,6 +296,27 @@ class SlidingWindowAttentionConfig(Config):
         return window_size
 
 
+def _resolve_attention_backend(
+    backend: Optional[AttentionBackendName], use_flash: Optional[bool] = None
+) -> Optional[AttentionBackendName]:
+    """Resolve the deprecated flag without overriding an explicit backend or SWA auto-selection."""
+    if backend is not None:
+        backend = AttentionBackendName(backend)
+    if use_flash:
+        if backend is not None and backend != AttentionBackendName.flash_2:
+            raise OLMoConfigurationError(
+                f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
+            )
+        elif backend is None:
+            warnings.warn(
+                "'use_flash' is deprecated, use 'backend=flash_2' instead",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            backend = AttentionBackendName.flash_2
+    return backend
+
+
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
@@ -343,6 +364,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
+    """Deprecated input retained for old configs; use :data:`backend` in new configs."""
     backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
@@ -748,19 +770,7 @@ class Attention(SequenceMixer):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        if backend is not None:
-            backend = AttentionBackendName(backend)
-
-        if use_flash:
-            if backend is not None and backend != AttentionBackendName.flash_2:
-                raise OLMoConfigurationError(
-                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
-                )
-            elif backend is None:
-                warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
-                )
-                backend = AttentionBackendName.flash_2
+        backend = _resolve_attention_backend(backend, use_flash)
 
         # Translate window size so that we only look left, not right.
         self.window_size = window_size
@@ -1555,19 +1565,7 @@ class FusedAttentionV2(Attention):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        if backend is not None:
-            backend = AttentionBackendName(backend)
-
-        if use_flash:
-            if backend is not None and backend != AttentionBackendName.flash_2:
-                raise OLMoConfigurationError(
-                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
-                )
-            elif backend is None:
-                warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
-                )
-                backend = AttentionBackendName.flash_2
+        backend = _resolve_attention_backend(backend, use_flash)
 
         self.window_size = window_size
         window_size_tuple: Tuple[int, int] = (-1, -1)

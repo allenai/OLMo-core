@@ -120,9 +120,11 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
     output = Path(os.environ.get("RESULTS_DIR", "/results")) / f"document-router-{mode}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    def compare(left, right, label, *, exact=False, relative_limit=2e-4):
+    def compare(left, right, label, *, exact=False, relative_limit=2e-4, absolute_limit=0.0):
         delta = left.float() - right.float()
-        relative_l2 = float(delta.norm() / left.float().norm().clamp_min(1e-20))
+        reference_norm = left.float().norm().clamp_min(1e-20)
+        delta_norm = delta.norm()
+        relative_l2 = float(delta_norm / reference_norm)
         report.append(
             {
                 "label": label,
@@ -136,7 +138,10 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
         if exact:
             torch.testing.assert_close(left, right, rtol=0, atol=0, msg=label)
         else:
-            assert relative_l2 <= relative_limit, (label, report[-1])
+            assert delta_norm <= absolute_limit + relative_limit * reference_norm, (
+                label,
+                report[-1],
+            )
 
     for update in range(3):
         if not track_trajectory:
@@ -171,7 +176,16 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
                         # rank order for near ties. Still require the SAME selected
                         # experts. Primitive and same-weight checks require order too.
                         left, right = left.sort(-1).values, right.sort(-1).values
-                    compare(left, right, f"{prefix}/mb{mb}/output{field}", exact=field in (1, 2))
+                    # The signed scalar loss can nearly cancel, making a purely
+                    # relative error unstable. Allow a small absolute error only
+                    # for that reduction; keep tensor and exact routing checks strict.
+                    compare(
+                        left,
+                        right,
+                        f"{prefix}/mb{mb}/output{field}",
+                        exact=field in (1, 2),
+                        absolute_limit=1e-5 if field == 3 else 0.0,
+                    )
                 compare(input_grads[0][mb], input_grads[arm][mb], f"{prefix}/mb{mb}/dx")
             for index, (left, right) in enumerate(
                 zip(routers[0].parameters(), routers[arm].parameters())

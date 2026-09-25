@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
 - Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
 
+### Removed
+
+- Removed the `src/scripts/train/private-olmo.py` training script.
+
+- Removed the `olmo_core.model_ladder` API, its internal CLI wrapper, all eleven ladder training scripts (including the standalone Gemma-like ladder), two Slurm launchers, and the API documentation. Existing ladder orchestration configs and commands require an earlier revision; this does not change the model or optimizer checkpoint formats. The internal experiment framework remains available.
+
 ### Fixed
 
 - Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/OLMo-core/pull/843).
@@ -32,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dispatch_flash_attn_4` passed `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q` and `max_seqlen_k` positionally. flash-attn 4 inserted a `qv` parameter at position 3 (present from ~`4.0.0b19` onward), which shifts every following argument by one, so `max_seqlen_q` — an `int` — lands where `cu_seqlens_k` is expected and the call fails with `AttributeError: 'int' object has no attribute 'shape'`. These are now passed by keyword; the parameter names are unchanged across flash-attn 4 releases, so this is correct against both old and new versions. Only reachable on Blackwell, where `has_flash_attn_4()` returns True.
 
 ### Changed
+
+- Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
+
+- Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.
 
 - Replaced `FusedAttention` with `FusedAttentionV2` and migrated its applicable tests to V2. Legacy `AttentionConfig(name="fused")` configs still load through V2 with the same packed QKV parameter names and shapes, preserving model and optimizer checkpoint compatibility. Legacy fused RoPE is mapped to regular RoPE: floating-point results (especially low-precision RoPE gradients) differ, so resumed training is not numerically identical. `TransformerConfig.llama_like(fused_ops=True)` now selects V2 with regular RoPE when it previously selected fused attention.
 

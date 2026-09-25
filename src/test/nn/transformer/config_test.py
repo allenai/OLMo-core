@@ -1,4 +1,5 @@
 import json
+from typing import Any, Callable
 
 from cached_path import cached_path
 
@@ -67,3 +68,46 @@ def test_legacy_fused_attention_config():
     with pytest.warns(UserWarning, match="not numerically identical"):
         model = restored.build()
     assert all(isinstance(block.attention, FusedAttentionV2) for block in model.blocks.values())
+
+
+def test_factory_legacy_use_flash_emits_backend():
+    """Factories accept the old keyword but produce configs with explicit backends."""
+    import pytest
+
+    from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
+
+    factories: list[tuple[Callable[..., TransformerConfig], dict[str, Any]]] = [
+        (TransformerConfig.llama_like, {}),
+        (TransformerConfig.ngpt_like, {}),
+        (TransformerConfig.gemma3_like, {"n_kv_heads": 2, "hidden_size": 128}),
+        (
+            TransformerConfig.qwen3_5_like,
+            {"n_kv_heads": 2, "head_dim": 32, "intermediate_size": 128},
+        ),
+    ]
+    for factory, kwargs in factories:
+        with pytest.warns(DeprecationWarning, match="use_flash"):
+            config = factory(
+                d_model=64, vocab_size=128, n_layers=4, n_heads=2, use_flash=True, **kwargs
+            )
+        blocks = config.block.values() if isinstance(config.block, dict) else [config.block]
+        for block in blocks:
+            attention = block.sequence_mixer
+            if isinstance(attention, AttentionConfig):
+                assert attention.backend == AttentionBackendName.flash_2
+                assert attention.use_flash is None
+        config = factory(
+            d_model=64,
+            vocab_size=128,
+            n_layers=4,
+            n_heads=2,
+            use_flash=False,
+            attn_backend=AttentionBackendName.flash_3,
+            **kwargs,
+        )
+        blocks = config.block.values() if isinstance(config.block, dict) else [config.block]
+        for block in blocks:
+            attention = block.sequence_mixer
+            if isinstance(attention, AttentionConfig):
+                assert attention.backend == AttentionBackendName.flash_3
+                assert attention.use_flash is None
