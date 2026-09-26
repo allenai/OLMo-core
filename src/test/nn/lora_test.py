@@ -193,3 +193,31 @@ def test_bad_rank_rejected():
         LoRAConfig(rank=0)
     with pytest.raises(OLMoConfigurationError):
         LoRAConfig(target_modules=[])
+
+
+def test_broken_optional_fla_does_not_break_package_import(monkeypatch):
+    """A *broken* optional dependency must degrade like a missing one.
+
+    `import fla` transitively imports torchaudio, whose compiled extension can raise
+    `OSError` (not `ImportError`) when it does not match the installed torch. The guard
+    used to catch only `ImportError`, so a bad image took down `import olmo_core` itself.
+    """
+    import builtins
+    import importlib
+
+    real_import = builtins.__import__
+
+    def _boom(name, *args, **kwargs):
+        if name == "fla" or name.startswith("fla."):
+            raise OSError("undefined symbol: torch_dtype_float4_e2m1fn_x2")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    module = importlib.reload(
+        importlib.import_module("olmo_core.nn.attention.flash_linear_attn_api")
+    )
+    try:
+        assert module.has_fla() is False
+    finally:
+        monkeypatch.undo()
+        importlib.reload(module)

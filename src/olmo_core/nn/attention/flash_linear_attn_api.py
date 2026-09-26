@@ -1,10 +1,27 @@
+import logging
 from typing import Literal
 
 import torch
 
+log = logging.getLogger(__name__)
+
 try:
     import fla
-except ImportError:
+except Exception as e:  # noqa: BLE001 -- see below
+    # Deliberately broader than `ImportError`. `fla` is optional (hence `has_fla()`), but
+    # until now only an *absent* install degraded gracefully -- a *broken* one took down
+    # the entire `olmo_core` package import, because `import fla` pulls in transformers
+    # and thence `torchaudio`, whose `torch.ops.load_library` raises `OSError` when its
+    # compiled extension does not match the installed torch:
+    #
+    #   OSError: .../libtorchaudio.abi3.so: undefined symbol: torch_dtype_float4_e2m1fn_x2
+    #
+    # That killed every job on an otherwise fine Beaker image, in `import olmo_core`, for
+    # a dependency nothing in the Molmo2 stack uses. A model that genuinely needs fla
+    # still fails loudly: `has_fla()` returns False and the dispatch helpers assert on it.
+    log.warning(
+        "flash-linear-attention is installed but failed to import (%s: %s)", type(e).__name__, e
+    )
     fla = None
 
 
