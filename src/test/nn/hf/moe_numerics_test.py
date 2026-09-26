@@ -9,19 +9,20 @@ from olmo_core.testing.utils import (
 )
 
 
-def test_core_combine_rounds_fused_updates_in_routing_order():
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
+def test_core_combine_rounds_updates_in_routing_order(device):
     from olmo_core.nn.moe.v2.hf.moe_numerics import core_combine
 
     torch.manual_seed(73)
-    values = torch.randn(5, 16, 32).bfloat16()
-    probabilities = torch.rand(5, 16)
+    values = torch.randn(5, 16, 32, device=device).bfloat16()
+    probabilities = torch.rand(5, 16, device=device)
     # FP64 supplies an independent arithmetic oracle before each BF16 rounding.
-    expected = torch.zeros(5, 32, dtype=torch.bfloat16)
+    expected = torch.zeros(5, 32, dtype=torch.bfloat16, device=device)
     for slot in range(16):
-        expected = (
-            expected.double()
-            + values[:, slot].double() * probabilities[:, slot, None].bfloat16().double()
-        ).bfloat16()
+        product = values[:, slot].double() * probabilities[:, slot, None].bfloat16().double()
+        if device == "cuda" and torch.cuda.get_device_capability()[0] < 9:
+            product = product.bfloat16().double()
+        expected = (expected.double() + product).bfloat16()
     actual = core_combine(values, probabilities)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     fp32_sum = (values.float() * probabilities[..., None]).sum(1).bfloat16()
@@ -98,6 +99,37 @@ def test_core_numerics_is_serialized_and_old_configs_keep_original_mode():
         Olmo3MoeConfig(moe_use_core_numerics=True, hidden_act="relu")
 
 
+@requires_gpu
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_hf_dense_first_layer_matches_core_packed_gemm(dtype):
+    from olmo_core.config import DType
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeDenseMLP
+    from olmo_core.nn.moe.v2.shared_experts import SharedExperts
+
+    # Real 275M dense-first dimensions expose Ampere GEMM rounding differences
+    # that the small routed-expert test does not exercise.
+    torch.manual_seed(719)
+    D, H = 544, 4352
+    core = SharedExperts(
+        d_model=D,
+        hidden_size=H,
+        num_experts=1,
+        bias=False,
+        dtype=DType.bfloat16 if dtype == torch.bfloat16 else DType.float32,
+        init_device="cuda",
+    )
+    hf = Olmo3MoeDenseMLP(
+        Olmo3MoeConfig(hidden_size=D, dense_mlp_intermediate_size=H, moe_use_core_numerics=True)
+    ).to(device="cuda", dtype=dtype)
+    with torch.no_grad():
+        hf.up_proj.weight.copy_(core.w_up_gate[:, :H].t())
+        hf.gate_proj.weight.copy_(core.w_up_gate[:, H:].t())
+        hf.down_proj.weight.copy_(core.w_down[0].t())
+        x = torch.randn(1, 60, D, device="cuda", dtype=dtype)
+        torch.testing.assert_close(hf(x), core(x).squeeze(0), rtol=1e-4, atol=1e-4)
+
+
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
 @pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
 def test_core_combine_fullgraph_and_gradients(dtype, device):
@@ -108,11 +140,17 @@ def test_core_combine_fullgraph_and_gradients(dtype, device):
     probabilities = torch.rand(5, 16, device=device, requires_grad=True)
     expected = values.new_zeros((5, 32))
     for slot in range(16):
-        expected = torch.addcmul(
-            expected.float(),
-            values[:, slot].float(),
-            probabilities[:, slot, None].to(dtype).float(),
-        ).to(dtype)
+        value = values[:, slot].float()
+        probability = probabilities[:, slot, None].to(dtype).float()
+        if (
+            device == "cuda"
+            and dtype == torch.bfloat16
+            and torch.cuda.get_device_capability()[0] < 9
+        ):
+            product = (value * probability).to(dtype)
+            expected = (expected.float() + product.float()).to(dtype)
+        else:
+            expected = torch.addcmul(expected.float(), value, probability).to(dtype)
     actual = torch.compile(core_combine, fullgraph=True)(values, probabilities)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
     gradient = torch.randn_like(actual)

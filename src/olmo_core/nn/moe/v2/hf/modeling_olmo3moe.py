@@ -159,6 +159,14 @@ class Olmo3MoeDenseMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
+        if self.config.moe_use_core_numerics:
+            # Match SharedExperts' packed GEMM and operand layout. Separate up/gate
+            # projections can select a different accumulation order on Ampere.
+            weight = torch.cat((self.up_proj.weight.t(), self.gate_proj.weight.t()), dim=1)
+            up, gate = (x.reshape(-1, self.hidden_size) @ weight).chunk(2, dim=-1)
+            hidden = self.act_fn(gate) * up
+            down_weight = self.down_proj.weight.t().contiguous().unsqueeze(0)
+            return torch.bmm(hidden.unsqueeze(0), down_weight).reshape(x.shape)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 

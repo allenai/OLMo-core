@@ -47,19 +47,30 @@ def core_swiglu(up_gate: torch.Tensor) -> torch.Tensor:
 def core_combine(values: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor:
     """Reproduce TE's index-map combination in routing-slot order.
 
-    TE 2.18 converts probabilities to the activation dtype and rounds each fused
-    multiply-add to that dtype. The opaque custom op preserves these rounding boundaries under full-graph
-    compilation, which otherwise fuses the casts into an FP32 accumulator.
+    TE 2.18 converts probabilities to the activation dtype and rounds every
+    update to that dtype. On pre-SM90 GPUs, CUDA's BF16 multiply and add each
+    lower to an FMA and round separately; on SM90+ they contract into one FMA.
+    CPU uses the SM90+ arithmetic. The opaque custom op preserves these rounding
+    boundaries under full-graph compilation.
     ``values`` is [tokens, top_k, hidden]; probabilities remain FP32 up to this op.
     """
     dtype = values.dtype
+    separate_rounding = (
+        dtype == torch.bfloat16
+        and values.is_cuda
+        and torch.cuda.get_device_capability(values.device)[0] < 9
+    )
     probabilities = probabilities.to(dtype).float()
     values = values.float()
     output = values.new_zeros((values.shape[0], values.shape[2])).to(dtype)
     for slot in range(values.shape[1]):
-        output = torch.addcmul(output.float(), values[:, slot], probabilities[:, slot, None]).to(
-            dtype
-        )
+        if separate_rounding:
+            product = (values[:, slot] * probabilities[:, slot, None]).to(dtype)
+            output = (output.float() + product.float()).to(dtype)
+        else:
+            output = torch.addcmul(
+                output.float(), values[:, slot], probabilities[:, slot, None]
+            ).to(dtype)
     return output
 
 
