@@ -12,7 +12,9 @@ except ImportError:
 
 from olmo_core.kernels.moe_chunk_reorder import moe_chunk_permute, moe_chunk_unpermute
 from olmo_core.kernels.moe_permute_drop import moe_permute_drop_fwd
-from olmo_core.kernels.moe_unpermute_bwd import moe_unpermute_bwd as moe_unpermute_bwd_cuda
+from olmo_core.kernels.moe_unpermute_bwd import (
+    moe_unpermute_bwd as moe_unpermute_bwd_cuda,
+)
 from olmo_core.utils import get_or_init_stream
 
 try:
