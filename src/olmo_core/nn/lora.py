@@ -107,7 +107,19 @@ class LoRALinear(nn.Linear):
         # gain for a=sqrt(5) leaves bound = sqrt(3 / fan_in), matching nn.Linear's default.
         bound = math.sqrt(3.0 / self.lora_A.shape[1])
         with torch.no_grad():
-            self.lora_A.uniform_(-bound, bound, generator=generator)
+            if generator is None:
+                self.lora_A.uniform_(-bound, bound)
+            else:
+                # Draw on the generator's own device and copy in. `Tensor.uniform_` requires
+                # the generator to match the tensor's device ("Expected a 'cuda' device type
+                # for generator but found 'cpu'"), and the generator is deliberately a CPU
+                # one: seeding it by rank-independent value is what makes every rank produce
+                # identical adapters without a collective. Drawing on CPU and copying keeps
+                # that property on any device, and is free at these sizes.
+                values = torch.empty(
+                    self.lora_A.shape, device=generator.device, dtype=torch.float32
+                ).uniform_(-bound, bound, generator=generator)
+                self.lora_A.copy_(values.to(self.lora_A.dtype))
             self.lora_B.zero_()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
@@ -210,7 +222,13 @@ def apply_lora(model: nn.Module, config: LoRAConfig) -> List[str]:
         adapted.lora_B = nn.Parameter(
             torch.empty(linear.out_features, config.rank, device=device, dtype=linear.weight.dtype)
         )
-        adapted.reset_lora_parameters(generator=None if device.type == "meta" else generator)
+        if device.type == "meta":
+            # Nothing to initialise on meta; the real values are written once the module is
+            # materialised. `apply_lora` is normally called after `to_empty()`, so this only
+            # covers config-inspection paths that never train.
+            adapted.reset_lora_parameters(generator=None)
+        else:
+            adapted.reset_lora_parameters(generator=generator)
         _set_submodule(model, name, adapted)
         new_param_names.extend([f"{name}.lora_A", f"{name}.lora_B"])
 
@@ -258,9 +276,7 @@ def merge_lora_(model: nn.Module) -> List[str]:
 def lora_param_names(model: nn.Module) -> List[str]:
     """Every ``*.lora_A`` / ``*.lora_B`` parameter name currently in ``model``."""
     return sorted(
-        name
-        for name, _ in model.named_parameters()
-        if name.endswith((".lora_A", ".lora_B"))
+        name for name, _ in model.named_parameters() if name.endswith((".lora_A", ".lora_B"))
     )
 
 

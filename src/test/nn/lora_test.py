@@ -221,3 +221,22 @@ def test_broken_optional_fla_does_not_break_package_import(monkeypatch):
     finally:
         monkeypatch.undo()
         importlib.reload(module)
+
+
+def test_adapter_init_draws_on_the_generators_device_not_the_parameters():
+    """Regression: `Tensor.uniform_(generator=...)` requires the generator's device to match
+    the tensor's, so seeding a CUDA parameter from the CPU generator raised
+    "Expected a 'cuda' device type for generator but found 'cpu'" on the first real run.
+    The generator is CPU on purpose -- that is what makes every rank draw identical
+    adapters without a collective -- so the draw happens on CPU and is copied in."""
+    layer = LoRALinear(8, 4, rank=2, alpha=4.0, bias=False)
+    gen = torch.Generator(device="cpu").manual_seed(7919)
+    layer.reset_lora_parameters(generator=gen)
+
+    expected = torch.empty(2, 8).uniform_(
+        -((3.0 / 8) ** 0.5),
+        (3.0 / 8) ** 0.5,
+        generator=torch.Generator(device="cpu").manual_seed(7919),
+    )
+    torch.testing.assert_close(layer.lora_A, expected, rtol=0, atol=0)
+    assert torch.count_nonzero(layer.lora_B) == 0
