@@ -75,6 +75,7 @@ from olmo_core.optim import (
 )
 from olmo_core.train import (
     Duration,
+    LoadStrategy,
     TrainerConfig,
     prepare_cli_environment,
     prepare_training_environment,
@@ -218,13 +219,23 @@ FINEVISION_RATES: dict = {
 FINEVISION_MIN_VISUAL_DEPENDENCY: Optional[int] = None
 
 # Default init: latest step under this OLMo-core stage-1 run (model weights only).
-# HARDCODED personal checkpoint (donovanc's stage-1 run on weka). Point this at your own
-# stage-1 run via --trainer.load_path=/path/to/run, or --trainer.load_path=null to
-# initialise from the released HF Molmo2-4B weights instead.
+# Point this at your own stage-1 run via --trainer.load_path=/path/to/run, or
+# --trainer.load_path=null to initialise from the released HF Molmo2-4B weights instead.
+#
+# This used to be a personal path under `donovanc/molmofication/checkpoints/` that has
+# since been deleted. Because the trainer's stock `load_strategy` is `if_available`, the
+# missing directory did not raise -- it logged one warning and trained stage 2 from the
+# uninitialized weights `to_empty()` leaves behind, at a flat CE of 11.93 (= ln(vocab)).
+# The run completes, saves checkpoints, and evaluates as a very bad model rather than as
+# a misconfiguration. `LOAD_STRATEGY` below makes that a hard error.
 DEFAULT_LOAD_PATH = (
-    "/weka/oe-training-default/donovanc/molmofication/checkpoints/"
-    "molmo2-pretraining-olmo-core/8-gpu-holmes/8-gpu-holmes-olmo-core-stable"
+    "/weka/oe-training-default/ai2-llm/checkpoints/jasonr/molmo2-stage1-4b-full-20260814"
 )
+
+# Stage 2 is by definition a finetune of stage 1, so "no checkpoint anywhere, train from
+# scratch" is never the intent here. `always` still permits a preemption resume: the
+# trainer tries the save folder first and only raises when *neither* source has one.
+LOAD_STRATEGY = LoadStrategy.always
 
 # Phase-p0 ship-stack env vars, validated in the 8/16-GPU A/B sweeps (see
 # launch_scripts/donovan/beaker/sft/, gitignored on this branch). Applied only to
@@ -575,6 +586,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
             save_overwrite=True,
             load_path=DEFAULT_LOAD_PATH,
+            load_strategy=LOAD_STRATEGY,
             load_trainer_state=False,
             load_optim_state=False,
             metrics_collect_interval=5,
@@ -896,6 +908,21 @@ def launch(config: ExperimentConfig):
             "job would fail at dataset build only after being scheduled. Export it before "
             "launching, e.g. /weka/oe-training-default/donovanc/molmo-experimental-data"
         )
+
+    # A `load_path` that resolves to nothing is the most expensive silent failure here:
+    # `LOAD_STRATEGY = always` now turns it into an error, but one raised after the job has
+    # queued for a node and spent minutes on setup. Weka is mounted on the submitting box,
+    # so answer it for free.
+    if config.trainer.load_path and config.trainer.load_strategy != LoadStrategy.never:
+        from olmo_core.train.checkpoint import Checkpointer
+
+        if not Checkpointer.contains_checkpoint(config.trainer.load_path):
+            raise OLMoConfigurationError(
+                f"trainer.load_path ({config.trainer.load_path!r}) contains no checkpoint. "
+                "Stage 2 finetunes a stage-1 model, so this is not something to train "
+                "through: pass --trainer.load_path=<a stage-1 run dir>, or =null to "
+                "initialise from the released HF Molmo2-4B weights instead."
+            )
 
     # The trainer asserts `global_batch_size % (rank_microbatch_size * dp_world_size) == 0`,
     # but only once every rank is up -- so a bad pack count costs a scheduling round trip.

@@ -44,3 +44,32 @@ def test_pack_geometry_matches_the_base_tier():
     the two arms while looking like a data-only difference."""
     assert not mixture_is_multi_image(CONTRAST)
     assert get_mixture_pack_profile(CONTRAST) == get_mixture_pack_profile(BASE)
+
+
+def test_stage2_default_load_path_exists():
+    """The stage-2 default init must point at a checkpoint that is actually there.
+
+    It previously pointed at a personal path that had been deleted. With the trainer's
+    stock `if_available` load strategy that produced no error -- stage 2 trained from
+    uninitialized weights at a flat CE of 11.93 (= ln(vocab)) and looked like a bad model.
+    Both the default and the strategy are fixed; this pins the default so the same rot
+    cannot recur unnoticed.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[4] / "src/scripts/train/Molmo2-Stage2.py"
+    spec = importlib.util.spec_from_file_location("molmo2_stage2", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["molmo2_stage2"] = module
+    spec.loader.exec_module(module)
+
+    from olmo_core.train import LoadStrategy
+    from olmo_core.train.checkpoint import Checkpointer
+
+    assert module.LOAD_STRATEGY == LoadStrategy.always
+    assert Checkpointer.contains_checkpoint(
+        module.DEFAULT_LOAD_PATH
+    ), f"DEFAULT_LOAD_PATH {module.DEFAULT_LOAD_PATH!r} has no checkpoint"
