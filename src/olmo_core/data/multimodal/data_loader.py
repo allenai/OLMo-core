@@ -80,6 +80,10 @@ class MultimodalDataLoader(DataLoaderBase):
         if epoch is not None:
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
+        # Hand the epoch to a source that samples per example, as MixtureDataLoader does.
+        set_epoch = getattr(self.dataset, "set_epoch", None)
+        if callable(set_epoch):
+            set_epoch(epoch)
         order = np.arange(len(self.dataset))
         if self.shuffle:
             np.random.RandomState(self.seed + epoch).shuffle(order)

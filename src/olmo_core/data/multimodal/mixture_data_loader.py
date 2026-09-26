@@ -134,6 +134,14 @@ class MixtureDataLoader(DataLoaderBase):
         if epoch is not None:
             self._epoch = epoch
         epoch = self._epoch if self._epoch is not None else 1
+        # Sources that *sample* inside ``__getitem__`` (a few of an image's negatives, a render
+        # size) need the epoch, or every epoch redraws the same subset and the rest of each pool
+        # is never trained on: reshuffling references alone cannot rotate a within-example draw.
+        # See :class:`~olmo_core.data.multimodal.sft_common.EpochSeededExamples`.
+        for dataset in self.datasets:
+            set_epoch = getattr(dataset, "set_epoch", None)
+            if callable(set_epoch):
+                set_epoch(epoch)
         rng = np.random.RandomState(self.seed + epoch)
         # Number of example refs to draw. When packing, an epoch consumes ~all examples
         # (several per packed sequence), so draw a full epoch of examples; otherwise draw
