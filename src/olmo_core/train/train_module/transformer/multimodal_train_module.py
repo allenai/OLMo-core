@@ -30,7 +30,7 @@ from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
-from olmo_core.distributed.checkpoint import prune_state_dict
+from olmo_core.distributed.checkpoint import prune_state_dict, swap_param_keys
 from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
@@ -347,15 +347,26 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         — which loads as whatever ``to_empty()`` left in memory and shows up much later as
         a mysteriously bad model. Adapters are the only keys allowed to be missing.
 
-        The comparison has to happen in *checkpoint* key space, which is not the module
-        tree's key space: activation checkpointing inserts ``_checkpoint_wrapped_module``
-        segments into ``named_parameters()`` names, and ``get_model_state_dict`` strips
-        them. Using the raw module names here reported all ten wrapped connector
-        parameters as missing on every real load. Reuse the same
-        ``_get_state_dict`` + ``prune_state_dict`` pair the base class loads through, so
-        the two can't drift again.
+        The comparison has to happen in *checkpoint* key space, which is two
+        transformations away from the module tree's:
+
+        1. activation checkpointing inserts ``_checkpoint_wrapped_module`` segments into
+           ``named_parameters()`` names, which ``get_model_state_dict`` strips; and
+        2. ``load_key_mapping`` renames the pre-``VisionBackbone`` layout.
+
+        So this mirrors the base class's own ``_get_state_dict`` -> ``swap_param_keys`` ->
+        ``prune_state_dict`` sequence rather than inspecting the model directly. Skipping
+        either step produced a false alarm on a perfectly good checkpoint (ten wrapped
+        connector parameters, then all 414 legacy-named vision/connector parameters).
         """
         reference = self._get_state_dict(self.state_dict_load_opts, optim=False)
+        if self.load_key_mapping:
+            # The other transformation the base class applies before pruning, and the
+            # other way this guard has been wrong. Stage-1 checkpoints written before the
+            # `VisionBackbone` rename store `model.vision.*` / `model.connector.*`;
+            # `legacy_vision_key_mapping()` is what makes them loadable at all. Skipping
+            # it here reported all 414 of those keys as missing.
+            swap_param_keys(reference, self.load_key_mapping, metadata=metadata)
         missing = set(prune_state_dict(reference, set(metadata.state_dict_metadata.keys())))
         expected = {f"model.{name}" for name in self.lora_param_names}
         unexpected = missing - expected

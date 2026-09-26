@@ -304,6 +304,32 @@ def test_missing_base_weight_is_rejected_even_under_the_relaxed_load():
         tm._check_lora_pruned_keys(bad)
 
 
+def test_the_guard_tolerates_a_legacy_named_stage1_checkpoint():
+    """Regression: the real stage-1 checkpoint predates the `VisionBackbone` rename.
+
+    Its 414 vision/connector entries are stored as `model.vision.*` / `model.connector.*`
+    and only load because `legacy_vision_key_mapping()` renames them. A guard that
+    compared against the post-rename names called every one of them missing and refused
+    to start on a perfectly good checkpoint.
+    """
+    tm = _train_module(use_lora=True)
+    assert tm.load_key_mapping, "MultimodalLM should supply a legacy vision key mapping"
+
+    lora_keys = {f"model.{k}" for k in lora_param_names(tm.model)}
+
+    # `load_key_mapping` is keyed by bare parameter name; `swap_param_keys` applies it
+    # inside the nested state dict, below the "model" level.
+    def _to_legacy(key: str) -> str:
+        bare = key[len("model.") :]
+        return "model." + tm.load_key_mapping.get(bare, bare)
+
+    legacy = _FakeMetadata({_to_legacy(k) for k in _checkpoint_keys(tm) if k not in lora_keys})
+    assert any(
+        k.startswith("model.vision.") for k in legacy.state_dict_metadata
+    ), "fixture did not actually produce legacy-layout keys"
+    tm._check_lora_pruned_keys(legacy)  # must not raise
+
+
 def test_the_guard_tolerates_activation_checkpoint_wrapped_module_names():
     """Regression: the connector is activation-checkpointed, so its `named_parameters()`
     names carry `_checkpoint_wrapped_module` while the checkpoint's do not."""
