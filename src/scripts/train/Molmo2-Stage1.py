@@ -88,6 +88,7 @@ from olmo_core.data.multimodal.mixtures.ocr import (
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
+from olmo_core.data.multimodal.pixmo_points import COSYN_POINT_V2_PATH
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
@@ -322,7 +323,8 @@ OCR_SOURCES = DEFAULT_OCR_SOURCES
 #   "v2": mm_olmo's molmo3 stage-1 group (launch_scripts/train_molmo3_stage1.py
 #         `_base_mixture`): the audited, image-grouped PixMo-Points build with absence queries
 #         (`PixMoPointsV2DatasetConfig`), the audited PixMo-Count build
-#         (`PixMoCountV2DatasetConfig`) and cosyn_point, split *linearly* by size (mm_olmo
+#         (`PixMoCountV2DatasetConfig`) and the audited CoSyn build (`cosyn_point_v2`, mm_olmo's
+#         `CoSynPointConfigV2` without its masks), split *linearly* by size (mm_olmo
 #         `size_weighted=1`). The one member of that group with no port is `CocoTrain`, which
 #         is a SEGMENTATION source, not detection-as-pointing: under `style="pixmo"` it emits
 #         `pixmo_seg` and its messages carry `bboxes` + RLE `segmentations` with no points
@@ -341,6 +343,10 @@ POINTING_V2_AUDIT_STYLE = ("aux_point_count", "aux_pointing")
 POINTING_V2_FILTER_AUDIT = False
 POINTING_V2_N_EASY_NEGATIVES = 2
 POINTING_V2_P_PAIRED_NEGATIVES = 0.25
+# The audited CoSyn build's failed questions (18% of them) are kept behind `aux_cosyn_point:`.
+# mm_olmo tags them `aux_pointing:`; a tag of their own keeps `aux_pointing:` followed by an
+# object name, as `pointing:` is. Its agent masks feed segmentation, which is not trained here.
+POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 
 # Data recipes: the four group rates and the pointing sources, selected with `--recipe`. The
 # caption group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate. A recipe only sets
@@ -1130,14 +1136,18 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
                 ),
             ]
         elif config.pointing_data == "v2":
-            # mm_olmo train_molmo3_stage1 `_base_mixture` pointing group, minus `CocoTrain`.
-            pointing_names = ["pixmo_points_v2", "pixmo_count_v2", "cosyn_point"]
+            # mm_olmo train_molmo3_stage1 `_base_mixture` pointing group, minus `CocoTrain` and
+            # every segmentation branch (the v2 sources are ported points-only).
+            pointing_names = ["pixmo_points_v2", "pixmo_count_v2", "cosyn_point_v2"]
             pointing = [
                 config.pointing_v2.build(tokenizer),
                 config.count_v2.build(tokenizer),
-                CoSynPointDatasetConfig(max_crops=MAX_CROPS, **POINTING_DATASET_KWARGS).build(
-                    tokenizer
-                ),
+                CoSynPointDatasetConfig(
+                    dataset_path=COSYN_POINT_V2_PATH,
+                    audit_style=POINTING_V2_COSYN_AUDIT_STYLE,
+                    max_crops=MAX_CROPS,
+                    **POINTING_DATASET_KWARGS,
+                ).build(tokenizer),
             ]
         else:
             raise OLMoConfigurationError(

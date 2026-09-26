@@ -107,6 +107,93 @@ def test_cosyn_point_carries_its_own_tag_in_stage1(tmp_path):
     ]
 
 
+def _write_cosyn_point_v2(tmp_path):
+    """A one-row audited CoSyn fixture (`cosyn-point-v2-masks` columns): three questions, of which
+    the second failed the audit with `clear_error` and the third with `error`."""
+    from datasets import Dataset, DatasetDict
+    from PIL import Image
+
+    img = tmp_path / "doc2.png"
+    Image.new("RGB", (64, 48), color=(10, 40, 90)).save(img)
+    rows = {
+        "id": ["doc2"],
+        "image": [str(img)],
+        "questions": [["Find the title.", "Find the date.", "Find the signature."]],
+        "answer_points": [[{"x": [50.0], "y": [25.0]}] * 3],
+        "names": [["title", "date", "signature"]],
+        "audit_result": [["correct", "clear_error", "error"]],
+        "masks": [[["rle"], [], ["rle"]]],  # segmentation only: must be ignored
+        "mask_f1": [[1.0, 0.0, 1.0]],
+        "mask_size": [[48, 64]],
+    }
+    path = tmp_path / "cosyn-point-v2-masks"
+    DatasetDict({"train": Dataset.from_dict(rows)}).save_to_disk(str(path))
+    return str(path)
+
+
+def test_audited_cosyn_tags_failed_questions_aux_cosyn_point(tmp_path):
+    """With `audit_style`, the questions that failed the audit keep training behind their own tag;
+    the masks never become messages."""
+    from olmo_core.data.multimodal import CoSynPointDatasetConfig
+
+    tok = _PromptTok()
+    ex = CoSynPointDatasetConfig(
+        dataset_path=_write_cosyn_point_v2(tmp_path),
+        audit_style="aux_cosyn_point",
+        max_crops=1,
+        **STAGE1,
+    ).build(tok)[0]
+    assert ex["loss_masks"].sum() > 0
+    assert sorted(p for p in tok.prompts if p) == [
+        "aux_cosyn_point: Find the date.",
+        "aux_cosyn_point: Find the signature.",
+        "cosyn_point: Find the title.",
+    ]
+
+
+def test_audited_cosyn_without_audit_style_tags_every_question_alike(tmp_path):
+    from olmo_core.data.multimodal import CoSynPointDatasetConfig
+
+    tok = _PromptTok()
+    CoSynPointDatasetConfig(
+        dataset_path=_write_cosyn_point_v2(tmp_path), max_crops=1, **STAGE1
+    ).build(tok)[0]
+    assert {p.split(":")[0] for p in tok.prompts if p} == {"cosyn_point"}
+
+
+def test_audit_style_needs_an_audited_build(tmp_path):
+    from olmo_core.data.multimodal import CoSynPointDatasetConfig
+    from olmo_core.exceptions import OLMoConfigurationError
+
+    with pytest.raises(OLMoConfigurationError, match="audit_result"):
+        CoSynPointDatasetConfig(
+            dataset_path=_write_cosyn_point(tmp_path), audit_style="aux_cosyn_point"
+        ).build(_PromptTok())
+
+
+def test_stage1_v2_pointing_uses_the_audited_cosyn_build():
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("_s1a", "src/scripts/train/Molmo2-Stage1.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_s1a"] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except SystemExit:
+        pass
+    from olmo_core.data.multimodal.pixmo_points import COSYN_POINT_V2_PATH
+
+    assert mod.POINTING_V2_COSYN_AUDIT_STYLE == "aux_cosyn_point"
+    assert COSYN_POINT_V2_PATH.endswith("pixmo_datasets/cosyn-point-v2-masks")
+    src = open("src/scripts/train/Molmo2-Stage1.py").read()
+    v2 = src.split('elif config.pointing_data == "v2":')[1].split("else:")[0]
+    assert "dataset_path=COSYN_POINT_V2_PATH" in v2
+    assert "audit_style=POINTING_V2_COSYN_AUDIT_STYLE" in v2
+    assert '"cosyn_point_v2"' in v2
+
+
 def test_target_never_carries_the_prefix():
     """Only the prompt is prefixed; the answer's label stays bare in both families.
 

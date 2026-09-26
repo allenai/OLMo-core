@@ -55,7 +55,7 @@ from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .paths import PIXMO_DATASETS, PIXMO_POINTS_V2
-from .pixmo_points import _build_example, _load_split, _open_image
+from .pixmo_points import FAILED_AUDIT_RESULTS, _build_example, _load_split, _open_image
 from .sft_common import EpochSeededExamples, heldout_ids
 from .sft_formatter import SftFormatter
 
@@ -93,8 +93,6 @@ POINTS_V2_HELDOUT_PATHS: Tuple[str, ...] = (
 #: not held-out data, so they are neither read nor usable as a guard.
 COUNT_V2_HELDOUT_PATHS: Tuple[str, ...] = (f"{PIXMO_DATASETS}/count",)
 
-#: ``audit_result`` values mm_olmo treats as a failed audit (``PixMoPointV2._keep``).
-FAILED_AUDIT_RESULTS = frozenset({"error", "clear_error"})
 
 # mm_olmo ``PixMoPointV2.kind`` -> the ``source`` column value it keeps.
 _KIND_TO_SOURCE = {"basic": "pointing", "high_frequency": "counting", "both": None}

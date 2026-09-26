@@ -35,9 +35,18 @@ __all__ = [
     "PixMoCountDataset",
     "CoSynPointDatasetConfig",
     "CoSynPointDataset",
+    "COSYN_POINT_STYLE",
+    "COSYN_POINT_V2_PATH",
+    "FAILED_AUDIT_RESULTS",
 ]
 
+from olmo_core.exceptions import OLMoConfigurationError
+
 from .paths import PIXMO_DATASETS
+
+#: ``audit_result`` values mm_olmo treats as a failed audit (``PixMoPointV2._keep``,
+#: ``CoSynPointConfigV2.FAILED``).
+FAILED_AUDIT_RESULTS = frozenset({"error", "clear_error"})
 
 
 def _build_example(
@@ -343,6 +352,12 @@ class PixMoCountDataset:
 #: follows".
 COSYN_POINT_STYLE = "cosyn_point"
 
+#: mm_olmo's audited CoSyn build (``CoSynPointConfigV2``): the v1 build's images, questions,
+#: points and names unchanged (all 68,051 train rows match), plus a per-question ``audit_result``
+#: from a VLM audit (81.7% ``correct``, 17.3% ``clear_error``, 1.0% ``error`` on a 1-in-20
+#: sample) and agent masks. The masks feed segmentation messages, which this repo does not train, so they are ignored.
+COSYN_POINT_V2_PATH = f"{PIXMO_DATASETS}/cosyn-point-v2-masks"
+
 
 @dataclass
 class CoSynPointDatasetConfig(Config):
@@ -360,6 +375,11 @@ class CoSynPointDatasetConfig(Config):
     system_prompt: str = "demo_or_style_v2"
     """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``, which prefixes
     the question with ``"cosyn_point:"`` (:data:`COSYN_POINT_STYLE`)."""
+    audit_style: Optional[str] = None
+    """Style for the questions that failed the VLM audit (:data:`FAILED_AUDIT_RESULTS`), e.g.
+    ``"aux_cosyn_point"``: they are kept, behind a tag of their own, so the model learns them apart
+    from the questions that passed. Needs the audited build (:data:`COSYN_POINT_V2_PATH`). ``None``
+    treats every question alike, which is all the v1 build allows."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)
@@ -370,25 +390,36 @@ class CoSynPointDataset:
         self.config = config
         self.tokenizer = tokenizer
         self._data = _load_split(config.dataset_path, "train")
+        if config.audit_style is not None and "audit_result" not in self._data.column_names:
+            raise OLMoConfigurationError(
+                f"audit_style={config.audit_style!r} needs an audited CoSyn build with an "
+                f"`audit_result` column, such as {COSYN_POINT_V2_PATH!r}; {config.dataset_path!r} "
+                f"has {self._data.column_names}"
+            )
 
     def __len__(self) -> int:
         return len(self._data)
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         row = self._data[i]
+        cfg = self.config
         # The prefix follows the checkpoint's family exactly as for the PixMo sources.
-        prefix = SftFormatter(
-            seed=self.config.seed,
-            prompt_templates=self.config.prompt_templates,
-            system_prompt=self.config.system_prompt,
-        ).style_prefix(COSYN_POINT_STYLE)
+        fmt = SftFormatter(
+            seed=cfg.seed, prompt_templates=cfg.prompt_templates, system_prompt=cfg.system_prompt
+        )
+        prefix = fmt.style_prefix(COSYN_POINT_STYLE)
+        failed_prefix = fmt.style_prefix(cfg.audit_style) if cfg.audit_style else prefix
+        audits = row["audit_result"] if cfg.audit_style else [None] * len(row["questions"])
         branches: List[Tuple[str, str]] = []
-        for question, points, name in zip(row["questions"], row["answer_points"], row["names"]):
+        for question, points, name, audit in zip(
+            row["questions"], row["answer_points"], row["names"], audits
+        ):
+            tag = failed_prefix if audit in FAILED_AUDIT_RESULTS else prefix
             xy = np.array([points["x"], points["y"]], dtype=np.float64).T.reshape(-1, 2)
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
             answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
-            branches.append((f"{prefix} {question}" if prefix else question, answer))
+            branches.append((f"{tag} {question}" if tag else question, answer))
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),

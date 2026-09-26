@@ -186,6 +186,9 @@ class SftFormatter:
             "aux_pointing",
             "aux_point_count",
             "v3det_points",
+            # This repo's marker for audit-failed CoSyn questions (mm_olmo reuses `aux_pointing`),
+            # so `aux_pointing:` stays followed by an object name.
+            "aux_cosyn_point",
         }
     )
     #: System-prompt families that prefix the style name.
