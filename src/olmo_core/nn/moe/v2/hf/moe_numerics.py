@@ -1,5 +1,7 @@
 """Numerics of OLMoDDP's no-EP expert forward, without a TransformerEngine dependency."""
 
+from typing import Tuple
+
 import torch
 
 try:
@@ -41,13 +43,13 @@ def core_swiglu(up_gate: torch.Tensor) -> torch.Tensor:
     return (up * gate * torch.sigmoid(gate)).to(up_gate.dtype)
 
 
-@torch.compiler.disable
+@torch.library.custom_op("olmo3_moe_hf::core_combine", mutates_args=())
 def core_combine(values: torch.Tensor, probabilities: torch.Tensor) -> torch.Tensor:
     """Reproduce TE's index-map combination in routing-slot order.
 
     TE 2.18 converts probabilities to the activation dtype and rounds each fused
-    multiply-add to that dtype. Keeping these explicit casts outside compilation
-    prevents pointwise fusion from retaining an FP32 accumulator across slots.
+    multiply-add to that dtype. The opaque custom op preserves these rounding boundaries under full-graph
+    compilation, which otherwise fuses the casts into an FP32 accumulator.
     ``values`` is [tokens, top_k, hidden]; probabilities remain FP32 up to this op.
     """
     dtype = values.dtype
@@ -59,3 +61,35 @@ def core_combine(values: torch.Tensor, probabilities: torch.Tensor) -> torch.Ten
             dtype
         )
     return output
+
+
+@core_combine.register_fake
+def _core_combine_fake(values, probabilities):
+    return values.new_empty((values.shape[0], values.shape[2]))
+
+
+def _core_combine_setup_context(ctx, inputs, output):
+    ctx.save_for_backward(*inputs)
+
+
+@torch.library.custom_op("olmo3_moe_hf::core_combine_backward", mutates_args=())
+def _core_combine_backward_op(
+    values: torch.Tensor, probabilities: torch.Tensor, grad_output: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    # Match autograd through the activation-dtype casts in the forward.
+    grad = grad_output.float()[:, None, :]
+    grad_values = (grad * probabilities.to(values.dtype).float()[..., None]).to(values.dtype)
+    grad_probabilities = (grad * values.float()).sum(-1).to(values.dtype).to(probabilities.dtype)
+    return grad_values, grad_probabilities
+
+
+@_core_combine_backward_op.register_fake
+def _core_combine_backward_fake(values, probabilities, grad_output):
+    return torch.empty_like(values), torch.empty_like(probabilities)
+
+
+def _core_combine_backward(ctx, grad_output):
+    return _core_combine_backward_op(*ctx.saved_tensors, grad_output)
+
+
+core_combine.register_autograd(_core_combine_backward, setup_context=_core_combine_setup_context)

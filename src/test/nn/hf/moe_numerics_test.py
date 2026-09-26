@@ -1,7 +1,12 @@
 import pytest
 import torch
 
-from olmo_core.testing.utils import requires_gpu, requires_te, requires_triton
+from olmo_core.testing.utils import (
+    GPU_MARKS,
+    requires_gpu,
+    requires_te,
+    requires_triton,
+)
 
 
 def test_core_combine_rounds_fused_updates_in_routing_order():
@@ -91,3 +96,44 @@ def test_core_numerics_is_serialized_and_old_configs_keep_original_mode():
     assert isinstance(Olmo3MoeSparseMLP(config).experts, Olmo3MoeCoreExperts)
     with pytest.raises(ValueError, match="requires hidden_act"):
         Olmo3MoeConfig(moe_use_core_numerics=True, hidden_act="relu")
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
+def test_core_combine_fullgraph_and_gradients(dtype, device):
+    from olmo_core.nn.moe.v2.hf.moe_numerics import core_combine
+
+    torch.manual_seed(73)
+    values = torch.randn(5, 16, 32, dtype=dtype, device=device, requires_grad=True)
+    probabilities = torch.rand(5, 16, device=device, requires_grad=True)
+    expected = values.new_zeros((5, 32))
+    for slot in range(16):
+        expected = torch.addcmul(
+            expected.float(),
+            values[:, slot].float(),
+            probabilities[:, slot, None].to(dtype).float(),
+        ).to(dtype)
+    actual = torch.compile(core_combine, fullgraph=True)(values, probabilities)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    gradient = torch.randn_like(actual)
+    expected_grads = torch.autograd.grad(expected, (values, probabilities), gradient)
+    actual_grads = torch.autograd.grad(actual, (values, probabilities), gradient)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
+def test_core_experts_fullgraph_fallback(device):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeCoreExperts,
+        Olmo3MoeExpert,
+    )
+
+    torch.manual_seed(83)
+    experts = Olmo3MoeCoreExperts(Olmo3MoeExpert(16, 32, "silu") for _ in range(4)).to(device)
+    x = torch.randn(5, 16, device=device)
+    weights, indices = torch.randn(5, 4, device=device).softmax(-1).topk(2)
+    with torch.no_grad():
+        expected = experts(x, indices, weights)
+        actual = torch.compile(experts, fullgraph=True)(x, indices, weights)
+    torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
