@@ -10,8 +10,8 @@ before it is divided among sources (:data:`OCR_TASK_SHARES`):
   (style ``textocr``; TextOCR, plus HierText / COCO-Text / UberText, which take TextOCR's form:
   the text in a photo as snippets joined by spaces), and two synthetic English sets (see
   :mod:`~olmo_core.data.multimodal.synthetic_ocr`): NVIDIA's SynthDoG-style scattered text
-  (style ``synthdog``) and thermal-printer receipts (style ``receipt``), each with a tag of its
-  own.
+  (style ``synth_ocr``) and thermal-printer receipts (style ``receipt_ocr``), each with a tag of
+  its own.
 * **figure captions** -- describe a text-rich figure at three altitudes.
   The five ``text_rich_*`` categories (styles ``fig_caption_{high,mid,low}``; see
   :class:`~olmo_core.data.multimodal.text_rich_caption.TextRichCaptionDatasetConfig`).

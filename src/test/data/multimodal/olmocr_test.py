@@ -331,6 +331,7 @@ def test_stage1_refuses_the_olmocr_eval_split():
 
     def data_config(split):
         return SimpleNamespace(
+            recipe="v1",
             pointing_data="v1",
             pointing_rate=0.3,
             nlp_rate=0.1,

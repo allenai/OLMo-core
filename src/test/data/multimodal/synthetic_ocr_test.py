@@ -153,13 +153,13 @@ def test_nvidia_reads_only_english_train_files(tmp_path):
     assert ds.locate(2) == (ds.files[1], 0)
 
 
-def test_nvidia_example_is_synthdog_tag_and_visual_order(tmp_path):
+def test_nvidia_example_is_synth_ocr_tag_and_visual_order(tmp_path):
     tok = _PromptTok()
     ds = NvidiaSynthOcrDatasetConfig(dataset_path=_nvidia_root(tmp_path), max_crops=1).build(tok)
     assert layout_text(ds.read(0)[1]) == "hello world"  # the label says "world hello"
     ex = ds[0]
     assert ex["loss_masks"].sum() > 0
-    assert [p for p in tok.prompts if p] == ["synthdog:"]
+    assert [p for p in tok.prompts if p] == ["synth_ocr:"]
 
 
 def test_nvidia_skips_an_image_with_no_text(tmp_path):
@@ -233,14 +233,14 @@ def test_prepare_keeps_english_train_rows_only(tmp_path):
     assert isinstance(data[0]["image_photo"], bytes)
 
 
-def test_receipt_example_is_receipt_tag(tmp_path):
+def test_receipt_example_is_receipt_ocr_tag(tmp_path):
     root = _write_receipts(tmp_path)
     prepare_synthetic_receipts(root, str(tmp_path / "receipts" / "en_train_arrow"))
     tok = _PromptTok()
     ds = SyntheticReceiptsDatasetConfig(dataset_path=root, max_crops=1).build(tok)
     assert len(ds) == 2
     assert ds[0]["loss_masks"].sum() > 0
-    assert [p for p in tok.prompts if p] == ["receipt:"]
+    assert [p for p in tok.prompts if p] == ["receipt_ocr:"]
 
 
 def test_receipts_without_prepared_dir_is_a_clear_error(tmp_path):

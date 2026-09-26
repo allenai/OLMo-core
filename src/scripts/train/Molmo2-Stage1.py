@@ -17,6 +17,12 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 
 ``--model_size`` selects the variant: ``4b`` (Qwen3-4B, the default) or ``8b`` (Qwen3-8B).
 
+``--recipe`` selects the data mixture (see :data:`RECIPES`): ``v1`` (the default) is the released
+Molmo2-4B-Pretrain mixture -- caption 0.6, pointing and counting 0.3 on the v1 sources, Tulu
+text 0.1, no OCR. ``v2`` is caption 0.5, pointing and counting 0.25 on the v2 sources, OCR 0.25
+and no text-only data. A recipe only sets the defaults of ``pointing_rate`` / ``nlp_rate`` /
+``ocr_rate`` / ``pointing_data``; an explicit override of any of them still wins.
+
 ``--pointing_data`` selects the pointing/counting group: ``v1`` (the released Molmo2 pretrain's
 sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, image-grouped
 PixMo-Points build with sub-sampled absence queries, plus the audited PixMo-Count build). The v2
@@ -294,10 +300,10 @@ NLP_RATE = 0.10
 # in and its text (or a description of a text-rich figure) out, with no question in the prompt.
 # It is mm_olmo's two molmo3 stage-1 OCR groups (`train_molmo3_stage1._base_mixture`, 0.075 each)
 # -- olmOCR-mix page transcription and the three-level figure captions -- plus TextOCR scene
-# text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`synthdog`) and
-# thermal receipts (`receipt`). The rate is split evenly between the two tasks, transcription and
-# figure captions, as mm_olmo's two groups are, then by sqrt(size) within a task (mm_olmo's
-# `root_size_factor`).
+# text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`synth_ocr`) and
+# thermal receipts (`receipt_ocr`). The rate is split evenly between the two tasks,
+# transcription and figure captions, as mm_olmo's two groups are, then by sqrt(size) within a
+# task (mm_olmo's `root_size_factor`).
 # Paid for out of the caption group. Off by default so the default run stays the released
 # Molmo2 pretrain mixture; `--ocr_rate=0.15` enables it at mm_olmo's total.
 # `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
@@ -333,6 +339,21 @@ POINTING_V2_AUDIT_STYLE = ("aux_point_count", "aux_pointing")
 POINTING_V2_FILTER_AUDIT = False
 POINTING_V2_N_EASY_NEGATIVES = 2
 POINTING_V2_P_PAIRED_NEGATIVES = 0.25
+
+# Data recipes: the four group rates and the pointing sources, selected with `--recipe`. The
+# caption group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate. A recipe only sets
+# defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption at 0.55).
+#   "v1": the released Molmo2-4B-Pretrain mixture: caption 0.6, pointing and counting 0.3 (v1
+#         sources), Tulu text 0.1, no OCR.
+#   "v2": caption 0.5, pointing and counting 0.25 (v2 sources: audited PixMo-Points / PixMo-Count
+#         + CoSyn), OCR 0.25 (the default OCR sources, see `OCR_RATE`), no text-only data.
+RECIPES = {
+    "v1": dict(
+        pointing_rate=POINTING_RATE, nlp_rate=NLP_RATE, ocr_rate=OCR_RATE, pointing_data="v1"
+    ),
+    "v2": dict(pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, pointing_data="v2"),
+}
+RECIPE = "v1"
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -389,6 +410,9 @@ class ExperimentConfig(Config):
     global_batch_size: int = GLOBAL_BATCH_SIZE
     """Global batch in *tokens* (= global instances × seq len). Override to scale the batch;
     pair with ``--train_module.rank_microbatch_size`` to set sequences/forward (GEMM size)."""
+    recipe: str = RECIPE
+    """The data recipe the rates below were defaulted from (:data:`RECIPES`); recorded for
+    provenance. Pick it with ``--recipe``, which is read before the merge."""
     pointing_rate: float = POINTING_RATE
     """Fraction of mixture samples from pointing/counting sources (mm_olmo ``--pointing``)."""
     nlp_rate: float = NLP_RATE
@@ -494,6 +518,21 @@ def _read_float_override(overrides: List[str], key: str, default: float) -> floa
         raise OLMoConfigurationError(f"{key}={raw!r} is not a float") from None
 
 
+def resolve_recipe(overrides: List[str]) -> Tuple[str, dict]:
+    """The ``--recipe`` named in the raw overrides and the field defaults it sets.
+
+    Read before :meth:`Config.merge`, so the recipe's rates become the config's starting values
+    and an explicit ``--pointing_rate`` / ``--nlp_rate`` / ``--ocr_rate`` / ``--pointing_data``
+    still overrides them.
+
+    :raises OLMoConfigurationError: If the recipe is not one of :data:`RECIPES`.
+    """
+    recipe = _read_override(overrides, "recipe", RECIPE).strip().lower()
+    if recipe not in RECIPES:
+        raise OLMoConfigurationError(f"recipe={recipe!r} is not one of {tuple(RECIPES)}")
+    return recipe, dict(RECIPES[recipe])
+
+
 def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:
     """Resolve ``(model_size, init_from)`` from the raw overrides, validating both."""
     model_size = _read_override(overrides, "model_size", MODEL_SIZE).lower()
@@ -511,12 +550,14 @@ def validate_data_config(config) -> None:
     """Check the data-mixture fields of a merged config.
 
     Separate from :func:`build_config`, which also resolves the Beaker launch and so cannot run
-    without cluster access: this only reads ``pointing_data``, the three rates, ``ocr_sources``,
-    ``olmocr`` and ``ocr_tars``.
+    without cluster access: this only reads ``recipe``, ``pointing_data``, the three rates,
+    ``ocr_sources``, ``olmocr`` and ``ocr_tars``.
 
     :raises OLMoConfigurationError: If a field is invalid, or an override would be silently
         ignored, or a source would read anything but its train split.
     """
+    if config.recipe not in RECIPES:
+        raise OLMoConfigurationError(f"recipe={config.recipe!r} is not one of {tuple(RECIPES)}")
     if config.pointing_data not in POINTING_DATA_CHOICES:
         raise OLMoConfigurationError(
             f"pointing_data={config.pointing_data!r} is not one of {POINTING_DATA_CHOICES}"
@@ -589,6 +630,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     assert beaker_user is not None
 
     model_size, init_from = _resolve_model_spec(overrides)
+    recipe, recipe_fields = resolve_recipe(overrides)
     # Resolved pre-merge because it shapes `freeze_params`, the optimizer groups and the
     # per-group scheduler, all of which are built before `Config.merge` runs.
     train_vit = _read_bool_override(overrides, "train_vit", TRAIN_VIT)
@@ -641,7 +683,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     )
     # OCR source templates (`build_ocr_source` fills in the per-source fields); only built when
     # `ocr_rate > 0`. Every response token weighted equally, like the caption source; the user
-    # turn is the bare `<style>:` tag (`olmocr:` / `textocr:` / `synthdog:` / `receipt:` /
+    # turn is the bare `<style>:` tag (`olmocr:` / `textocr:` / `synth_ocr:` / `receipt_ocr:` /
     # `fig_caption_{high,mid,low}:`), as in mm_olmo's molmo3 stage 1. Long pages are
     # tail-truncated to the sequence length.
     olmocr_config = OlmOcrMixDatasetConfig(
@@ -818,6 +860,8 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         launch=launch_config,
         pointing_v2=pointing_v2_config,
         count_v2=count_v2_config,
+        recipe=recipe,
+        **recipe_fields,
         olmocr=olmocr_config,
         ocr_tars=ocr_tars_config,
         text_rich=text_rich_config,
@@ -1214,6 +1258,9 @@ Examples
 
 Print the config:
 › python {sys.argv[0]} dry_run molmo2-stage1
+
+The v2 recipe (caption 0.5, v2 pointing and counting 0.25, OCR 0.25, no text-only data):
+› python {sys.argv[0]} launch molmo2-stage1-v2 --recipe=v2
 
 8B from-scratch run:
 › python {sys.argv[0]} launch molmo2-stage1-8b --model_size=8b

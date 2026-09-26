@@ -443,6 +443,7 @@ def _data_config(**kw):
     from types import SimpleNamespace
 
     fields = dict(
+        recipe="v1",
         pointing_data="v1",
         pointing_rate=0.3,
         nlp_rate=0.1,
@@ -486,3 +487,80 @@ def test_stage1_warns_when_a_source_of_unverified_split_is_selected(caplog):
     with caplog.at_level("WARNING"):
         mod.validate_data_config(_data_config(ocr_sources=("olmocr_books", "cocotext")))
     assert "cocotext" in caplog.text and "training split" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Data recipes
+# ---------------------------------------------------------------------------
+
+
+def test_stage1_recipes():
+    """v1 is the released pretrain mixture; v2 is caption 0.5, v2 pointing and counting 0.25,
+    OCR 0.25 and no text-only data."""
+    mod = _load_stage1_module()
+    v1, v2 = mod.RECIPES["v1"], mod.RECIPES["v2"]
+    assert mod.RECIPE == "v1"
+    assert v1 == dict(pointing_rate=0.3, nlp_rate=0.1, ocr_rate=0.0, pointing_data="v1")
+    assert v2 == dict(pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, pointing_data="v2")
+    for r in (v1, v2):
+        caption = 1.0 - r["pointing_rate"] - r["nlp_rate"] - r["ocr_rate"]
+        assert caption == pytest.approx(0.6 if r is v1 else 0.5)
+    # The ExperimentConfig defaults are the v1 recipe, so a config built without `--recipe`
+    # (and the dataclass defaults a test builds) agree with it.
+    fields = mod.ExperimentConfig.__dataclass_fields__
+    assert {k: fields[k].default for k in v1} == v1
+    assert fields["recipe"].default == "v1"
+
+
+@pytest.mark.parametrize(
+    "overrides, expected",
+    [
+        ([], "v1"),
+        (["--recipe=v2"], "v2"),
+        (["--recipe=V2"], "v2"),
+        (["--recipe=v2", "--recipe=v1"], "v1"),  # later wins, as in `merge`
+        (["--ocr_rate=0.1"], "v1"),
+    ],
+)
+def test_resolve_recipe(overrides, expected):
+    mod = _load_stage1_module()
+    name, fields = mod.resolve_recipe(overrides)
+    assert name == expected
+    assert fields == mod.RECIPES[expected]
+    fields["ocr_rate"] = 0.9  # a copy: the registry itself must not change
+    assert mod.RECIPES[expected]["ocr_rate"] != 0.9
+
+
+def test_unknown_recipe_is_refused():
+    mod = _load_stage1_module()
+    with pytest.raises(OLMoConfigurationError, match="recipe"):
+        mod.resolve_recipe(["--recipe=v3"])
+    with pytest.raises(OLMoConfigurationError, match="recipe"):
+        mod.validate_data_config(_data_config(recipe="v3"))
+
+
+def test_v2_recipe_validates_and_splits_its_groups():
+    """The v2 recipe's rates pass validation, and with the real source sizes the caption, pointing
+    and OCR groups get 0.5 / 0.25 / 0.25 of the mixture."""
+    mod = _load_stage1_module()
+    mod.validate_data_config(_data_config(recipe="v2", **mod.RECIPES["v2"]))
+    pointing = mod._pointing_group_fractions([220_290, 36_901, 68_051], "v2")
+    ocr_names = list(ocr_mix.DEFAULT_OCR_SOURCES)
+    sizes = {
+        "olmocr_documents": 231_668,
+        "olmocr_books": 16_575,
+        "olmocr_loc_transcripts": 9_891,
+        "olmocr_national_archives": 9_828,
+        "text_rich_chart": 353_439,
+        "text_rich_diagram": 142_534,
+        "text_rich_doc": 438_267,
+        "text_rich_graphic": 87_212,
+        "text_rich_table": 315_515,
+        "textocr": 21_749,
+        "nvidia_synth_en": 1_460_304,
+        "synth_receipts_en": 16_437,
+    }
+    ocr = mod._ocr_fractions(ocr_names, [sizes[n] for n in ocr_names])
+    r = mod.RECIPES["v2"]
+    assert r["pointing_rate"] * pointing.sum() == pytest.approx(0.25)
+    assert r["ocr_rate"] * ocr.sum() == pytest.approx(0.25)

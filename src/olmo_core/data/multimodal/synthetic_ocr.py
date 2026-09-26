@@ -5,7 +5,7 @@ Two sources, English only, train splits only:
 * :class:`NvidiaSynthOcrDataset` -- ``nvidia/OCR-Synthetic-Multilingual-v1`` (CC BY 4.0), the
   SynthDoG-style data behind Nemotron OCR v2. Words and short phrases are scattered over photos
   or flat colours, often rotated or vertical, so it is scene-like text, not a page. It has a tag
-  of its own, ``synthdog`` (after its generator), and its target is the text joined by spaces,
+  of its own, ``synth_ocr``, and its target is the text joined by spaces,
   the form TextOCR's answers take. The dataset's own
   ``labels`` field is NOT used as the target: it joins the words in the order of the sentence
   they were cut from, which only 16% of images show visually (measured on 496 validation images),
@@ -13,7 +13,7 @@ Two sources, English only, train splits only:
   from the line boxes in visual order instead (:func:`layout_text`).
 * :class:`SyntheticReceiptsDataset` -- ``albertobarnabo/synthetic-receipts-ocr`` (Apache 2.0),
   thermal-printer receipts, of which the US and UK locales are English. It has a tag of its own,
-  ``receipt``, and its target is the printed lines (:func:`receipt_text`).
+  ``receipt_ocr``, and its target is the printed lines (:func:`receipt_text`).
   The photo-degraded image is used (perspective, lighting, blur, JPEG), the closer one to real
   receipts. The parquet row groups hold several hundred inline images each, so the English train
   rows are first converted once into a memory-mapped Arrow dataset
@@ -50,8 +50,8 @@ __all__ = [
     "SyntheticReceiptsDatasetConfig",
     "SyntheticReceiptsDataset",
     "RECEIPT_LOCALES",
-    "SYNTHDOG_STYLE",
-    "RECEIPT_STYLE",
+    "SYNTH_OCR_STYLE",
+    "RECEIPT_OCR_STYLE",
     "layout_text",
     "receipt_text",
     "prepare_synthetic_receipts",
@@ -61,11 +61,11 @@ log = logging.getLogger(__name__)
 
 #: Style of the NVIDIA set: its own tag, so its synthetic scattered text is learned apart from
 #: TextOCR's real photos.
-SYNTHDOG_STYLE = "synthdog"
+SYNTH_OCR_STYLE = "synth_ocr"
 
 #: Style of the receipts: its own tag, so a receipt transcription is learned apart from
 #: olmOCR's page transcriptions.
-RECEIPT_STYLE = "receipt"
+RECEIPT_OCR_STYLE = "receipt_ocr"
 
 #: The English locales of the receipts dataset.
 RECEIPT_LOCALES: Tuple[str, ...] = ("US", "UK")
@@ -129,7 +129,7 @@ def layout_text(annotation: Dict[str, Any]) -> str:
 
 @dataclass
 class NvidiaSynthOcrDatasetConfig(Config):
-    """``nvidia/OCR-Synthetic-Multilingual-v1``, English train split, as ``synthdog`` examples."""
+    """``nvidia/OCR-Synthetic-Multilingual-v1``, English train split, as ``synth_ocr`` examples."""
 
     dataset_path: str = NVIDIA_SYNTH_OCR
     """The dataset's local copy; ``en/train/*.h5`` is read under it and nothing else."""
@@ -239,7 +239,7 @@ class NvidiaSynthOcrDataset(EpochSeededExamples):
         if not text:
             raise ValueError("image has no text")
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        prompt = style_tag_prompt(SYNTHDOG_STYLE)
+        prompt = style_tag_prompt(SYNTH_OCR_STYLE)
         return _run_example(self, self.tokenizer, image, prompt, text, self.config, i)
 
 
@@ -311,7 +311,7 @@ def prepare_synthetic_receipts(
 
 @dataclass
 class SyntheticReceiptsDatasetConfig(Config):
-    """``albertobarnabo/synthetic-receipts-ocr``, English train receipts, as ``receipt``
+    """``albertobarnabo/synthetic-receipts-ocr``, English train receipts, as ``receipt_ocr``
     examples."""
 
     dataset_path: str = SYNTH_RECEIPTS_OCR
@@ -380,5 +380,5 @@ class SyntheticReceiptsDataset(EpochSeededExamples):
         if not text:
             raise ValueError("receipt has no text")
         image = Image.open(io.BytesIO(row["image_photo"])).convert("RGB")
-        prompt = style_tag_prompt(RECEIPT_STYLE)
+        prompt = style_tag_prompt(RECEIPT_OCR_STYLE)
         return _run_example(self, self.tokenizer, image, prompt, text, self.config, i)
