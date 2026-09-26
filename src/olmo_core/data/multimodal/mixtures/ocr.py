@@ -80,6 +80,7 @@ __all__ = [
     "OCR_TASK_SHARES",
     "ocr_task",
     "ocr_task_shares",
+    "ocr_weighting_sizes",
     "OLMOCR_STYLE",
     "TEXTOCR_STYLE",
     "build_ocr_source",
@@ -178,6 +179,31 @@ def ocr_task_shares(names: Sequence[str]) -> List[float]:
     tasks = [ocr_task(n) for n in names]
     total = sum(OCR_TASK_SHARES[t] for t in set(tasks))
     return [OCR_TASK_SHARES[t] / total for t in tasks]
+
+
+def ocr_weighting_sizes(names: Sequence[str], sizes: Sequence[int]) -> List[int]:
+    """The sizes the OCR split weights its sources by.
+
+    A synthetic source (:data:`SYNTHETIC_OCR_SOURCES`) counts as no larger than the largest real
+    source of the same task in ``names``: its row count says how much data was generated, not how
+    much it is worth, and uncapped the 1.46M NVIDIA images would take the biggest share of
+    transcription on size alone (6.6% of the v2 mixture, more than the four olmOCR-mix subsets
+    together). A task with no real source among ``names`` is left uncapped.
+
+    :param names: OCR source names.
+    :param sizes: Their row counts, parallel to ``names``.
+
+    :returns: The sizes to weight by, parallel to ``names``.
+    """
+    tasks = [ocr_task(n) for n in names]
+    caps: Dict[str, int] = {}
+    for name, task, size in zip(names, tasks, sizes):
+        if name not in SYNTHETIC_OCR_SOURCES:
+            caps[task] = max(caps.get(task, 0), int(size))
+    return [
+        min(int(size), caps[task]) if name in SYNTHETIC_OCR_SOURCES and task in caps else int(size)
+        for name, task, size in zip(names, tasks, sizes)
+    ]
 
 
 def build_ocr_source(

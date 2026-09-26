@@ -281,3 +281,26 @@ def test_build_ocr_source_uses_the_synthetic_configs(tmp_path):
     )
     assert len(ocr_mix.build_ocr_source("nvidia_synth_en", _PromptTok(), **templates)) == 3
     assert len(ocr_mix.build_ocr_source("synth_receipts_en", _PromptTok(), **templates)) == 2
+
+
+# ---------------------------------------------------------------------------
+# Weighting-size cap
+# ---------------------------------------------------------------------------
+
+
+def test_synthetic_sizes_are_capped_at_the_largest_real_source_of_their_task():
+    names = ["olmocr_documents", "textocr", "nvidia_synth_en", "synth_receipts_en", "text_rich_doc"]
+    sizes = [231_668, 21_749, 1_460_304, 16_437, 438_267]
+    assert ocr_mix.ocr_weighting_sizes(names, sizes) == [
+        231_668,
+        21_749,
+        231_668,  # capped at olmocr_documents, the largest real transcription source
+        16_437,  # already below the cap
+        438_267,  # a figure-caption source is not a transcription source's cap
+    ]
+
+
+def test_synthetic_sizes_are_uncapped_without_a_real_source_of_their_task():
+    names = ["nvidia_synth_en", "synth_receipts_en", "text_rich_doc"]
+    sizes = [1_460_304, 16_437, 438_267]
+    assert ocr_mix.ocr_weighting_sizes(names, sizes) == sizes

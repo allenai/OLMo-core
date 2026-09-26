@@ -84,6 +84,7 @@ from olmo_core.data.multimodal.mixtures.ocr import (
     build_ocr_source,
     ocr_task,
     ocr_task_shares,
+    ocr_weighting_sizes,
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
@@ -303,7 +304,8 @@ NLP_RATE = 0.10
 # text and two synthetic English transcription sets: NVIDIA OCR-Synthetic (`synth_ocr`) and
 # thermal receipts (`receipt_ocr`). The rate is split evenly between the two tasks,
 # transcription and figure captions, as mm_olmo's two groups are, then by sqrt(size) within a
-# task (mm_olmo's `root_size_factor`).
+# task (mm_olmo's `root_size_factor`), with a synthetic source weighted as if no larger than the
+# largest real source of its task (NVIDIA's 1.46M images count as olmOCR-mix documents' 232k).
 # Paid for out of the caption group. Off by default so the default run stays the released
 # Molmo2 pretrain mixture; `--ocr_rate=0.15` enables it at mm_olmo's total.
 # `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
@@ -1055,12 +1057,14 @@ def _ocr_fractions(names: Sequence[str], sizes: Sequence[int]):
     Two levels, like mm_olmo's two OCR groups. The rate is first divided between the tasks,
     transcription and figure captions (``mixtures.ocr.OCR_TASK_SHARES``); each task's share is
     then divided among its sources by sqrt(size). A single flat split would be decided by the
-    figure captions' much larger row counts.
+    figure captions' much larger row counts. A synthetic source's size is capped at the largest
+    real source of its task first (``mixtures.ocr.ocr_weighting_sizes``).
     """
     import numpy as np
 
     shares = ocr_task_shares(names)
     tasks = [ocr_task(n) for n in names]
+    sizes = ocr_weighting_sizes(names, sizes)
     out = np.zeros(len(names), dtype=np.float64)
     for task in dict.fromkeys(tasks):
         idx = [i for i, t in enumerate(tasks) if t == task]

@@ -564,3 +564,7 @@ def test_v2_recipe_validates_and_splits_its_groups():
     r = mod.RECIPES["v2"]
     assert r["pointing_rate"] * pointing.sum() == pytest.approx(0.25)
     assert r["ocr_rate"] * ocr.sum() == pytest.approx(0.25)
+    # The NVIDIA synthetic set is weighted as if no larger than olmOCR-mix documents.
+    share = dict(zip(ocr_names, r["ocr_rate"] * ocr))
+    assert share["nvidia_synth_en"] == pytest.approx(share["olmocr_documents"])
+    assert share["nvidia_synth_en"] == pytest.approx(0.0384, abs=1e-4)
