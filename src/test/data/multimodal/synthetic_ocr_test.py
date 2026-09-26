@@ -290,11 +290,11 @@ def test_build_ocr_source_uses_the_synthetic_configs(tmp_path):
 
 def test_synthetic_sizes_are_capped_at_the_largest_real_source_of_their_task():
     names = ["olmocr_documents", "textocr", "nvidia_synth_en", "synth_receipts_en", "text_rich_doc"]
-    sizes = [231_668, 21_749, 1_460_304, 16_437, 438_267]
+    sizes = [218_831, 21_749, 1_460_304, 16_437, 438_267]
     assert ocr_mix.ocr_weighting_sizes(names, sizes) == [
-        231_668,
+        218_831,
         21_749,
-        231_668,  # capped at olmocr_documents, the largest real transcription source
+        218_831,  # capped at olmocr_documents, the largest real transcription source
         16_437,  # already below the cap
         438_267,  # a figure-caption source is not a transcription source's cap
     ]

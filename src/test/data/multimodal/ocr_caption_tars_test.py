@@ -547,10 +547,11 @@ def test_v2_recipe_validates_and_splits_its_groups():
     pointing = mod._pointing_group_fractions([220_290, 36_901, 68_051], "v2")
     ocr_names = list(ocr_mix.DEFAULT_OCR_SOURCES)
     sizes = {
-        "olmocr_documents": 231_668,
-        "olmocr_books": 16_575,
-        "olmocr_loc_transcripts": 9_891,
-        "olmocr_national_archives": 9_828,
+        # olmOCR-mix sizes after the default English filter, as a run sees them.
+        "olmocr_documents": 218_831,
+        "olmocr_books": 15_134,
+        "olmocr_loc_transcripts": 9_712,
+        "olmocr_national_archives": 9_810,
         "text_rich_chart": 353_439,
         "text_rich_diagram": 142_534,
         "text_rich_doc": 438_267,
@@ -567,4 +568,4 @@ def test_v2_recipe_validates_and_splits_its_groups():
     # The NVIDIA synthetic set is weighted as if no larger than olmOCR-mix documents.
     share = dict(zip(ocr_names, r["ocr_rate"] * ocr))
     assert share["nvidia_synth_en"] == pytest.approx(share["olmocr_documents"])
-    assert share["nvidia_synth_en"] == pytest.approx(0.0384, abs=1e-4)
+    assert share["nvidia_synth_en"] == pytest.approx(0.0382, abs=1e-4)

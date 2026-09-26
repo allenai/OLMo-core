@@ -305,7 +305,7 @@ NLP_RATE = 0.10
 # thermal receipts (`receipt_ocr`). The rate is split evenly between the two tasks,
 # transcription and figure captions, as mm_olmo's two groups are, then by sqrt(size) within a
 # task (mm_olmo's `root_size_factor`), with a synthetic source weighted as if no larger than the
-# largest real source of its task (NVIDIA's 1.46M images count as olmOCR-mix documents' 232k).
+# largest real source of its task (NVIDIA's 1.46M images count as olmOCR-mix documents' 219k).
 # Paid for out of the caption group. Off by default so the default run stays the released
 # Molmo2 pretrain mixture; `--ocr_rate=0.15` enables it at mm_olmo's total.
 # `DEFAULT_OCR_SOURCES` holds train splits only. It leaves out the `s2pdf` / `iabooks` tars, which
