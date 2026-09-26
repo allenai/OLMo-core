@@ -7,7 +7,11 @@ import torch
 
 from olmo_core._nvtx import nvtx
 
-from ...moe.utils import async_copy_to_cpu, run_on_stream_no_compile, wait_stream_no_compile
+from ...moe.utils import (
+    async_copy_to_cpu,
+    run_on_stream_no_compile,
+    wait_stream_no_compile,
+)
 from ..utils import moe_permute_no_compile, moe_unpermute_no_compile
 from .fp8 import shared_experts_forward_rowwise_fp8
 from .routed_experts import requires_host_side_split_sizes
