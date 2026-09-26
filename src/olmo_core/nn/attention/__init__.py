@@ -3,14 +3,20 @@ import math
 import os
 import warnings
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
 from torch.autograd.graph import saved_tensors_hooks
 from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Placement, Replicate, Shard
+from torch.distributed.tensor import (
+    DTensor,
+    Placement,
+    Replicate,
+    Shard,
+    distribute_tensor,
+)
 from torch.distributed.tensor.parallel import parallelize_module
 
 from olmo_core.config import Config, DType, StrEnum
@@ -33,12 +39,7 @@ from ..functional import l2_normalize
 from ..layer_norm import LayerNorm, LayerNormConfig
 from ..mxfp8_linear import MXFP8Linear
 from ..output_discard_checkpoint import OutputDiscardCheckpoint
-from ..rope import (
-    ComplexRotaryEmbedding,
-    FusedRotaryEmbedding,
-    RoPEConfig,
-    RotaryEmbedding,
-)
+from ..rope import ComplexRotaryEmbedding, RoPEConfig, RoPEType, RotaryEmbedding
 from ..utils import get_tp_wrappers
 from . import flash_attn_api
 from .backend import (
@@ -77,7 +78,6 @@ __all__ = [
     "TEAttentionBackend",
     "AttentionConfig",
     "Attention",
-    "FusedAttention",
     "FusedAttentionV2",
     "NormalizedAttention",
     "RingAttentionLoadBalancerType",
@@ -296,6 +296,27 @@ class SlidingWindowAttentionConfig(Config):
         return window_size
 
 
+def _resolve_attention_backend(
+    backend: Optional[AttentionBackendName], use_flash: Optional[bool] = None
+) -> Optional[AttentionBackendName]:
+    """Resolve the deprecated flag without overriding an explicit backend or SWA auto-selection."""
+    if backend is not None:
+        backend = AttentionBackendName(backend)
+    if use_flash:
+        if backend is not None and backend != AttentionBackendName.flash_2:
+            raise OLMoConfigurationError(
+                f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
+            )
+        elif backend is None:
+            warnings.warn(
+                "'use_flash' is deprecated, use 'backend=flash_2' instead",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+            backend = AttentionBackendName.flash_2
+    return backend
+
+
 class AttentionType(StrEnum):
     """
     An enumeration of the different attention implementations.
@@ -307,7 +328,8 @@ class AttentionType(StrEnum):
     """
     fused = "fused"
     """
-    ➡️ :class:`FusedAttention`
+    Legacy spelling for :class:`FusedAttentionV2`, retained for loading old configs.
+    Fused RoPE is replaced with regular RoPE, which is not numerically identical.
     """
     fused_v2 = "fused_v2"
     """
@@ -342,10 +364,14 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     qk_norm: Optional[LayerNormConfig] = None
     dropout: Optional[float] = None
     use_flash: Optional[bool] = None
+    """Deprecated input retained for old configs; use :data:`backend` in new configs."""
     backend: Optional[AttentionBackendName] = None
     dtype: DType = DType.float32
     sliding_window: Optional[SlidingWindowAttentionConfig] = None
     use_head_qk_norm: Optional[bool] = None
+    scalable_softmax: bool = False
+    """Scalable softmax; incompatible with CP, KV caching, and sliding window attention."""
+    qk_norm_per_head_gains: Optional[bool] = None
     attention_sinks: bool = False
     """
     Add a per-head learnable "attention sink" logit (as in GPT-OSS). Only supported by the default
@@ -405,7 +431,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
 
         # Block attention QK norm.
         if self.qk_norm is not None:
-            if self.use_head_qk_norm:
+            if self.use_head_qk_norm and not self.qk_norm_per_head_gains:
                 params += 2 * self.qk_norm.num_params(head_dim)
             else:
                 params += self.qk_norm.num_params(n_heads * head_dim)  # q_norm
@@ -436,6 +462,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if self.attention_sinks:
             params += n_heads
 
+        # Per-head scalable-softmax factors.
+        if self.scalable_softmax:
+            params += n_heads
+
         return params
 
     def build(
@@ -453,6 +483,31 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         :param d_model: The model dimensionality.
         :param init_device: The device to initialize the parameters on, e.g. "cpu", "meta".
         """
+        if self.name == AttentionType.fused:
+            warnings.warn(
+                "The 'fused' attention implementation has been removed; using FusedAttentionV2. "
+                "Checkpoint parameter names and shapes are preserved, but regular RoPE is "
+                "not numerically identical to fused RoPE.",
+                UserWarning,
+                stacklevel=2,
+            )
+            rope = self.rope
+            if rope is not None and rope.name == RoPEType.fused:
+                rope = replace(rope, name=RoPEType.default)
+            return replace(
+                self,
+                name=AttentionType.fused_v2,
+                rope=rope,
+                backend=self.backend or AttentionBackendName.flash_2,
+                use_flash=None,  # The original implementation ignored this flag.
+            ).build(
+                d_model,
+                layer_idx=layer_idx,
+                n_layers=n_layers,
+                init_device=init_device,
+                cache=cache,
+            )
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
         kwargs.pop("name")
 
@@ -462,6 +517,10 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if sliding_window_config is not None and sliding_window_config.should_use_swa(
             layer_idx, n_layers
         ):
+            if self.scalable_softmax:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
             kwargs["window_size"] = sliding_window_config.get_window_size(layer_idx, n_layers)
         else:  # global (non-SWA) layer
             rope_config: Optional[RoPEConfig] = kwargs.get("rope")
@@ -495,7 +554,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
             raise OLMoConfigurationError(f"{enabled} are only supported by fused_v2 attention")
 
         # QKV recompute / MXFP8-save are honored by the shared Attention.forward, so they apply to
-        # the default and fused_v2 implementations (fused and normalized override forward). As above,
+        # the default and fused_v2 implementations (normalized overrides forward). As above,
         # only reject an enabled flag.
         shared_forward_kwargs = {
             key: kwargs.pop(key)
@@ -511,16 +570,16 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
                 f"{enabled} are only supported by default and fused_v2 attention"
             )
 
+        if self.name != AttentionType.default:
+            for key in ("scalable_softmax", "qk_norm_per_head_gains"):
+                if kwargs.pop(key, False):
+                    raise OLMoConfigurationError(
+                        f"'{key}' is not supported with {self.name} attention"
+                    )
+
         try:
             if self.name == "default":
                 return Attention(**kwargs, **shared_forward_kwargs)
-            elif self.name == "fused":
-                kwargs.pop("use_flash", None)
-                if "window_size" in kwargs:
-                    raise OLMoConfigurationError(
-                        "'window_size' is not supported with fused attention"
-                    )
-                return FusedAttention(**kwargs)
             elif self.name == "fused_v2":
                 return FusedAttentionV2(**kwargs, **fused_v2_kwargs, **shared_forward_kwargs)
             elif self.name == "normalized":
@@ -565,7 +624,7 @@ class Attention(SequenceMixer):
     a backend that supports it, like the flash backend.
 
     .. seealso::
-        :class:`FusedAttention` if you have flash-attn installed and you're not using MQA or GQA.
+        :class:`FusedAttentionV2` for a packed QKV projection.
 
     :param d_model: The model hidden size.
     :param n_heads: The number of attention heads.
@@ -575,9 +634,15 @@ class Attention(SequenceMixer):
     :param rope: The config for RoPE, if RoPE should be used.
     :param clip_qkv: Clip QKV to this value, if set.
     :param qk_norm: Configuration a layer norm for queries and keys.
+    :param use_head_qk_norm: Apply the QK norm head-wise, i.e. to each head separately with
+        normalization statistics computed over ``head_dim`` instead of the full hidden dimension.
+    :param qk_norm_per_head_gains: Give each head its own norm gain (and bias) parameters instead
+        of sharing them across heads. Requires ``use_head_qk_norm=True``.
     :param dropout: Dropout probability.
     :param use_flash: Deprecated, use ``backend="flash_2"`` instead.
     :param backend: The attention backend to use. If not set, it will be chosen automatically.
+    :param scalable_softmax: Use Scalable-Softmax with a learned scale for each query head.
+        Context parallelism, KV caching, and sliding window attention are unsupported.
     :param dtype: The default data type to use for parameters.
     :param init_device: The device to initialize weights on.
     """
@@ -606,12 +671,18 @@ class Attention(SequenceMixer):
         attention_sinks: bool = False,
         use_recompute_qkv_prep: bool = False,
         mxfp8_save_qkv_for_backward: bool = False,
+        scalable_softmax: bool = False,
+        qk_norm_per_head_gains: bool = False,
     ):
         super().__init__()
 
         self.use_recompute_qkv_prep = use_recompute_qkv_prep
         self.mxfp8_save_qkv_for_backward = mxfp8_save_qkv_for_backward
         self._mxfp8_saved_qkv_for_backward_last_pack_count = 0
+        if qk_norm_per_head_gains and not use_head_qk_norm:
+            raise OLMoConfigurationError(
+                "'qk_norm_per_head_gains' requires 'use_head_qk_norm=True'"
+            )
 
         self.n_heads = n_heads
         self.n_kv_heads = n_kv_heads or n_heads
@@ -652,6 +723,14 @@ class Attention(SequenceMixer):
 
         self.clip_qkv = clip_qkv
         self.use_head_qk_norm = use_head_qk_norm
+        self.scalable_softmax = scalable_softmax
+        self.ssmax_scale: Optional[nn.Parameter] = None
+        if scalable_softmax:
+            if window_size is not None:
+                raise OLMoConfigurationError(
+                    "'scalable_softmax' is not supported with sliding window attention"
+                )
+            self.ssmax_scale = nn.Parameter(torch.ones(n_heads, dtype=dtype, device=init_device))
 
         # Per-head learnable attention-sink logits (GPT-OSS). See :meth:`sdpa`.
         self.sinks: Optional[nn.Parameter] = (
@@ -664,8 +743,17 @@ class Attention(SequenceMixer):
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
             if use_head_qk_norm:
-                self.q_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
-                self.k_norm = qk_norm.build(size=self.head_dim, init_device=init_device)
+                q_weight_shape: Optional[Tuple[int, ...]] = None
+                k_weight_shape: Optional[Tuple[int, ...]] = None
+                if qk_norm_per_head_gains:
+                    q_weight_shape = (n_heads, self.head_dim)
+                    k_weight_shape = (self.n_kv_heads, self.head_dim)
+                self.q_norm = qk_norm.build(
+                    size=self.head_dim, init_device=init_device, weight_shape=q_weight_shape
+                )
+                self.k_norm = qk_norm.build(
+                    size=self.head_dim, init_device=init_device, weight_shape=k_weight_shape
+                )
             else:
                 self.q_norm = qk_norm.build(size=n_heads * self.head_dim, init_device=init_device)
                 self.k_norm = qk_norm.build(
@@ -682,19 +770,7 @@ class Attention(SequenceMixer):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        if backend is not None:
-            backend = AttentionBackendName(backend)
-
-        if use_flash:
-            if backend is not None and backend != AttentionBackendName.flash_2:
-                raise OLMoConfigurationError(
-                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
-                )
-            elif backend is None:
-                warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
-                )
-                backend = AttentionBackendName.flash_2
+        backend = _resolve_attention_backend(backend, use_flash)
 
         # Translate window size so that we only look left, not right.
         self.window_size = window_size
@@ -806,6 +882,38 @@ class Attention(SequenceMixer):
             self.kv_cache_manager.update_seqlen(q.shape[1])
         return att
 
+    def _apply_scalable_softmax(
+        self,
+        q: torch.Tensor,
+        cu_doc_lens: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if not self.scalable_softmax:
+            return q
+        if self.cp_enabled:
+            raise NotImplementedError("Scalable-Softmax is not supported with context parallelism")
+        if self.kv_cache_manager is not None:
+            raise NotImplementedError("Scalable-Softmax is not supported with KV caching")
+
+        if cu_doc_lens is None:
+            visible_lengths = torch.arange(1, q.shape[1] + 1, device=q.device)
+            visible_lengths = visible_lengths.unsqueeze(0).expand(q.shape[0], -1)
+        else:
+            boundaries = cu_doc_lens.to(device=q.device)
+            token_indices = torch.arange(
+                q.shape[0] * q.shape[1], device=q.device, dtype=boundaries.dtype
+            )
+            document_indices = torch.searchsorted(boundaries[1:], token_indices, right=True)
+            document_starts = boundaries[document_indices]
+            visible_lengths = (token_indices - document_starts + 1).view(q.shape[0], q.shape[1])
+
+        assert self.ssmax_scale is not None
+        ssmax_scale = self.ssmax_scale
+        if isinstance(ssmax_scale, DTensor):
+            ssmax_scale = ssmax_scale.to_local()
+        scale = visible_lengths.log().to(q.dtype).unsqueeze(-1)
+        scale = scale * ssmax_scale.to(q.dtype).view(1, 1, -1)
+        return q * scale.unsqueeze(-1)
+
     def _apply_rope(
         self,
         q: torch.Tensor,
@@ -889,6 +997,11 @@ class Attention(SequenceMixer):
         v = v.view(B, T, -1, self.head_dim)
 
         if self.use_head_qk_norm:
+            # NOTE: with per-head gains ('qk_norm_per_head_gains=True') the norm weight has shape
+            # (n_heads, head_dim), and correctness relies on applying the norm *after* the
+            # head-wise view above so that head 'h' broadcasts against gain row 'h'. Under tensor
+            # parallelism this still holds: the norm runs in the sequence-sharded region where all
+            # heads are present locally and the weight is replicated.
             if self.q_norm is not None:
                 q = self.q_norm(q)
             if self.k_norm is not None:
@@ -906,6 +1019,7 @@ class Attention(SequenceMixer):
                 q, k, start_pos, pos_sin, pos_cos, freqs_cis, cu_doc_lens, position_ids
             )
 
+        q = self._apply_scalable_softmax(q, cu_doc_lens)
         return q, k, v
 
     def forward(
@@ -1078,6 +1192,12 @@ class Attention(SequenceMixer):
             #    which will be reshaped into (B, T, H [sharded], D)
             # if head-wise norm: output is sharded on the head dimension (B, T, H [sharded], D)
             plan["q_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
+
+        if self.ssmax_scale is not None:
+            self.register_parameter(
+                "ssmax_scale",
+                nn.Parameter(distribute_tensor(self.ssmax_scale, tp_mesh, [Shard(0)])),
+            )
         if self.k_norm is not None:
             plan["k_norm"] = SequenceParallel(use_local_output=True, output_layouts=Shard(2))
 
@@ -1103,6 +1223,10 @@ class Attention(SequenceMixer):
         :param ring: The ring context parallel style.
         :param uly: The ulysses context parallel style.
         """
+        if self.scalable_softmax:
+            raise OLMoConfigurationError(
+                "Scalable-Softmax is not supported with context parallelism"
+            )
         self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
 
     def init_weights(
@@ -1116,6 +1240,9 @@ class Attention(SequenceMixer):
         generator: Optional[torch.Generator] = None,
     ) -> None:
         from olmo_core.nn.transformer.init import InitMethod, init_linear
+
+        if self.ssmax_scale is not None:
+            nn.init.ones_(self.ssmax_scale)
 
         # Compute std for Q/K/V initialization
         if init_method == InitMethod.fan_in:
@@ -1162,6 +1289,8 @@ class Attention(SequenceMixer):
         :param batch_size: The batch size for the cache.
         :param max_seq_len: The maximum sequence length for the cache.
         """
+        if self.scalable_softmax:
+            raise OLMoConfigurationError("Scalable-Softmax is not supported with KV caching")
         self.backend.assert_supports_kv_cache()
 
         self.kv_cache_manager = KVCacheManager(
@@ -1364,223 +1493,6 @@ class NormalizedAttention(Attention):
         w.copy_(l2_normalize(w, dim=dim))
 
 
-class FusedAttention(SequenceMixer):
-    """
-    An "fused" implementation of multi-head self-attention.
-
-    Intra-document masking is supported by passing in the ``max_doc_len`` and ``cu_doc_lens``
-    parameters to :meth:`forward()`.
-
-    .. warning::
-        Currently this is only supported with the "flash_2" backend.
-
-    .. warning::
-        If using RoPE, this requires that you use the "fused" RoPE implementation
-        (:class:`~olmo_core.nn.rope.FusedRotaryEmbedding`).
-
-    :param d_model: The model hidden size.
-    :param n_heads: The number of attention heads.
-    :param bias: Include biases with linear layers.
-    :param rope: The config for RoPE, if RoPE should be used.
-    :param clip_qkv: Clip QKV to this value, if set.
-    :param dropout: Dropout probability.
-    :param dtype: The default data type to use for parameters.
-    :param init_device: The device to initialize weights on.
-    """
-
-    def __init__(
-        self,
-        *,
-        d_model: int,
-        n_heads: int,
-        bias: bool = True,
-        rope: Optional[RoPEConfig] = None,
-        clip_qkv: Optional[float] = None,
-        dropout: float = 0.0,
-        dtype: torch.dtype = torch.float32,
-        backend: Optional[AttentionBackendName] = None,
-        init_device: str = "cpu",
-        cache: Optional[BufferCache] = None,
-    ):
-        super().__init__()
-
-        self.n_heads = n_heads
-        self.head_dim = d_model // n_heads
-        self.w_qkv = nn.Linear(d_model, 3 * d_model, bias=bias, dtype=dtype, device=init_device)
-        self.w_out = nn.Linear(d_model, d_model, bias=bias, dtype=dtype, device=init_device)
-        self.clip_qkv = clip_qkv
-        self.rope: Optional[FusedRotaryEmbedding] = None
-        if rope is not None:
-            if rope.name != "fused":
-                raise OLMoConfigurationError(f"{self.__class__.__name__} requires fused RoPE")
-            rope_class = rope.build(self.head_dim, cache=cache)
-            assert isinstance(rope_class, FusedRotaryEmbedding)
-            self.rope = rope_class
-
-        if backend is not None:
-            backend = AttentionBackendName(backend)
-        elif backend is None:
-            backend = AttentionBackendName.flash_2
-
-        backend.assert_supported()
-        backend.assert_supports_packed_qkv()
-        log.info(f"Using attention backend '{backend}'")
-        self.backend = backend.build(
-            head_dim=self.head_dim, n_heads=self.n_heads, dropout_p=dropout, cache=cache
-        )
-
-    @property
-    def cp_enabled(self) -> bool:
-        return self.backend.cp_enabled
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        max_doc_len: Optional[int] = None,
-        cu_doc_lens: Optional[torch.Tensor] = None,
-        pos_sin: Optional[torch.Tensor] = None,
-        pos_cos: Optional[torch.Tensor] = None,
-        freqs_cis: Optional[torch.Tensor] = None,
-        cache_leftpad: Optional[torch.Tensor] = None,
-        or_mask: Optional[torch.Tensor] = None,
-        and_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        """
-        Apply attention to the input.
-
-        :param x: The input of shape ``(batch_size, seq_len, d_model)``.
-        :param max_doc_len: The maximum document length in the input ``x``.
-            Required together with ``cu_doc_lens`` when using intra-document masking.
-        :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
-            :class:`torch.int32` tensor that should always have one more element than there
-            are documents (the first element in the tensor should always be ``0``).
-            Required together with ``max_doc_len`` when using intra-document masking.
-
-        :returns: The output of attention with shape ``(batch_size, seq_len, d_model)``.
-        """
-        if cache_leftpad:
-            raise NotImplementedError(
-                "cache_leftpad is not supported for the fused attention variant"
-            )
-        if cu_doc_lens is not None and self.rope is not None:
-            raise NotImplementedError(
-                "Intra-document RoPE (cu_doc_lens) is not yet supported by FusedAttention"
-            )
-
-        if or_mask is not None:
-            raise NotImplementedError(
-                "FusedAttention (flash-attn) does not support `or_mask` "
-                "(e.g. bidirectional image-token attention); use the 'torch' attention backend."
-            )
-        if and_mask is not None:
-            raise NotImplementedError(
-                "FusedAttention (flash-attn) does not support `and_mask` "
-                "(e.g. subsegment / branch isolation); use the 'torch' attention backend."
-            )
-        if position_ids is not None:
-            raise NotImplementedError(
-                "FusedAttention (flash-attn) does not support explicit `position_ids`; "
-                "use the 'torch' attention backend."
-            )
-
-        B, T, _ = x.shape
-
-        # shape: (batch_size, seq_len, 3, n_heads, head_dim)
-        qkv = self.w_qkv(x).view(B, T, 3, self.n_heads, self.head_dim)
-
-        if self.clip_qkv is not None:
-            qkv.clamp_(min=-self.clip_qkv, max=self.clip_qkv)
-
-        if self.rope is not None:
-            if self.cp_enabled and pos_sin is None and pos_cos is None and freqs_cis is None:
-                raise RuntimeError(
-                    "RoPE buffers must be passed through to attention after being properly "
-                    "sharded by the context parallel load balancer"
-                )
-            qkv = self.rope(qkv, pos_sin=pos_sin, pos_cos=pos_cos, freqs_cis=freqs_cis)
-
-        att = self.backend(
-            qkv,
-            cu_doc_lens=cu_doc_lens,
-            max_doc_len=max_doc_len,
-        )
-
-        # shape: (batch_size, seq_len, d_model)
-        att = att.view(B, T, -1)  # type: ignore
-
-        # shape: (batch_size, seq_len, d_model)
-        return self.w_out(att)
-
-    def apply_tp(
-        self,
-        tp_mesh: DeviceMesh,
-        input_layout: Optional[Placement] = None,
-        output_layout: Optional[Placement] = None,
-        use_local_output: bool = True,
-        float8_enabled: bool = False,
-    ):
-        del tp_mesh, input_layout, output_layout, use_local_output, float8_enabled
-
-        raise NotImplementedError("TP is not implemented yet for the fused attention variant")
-
-    def apply_cp(
-        self,
-        cp_mesh: DeviceMesh,
-        ring: Optional[RingContextParallelStyle] = None,
-        uly: Optional[UlyssesContextParallelStyle] = None,
-    ):
-        self.backend.apply_cp(cp_mesh, ring=ring, uly=uly)
-
-    def init_weights(
-        self,
-        *,
-        init_method: "InitMethod",
-        d_model: int,
-        block_idx: int,
-        num_blocks: int,
-        std: float = 0.02,
-        generator: Optional[torch.Generator] = None,
-    ) -> None:
-        from olmo_core.nn.transformer.init import InitMethod, init_linear
-
-        # Compute std for fused QKV initialization
-        if init_method == InitMethod.fan_in:
-            std = self.w_qkv.in_features**-0.5
-        elif init_method == InitMethod.normalized:
-            std = d_model**-0.5
-
-        init_linear(self.w_qkv, std=std, generator=generator)
-
-        # Compute std for w_out initialization
-        if init_method == InitMethod.fan_in:
-            std = self.w_out.in_features**-0.5
-        elif init_method == InitMethod.llama:
-            std = std / (2 * num_blocks) ** 0.5
-        elif init_method == InitMethod.llama_depth:
-            std = std / (2 * (block_idx + 1)) ** 0.5
-        elif init_method == InitMethod.normalized:
-            std = std / (2 * num_blocks) ** 0.5
-
-        init_linear(self.w_out, std=std, generator=generator)
-
-    def num_flops_per_token(self, seq_len: int) -> int:
-        # 6 FLOPs per parameter (2 ops * 3 for forward+backward)
-        param_flops = 6 * sum(p.numel() for p in self.parameters())
-
-        # Attention computation (QK^T and Attn*V).
-        # 12x multiplier: 2 matmuls * 2 ops each * 3 for forward+backward.
-        # Historical note: this previously counted ``12 * n_heads * head_dim * seq_len``, ignoring
-        # causal masking and overcounting by ~2x. We now count the exact causal ``(query, key)``
-        # pairs, so reported model TFLOPs / MFU drop on the attention-compute term relative to logs
-        # produced before this change.
-        attention_positions = _causal_attention_positions(seq_len)
-        attn_flops = 12 * self.n_heads * self.head_dim * attention_positions // seq_len
-
-        return param_flops + attn_flops
-
-
-@beta_feature
 class FusedAttentionV2(Attention):
     """
     A packed-projection variant of :class:`Attention`.
@@ -1716,19 +1628,7 @@ class FusedAttentionV2(Attention):
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
 
-        if backend is not None:
-            backend = AttentionBackendName(backend)
-
-        if use_flash:
-            if backend is not None and backend != AttentionBackendName.flash_2:
-                raise OLMoConfigurationError(
-                    f"'use_flash' is only compatible with 'flash_2' backend (got '{backend}')"
-                )
-            elif backend is None:
-                warnings.warn(
-                    "'use_flash' is deprecated, use 'backend=flash_2' instead", DeprecationWarning
-                )
-                backend = AttentionBackendName.flash_2
+        backend = _resolve_attention_backend(backend, use_flash)
 
         self.window_size = window_size
         window_size_tuple: Tuple[int, int] = (-1, -1)

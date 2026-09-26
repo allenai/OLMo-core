@@ -27,6 +27,11 @@ __all__ = ["nvtx", "maybe_nvtx_annotate"]
 class _NoOpRange(ContextDecorator):
     """A do-nothing range usable as both a decorator and a context manager."""
 
+    def __call__(self, func):
+        # ContextDecorator wraps the function in a captured context manager that Dynamo cannot
+        # enter in a full graph. A no-op decorator can simply preserve the original callable.
+        return func
+
     def __enter__(self) -> "_NoOpRange":
         return self
 

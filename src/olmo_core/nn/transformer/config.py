@@ -19,6 +19,7 @@ from ..attention import (
     GateConfig,
     GateGranularity,
     SlidingWindowAttentionConfig,
+    _resolve_attention_backend,
 )
 from ..attention.recurrent import GatedDeltaNetConfig
 from ..buffer_cache import BufferCache
@@ -1599,7 +1600,7 @@ class TransformerConfig(ModelConfig):
         partial_rotary_factor: float = 0.25,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
@@ -1652,8 +1653,7 @@ class TransformerConfig(ModelConfig):
                 gate=GateConfig(granularity=GateGranularity.elementwise),
                 qk_norm=layer_norm,
                 use_head_qk_norm=True,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=intermediate_size, bias=False, dtype=dtype),
@@ -1694,7 +1694,7 @@ class TransformerConfig(ModelConfig):
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
@@ -1739,9 +1739,11 @@ class TransformerConfig(ModelConfig):
         att_type = AttentionType.default
         if rope_type is None:
             rope_type = RoPEType.default
-            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-                att_type = AttentionType.fused
-                rope_type = RoPEType.fused
+            if fused_ops and n_kv_heads is None:
+                att_type = AttentionType.fused_v2
+                use_flash = None  # The original fused implementation ignored this flag.
+                if attn_backend is None:
+                    attn_backend = AttentionBackendName.flash_2
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
@@ -1766,8 +1768,7 @@ class TransformerConfig(ModelConfig):
                 gate=gate,
                 qk_norm=layer_norm if qk_norm else None,
                 use_head_qk_norm=use_head_qk_norm if qk_norm else None,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 sliding_window=sliding_window,
                 dtype=dtype,
             ),
@@ -1862,7 +1863,8 @@ class TransformerConfig(ModelConfig):
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        use_flash: bool = False,
+        use_flash: bool = False,  # Deprecated; use attn_backend instead.
+        attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1884,7 +1886,7 @@ class TransformerConfig(ModelConfig):
                 n_kv_heads=n_kv_heads,
                 qk_norm=None if not qk_norm else LayerNormConfig(name=LayerNormType.l2_norm),
                 rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
-                use_flash=use_flash,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(
@@ -1923,7 +1925,7 @@ class TransformerConfig(ModelConfig):
         global_layer_interval: int = 6,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
@@ -1961,8 +1963,7 @@ class TransformerConfig(ModelConfig):
                 gate=gate,
                 qk_norm=layer_norm,
                 use_head_qk_norm=True,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 sliding_window=SlidingWindowAttentionConfig(
                     pattern=[local_window_size],  # Always apply SWA on local_block
                     force_full_attention_on_first_layer=False,

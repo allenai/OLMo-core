@@ -11,6 +11,7 @@ from transformers import (
     Olmo2Config,
     Olmo3Config,
     PreTrainedModel,
+    PreTrainedTokenizerFast,
 )
 
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -72,6 +73,11 @@ def _get_expected_hf_config(
     tokenizer_config: TokenizerConfig,
 ) -> Olmo2Config | Olmo3Config:
     """Build expected HF config based on model family."""
+    bos_token_id = tokenizer_config.bos_token_id
+    if bos_token_id is None and tokenizer_config.identifier is not None:
+        bos_token_id = PreTrainedTokenizerFast.from_pretrained(
+            tokenizer_config.identifier
+        ).bos_token_id
     common_config = {
         "vocab_size": tokenizer_config.vocab_size,
         "hidden_size": transformer_config.d_model,
@@ -82,7 +88,7 @@ def _get_expected_hf_config(
         "rms_norm_eps": 1e-6,
         "max_position_embeddings": 256,
         "pad_token_id": tokenizer_config.pad_token_id,
-        "bos_token_id": tokenizer_config.bos_token_id,
+        "bos_token_id": bos_token_id,
         "eos_token_id": tokenizer_config.eos_token_id,
         "torch_dtype": torch.float32,
     }

@@ -17,7 +17,7 @@ from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import (
     dispatch_chunk_kda,
     has_fla,
-    has_kernel_fun,
+    require_kernel_fun,
 )
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
@@ -69,11 +69,8 @@ class KimiDeltaAttention(SequenceMixer):
             raise RuntimeError(
                 "KimiDeltaAttention requires flash-linear-attention with fla.ops.kda"
             )
-        if use_experimental_kernels and not has_kernel_fun():
-            raise RuntimeError(
-                "KimiDeltaAttention(use_experimental_kernels=True) requires the kernel-fun package; "
-                "install it with the 'kernel-fun' extra: pip install 'ai2-olmo-core[kernel-fun]'"
-            )
+        if use_experimental_kernels:
+            require_kernel_fun()
         from fla.modules import FusedRMSNormGated
 
         self.d_model = d_model
@@ -334,7 +331,12 @@ class KimiDeltaAttentionConfig(SequenceMixerConfig[KimiDeltaAttention]):
         short-conv kernels (:func:`kernel_fun.cconv.causal_conv1d`) for the layer's three
         causal convolutions. This single flag controls both. Requires the package,
         installed with the ``kernel-fun`` extra (``pip install
-        'ai2-olmo-core[kernel-fun]'``); building the layer without it raises. Each kernel
+        'ai2-olmo-core[kernel-fun]'``). The training image must also provide the CUDA 13
+        CuTe DSL build (tested with ``nvidia-cutlass-dsl[cu13]==4.5.3``), which needs a
+        CUDA 13-compatible NVIDIA driver. Install it explicitly with ``pip install
+        'nvidia-cutlass-dsl[cu13]==4.5.3'`` when preparing the image; the extra leaves
+        the image's CUDA stack unchanged. The CUDA 12 compiler cannot lower the KDA
+        MMA backward; building the layer with it raises before training starts. Each kernel
         only takes effect on the hardware/shapes it supports (Blackwell, chunk-size-64, no
         packed-document ``cu_seqlens`` for KDA; Hopper and up, no bias, no packed-document
         ``cu_seqlens`` for the conv); otherwise the layer silently falls back to FLA.

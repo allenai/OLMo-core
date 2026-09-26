@@ -171,6 +171,38 @@ def save_hf_model(
 
     hf_state_dict: Dict[str, torch.Tensor] = convert_state_to_hf(hf_config, model_state_dict)
 
+    # The custom MoE-v2 mapping includes fused expert tensors, KDA, and optional
+    # LatentMoE projections. Verify it as a lossless bijection before writing
+    # anything so a future missing/incorrect mapping cannot produce a
+    # superficially loadable checkpoint.
+    if getattr(hf_config, "model_type", None) == "olmo3moe":
+        roundtrip_state = convert_state_from_hf(hf_config, hf_state_dict, model_type="olmo3moe")
+        if set(roundtrip_state) != set(model_state_dict):
+            missing = sorted(set(model_state_dict) - set(roundtrip_state))
+            unexpected = sorted(set(roundtrip_state) - set(model_state_dict))
+            raise RuntimeError(
+                "olmo3moe HF tensor roundtrip changed state keys: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        for key, source in model_state_dict.items():
+            converted = roundtrip_state[key]
+            if source.shape != converted.shape or source.dtype != converted.dtype:
+                raise RuntimeError(
+                    f"olmo3moe HF tensor roundtrip changed {key}: "
+                    f"{tuple(source.shape)}/{source.dtype} -> "
+                    f"{tuple(converted.shape)}/{converted.dtype}"
+                )
+            if not torch.equal(source, converted):
+                max_abs = (
+                    (source.float() - converted.float()).abs().max().item()
+                    if source.numel()
+                    else 0.0
+                )
+                raise RuntimeError(
+                    f"olmo3moe HF tensor roundtrip is not exact for {key}; max_abs_diff={max_abs}"
+                )
+        del roundtrip_state
+
     # model.save_pretrained fails says `tensor.reshape()` should be used instead of `tensor.view()`
     # if we do not make the state contiguous. Unfortunately this is bad for perf.
     hf_state_dict = {key: state.contiguous() for key, state in hf_state_dict.items()}
@@ -187,10 +219,21 @@ def save_hf_model(
     hf_model.generation_config.do_sample = True
 
     if huggingface_tokenizer is not None:
-        hf_model.generation_config.eos_token_id = huggingface_tokenizer.convert_tokens_to_ids(
-            ["<|im_end|>", "<|endoftext|>"]
-        )
-        hf_model.generation_config.pad_token = huggingface_tokenizer.pad_token_id
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id"):
+            value = getattr(huggingface_tokenizer, name)
+            setattr(hf_model.config, name, value)
+            setattr(hf_model.generation_config, name, value)
+        # Preserve recognized chat stopping tokens, but never turn an absent
+        # token into an accidental stop at the tokenizer's unknown-token ID.
+        if huggingface_tokenizer.eos_token_id is not None:
+            stop_ids = [huggingface_tokenizer.eos_token_id]
+            for token in ("<|im_end|>", "<|endoftext|>"):
+                if token in huggingface_tokenizer.all_special_tokens:
+                    token_id = huggingface_tokenizer.convert_tokens_to_ids(token)
+                    if token_id not in stop_ids:
+                        stop_ids.append(token_id)
+            if len(stop_ids) > 1:
+                hf_model.generation_config.eos_token_id = stop_ids
 
     if get_fs_local_rank(process_group) == 0:
         if is_url(save_dir):
