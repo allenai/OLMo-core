@@ -50,6 +50,9 @@ from olmo_core.data.multimodal.paths import PIXMO_DATASETS
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.internal.cli_overrides import read_bool_override as _read_bool_override
+from olmo_core.internal.cli_overrides import read_float_override as _read_float_override
+from olmo_core.internal.cli_overrides import read_override as _read_override
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
@@ -155,7 +158,6 @@ MODEL_SIZES = {
 # (`--init_from=molmo2`), kept for parity tests and continuation experiments.
 INIT_FROM = "scratch"
 INIT_FROM_CHOICES = ("scratch", "molmo2")
-_BOOLS = {"true": True, "false": False, "1": True, "0": False, "yes": True, "no": False}
 SCRATCH_VIT_ID = "google/siglip2-so400m-patch14-384"  # shared by every Molmo2 variant
 NEW_EMBEDDING_INIT_STD = 0.02  # mm_olmo `new_embedding_init_range`
 SEQUENCE_LENGTH = 2560  # fixed pad length; the released runs passed `--seq_len=2560`
@@ -369,42 +371,6 @@ def _build_model_config(model_size: str, init_from: str) -> MultimodalLMConfig:
         rope_theta=spec.rope_theta(init_from),
         response_residual_dropout=RESPONSE_RESIDUAL_DROPOUT,
     )
-
-
-def _read_override(overrides: List[str], key: str, default: str) -> str:
-    """Read a top-level scalar out of the raw overrides.
-
-    The model config depends on ``model_size`` and ``init_from`` (architecture and RoPE
-    base), and it is built before :meth:`Config.merge` runs, so those overrides cannot be
-    read off the merged config. Later occurrences win, matching ``merge``.
-    """
-    value = default
-    # `Config.merge` normalizes hyphens to underscores (`_clean_opt`), so `--model-size=8b` and
-    # `--model_size=8b` are the same override to it. Comparing the raw name here would miss the
-    # dashed spelling and silently build the config from the default while `merge` applied the
-    # requested value to the top-level field -- a divergence with no error.
-    for override in overrides:
-        name, _, raw = override.lstrip("-").partition("=")
-        if name.replace("-", "_") == key and raw:
-            value = raw
-    return value
-
-
-def _read_bool_override(overrides: List[str], key: str, default: bool) -> bool:
-    """Read a boolean top-level scalar out of the raw overrides."""
-    raw = _read_override(overrides, key, str(default)).strip().lower()
-    if raw not in _BOOLS:
-        raise OLMoConfigurationError(f"{key}={raw!r} is not a boolean")
-    return _BOOLS[raw]
-
-
-def _read_float_override(overrides: List[str], key: str, default: float) -> float:
-    """Read a float top-level scalar out of the raw overrides."""
-    raw = _read_override(overrides, key, str(default)).strip()
-    try:
-        return float(raw)
-    except ValueError:
-        raise OLMoConfigurationError(f"{key}={raw!r} is not a float") from None
 
 
 def _resolve_model_spec(overrides: List[str]) -> Tuple[str, str]:

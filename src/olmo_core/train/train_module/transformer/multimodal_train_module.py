@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, cast
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
@@ -44,6 +45,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
+from olmo_core.nn.lora import LoRAConfig, apply_lora
 from olmo_core.optim import OptimConfig
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import env_bool, get_default_device, move_to_device, warn_once
@@ -73,6 +75,7 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         max_sequence_length: int,
         *,
         freeze_params: Optional[List[str]] = None,
+        lora: Optional[LoRAConfig] = None,
         z_loss_multiplier: Optional[float] = None,
         autocast_precision: Optional[torch.dtype] = None,
         max_grad_norm: Optional[float] = None,
@@ -148,6 +151,17 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     )
 
         model.to(self.device)
+
+        # LoRA goes in *after* the freeze loop and *before* activation checkpointing,
+        # compile, FSDP wrapping, and the optimizer build. Freezing first means a
+        # `freeze_params=["lm.*"]` can freeze the whole language model and the adapters
+        # still come back trainable, because `apply_lora` creates them fresh. It also has
+        # to precede `_parallelize`, since FSDP replaces parameters with DTensors and the
+        # optimizer must be built over the sharded adapters.
+        self.lora_param_names: List[str] = []
+        if lora is not None:
+            self.lora_param_names = apply_lora(model, lora)
+
         # A fully-frozen submodule has no trainable params, so wrapping it in activation
         # checkpointing buys no backward-memory savings — and under compile, checkpointing a
         # frozen (eval-mode) submodule has been observed to hit "RNG ops in recompute regions"
@@ -210,8 +224,15 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True
         )
+        # A stage-1/full-finetune checkpoint has no `lora_A`/`lora_B` entries, so a strict
+        # load would fail outright. `strict=False` routes through
+        # `TransformerTrainModule.state_dict_to_load`, which prunes the keys the checkpoint
+        # lacks and then merges the model's own (freshly initialised) values back in —
+        # exactly the behaviour the adapters need. `_check_lora_pruned_keys` then asserts
+        # that nothing *but* adapters got pruned, so a genuinely missing base weight is
+        # still a hard error rather than silent garbage.
         self.state_dict_load_opts = state_dict_load_opts or dist_cp_sd.StateDictOptions(
-            flatten_optimizer_state_dict=True, strict=True
+            flatten_optimizer_state_dict=True, strict=not self.lora_param_names
         )
         # Always accept checkpoints written before the vision modules moved under
         # `vision_backbone`. `swap_param_keys` skips entries whose checkpoint-side key is
@@ -306,6 +327,42 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             fully_shard(self.model, mesh=dp_mesh, mp_policy=mp, reshard_after_forward=raf)
             if self.log_fsdp_topology:
                 log_fsdp_topology(self.model, label="multimodal")
+
+    # -- checkpoint loading ------------------------------------------------------
+
+    def state_dict_to_load(  # type: ignore[override]
+        self, metadata: Metadata, *, optim: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        state_dict = super().state_dict_to_load(metadata, optim=optim)
+        if self.lora_param_names:
+            self._check_lora_pruned_keys(state_dict, metadata)
+        return state_dict
+
+    def _check_lora_pruned_keys(self, state_dict: Dict[str, Any], metadata: Metadata) -> None:
+        """Fail loudly if the non-strict LoRA load dropped anything but adapters.
+
+        ``strict=False`` is needed because a base checkpoint has no ``lora_A``/``lora_B``
+        entries. The cost is that it would *also* swallow a genuinely missing base weight
+        — which loads as whatever ``to_empty()`` left in memory and shows up much later as
+        a mysteriously bad model. Adapters are the only keys allowed to be missing.
+        """
+        checkpoint_keys = set(metadata.state_dict_metadata.keys())
+        model_keys = {f"model.{name}" for name, _ in self.model.named_parameters()}
+        missing = {k for k in model_keys if k not in checkpoint_keys}
+        expected = {f"model.{name}" for name in self.lora_param_names}
+        unexpected = missing - expected
+        if unexpected:
+            raise RuntimeError(
+                f"Checkpoint is missing {len(unexpected)} non-LoRA model key(s), which the "
+                "LoRA load path would otherwise silently leave uninitialized: "
+                f"{sorted(unexpected)[:10]}"
+            )
+        if not_present := (expected - missing):
+            log.info(
+                "Checkpoint already carries %d LoRA adapter key(s); resuming them rather "
+                "than re-initializing.",
+                len(not_present),
+            )
 
     # -- helpers to reach the underlying MultimodalLM / its Transformer ----------
 
@@ -607,6 +664,15 @@ class MultimodalTransformerTrainModuleConfig(TrainModuleConfig):
     max_sequence_length: int
     optim: OptimConfig
     freeze_params: Optional[List[str]] = None
+
+    lora: Optional[LoRAConfig] = None
+    """Adapt the matched ``nn.Linear`` layers with a low-rank update instead of training
+    them. Applied after :data:`freeze_params`, so the usual recipe is to freeze a whole
+    subtree (``["lm.*"]``) and let LoRA supply the trainable parameters back. Enabling it
+    also relaxes the checkpoint load to ``strict=False``, because a base checkpoint has no
+    adapter entries — see :meth:`MultimodalTransformerTrainModule._check_lora_pruned_keys`
+    for the guard that keeps that from hiding a real problem."""
+
     max_grad_norm: Optional[float] = None
     scheduler: Optional[Scheduler] = None
     compile_model: bool = False

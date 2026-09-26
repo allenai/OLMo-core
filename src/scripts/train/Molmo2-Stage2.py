@@ -53,12 +53,18 @@ from olmo_core.data.multimodal.mixtures.tiers import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.internal.cli_overrides import (
+    read_bool_override,
+    read_float_override,
+    read_int_override,
+)
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.nn.lora import LLM_LORA_TARGET_MODULES, LoRAConfig
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
 from olmo_core.optim import (
@@ -156,6 +162,27 @@ VISION_LR = 5e-6
 LLM_LR = 1e-5
 COMPONENT_WARMUP = 200
 ALPHA_F = 0.1
+
+# LoRA (off by default -- the shipped recipe is a full finetune).
+#
+# Purpose is cheap dataset/mixture ablations: freezing the LLM and the ViT and training
+# only low-rank adapters on the LLM's attention/MLP projections removes the weight-gradient
+# GEMMs, the fp32 gradient reduce-scatter, the optimizer state for ~4B parameters, and the
+# whole vision-encoder backward. The forward pass is unchanged, so this is not a free
+# speedup -- see the LoRA section of PROJECT_CONTEXT_olmo-core.md for the measured number.
+#
+# The connector stays FULL-RANK and trainable: it is the only path image features take into
+# the language model, and constraining it to low rank is the likeliest way to break a
+# vision-heavy ablation.
+USE_LORA = False
+LORA_RANK = 64
+LORA_ALPHA = 128.0
+LORA_DROPOUT = 0.0
+# NOT `LLM_LR`. 1e-5 is a full-finetune learning rate; LoRA's effective update is scaled by
+# `alpha/rank` over a randomly-initialised projection and conventionally wants 10-50x more.
+# Running LoRA at 1e-5 underfits badly and turns any LoRA-vs-full-FT comparison into a
+# strawman. Tuned by the phase-2 LR probe.
+LORA_LR = 2e-4
 
 MAX_STEPS = 300_000
 
@@ -283,6 +310,18 @@ class ExperimentConfig(Config):
     finevision_rate: float = 0.0
     """Total mixture fraction for the five verified FineVision configs, split evenly
     across them via ``FINEVISION_RATES`` keys (0 disables)."""
+    use_lora: bool = USE_LORA
+    """Train LoRA adapters on the LLM instead of finetuning it, with the ViT frozen and the
+    connector left full-rank. Resolved *pre-merge* in :func:`build_config` because it
+    reshapes ``freeze_params``, the optimizer group overrides and the per-group scheduler,
+    all of which are built before ``Config.merge`` runs."""
+
+    lora_rank: int = LORA_RANK
+    lora_alpha: float = LORA_ALPHA
+    lora_dropout: float = LORA_DROPOUT
+    lora_lr: float = LORA_LR
+    """Learning rate for the adapters. See :data:`LORA_LR` -- do not reuse ``LLM_LR``."""
+
     ignore_shuffle_algo_version_mismatch: bool = False
     """Resume a checkpoint whose mixture shuffle algorithm predates
     ``MixtureDataLoader.SHUFFLE_ALGO_VERSION``. Off by default: such a resume regenerates a
@@ -438,6 +477,61 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     model_config = _build_model_config()
 
+    # Resolved pre-merge: these shape `freeze_params`, the optimizer group overrides and
+    # the per-group scheduler table, all of which are constructed below -- before
+    # `.merge(overrides)` gets a chance to apply the flag. `_check_lora_overrides_applied`
+    # re-validates after the merge that the two agree.
+    use_lora = read_bool_override(overrides, "use_lora", USE_LORA)
+    lora_rank = read_int_override(overrides, "lora_rank", LORA_RANK)
+    lora_alpha = read_float_override(overrides, "lora_alpha", LORA_ALPHA)
+    lora_dropout = read_float_override(overrides, "lora_dropout", LORA_DROPOUT)
+    lora_lr = read_float_override(overrides, "lora_lr", LORA_LR)
+
+    # Full finetune: three component groups at three LRs (mm_olmo SFT).
+    # LoRA: the LLM and the ViT are frozen, so their globs must be dropped -- a group
+    # override matching only frozen params is demoted to a warning by
+    # `OptimConfig.build_groups`, but leaving dead globs in the config is how Stage 1's
+    # `train_vit=False` path silently broke before. The connector keeps its own group.
+    if use_lora:
+        optim_group_overrides = [
+            OptimGroupOverride(
+                params=["vision_backbone.connector.*"],
+                opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+            ),
+            OptimGroupOverride(
+                params=["lm.*.lora_A", "lm.*.lora_B"],
+                opts=dict(lr=lora_lr, weight_decay=0.0, scheduler_name="lora"),
+            ),
+        ]
+        component_schedulers = {
+            "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+            "lora": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+        }
+        freeze_params = ["lm.*", "vision_backbone.vision.*"]
+        lora_config: Optional[LoRAConfig] = LoRAConfig(
+            rank=lora_rank,
+            alpha=lora_alpha,
+            dropout=lora_dropout,
+            target_modules=list(LLM_LORA_TARGET_MODULES),
+        )
+    else:
+        optim_group_overrides = [
+            OptimGroupOverride(
+                params=["vision_backbone.connector.*"],
+                opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+            ),
+            OptimGroupOverride(
+                params=["vision_backbone.vision.*"],
+                opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
+            ),
+        ]
+        component_schedulers = {
+            "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+            "vision": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+        }
+        freeze_params = []
+        lora_config = None
+
     collator_config = MultimodalCollatorConfig(
         pad_token_id=151643,
         label_ignore_index=-100,
@@ -452,26 +546,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             betas=(0.9, 0.95),
             eps=1e-6,
             weight_decay=0.0,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["vision_backbone.connector.*"],
-                    opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
-                ),
-                OptimGroupOverride(
-                    params=["vision_backbone.vision.*"],
-                    opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
-                ),
-            ],
+            group_overrides=optim_group_overrides,
         ),
+        freeze_params=freeze_params or None,
+        lora=lora_config,
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=COMPILE_MODEL,
         autocast_precision=DType.bfloat16,
         scheduler=PerGroupScheduler(
-            schedulers={
-                "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
-                "vision": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
-            },
+            schedulers=component_schedulers,
             default=CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
         ),
         dp_config=TransformerDataParallelConfig(
@@ -581,7 +665,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 BeakerEnvVar(name=_var, value=_value)
             ]
 
-    return _apply_mixture_pack_profile(
+    config = _apply_mixture_pack_profile(
         ExperimentConfig(
             model=model_config,
             collator=collator_config,
@@ -591,6 +675,40 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ).merge(overrides),
         overrides,
     )
+    _check_lora_overrides_applied(config, (use_lora, lora_rank, lora_alpha, lora_dropout, lora_lr))
+    return config
+
+
+def _check_lora_overrides_applied(config: ExperimentConfig, resolved: tuple) -> None:
+    """Fail if the merged config disagrees with what the pre-merge read built.
+
+    The LoRA flags are read out of the raw overrides *before* ``merge``, because they
+    reshape the optimizer groups, the scheduler table and ``freeze_params``. If the merge
+    then produced different values — a spelling the pre-merge reader missed, say — the
+    top-level fields would advertise one recipe while the optimizer was built from
+    another, and nothing would report it. Cheap to check, expensive to debug.
+    """
+    merged = (
+        config.use_lora,
+        config.lora_rank,
+        config.lora_alpha,
+        config.lora_dropout,
+        config.lora_lr,
+    )
+    if merged != resolved:
+        raise OLMoConfigurationError(
+            f"LoRA settings changed during merge: {resolved} -> {merged}. The optimizer "
+            "groups and freeze_params were built from the first tuple."
+        )
+    # Belt and braces on the piece the tuple check cannot see: the train module's actual
+    # `lora` / `freeze_params` must agree with `use_lora` after the merge, since a user can
+    # override `--train_module.lora=null` independently of `--use_lora`.
+    has_lora = config.train_module.lora is not None
+    if has_lora != config.use_lora:
+        raise OLMoConfigurationError(
+            f"use_lora={config.use_lora} but train_module.lora is "
+            f"{'set' if has_lora else 'None'}; override `use_lora`, not `train_module.lora`"
+        )
 
 
 def _load_tokenizer():
