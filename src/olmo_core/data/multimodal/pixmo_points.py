@@ -355,7 +355,8 @@ COSYN_POINT_STYLE = "cosyn_point"
 #: mm_olmo's audited CoSyn build (``CoSynPointConfigV2``): the v1 build's images, questions,
 #: points and names unchanged (all 68,051 train rows match), plus a per-question ``audit_result``
 #: from a VLM audit (81.7% ``correct``, 17.3% ``clear_error``, 1.0% ``error`` on a 1-in-20
-#: sample) and agent masks. The masks feed segmentation messages, which this repo does not train, so they are ignored.
+#: sample) and agent masks. The masks feed segmentation messages, which this repo does not
+#: train, so they are ignored.
 COSYN_POINT_V2_PATH = f"{PIXMO_DATASETS}/cosyn-point-v2-masks"
 
 
