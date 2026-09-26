@@ -147,6 +147,16 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             return cos, sin
 
 
+def _core_shared_expert_forward(expert, x):
+    # Match SharedExperts' packed GEMM and operand layout. Separate up/gate
+    # projections can select a different accumulation order on Ampere.
+    weight = torch.cat((expert.up_proj.weight.t(), expert.gate_proj.weight.t()), dim=1)
+    up, gate = (x.reshape(-1, x.shape[-1]) @ weight).chunk(2, dim=-1)
+    hidden = expert.act_fn(gate) * up
+    down_weight = expert.down_proj.weight.t().contiguous().unsqueeze(0)
+    return torch.bmm(hidden.unsqueeze(0), down_weight).reshape(x.shape)
+
+
 class Olmo3MoeDenseMLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -160,13 +170,7 @@ class Olmo3MoeDenseMLP(nn.Module):
 
     def forward(self, x):
         if self.config.moe_use_core_numerics:
-            # Match SharedExperts' packed GEMM and operand layout. Separate up/gate
-            # projections can select a different accumulation order on Ampere.
-            weight = torch.cat((self.up_proj.weight.t(), self.gate_proj.weight.t()), dim=1)
-            up, gate = (x.reshape(-1, self.hidden_size) @ weight).chunk(2, dim=-1)
-            hidden = self.act_fn(gate) * up
-            down_weight = self.down_proj.weight.t().contiguous().unsqueeze(0)
-            return torch.bmm(hidden.unsqueeze(0), down_weight).reshape(x.shape)
+            return _core_shared_expert_forward(self, x)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
 
@@ -184,6 +188,13 @@ class Olmo3MoeExpert(nn.Module):
     def forward(self, x):
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj
+
+
+class Olmo3MoeCoreSharedExpert(Olmo3MoeExpert):
+    """Shared expert preserving core's packed projection and GEMM layouts."""
+
+    def forward(self, x):
+        return _core_shared_expert_forward(self, x)
 
 
 class Olmo3MoeExperts(nn.ModuleList):
@@ -438,7 +449,10 @@ class Olmo3MoeSparseMLP(nn.Module):
             self.experts.append(expert)
         self.shared_expert: Optional[Olmo3MoeExpert]
         if config.shared_expert_intermediate_size is not None:
-            self.shared_expert = Olmo3MoeExpert(
+            shared_expert_cls = (
+                Olmo3MoeCoreSharedExpert if config.moe_use_core_numerics else Olmo3MoeExpert
+            )
+            self.shared_expert = shared_expert_cls(
                 hidden_size=config.hidden_size,
                 moe_intermediate_size=config.shared_expert_intermediate_size,
                 hidden_act=config.hidden_act,

@@ -27,9 +27,7 @@ if triton is not None:
 
 def core_swiglu(up_gate: torch.Tensor) -> torch.Tensor:
     """Apply the core inference kernel's single-rounding SwiGLU to packed [up, gate]."""
-    if up_gate.is_cuda and not torch.is_grad_enabled():
-        if triton is None:
-            raise RuntimeError("OLMo-core expert inference numerics require Triton on CUDA")
+    if up_gate.is_cuda and not torch.is_grad_enabled() and triton is not None:
         up_gate = up_gate.contiguous()
         rows, width = up_gate.shape
         hidden = width // 2

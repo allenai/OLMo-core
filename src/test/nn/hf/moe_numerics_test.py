@@ -82,6 +82,7 @@ def test_core_numerics_is_serialized_and_old_configs_keep_original_mode():
     from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
     from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
         Olmo3MoeCoreExperts,
+        Olmo3MoeCoreSharedExpert,
         Olmo3MoeSparseMLP,
     )
 
@@ -90,21 +91,26 @@ def test_core_numerics_is_serialized_and_old_configs_keep_original_mode():
         hidden_size=32,
         moe_intermediate_size=64,
         n_routed_experts=4,
-        shared_expert_intermediate_size=None,
+        shared_expert_intermediate_size=64,
         moe_use_core_numerics=True,
     )
     config = Olmo3MoeConfig.from_dict(config.to_dict())
     assert isinstance(Olmo3MoeSparseMLP(config).experts, Olmo3MoeCoreExperts)
+    assert isinstance(Olmo3MoeSparseMLP(config).shared_expert, Olmo3MoeCoreSharedExpert)
     with pytest.raises(ValueError, match="requires hidden_act"):
         Olmo3MoeConfig(moe_use_core_numerics=True, hidden_act="relu")
 
 
 @requires_gpu
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
-def test_hf_dense_first_layer_matches_core_packed_gemm(dtype):
+@pytest.mark.parametrize("kind", ["dense", "shared"])
+def test_hf_dense_and_shared_experts_match_core_packed_gemm(dtype, kind):
     from olmo_core.config import DType
     from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
-    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeDenseMLP
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeCoreSharedExpert,
+        Olmo3MoeDenseMLP,
+    )
     from olmo_core.nn.moe.v2.shared_experts import SharedExperts
 
     # Real 275M dense-first dimensions expose Ampere GEMM rounding differences
@@ -119,8 +125,12 @@ def test_hf_dense_first_layer_matches_core_packed_gemm(dtype):
         dtype=DType.bfloat16 if dtype == torch.bfloat16 else DType.float32,
         init_device="cuda",
     )
-    hf = Olmo3MoeDenseMLP(
-        Olmo3MoeConfig(hidden_size=D, dense_mlp_intermediate_size=H, moe_use_core_numerics=True)
+    hf = (
+        Olmo3MoeDenseMLP(
+            Olmo3MoeConfig(hidden_size=D, dense_mlp_intermediate_size=H, moe_use_core_numerics=True)
+        )
+        if kind == "dense"
+        else Olmo3MoeCoreSharedExpert(D, H, "silu")
     ).to(device="cuda", dtype=dtype)
     with torch.no_grad():
         hf.up_proj.weight.copy_(core.w_up_gate[:, :H].t())
@@ -128,6 +138,18 @@ def test_hf_dense_first_layer_matches_core_packed_gemm(dtype):
         hf.down_proj.weight.copy_(core.w_down[0].t())
         x = torch.randn(1, 60, D, device="cuda", dtype=dtype)
         torch.testing.assert_close(hf(x), core(x).squeeze(0), rtol=1e-4, atol=1e-4)
+
+
+@requires_gpu
+def test_core_swiglu_cuda_without_triton(monkeypatch):
+    from olmo_core.nn.moe.v2.hf import moe_numerics
+
+    monkeypatch.setattr(moe_numerics, "triton", None)
+    x = torch.randn(7, 64, device="cuda", dtype=torch.bfloat16)
+    up, gate = x.float().chunk(2, dim=-1)
+    expected = (up * gate * torch.sigmoid(gate)).bfloat16()
+    with torch.inference_mode():
+        torch.testing.assert_close(moe_numerics.core_swiglu(x), expected, rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
