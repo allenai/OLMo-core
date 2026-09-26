@@ -120,18 +120,17 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
     output = Path(os.environ.get("RESULTS_DIR", "/results")) / f"document-router-{mode}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    def compare(left, right, label, *, exact=False, relative_limit=2e-4, scale=None):
+    def compare(left, right, label, *, exact=False, relative_limit=2e-4, absolute_limit=0.0):
         delta = left.float() - right.float()
-        normalizer = left.float().norm() if scale is None else scale
-        relative_l2 = float(delta.norm() / normalizer.clamp_min(1e-20))
+        reference_norm = left.float().norm().clamp_min(1e-20)
+        delta_norm = delta.norm()
+        relative_l2 = float(delta_norm / reference_norm)
         report.append(
             {
                 "label": label,
                 "max_abs": float(delta.abs().max()),
                 "relative_l2": relative_l2,
                 "mismatch_count": int((left != right).sum()),
-                "normalization": "tensor_l2" if scale is None else "loss_terms_l1",
-                "normalizer": float(normalizer),
             }
         )
         output.write_text(json.dumps(report, indent=2))
@@ -139,7 +138,10 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
         if exact:
             torch.testing.assert_close(left, right, rtol=0, atol=0, msg=label)
         else:
-            assert relative_l2 <= relative_limit, (label, report[-1])
+            assert delta_norm <= absolute_limit + relative_limit * reference_norm, (
+                label,
+                report[-1],
+            )
 
     for update in range(3):
         if not track_trajectory:
@@ -150,24 +152,15 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
         inputs = [torch.randn(2, 257, 1024, device="cuda", dtype=torch.bfloat16) for _ in range(8)]
         outputs: list[list[tuple[torch.Tensor, ...]]] = [[] for _ in settings]
         input_grads: list[list[torch.Tensor]] = [[] for _ in settings]
-        loss_scales = []
         for arm, router in enumerate(routers):
             for microbatch, original in enumerate(inputs):
                 x = original.detach().clone().requires_grad_(True)
                 torch.manual_seed(1000 + update * 8 + microbatch)
                 weights, indices, counts, aux = router(x, False, segment_ids=segments)
                 # Both routing weights and all-expert auxiliary scores affect backward.
-                routing_terms = weights * coefficient.gather(-1, indices)
-                aux_term = aux[0].square().sum() * 0.01
-                loss = (routing_terms.sum() + aux_term) / 8
-                if arm == 0:
-                    # The signed reduction can nearly cancel even when every
-                    # term agrees closely. Normalize scalar loss error by its
-                    # reference term magnitudes; tensor/gradient/Adam checks
-                    # below keep their original norms and error limits.
-                    loss_scales.append(
-                        (routing_terms.detach().double().abs().sum() + aux_term.detach().abs()) / 8
-                    )
+                loss = (
+                    (weights * coefficient.gather(-1, indices)).sum() + aux[0].square().sum() * 0.01
+                ) / 8
                 loss.backward()
                 outputs[arm].append(
                     (weights.detach(), indices, counts, loss.detach(), aux[0].detach())
@@ -183,12 +176,15 @@ def test_compiled_router_gradients_and_adam(monkeypatch, track_trajectory):
                         # rank order for near ties. Still require the SAME selected
                         # experts. Primitive and same-weight checks require order too.
                         left, right = left.sort(-1).values, right.sort(-1).values
+                    # The signed scalar loss can nearly cancel, making a purely
+                    # relative error unstable. Allow a small absolute error only
+                    # for that reduction; keep tensor and exact routing checks strict.
                     compare(
                         left,
                         right,
                         f"{prefix}/mb{mb}/output{field}",
                         exact=field in (1, 2),
-                        scale=loss_scales[mb] if field == 3 else None,
+                        absolute_limit=1e-5 if field == 3 else 0.0,
                     )
                 compare(input_grads[0][mb], input_grads[arm][mb], f"{prefix}/mb{mb}/dx")
             for index, (left, right) in enumerate(

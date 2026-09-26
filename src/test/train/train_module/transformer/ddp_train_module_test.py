@@ -9,7 +9,7 @@ import torch.distributed.checkpoint as dcp
 from olmo_core.config import DType
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.exceptions import OLMoConfigurationError
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
@@ -79,7 +79,7 @@ def _tiny_model_config(
                 name=AttentionType.default,
                 n_heads=4,
                 bias=False,
-                use_flash=False,
+                backend=AttentionBackendName.torch,
                 dtype=dtype,
                 n_kv_heads=2 if per_head_qk is not None else None,
                 qk_norm=layer_norm if per_head_qk is not None else None,
@@ -107,6 +107,9 @@ def _run_construct_no_ep():
         optim=OLMoDDPOptimizerConfig(lr=1e-3),
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
     )
+    legacy_config = config.as_config_dict()
+    legacy_config["max_grad_norm"] = 0.25
+    config = OLMoDDPTrainModuleConfig.from_dict(legacy_config)
     # eval_only=True skips the optimizer build (its fp32-master-param setup is exercised on GPU);
     # this covers the world-mesh build + data-parallel wrapping with no expert parallelism.
     train_module = config.build(model, device=torch.device("cpu"), eval_only=True)
@@ -115,6 +118,7 @@ def _run_construct_no_ep():
     assert train_module.dp_world_size == 2
     assert train_module.world_mesh["dense"] is not None
     assert train_module.moe_mesh is None  # no expert parallelism
+    assert not hasattr(train_module, "max_grad_norm")
 
 
 def test_moe_v2_train_module_construction_no_ep():
@@ -365,3 +369,43 @@ def test_moe_v2_train_module_direct_checkpoint_restores_buffers(tmp_path):
         start_method="spawn",
         func_args=(str(tmp_path / "checkpoint"),),
     )
+
+
+@pytest.mark.parametrize("module_norm", [None, 1.0, 0.25, 0.0])
+@pytest.mark.parametrize("optimizer_norm", [None, 1.0, 2.0])
+@pytest.mark.parametrize("with_metadata", [False, True])
+def test_max_grad_norm_config_precedence(module_norm, optimizer_norm, with_metadata):
+    """Loaded configs forward module clipping overrides without mutating the optimizer config."""
+    import json
+    from unittest.mock import Mock, patch
+
+    config = OLMoDDPTrainModuleConfig(
+        rank_microbatch_size=1024,
+        max_sequence_length=512,
+        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+    )
+    serialized = config.as_config_dict() if with_metadata else config.as_dict()
+    if module_norm is not None:
+        serialized["max_grad_norm"] = module_norm
+    if optimizer_norm is None:
+        serialized["optim"].pop("max_grad_norm")
+    else:
+        serialized["optim"]["max_grad_norm"] = optimizer_norm
+    restored = OLMoDDPTrainModuleConfig.from_dict(json.loads(json.dumps(serialized)))
+    original_optimizer_norm = 1.0 if optimizer_norm is None else optimizer_norm
+    assert restored.max_grad_norm == module_norm
+    assert restored.optim.max_grad_norm == original_optimizer_norm
+    assert OLMoDDPTrainModuleConfig.from_dict(restored.as_config_dict()) == restored
+
+    with patch(
+        "olmo_core.train.train_module.transformer.ddp_train_module.OLMoDDPTrainModule"
+    ) as train_module_cls:
+        restored.build(Mock())
+    kwargs = train_module_cls.call_args.kwargs
+    assert "max_grad_norm" not in kwargs
+    assert kwargs["optim"].max_grad_norm == (
+        original_optimizer_norm if module_norm is None else module_norm
+    )
+    assert restored.optim.max_grad_norm == original_optimizer_norm
+    if module_norm is not None:
+        assert kwargs["optim"] is not restored.optim

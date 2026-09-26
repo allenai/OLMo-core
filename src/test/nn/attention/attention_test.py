@@ -341,10 +341,8 @@ def test_sdpa(
 @requires_gpu
 @requires_flash_attn_2
 @pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16")])
-@pytest.mark.parametrize(
-    "use_flash", [pytest.param(True, id="flash_2"), pytest.param(False, id="torch-SDPA")]
-)
-def test_fused_attention_v2_against_non_fused(dtype: torch.dtype, use_flash: bool):
+@pytest.mark.parametrize("backend", [AttentionBackendName.flash_2, AttentionBackendName.torch])
+def test_fused_attention_v2_against_non_fused(dtype: torch.dtype, backend: AttentionBackendName):
     seed_all(0)
 
     d_model = 128
@@ -356,7 +354,7 @@ def test_fused_attention_v2_against_non_fused(dtype: torch.dtype, use_flash: boo
         init_device="cuda",
     )
 
-    attention = Attention(use_flash=use_flash, **kwargs)
+    attention = Attention(backend=backend, **kwargs)
     fused_att = FusedAttentionV2(backend=AttentionBackendName.flash_2, **kwargs)
 
     # Make sure weights match.
@@ -417,7 +415,9 @@ def test_attention_with_intra_document_masking():
     d_model = 128
     seq_len = 32
 
-    attention = Attention(d_model=d_model, n_heads=8, init_device="cuda", use_flash=True)
+    attention = Attention(
+        d_model=d_model, n_heads=8, init_device="cuda", backend=AttentionBackendName.flash_2
+    )
     fused_att = FusedAttentionV2(
         d_model=d_model, n_heads=8, init_device="cuda", backend=AttentionBackendName.flash_2
     )
@@ -675,7 +675,9 @@ def test_attention_prefill_forward_pass(batch_size: int):
     max_seq_len = 128
     seq_len = 124
     dtype = torch.bfloat16
-    attention = Attention(d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda")
+    attention = Attention(
+        d_model=d_model, n_heads=n_heads, backend=AttentionBackendName.flash_2, init_device="cuda"
+    )
 
     x = torch.randn(batch_size, seq_len, d_model, dtype=dtype, device="cuda")
 
@@ -706,7 +708,11 @@ def test_attention_kv_cache_write_position():
     dtype = torch.bfloat16
 
     attention = Attention(
-        d_model=d_model, n_heads=n_heads, use_flash=True, init_device="cuda", dtype=torch.float32
+        d_model=d_model,
+        n_heads=n_heads,
+        backend=AttentionBackendName.flash_2,
+        init_device="cuda",
+        dtype=torch.float32,
     )
 
     # Create inputs with different sequence lengths (simulated with left padding)
@@ -828,7 +834,7 @@ def test_attention_leftpad_shift_equivalence(use_rope):
         d_model=d_model,
         n_heads=n_heads,
         rope=RoPEConfig() if use_rope else None,
-        use_flash=True,
+        backend=AttentionBackendName.flash_2,
         init_device="cuda",
         dtype=torch.float32,
     )
@@ -1374,7 +1380,7 @@ def test_tensor_parallel_attention(backend: str, attn_kwargs: Dict[str, Any], tm
     device = torch.device("cuda") if "nccl" in backend else torch.device("cpu")
 
     seed_all(0)
-    attn_kwargs.update({"d_model": 128, "n_heads": 8, "use_flash": False})
+    attn_kwargs.update({"d_model": 128, "n_heads": 8, "backend": AttentionBackendName.torch})
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
@@ -1445,7 +1451,11 @@ def test_context_parallel_attention(load_balancer_type, head_stride: int, tmp_pa
     device = torch.device("cuda")
 
     # CP requires flash-attn and low precision dtypes.
-    attn_kwargs: Dict[str, Any] = {"d_model": 128, "n_heads": 8, "use_flash": True}
+    attn_kwargs: Dict[str, Any] = {
+        "d_model": 128,
+        "n_heads": 8,
+        "backend": AttentionBackendName.flash_2,
+    }
     attn = Attention(init_device=device.type, **attn_kwargs)
 
     bs, seq_len = 2, 64
@@ -1968,3 +1978,79 @@ def test_legacy_fused_attention_checkpoint(bias: bool, use_rope: bool):
     attention(torch.randn(2, 8, 32)).square().mean().backward()
     optim.step()
     assert all(torch.isfinite(p).all() for p in attention.parameters())
+
+
+@pytest.mark.parametrize("name", list(AttentionType))
+@pytest.mark.parametrize(
+    "use_flash,backend",
+    [
+        (None, None),
+        (False, None),
+        (True, None),
+        (False, "flash_3"),
+        (True, "flash_2"),
+        (True, "torch"),
+        (True, "flash_3"),
+    ],
+)
+def test_legacy_use_flash_config_backend(name, use_flash, backend, monkeypatch):
+    """Old serialized flags preserve backend selection and reject conflicting explicit backends."""
+    import warnings
+
+    config = AttentionConfig.from_dict(
+        {"name": name, "n_heads": 2, "use_flash": use_flash, "backend": backend}
+    )
+    selected = []
+    original_build = AttentionBackendName.build
+
+    def record_backend(backend_name, **kwargs):
+        selected.append(backend_name)
+        return original_build(AttentionBackendName.torch, **kwargs)
+
+    # Observe backend selection through real module construction without requiring GPU kernels.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(AttentionBackendName, "assert_supported", lambda self: None)
+    monkeypatch.setattr(AttentionBackendName, "build", record_backend)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        warnings.simplefilter("ignore", UserWarning)
+        if name != AttentionType.fused and use_flash and backend in ("torch", "flash_3"):
+            with pytest.raises(OLMoConfigurationError, match="only compatible with 'flash_2'"):
+                config.build(64, layer_idx=0, n_layers=1)
+            assert not selected
+        else:
+            config.build(64, layer_idx=0, n_layers=1)
+            expected = backend or (
+                "flash_2" if use_flash or name == AttentionType.fused else "torch"
+            )
+            assert selected == [expected]
+
+
+@pytest.mark.parametrize("name", [AttentionType.default, AttentionType.fused_v2])
+def test_legacy_use_flash_false_preserves_swa_backend(name, monkeypatch):
+    """False historically leaves an unspecified SWA backend free to select FlashAttention."""
+    from olmo_core.nn.attention import flash_attn_api
+
+    config = AttentionConfig(
+        name=name,
+        n_heads=2,
+        use_flash=False,
+        sliding_window=SlidingWindowAttentionConfig(
+            pattern=[4],
+            force_full_attention_on_first_layer=False,
+            force_full_attention_on_last_layer=False,
+        ),
+    )
+    selected = []
+    original_build = AttentionBackendName.build
+
+    def record_backend(backend_name, **kwargs):
+        selected.append(backend_name)
+        return original_build(AttentionBackendName.torch, **kwargs)
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(flash_attn_api, "has_flash_attn_2", lambda: True)
+    monkeypatch.setattr(AttentionBackendName, "assert_supported", lambda self: None)
+    monkeypatch.setattr(AttentionBackendName, "build", record_backend)
+    config.build(64, layer_idx=0, n_layers=1)
+    assert selected == [AttentionBackendName.flash_2]

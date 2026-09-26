@@ -126,7 +126,6 @@ class OLMoDDPTrainModule(TrainModule):
         ac_config: Optional[TransformerActivationCheckpointingConfig] = None,
         z_loss_multiplier: Optional[float] = None,
         autocast_precision: Optional[torch.dtype] = None,
-        max_grad_norm: Optional[float] = None,
         scheduler: Optional[Scheduler] = None,
         device: Optional[torch.device] = None,
         state_dict_save_opts: Optional[dist_cp_sd.StateDictOptions] = None,
@@ -318,7 +317,6 @@ class OLMoDDPTrainModule(TrainModule):
         self.label_ignore_index = label_ignore_index
         self.z_loss_multiplier = z_loss_multiplier
 
-        self.max_grad_norm = max_grad_norm  # TODO: remove, use optim.max_grad_norm
         self.scheduler = scheduler
         self.state_dict_save_opts = state_dict_save_opts or dist_cp_sd.StateDictOptions(
             flatten_optimizer_state_dict=True, cpu_offload=True

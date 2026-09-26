@@ -3,7 +3,7 @@ import torch.distributed as dist
 from torch.distributed.device_mesh import DeviceMesh
 
 from olmo_core.config import DType
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.moe import MoERouterGatingFunction
@@ -30,7 +30,7 @@ def _build_block() -> OLMoDDPTransformerBlock:
             n_heads=2,
             n_kv_heads=2,
             bias=False,
-            use_flash=False,
+            backend=AttentionBackendName.torch,
             dtype=DType.float32,
         ),
         attention_norm=layer_norm,

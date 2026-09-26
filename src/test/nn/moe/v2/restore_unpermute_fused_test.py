@@ -1,6 +1,7 @@
 import pytest
 import torch
 
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.moe.utils import (
     moe_permute_no_compile,
     moe_unpermute_1d_fused_drop_no_compile,
@@ -198,7 +199,7 @@ def _build_block(backend: str = "te_fused"):
             n_heads=2,
             n_kv_heads=2,
             bias=False,
-            use_flash=False,
+            backend=AttentionBackendName.torch,
             dtype=DType.float32,
         ),
         attention_norm=layer_norm,
