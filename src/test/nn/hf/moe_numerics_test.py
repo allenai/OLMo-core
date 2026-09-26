@@ -1,3 +1,5 @@
+from typing import Union
+
 import pytest
 import torch
 
@@ -125,13 +127,14 @@ def test_hf_dense_and_shared_experts_match_core_packed_gemm(dtype, kind):
         dtype=DType.bfloat16 if dtype == torch.bfloat16 else DType.float32,
         init_device="cuda",
     )
-    hf = (
+    hf: Union[Olmo3MoeDenseMLP, Olmo3MoeCoreSharedExpert] = (
         Olmo3MoeDenseMLP(
             Olmo3MoeConfig(hidden_size=D, dense_mlp_intermediate_size=H, moe_use_core_numerics=True)
         )
         if kind == "dense"
         else Olmo3MoeCoreSharedExpert(D, H, "silu")
-    ).to(device="cuda", dtype=dtype)
+    )
+    hf.to(device="cuda", dtype=dtype)
     with torch.no_grad():
         hf.up_proj.weight.copy_(core.w_up_gate[:, :H].t())
         hf.gate_proj.weight.copy_(core.w_up_gate[:, H:].t())
