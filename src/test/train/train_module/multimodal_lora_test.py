@@ -264,22 +264,53 @@ class _FakeMetadata:
         self.state_dict_metadata = {k: None for k in keys}
 
 
+def _checkpoint_keys(train_module) -> set:
+    """The keys a checkpoint written by this train module would actually contain.
+
+    Deliberately not `named_parameters()`: activation checkpointing inserts
+    `_checkpoint_wrapped_module` segments into module names and `get_model_state_dict`
+    strips them. A version of this test that built the fake metadata from module names
+    agreed with a guard that had the same bug, and both passed while every real load
+    failed on ten wrapped connector parameters.
+    """
+    import torch.distributed.checkpoint.state_dict as dist_cp_sd
+
+    return {
+        f"model.{k}"
+        for k in dist_cp_sd.get_model_state_dict(
+            train_module.model, options=train_module.state_dict_save_opts
+        )
+    }
+
+
+def test_a_base_checkpoint_loads_into_a_lora_model():
+    """The normal case: the stage-1 checkpoint has no adapter keys and that is fine."""
+    tm = _train_module(use_lora=True)
+    lora_keys = {f"model.{k}" for k in lora_param_names(tm.model)}
+    ok = _FakeMetadata(_checkpoint_keys(tm) - lora_keys)
+    tm._check_lora_pruned_keys(ok)  # must not raise
+
+
 def test_missing_base_weight_is_rejected_even_under_the_relaxed_load():
     """`strict=False` is needed for the adapters; it must not also hide a real gap."""
     tm = _train_module(use_lora=True)
-    lora_keys = set(lora_param_names(tm.model))
-    all_keys = {f"model.{n}" for n, _ in tm.model.named_parameters()}
+    all_keys = _checkpoint_keys(tm)
+    lora_keys = {f"model.{k}" for k in lora_param_names(tm.model)}
 
-    # A checkpoint with everything except the adapters: fine, that is the normal case.
-    ok = _FakeMetadata(all_keys - {f"model.{k}" for k in lora_keys})
-    tm._check_lora_pruned_keys({}, ok)
-
-    # Same, but also missing a real base weight.
     victim = "model.lm.blocks.0.attention.w_q.weight"
     assert victim in all_keys
-    bad = _FakeMetadata(set(ok.state_dict_metadata) - {victim})
+    bad = _FakeMetadata(all_keys - lora_keys - {victim})
     with pytest.raises(RuntimeError, match="missing 1 non-LoRA model key"):
-        tm._check_lora_pruned_keys({}, bad)
+        tm._check_lora_pruned_keys(bad)
+
+
+def test_the_guard_tolerates_activation_checkpoint_wrapped_module_names():
+    """Regression: the connector is activation-checkpointed, so its `named_parameters()`
+    names carry `_checkpoint_wrapped_module` while the checkpoint's do not."""
+    tm = _train_module(use_lora=True)
+    wrapped = [n for n, _ in tm.model.named_parameters() if "_checkpoint_wrapped_module" in n]
+    assert wrapped, "fixture no longer exercises an activation-checkpointed submodule"
+    assert not any("_checkpoint_wrapped_module" in k for k in _checkpoint_keys(tm))
 
 
 def test_checkpoint_key_space_is_full_finetune_plus_adapters_only():

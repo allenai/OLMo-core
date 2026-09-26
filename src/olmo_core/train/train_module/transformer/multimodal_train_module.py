@@ -30,6 +30,7 @@ from torch.distributed.checkpoint.metadata import Metadata
 
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
+from olmo_core.distributed.checkpoint import prune_state_dict
 from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
@@ -335,20 +336,27 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
     ) -> Dict[str, Any]:
         state_dict = super().state_dict_to_load(metadata, optim=optim)
         if self.lora_param_names:
-            self._check_lora_pruned_keys(state_dict, metadata)
+            self._check_lora_pruned_keys(metadata)
         return state_dict
 
-    def _check_lora_pruned_keys(self, state_dict: Dict[str, Any], metadata: Metadata) -> None:
+    def _check_lora_pruned_keys(self, metadata: Metadata) -> None:
         """Fail loudly if the non-strict LoRA load dropped anything but adapters.
 
         ``strict=False`` is needed because a base checkpoint has no ``lora_A``/``lora_B``
         entries. The cost is that it would *also* swallow a genuinely missing base weight
         — which loads as whatever ``to_empty()`` left in memory and shows up much later as
         a mysteriously bad model. Adapters are the only keys allowed to be missing.
+
+        The comparison has to happen in *checkpoint* key space, which is not the module
+        tree's key space: activation checkpointing inserts ``_checkpoint_wrapped_module``
+        segments into ``named_parameters()`` names, and ``get_model_state_dict`` strips
+        them. Using the raw module names here reported all ten wrapped connector
+        parameters as missing on every real load. Reuse the same
+        ``_get_state_dict`` + ``prune_state_dict`` pair the base class loads through, so
+        the two can't drift again.
         """
-        checkpoint_keys = set(metadata.state_dict_metadata.keys())
-        model_keys = {f"model.{name}" for name, _ in self.model.named_parameters()}
-        missing = {k for k in model_keys if k not in checkpoint_keys}
+        reference = self._get_state_dict(self.state_dict_load_opts, optim=False)
+        missing = set(prune_state_dict(reference, set(metadata.state_dict_metadata.keys())))
         expected = {f"model.{name}" for name in self.lora_param_names}
         unexpected = missing - expected
         if unexpected:
