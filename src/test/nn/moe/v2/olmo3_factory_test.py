@@ -16,6 +16,7 @@ from olmo_core.nn.hf import config as hf_config_utils
 from olmo_core.nn.moe.v2 import olmo3
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+from olmo_core.testing.utils import requires_fla
 
 
 def hybrid_config(latent_dim=16):
@@ -50,6 +51,7 @@ def hybrid_config(latent_dim=16):
 
 
 @pytest.mark.parametrize("latent_dim", [None, 16])
+@requires_fla
 def test_hybrid_factory_uses_native_components_and_roundtrips_weights(latent_dim):
     hf = hybrid_config(latent_dim)
     config = olmo3.build_olmo3_moe_config_from_hf_config(
@@ -78,6 +80,7 @@ def test_hybrid_factory_uses_native_components_and_roundtrips_weights(latent_dim
 
 
 @pytest.mark.parametrize("latent_dim", [None, 16])
+@requires_fla
 def test_streaming_export_matches_complete_export_and_is_lazy(latent_dim):
     hf = hybrid_config(latent_dim)
     config = olmo3.build_olmo3_moe_config_from_hf_config(
@@ -126,6 +129,7 @@ def test_streaming_export_splits_fused_attention_weights():
 
 @pytest.mark.parametrize("hidden,heads,kv,latent", [(32, 4, 2, 16), (48, 6, 3, 24)])
 @pytest.mark.parametrize("head_gains,ssmax", [(False, False), (True, False), (True, True)])
+@requires_fla
 def test_hero_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, head_gains, ssmax):
     hf = hybrid_config(latent)
     hf.hidden_size = hidden
@@ -219,6 +223,8 @@ def test_reverse_config_rejects_heterogeneous_attention_features():
     config = olmo3.build_olmo3_moe_config_from_hf_config(
         hf, attention_backend=AttentionBackendName.torch
     )
+    assert isinstance(config.block, dict)
+    assert config.block_pattern is not None
     config.block["other_full"] = deepcopy(config.block["full_attention"])
     config.block["other_full"].sequence_mixer.scalable_softmax = True
     config.block_pattern[-1] = "other_full"
@@ -235,6 +241,7 @@ def test_reverse_config_rejects_heterogeneous_attention_features():
 @pytest.mark.parametrize("feature", ["qk_norm_per_head_gains", "scalable_softmax"])
 def test_fused_attention_rejects_unsupported_hero_features(feature):
     hf = hybrid_config()
+    hf.layer_types = ["full_attention", "full_attention"]
     setattr(hf, feature, True)
     config = olmo3.build_olmo3_moe_config_from_hf_config(
         hf,
@@ -242,12 +249,13 @@ def test_fused_attention_rejects_unsupported_hero_features(feature):
         attention_type=AttentionType.fused_v2,
     )
     with pytest.raises(
-        OLMoConfigurationError, match=f"'{feature}' is only supported by default attention"
+        OLMoConfigurationError, match=f"'{feature}' is not supported with fused_v2 attention"
     ):
         config.build(init_device="meta")
 
 
 @pytest.mark.parametrize("global_lb", [False, True])
+@requires_fla
 def test_hf_ordinary_dense_layout_imports_without_mutating_config(global_lb):
     hf = hybrid_config()
     hf.dense_layers_use_shared_expert = False
@@ -285,6 +293,7 @@ def test_hf_ordinary_dense_layout_imports_without_mutating_config(global_lb):
     assert reverse.global_load_balancing == global_lb
 
 
+@requires_fla
 def test_sliding_window_size_matches_hf_in_both_config_directions():
     hf = hybrid_config()
     hf.layer_types = ["linear_attention", "sliding_attention"]

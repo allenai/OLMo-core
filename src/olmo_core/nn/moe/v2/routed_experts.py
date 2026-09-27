@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - import guard
     grouped_gemm = None  # type: ignore[assignment]
 import weakref
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Optional, cast
+from typing import Any, Callable, Iterator, Literal, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -407,7 +407,7 @@ class RoutedExpertsConfig(Config):
     activation_alpha: float = 1.702
     activation_limit: Optional[float] = None
     # Forward valid-prefix kernel only; direct wave/backward callers keep their defaults.
-    row_specialization: str = "static"
+    row_specialization: Literal["static", "dynamic"] = "static"
     match_eager_rounding: bool = False
     """Round SiLU before multiplication in no-gradient SwiGLU to match eager training."""
 
@@ -480,7 +480,7 @@ class RoutedExperts(nn.Module):
         activation_alpha: float = 1.702,
         activation_limit: Optional[float] = None,
         init_device: str = "cpu",
-        row_specialization: str = "static",
+        row_specialization: Literal["static", "dynamic"] = "static",
         match_eager_rounding: bool = False,
     ):
         super().__init__()
