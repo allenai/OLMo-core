@@ -303,3 +303,23 @@ def test_sliding_window_size_matches_hf_in_both_config_directions():
     )
     assert reverse.sliding_window == 4
     assert reverse.layer_types == hf.layer_types
+    exported = hf_config_utils.get_hf_config(native)
+    assert exported.layer_types == hf.layer_types
+    assert exported.sliding_window == hf.sliding_window
+
+
+@pytest.mark.parametrize("peri_ln", [False, True])
+def test_full_attention_shared_dense_config_export(peri_ln):
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "full_attention"]
+    hf.use_rope = True
+    hf.use_peri_ln = peri_ln
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf, attention_backend=AttentionBackendName.torch
+    )
+    native = config.build(init_device="cpu")
+    exported = hf_config_utils.get_hf_config(native)
+    assert exported.dense_layers_indices == [0]
+    assert exported.dense_layers_use_shared_expert
+    assert exported.dense_mlp_intermediate_size == hf.dense_mlp_intermediate_size
+    assert exported.use_peri_ln == peri_ln

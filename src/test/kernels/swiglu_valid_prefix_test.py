@@ -276,3 +276,45 @@ def test_routed_dispatch_and_gradient_path(mode):
     reference = x.detach().clone().requires_grad_()
     (reference[:, :8] * F.silu(reference[:, 8:])).sum().backward()
     torch.testing.assert_close(x.grad, reference.grad, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("rounding", [False, True])
+def test_routed_experts_eager_rounding_is_opt_in(rounding):
+    config = RoutedExpertsConfig(
+        d_model=8, hidden_size=8, num_experts=2, bias=False, dtype=DType.bfloat16
+    )
+    assert config.match_eager_rounding is False
+    config.match_eager_rounding = rounding
+    restored = RoutedExpertsConfig.from_dict(config.as_dict())
+    experts = restored.build(init_device="meta")
+    assert experts.match_eager_rounding is rounding
+    # Exercise dispatch without a GPU; numerical kernel parity is covered above.
+    x = mock.Mock(is_cuda=True, device=torch.device("cuda"))
+    count = mock.Mock(device=x.device)
+    with mock.patch(
+        "olmo_core.nn.moe.v2.routed_experts.swiglu_valid_prefix"
+    ) as kernel, torch.no_grad():
+        experts.chunk_and_activate(x, num_elements=count)
+    assert kernel.call_args.kwargs["match_eager_rounding"] is rounding
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("rounding", [False, True])
+def test_routed_experts_rounding_preserves_selected_numerics(rounding):
+    experts = RoutedExpertsConfig(
+        d_model=8,
+        hidden_size=4,
+        num_experts=2,
+        bias=False,
+        dtype=DType.bfloat16,
+        match_eager_rounding=rounding,
+    ).build(init_device="meta")
+    x = torch.tensor(
+        [[1.5, -2.75, 0.25, 16.0, 1.0, -1.0, 0.5, -2.0]], device="cuda", dtype=torch.bfloat16
+    )
+    count = torch.tensor(1, device="cuda")
+    with torch.no_grad():
+        actual = experts.chunk_and_activate(x, num_elements=count)
+    expected = x[:, :4] * F.silu(x[:, 4:]) if rounding else swiglu_valid_prefix(x, count)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
