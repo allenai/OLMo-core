@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from os.path import join
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, FrozenSet, List, Optional
 
 import numpy as np
 from PIL import Image
@@ -18,6 +20,7 @@ from olmo_core.data.multimodal.paths import (
     PIXMO_DATASETS,
     TORCH_DATASETS,
 )
+from olmo_core.exceptions import OLMoConfigurationError
 
 from ..pixmo_clocks import format_pixmo_clocks_row
 from .formatters import (
@@ -28,7 +31,16 @@ from .formatters import (
     format_vqa_short,
 )
 
-__all__ = ["ACADEMIC_REGISTRY", "build_academic_data", "format_academic_example"]
+__all__ = [
+    "ACADEMIC_REGISTRY",
+    "STAGE2_EVAL_TRAIN_SETS",
+    "build_academic_data",
+    "format_academic_example",
+    "vqa2_eval_coco_ids",
+    "vg_coco_ids",
+]
+
+log = logging.getLogger(__name__)
 
 VQA2_SOURCE = join(TORCH_DATASETS, "vqa2")
 TEXT_VQA_SOURCE = join(TORCH_DATASETS, "text_vqa")
@@ -41,6 +53,28 @@ ST_QA_SOURCE = join(TORCH_DATASETS, "scene-text")
 TALLY_QA_SOURCE = join(TORCH_DATASETS, "tally_qa")
 COSYN_IMAGES = join(TORCH_DATASETS, "cosyn_images")
 PLOT_QA_SOURCE = join(TORCH_DATASETS, "plot_qa")
+#: Visual Genome's official image metadata; its ``coco_id`` column names the 51,498 VG images
+#: that are COCO images.
+VG_IMAGE_DATA = join(TORCH_DATASETS, "locca", "vg", "image_data.json")
+
+#: Training sets of the benchmarks the stage-2 checkpoints are evaluated on (mm_olmo
+#: ``eval_molmo2.py`` ``IMAGE_TASKS`` / ``TEST_IMAGE_TASKS``), each mapped to that benchmark. They
+#: stay stage-2 data: a stage-1 source is never one of them. ``tally_qa`` is on the list for its
+#: images rather than its task -- a third of them are images the VQAv2 eval draws from (see
+#: :func:`_load_tally_qa`).
+STAGE2_EVAL_TRAIN_SETS: Dict[str, str] = {
+    "coco_2014_vqa_multi": "VQAv2",
+    "text_vqa": "TextVQA",
+    "chart_qa_weighted": "ChartQA",
+    "doc_qa": "DocVQA",
+    "info_qa": "InfographicVQA",
+    "ai2_diagram_v2_mix_transparent": "AI2D",
+    "a_okvqa_mc": "A-OKVQA",
+    "a_okvqa_da": "A-OKVQA",
+    "tally_qa": "VQAv2 (shared images)",
+}
+
+_TRAILING_ID = re.compile(r"(\d+)\.jpg$")
 
 
 def _open_image(path: Any) -> Image.Image:
@@ -227,12 +261,77 @@ def _resolve_tally_image(image_id: str) -> str:
     return join(TALLY_QA_SOURCE, "VG_100K", f"{image_id}.jpg")
 
 
+def _read_heldout_json(path: str) -> Any:
+    if not os.path.exists(path):
+        raise OLMoConfigurationError(
+            f"held-out set {path!r} not found, so train/eval image overlap cannot be checked"
+        )
+    return _load_json(path)
+
+
+@lru_cache(maxsize=1)
+def vqa2_eval_coco_ids() -> FrozenSet[int]:
+    """COCO ids of the 40,504 val2014 images the VQAv2 eval samples its questions from.
+
+    The eval (mm_olmo ``coco_2014_vqa_8192``, olmo-eval ``vqa2``) draws 8,192 questions from the
+    ``vqa2/molmo_val.json`` manifest, so no image in it may be trained on.
+
+    :raises OLMoConfigurationError: If the manifest is missing.
+    """
+    ids = set()
+    for ex in _read_heldout_json(join(VQA2_SOURCE, "molmo_val.json")):
+        m = _TRAILING_ID.search(ex["image"])
+        if m is None:
+            raise OLMoConfigurationError(f"no COCO id in VQAv2 eval image path {ex['image']!r}")
+        ids.add(int(m.group(1)))
+    return frozenset(ids)
+
+
+@lru_cache(maxsize=1)
+def vg_coco_ids() -> Dict[int, int]:
+    """Visual Genome image id -> COCO id, for the VG images that are COCO images.
+
+    :raises OLMoConfigurationError: If VG's ``image_data.json`` is missing.
+    """
+    return {
+        int(ex["image_id"]): int(ex["coco_id"])
+        for ex in _read_heldout_json(VG_IMAGE_DATA)
+        if ex.get("coco_id")
+    }
+
+
+def _tally_coco_id(image: str) -> Optional[int]:
+    """The COCO id of a TallyQA image (``train2014/...`` / ``val2014/...`` / ``VG_100K*/<id>.jpg``),
+    or None for a VG image that is not a COCO image."""
+    src, fname = image.split("/")
+    image_id = int(_TRAILING_ID.search(fname).group(1))  # type: ignore[union-attr]
+    return vg_coco_ids().get(image_id) if src.startswith("VG_") else image_id
+
+
 def _load_tally_qa(split: str) -> List[Dict[str, Any]]:
+    """TallyQA, grouped by image.
+
+    The train split holds 41,441 images (77,663 of its 249,318 questions) that the VQAv2 eval
+    samples from (:func:`vqa2_eval_coco_ids`): 32,633 COCO val2014 images, and 8,808 Visual Genome
+    images that are COCO val2014 images under a VG file name. They are dropped, leaving 91,540
+    images. Other splits are returned whole.
+    """
     split = "val" if split == "validation" else split
     data = _load_json(join(TALLY_QA_SOURCE, f"{split}.json"))
     grouped: Dict[str, List[Dict[str, Any]]] = {}
     for ex in data:
         grouped.setdefault(ex["image"], []).append(ex)
+    if split == "train":
+        heldout = vqa2_eval_coco_ids()
+        n_before = len(grouped)
+        grouped = {
+            image: qs for image, qs in grouped.items() if _tally_coco_id(image) not in heldout
+        }
+        log.info(
+            "tally_qa train: dropped %d of %d images the VQAv2 eval samples from",
+            n_before - len(grouped),
+            n_before,
+        )
     image_sources = {
         "train2014": VQA2_SOURCE,
         "val2014": VQA2_SOURCE,

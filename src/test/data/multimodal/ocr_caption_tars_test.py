@@ -442,6 +442,10 @@ def _data_config(**kw):
     full `build_config` resolves (which needs cluster access and a pushed commit)."""
     from types import SimpleNamespace
 
+    from olmo_core.data.multimodal.mixtures.stage1_academic import (
+        DEFAULT_ACADEMIC_SOURCES,
+    )
+
     fields = dict(
         recipe="v1",
         pointing_data="v1",
@@ -452,6 +456,8 @@ def _data_config(**kw):
         olmocr=OlmOcrMixDatasetConfig(),
         ocr_tars=OcrCaptionTarsDatasetConfig(),
         text_rich=TextRichCaptionDatasetConfig(),
+        academic_rate=0.0,
+        academic_sources=DEFAULT_ACADEMIC_SOURCES,
     )
     fields.update(kw)
     return SimpleNamespace(**fields)
