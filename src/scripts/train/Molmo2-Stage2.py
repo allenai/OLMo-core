@@ -688,7 +688,45 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         overrides,
     )
     _check_lora_overrides_applied(config, (use_lora, lora_rank, lora_alpha, lora_dropout, lora_lr))
+    _check_dp_config(config)
     return config
+
+
+def _check_dp_config(config: ExperimentConfig) -> None:
+    """Validate `--train_module.dp_config.name=ddp` (replicate instead of shard).
+
+    Two rules, both about failures that would otherwise be silent or late:
+
+    - **DDP is a LoRA-only option on this model.** A full finetune under DDP needs the
+      full fp32 replica (17.8 GiB) + fp32 grads (17.8) + AdamW state (35.7) per GPU
+      before activations (~180 GiB at this config; the no-chartdoc full-FT arm peaked at
+      226.3 GiB *under FSDP*). That OOM would land after the job has queued for a node.
+      Under LoRA the same sum is 18.7 GiB and measured FSDP-LoRA headroom is ~75 GiB.
+    - **The saved config must not lie.** The multimodal DDP branch ignores
+      `dp_config.param_dtype` (the model stays fp32; bf16 compute comes from autocast,
+      which mirrors FSDP's fp32-master/bf16-compute numerics). This script's default sets
+      `param_dtype=bf16` for FSDP, so flipping only `name=ddp` would record a bf16 cast
+      that never happened. Null it so `config.json` reflects the run. `reduce_dtype=fp32`
+      stays: DDP all-reduces in the param dtype, which *is* fp32, so it is accurate.
+    """
+    dp = config.train_module.dp_config
+    if dp is None or dp.name != DataParallelType.ddp:
+        return
+    if not config.use_lora:
+        raise OLMoConfigurationError(
+            "dp_config.name=ddp requires --use_lora=true: a full finetune replicates "
+            "71 GiB of fp32 weights+grads+optimizer state per GPU before activations "
+            "(~180 GiB at this config) and will OOM on 267.7 GiB B300s -- after the job "
+            "has already queued for a node. Shard (fsdp) for full finetunes."
+        )
+    if dp.param_dtype is not None:
+        log.info(
+            "dp_config.param_dtype=%s is ignored by the multimodal DDP path (params stay "
+            "fp32; bf16 compute comes from autocast) -- nulling it so the saved config "
+            "records what actually runs.",
+            dp.param_dtype,
+        )
+        dp.param_dtype = None
 
 
 def _check_lora_overrides_applied(config: ExperimentConfig, resolved: tuple) -> None:

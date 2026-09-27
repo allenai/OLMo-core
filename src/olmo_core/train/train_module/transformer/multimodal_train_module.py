@@ -291,6 +291,23 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if dp_config.name == DataParallelType.ddp:
             from torch.distributed._composable.replicate import replicate
 
+            # Composable `replicate` differences worth knowing when debugging this path:
+            # it builds an internal `DistributedDataParallel` over a ParameterList of ALL
+            # params (frozen included) lazily on the first forward, so (a) the reducer
+            # registers only `requires_grad=True` params -- under LoRA that is exactly the
+            # adapters + connector, and gradient comm is proportional to the *trainable*
+            # set; (b) rank-0 broadcast of the initial weights happens at first forward,
+            # after the checkpoint load; (c) module *buffers* are never synced (a
+            # ParameterList has none) -- benign while every rank loads the same
+            # checkpoint; and (d) DDP error messages name params by ParameterList index,
+            # not FQN. `param_dtype`/`reduce_dtype` are FSDP-only and ignored here: params
+            # stay in their built dtype and grads all-reduce in that same dtype.
+            if dp_config.param_dtype is not None:
+                log.warning(
+                    "dp_config.param_dtype=%s is ignored on the DDP path -- params keep "
+                    "their built dtype; compute precision comes from autocast_precision.",
+                    dp_config.param_dtype,
+                )
             replicate(self.model, device_mesh=dp_mesh, bucket_cap_mb=100)
         else:  # fsdp / hsdp
             from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard

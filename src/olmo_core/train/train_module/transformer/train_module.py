@@ -9,6 +9,7 @@ import torch.distributed as dist
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
 import torch.nn as nn
 from torch.distributed import DeviceMesh
+from torch.distributed._composable.replicate import DDP as ComposableDDP
 from torch.distributed.checkpoint.metadata import Metadata
 from torch.distributed.fsdp import FSDPModule
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -576,8 +577,17 @@ class TransformerTrainModule(TrainModule):
                 # For HSDP we can delay the gradients all-reduce until the final micro-batch.
                 if self.dp_config.name == DataParallelType.hsdp:
                     self.model.set_requires_all_reduce(is_last_mb)
+            elif isinstance(self.model, ComposableDDP):
+                # Composable ``replicate()`` (the multimodal DDP path) swaps the module's
+                # class to its own ``DDP`` mixin -- NOT ``nn.parallel.DistributedDataParallel``
+                # -- so the wrapper branch below never matches it, and the mixin has no
+                # ``no_sync()``; its API is ``set_requires_gradient_sync``. The flag is read
+                # by replicate's forward-pre-hook, so setting it before each micro-batch's
+                # forward gates that micro-batch's backward. Without this, every micro-batch
+                # all-reduces the full trainable gradient set instead of only the last one.
+                self.model.set_requires_gradient_sync(is_last_mb)
             elif isinstance(self.model, DDP):
-                # For DDP, only sync gradients on the final micro-batch.
+                # For (wrapper-style) DDP, only sync gradients on the final micro-batch.
                 if not is_last_mb:
                     stack.enter_context(self.model.no_sync())
 
@@ -618,9 +628,7 @@ class TransformerTrainModule(TrainModule):
             if hasattr(self.model, "clip_grad_norm_"):
                 grad_norm = self.model.clip_grad_norm_(max_grad_norm)
             else:
-                grad_norm = torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_grad_norm
-                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
             if isinstance(grad_norm, DTensor):
                 grad_norm = grad_norm.full_tensor()
             return grad_norm
