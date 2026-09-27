@@ -1262,9 +1262,13 @@ class OLMoDDPTrainModule(TrainModule):
 
         if self.eval_only:
             self._load_model_state_dict_direct(
-                    metadata, dir, reader, process_group,
-                    load=load_pass, constant_memory_planning=constant_memory_planning,
-                )
+                metadata,
+                dir,
+                reader,
+                process_group,
+                load=load_pass,
+                constant_memory_planning=constant_memory_planning,
+            )
         else:
             optim = self._require_optimizer()
             sd_to_load = optim.state_dict()
@@ -1288,8 +1292,12 @@ class OLMoDDPTrainModule(TrainModule):
                     "Skipping optimizer state during checkpoint load; loading model weights directly"
                 )
                 self._load_model_state_dict_direct(
-                    metadata, dir, reader, process_group,
-                    load=load_pass, constant_memory_planning=constant_memory_planning,
+                    metadata,
+                    dir,
+                    reader,
+                    process_group,
+                    load=load_pass,
+                    constant_memory_planning=constant_memory_planning,
                 )
                 optim._copy_model_params_to_main_params()
                 optim._copy_main_params_to_mxfp8_weights()
@@ -1450,8 +1458,13 @@ class OLMoDDPTrainModule(TrainModule):
         if load is None:
             load = dist_cp.state_dict_loader.load
         load(
-            state, checkpoint_id=checkpoint_id, storage_reader=reader, process_group=process_group,
-            planner=contiguous_planner.ContiguousLoadPlanner() if constant_memory_planning else None,
+            state,
+            checkpoint_id=checkpoint_id,
+            storage_reader=reader,
+            process_group=process_group,
+            planner=contiguous_planner.ContiguousLoadPlanner()
+            if constant_memory_planning
+            else None,
         )
         finish_qk_expansion(state, expansions)
 
@@ -2408,12 +2421,12 @@ class OLMoDDPTrainModule(TrainModule):
             "labels": None if labels is None else self._debug_tensor_payload(labels),
             "loss": self._debug_tensor_payload(lm_output.loss),
             "ce_loss": self._debug_tensor_payload(lm_output.ce_loss),
-            "z_loss": (
-                None if lm_output.z_loss is None else self._debug_tensor_payload(lm_output.z_loss)
-            ),
-            "logits": (
-                None if lm_output.logits is None else self._debug_tensor_payload(lm_output.logits)
-            ),
+            "z_loss": None
+            if lm_output.z_loss is None
+            else self._debug_tensor_payload(lm_output.z_loss),
+            "logits": None
+            if lm_output.logits is None
+            else self._debug_tensor_payload(lm_output.logits),
         }
         torch.save(payload, self._debug_dump_path("logits", f"mb{micro_batch_idx:03d}"))
 

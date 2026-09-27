@@ -686,6 +686,7 @@ class MoERouterV2(nn.Module):
             # If we only need the scores, return them directly.
             return scores, None, None, None
 
+        UES_QUANT_SCORES = False
         replay_indices = getattr(self, "replay_expert_indices", None)
         if replay_indices is not None:
             if replay_indices.shape != (*scores.shape[:-1], self.top_k):
@@ -696,9 +697,6 @@ class MoERouterV2(nn.Module):
             else:
                 expert_weights = scores.gather(-1, expert_indices)
 
-        UES_QUANT_SCORES = False
-        if replay_indices is not None:
-            pass
         elif UES_QUANT_SCORES:
             # TODO: merge into get_top_k
             scores_sel = self._quantize_scores(scores)
