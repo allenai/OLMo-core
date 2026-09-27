@@ -86,7 +86,12 @@ def build_olmo3_moe_hf_config_from_native_config(
         raise NotImplementedError("Olmo3Moe export requires attention sequence mixers.")
     if router is None or routed_experts is None:
         raise NotImplementedError("Olmo3Moe blocks require routed experts and a router.")
-    if any(b.routed_experts_router.emo is not None for b in moe_blocks):
+    if any(b.routed_experts_router is None for b in moe_blocks):
+        raise NotImplementedError("Every Olmo3Moe block requires a router.")
+    if any(
+        b.routed_experts_router is not None and b.routed_experts_router.emo is not None
+        for b in moe_blocks
+    ):
         raise NotImplementedError("The MILES factory does not support EMo.")
     if representative.layer_norm is None:
         raise NotImplementedError("Olmo3Moe export requires RMS layer norms.")
@@ -482,7 +487,7 @@ def build_olmo3_moe_config_from_hf_config(
             rope=(
                 RoPEConfig(
                     name=RoPEType.default,
-                    theta=float(config.get("rope_theta", 10_000)),
+                    theta=config.get("rope_theta", 10_000),
                     full_precision=True,
                 )
                 if config.get("use_rope", True)

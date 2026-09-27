@@ -69,6 +69,7 @@ def test_cuda_forward_and_gradients_against_fp32_reference(bias, autocast):
     torch.testing.assert_close(x.grad.float(), xr.grad, atol=0.002, rtol=0.025)
     torch.testing.assert_close(layer.weight.grad.float(), wr.grad, atol=0.012, rtol=0.025)
     if bias:
+        assert layer.bias is not None and br is not None
         torch.testing.assert_close(layer.bias.grad.float(), br.grad, atol=0.003, rtol=0.01)
     original = layer.weight.detach().clone()
     torch.optim.SGD(layer.parameters(), lr=0.1).step()

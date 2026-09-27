@@ -1,6 +1,5 @@
 """Native save must restore released optimizer storage even if writing fails."""
 
-from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -14,7 +13,8 @@ def test_failed_save_restores_live_optimizer(tmp_path, monkeypatch, failure_phas
     states = {"parameter.main": torch.tensor([1.0])}
     optimizer = mock.Mock()
     optimizer.state_dict.return_value = states
-    module = SimpleNamespace(
+    module = mock.Mock(
+        spec=ddp_train_module.OLMoDDPTrainModule,
         _require_optimizer=lambda: optimizer,
         _persistent_model_buffer_state_dict=mock.Mock(return_value={}),
     )

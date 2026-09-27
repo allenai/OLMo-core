@@ -729,13 +729,13 @@ def _olmo3moe_dense_layer_indices(config: PretrainedConfig) -> set:
     return set(indices)
 
 
-def _require_exact_state_keys(state: Dict[str, Any], used: set[str], *, state_name: str) -> None:
+def _require_exact_state_keys(state: Mapping[str, Any], used: set[str], *, state_name: str) -> None:
     unexpected = sorted(set(state) - used)
     if unexpected:
         raise KeyError(f"Unexpected {state_name} keys: {unexpected}")
 
 
-def _take(state: Dict[str, Any], used: set[str], key: str) -> Any:
+def _take(state: Mapping[str, Any], used: set[str], key: str) -> Any:
     used.add(key)
     return state[key]
 
@@ -778,7 +778,7 @@ def _convert_kda_layer_from_hf(
 
 
 def _convert_kda_layer_to_hf(
-    olmo_state: Dict[str, Any],
+    olmo_state: Mapping[str, Any],
     used: set[str],
     prefix: str,
     olmo_prefix: str,

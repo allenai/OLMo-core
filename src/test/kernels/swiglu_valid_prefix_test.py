@@ -196,7 +196,7 @@ def test_row_specialization_config_and_cpu_fallback(mode):
     actual = swiglu_valid_prefix(x, torch.tensor(5), row_specialization=mode)
     torch.testing.assert_close(actual[:5], x[:5, :8] * F.silu(x[:5, 8:]))
     with pytest.raises(ValueError, match="row_specialization"):
-        swiglu_valid_prefix(x, torch.tensor(5), row_specialization="invalid")
+        swiglu_valid_prefix(x, torch.tensor(5), row_specialization="invalid")  # type: ignore[arg-type]
 
 
 @requires_gpu

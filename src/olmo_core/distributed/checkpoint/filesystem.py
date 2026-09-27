@@ -126,10 +126,10 @@ def _write_items(
     timings: Optional[Dict[str, float]] = None,
 ) -> List[WriteResult]:
     results: List[WriteResult] = []
-    timings = {} if timings is None else timings
+    recorded_timings = {} if timings is None else timings
 
     def record(name: str, start: float) -> None:
-        timings[name] = timings.get(name, 0.0) + time.perf_counter() - start
+        recorded_timings[name] = recorded_timings.get(name, 0.0) + time.perf_counter() - start
 
     tmp_file = tempfile.NamedTemporaryFile(
         mode="w+b", suffix=".distcp", dir=None if is_url(path) else Path(path).parent, delete=False
@@ -158,11 +158,13 @@ def _write_items(
                 start = time.perf_counter()
                 torch.save(data, tmp_file)
                 record("serialize_seconds", start)
-                timings["tensor_bytes"] = timings.get("tensor_bytes", 0.0) + data.nbytes
+                recorded_timings["tensor_bytes"] = (
+                    recorded_timings.get("tensor_bytes", 0.0) + data.nbytes
+                )
 
             length = tmp_file.tell() - offset
-            timings["written_bytes"] = timings.get("written_bytes", 0.0) + length
-            timings["items"] = timings.get("items", 0.0) + 1
+            recorded_timings["written_bytes"] = recorded_timings.get("written_bytes", 0.0) + length
+            recorded_timings["items"] = recorded_timings.get("items", 0.0) + 1
 
             if isinstance(data, torch.Tensor) and (length - data.nbytes) > 1024 * 1024:
                 raise OLMoCheckpointError(

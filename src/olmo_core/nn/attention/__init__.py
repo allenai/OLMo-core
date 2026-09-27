@@ -540,13 +540,6 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
         if kwargs.get("qkv_bias") is not None and self.name != AttentionType.default:
             raise OLMoConfigurationError("qkv_bias is only supported by default attention")
 
-        # These features currently live in the default attention constructor. Disabled
-        # flags must not break the other constructors when a config is serialized.
-        if self.name != AttentionType.default:
-            for key in ("scalable_softmax", "qk_norm_per_head_gains"):
-                if kwargs.pop(key, False):
-                    raise OLMoConfigurationError(f"'{key}' is only supported by default attention")
-
         # Attention sinks are only wired up for the default attention; drop the flag otherwise so
         # the other implementations don't see an unexpected keyword argument.
         if not kwargs.get("attention_sinks", False):
