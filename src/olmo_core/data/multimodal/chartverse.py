@@ -49,6 +49,7 @@ from .paths import require_experiment_data_dir
 from .sequence_builder import example_rng
 from .sft_common import (
     decode_pil_image,
+    extract_reasoning_scratchpad,
     extract_reasoning_text,
     get_example_with_skip,
     strip_image_placeholders,
@@ -60,9 +61,44 @@ __all__ = [
     "CHARTVERSE_DEFAULT_SUBSET",
     "ChartVerseDatasetConfig",
     "ChartVerseDataset",
+    "build_supervision_target",
 ]
 
 log = logging.getLogger(__name__)
+
+
+def build_supervision_target(
+    raw_cot: Optional[str],
+    answer: str,
+    *,
+    scratchpad: bool = False,
+    max_cot_chars: Optional[int] = None,
+) -> str:
+    """Turn a sidecar derivation into the supervised target for one row.
+
+    Pure so it can be unit-tested without a staged corpus. Raises :class:`ValueError` for
+    rows that must be *skipped* (empty derivation, over-length derivation) -- the caller's
+    :func:`get_example_with_skip` moves on to the next row rather than training a
+    degraded target.
+
+    :param raw_cot: The raw ``cot_solution`` (``<think>…</think>`` + answer block).
+    :param answer: The short graded answer from the staged subset.
+    :param scratchpad: ``True`` keeps the ``<think>`` envelope and appends ``answer``;
+        ``False`` strips the tags and ends the prose with ``Final answer:``.
+    :param max_cot_chars: Skip rows whose raw derivation is longer than this.
+    """
+    if not raw_cot:
+        raise ValueError("empty derivation")
+    if max_cot_chars is not None and len(raw_cot) > max_cot_chars:
+        raise ValueError(f"derivation is {len(raw_cot)} chars > max_cot_chars={max_cot_chars}")
+    if scratchpad:
+        target = extract_reasoning_scratchpad(raw_cot, final_answer=answer)
+    else:
+        target = extract_reasoning_text(raw_cot, final_answer=answer)
+    if not target:
+        raise ValueError("derivation has no usable reasoning body")
+    return target
+
 
 #: Mixture source name (single source; the subset is a config field).
 CHARTVERSE_DATASET_NAME = "chartverse"
@@ -114,6 +150,29 @@ class ChartVerseDatasetConfig(Config):
     cot_column: str = "cot_solution"
     """Sidecar column holding the derivation."""
 
+    cot_scratchpad: bool = False
+    """Keep the derivation inside ``<think>…</think>`` and follow it with the bare
+    ``answer``, instead of stripping the tags and supervising the derivation as prose
+    (mirrors :attr:`~olmo_core.data.multimodal.mmfinereason.MMFineReasonDatasetConfig.cot_scratchpad`).
+
+    The prose form (``supervise_cot`` alone) was measured to *transfer* -- chart-shaped
+    CharXiv questions trigger the derivation at inference -- but the derivation then IS the
+    graded string and the judge marks it down (-9.6 reasoning at s500). The scratchpad form
+    keeps the emission and hands the judge only the committed answer, given olmo-eval's
+    ``strip_reasoning_trace``. Implies :attr:`supervise_cot`.
+    """
+
+    max_cot_chars: Optional[int] = None
+    """Skip rows whose raw derivation exceeds this many characters (``None`` keeps all).
+
+    ChartVerse traces are long -- p50 ~11k chars, p90 ~24k on ``sft_600k-cot`` -- and a trace
+    the model cannot finish inside the eval's decode budget is graded as the empty string
+    once ``</think>`` never arrives. 9,000 chars (~2.5k tokens, keeps ~34% of rows) leaves
+    headroom under a 4,096-token budget. Rows are *skipped*, not downgraded to answer-only,
+    so the source's share of the stream stays scratchpad-shaped rather than diluting the
+    emission dose it exists to deliver.
+    """
+
     max_crops: int = 8
     max_sequence_length: int = 4096
     loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -129,6 +188,10 @@ class ChartVerseDatasetConfig(Config):
     """
 
     def __post_init__(self):
+        if self.cot_scratchpad:
+            # The scratchpad is a *form* of derivation supervision; asking for it without
+            # the sidecar would silently train answer-only (the mmfinereason trap).
+            self.supervise_cot = True
         if self.supervise_cot:
             self.skip_overlong = True
 
@@ -264,10 +327,15 @@ class ChartVerseDataset:
                 f"ChartVerse derivation sidecar is misaligned at row {i}: "
                 f"sidecar id {side_id!r} != subset id {row_id!r}"
             )
-        cot = extract_reasoning_text(side.get(cfg.cot_column), final_answer=answer)
-        if not cot:
-            raise ValueError(f"ChartVerse row {i} has an empty {cfg.cot_column}")
-        return cot
+        try:
+            return build_supervision_target(
+                side.get(cfg.cot_column),
+                answer,
+                scratchpad=cfg.cot_scratchpad,
+                max_cot_chars=cfg.max_cot_chars,
+            )
+        except ValueError as e:
+            raise ValueError(f"ChartVerse row {i}: {e}") from e
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
         return get_example_with_skip(self, index, len(self))

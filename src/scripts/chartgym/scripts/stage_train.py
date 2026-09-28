@@ -33,6 +33,13 @@ MAX_CHARS_PER_ROW = 6000       # ~1.5k tokens of text against a 16,384 budget
 MAX_TARGET_CHARS = 600
 
 
+def scratchpad_target(trace: str, answer: str) -> str:
+    """``<think>{trace}</think>{answer}`` -- the same envelope ``extract_reasoning_scratchpad``
+    produces for MMFineReason/ChartVerse, so all three scratchpad sources look identical to
+    the model and to the eval-side strip. ``<think>`` is a real Qwen3 special token."""
+    return f"<think>{trace.strip()}</think>{answer}"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw", required=True, type=Path)
@@ -46,6 +53,13 @@ def main() -> int:
                          "chunk threshold. FineVisionDatasetConfig.dataset_path accepts a "
                          "parquet directory, and sft_common.decode_pil_image handles the "
                          "{bytes, path} struct, so nothing downstream changes.")
+    ap.add_argument("--scratchpad", action="store_true",
+                    help="Emit procedure traces as a delimited scratchpad, "
+                         "'<think>{trace}</think>{answer}', instead of bare prose. Rows whose "
+                         "target IS the answer (read-off families) are unchanged, so the "
+                         "trace-vs-terse selectivity the corpus is built on is preserved. "
+                         "Pairs with olmo-eval's strip_reasoning_trace; the graded string is "
+                         "then the bare answer, as it is for every other ChartGym target.")
     args = ap.parse_args()
 
     shards = sorted(args.raw.glob("shard-*")) or [args.raw]
@@ -66,6 +80,8 @@ def main() -> int:
             if len(target) > MAX_TARGET_CHARS:
                 dropped["target_too_long"] += 1
                 continue
+            if args.scratchpad and target != q["answer"]:
+                target = scratchpad_target(target, q["answer"])
             img = shard / "figures" / f"{q['figure_id']}.png"
             if not img.exists():
                 dropped["missing_image"] += 1

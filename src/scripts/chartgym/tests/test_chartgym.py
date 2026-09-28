@@ -375,3 +375,27 @@ def test_probe_na_rates_match_measured_gold():
         assert abs(got - gold) < 0.06, (
             f"t{tid} NA rate {got:.3f} is far from the measured gold {gold:.3f}"
         )
+
+
+# ---------------------------------------------------------------- scratchpad staging
+
+def test_scratchpad_staging_wraps_only_traced_targets():
+    """`stage_train.py --scratchpad` must wrap exactly the trace-bearing targets in the
+    `<think>…</think>{answer}` envelope and leave read-off targets untouched, so the
+    trace/terse selectivity above survives the change of form."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from stage_train import scratchpad_target  # noqa: E402
+
+    n_wrapped = 0
+    for spec, audit in _figures(n=10):
+        for q in emit_all(spec, audit, np.random.default_rng(11), include_held_out=False):
+            target = q.get("target") or q["answer"]
+            if target == q["answer"]:
+                continue  # read-off: the stager never touches these
+            wrapped = scratchpad_target(target, q["answer"])
+            n_wrapped += 1
+            assert wrapped.startswith("<think>") and wrapped.count("</think>") == 1
+            head, tail = wrapped.split("</think>", 1)
+            assert tail == q["answer"], "graded string after the strip must be the bare answer"
+            assert head[len("<think>"):] == target.strip()
+    assert n_wrapped > 0

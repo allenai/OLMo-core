@@ -365,6 +365,12 @@ class ExperimentConfig(Config):
     GPU-hours: compare against an answer-only arm at matched rows consumed, not steps."""
     chartverse_cot_sidecar: Optional[str] = None
     """Explicit derivation-sidecar directory (defaults to ``<subset path>-cot``)."""
+    chartverse_cot_scratchpad: bool = False
+    """Supervise ChartVerse derivations as ``<think>…</think>{answer}`` (implies
+    ``chartverse_supervise_cot``). Needs olmo-eval's ``strip_reasoning_trace``."""
+    chartverse_max_cot_chars: Optional[int] = None
+    """Skip ChartVerse rows whose raw derivation exceeds this many characters. 9000 keeps
+    ~34% of ``sft_600k-cot`` and fits a 4,096-token decode budget."""
     chartgym_rate: float = 0.0
     """Mixture fraction for ChartGym, the synthetic chart-capability corpus (0 disables).
 
@@ -955,6 +961,8 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 max_sequence_length=SEQUENCE_LENGTH,
                 supervise_cot=config.chartverse_supervise_cot,
                 cot_sidecar=config.chartverse_cot_sidecar,
+                cot_scratchpad=config.chartverse_cot_scratchpad,
+                max_cot_chars=config.chartverse_max_cot_chars,
             ).build(tokenizer)
         )
         weights.append(cv_rate)
