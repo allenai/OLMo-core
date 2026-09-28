@@ -124,12 +124,16 @@ def flatten_gold(example: Dict) -> List[int]:
     :param example: A unified-format example. Single-query gold is stored either flat (``[0, 1]``)
         or wrapped in one list (``[[0, 1]]``), depending on the generator.
 
-    :returns: The flat 0-based indices.
+    :returns: The flat 0-based indices. Each element is coerced with ``int(...)`` -- ``example`` is
+        an unparameterised ``Dict``, so a type checker cannot otherwise tell this returns
+        ``List[int]`` rather than ``List[object]``; coercing is also a real robustness improvement,
+        since a gold id arriving as a string (e.g. from a JSON round-trip) would otherwise compare
+        unequal to the ``int`` ids used everywhere downstream and silently break scoring.
     """
     gold = example["gold_doc_indices"]
     if gold and isinstance(gold[0], list):
-        return list(gold[0])
-    return list(gold)
+        return [int(g) for g in gold[0]]
+    return [int(g) for g in gold]
 
 
 def score_ids(parsed, example: Dict) -> Dict[str, float]:

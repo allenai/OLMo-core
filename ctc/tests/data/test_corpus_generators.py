@@ -585,6 +585,22 @@ def test_shrinking_a_multi_gold_example_keeps_its_gold_flat_and_scorable():
     assert len(flatten_gold(shorter)) == 2
 
 
+def test_flatten_gold_coerces_ids_to_int():
+    """
+    Both branches now coerce with ``int(...)``, which is both a type-checker fix (``example: Dict``
+    is unparameterised, so ``list(gold[0])``/``list(gold)`` read as ``List[object]``) and a real
+    robustness improvement: a gold id that arrives as a string (e.g. after a JSON round-trip) would
+    otherwise compare unequal to the ``int`` ids used everywhere downstream -- ``{g + 1 for g in
+    flatten_gold(example)}`` in :func:`ctc.tasks._retrieval.score_ids` would raise on ``"3" + 1``
+    rather than silently mis-scoring, but a stray string id is exactly the kind of thing that should
+    be normalized away before it gets that far.
+    """
+    from ctc.tasks._retrieval import flatten_gold
+
+    assert flatten_gold({"gold_doc_indices": ["3", "5"]}) == [3, 5]
+    assert flatten_gold({"gold_doc_indices": [["3", "5"]]}) == [3, 5]
+
+
 def test_hotpotqa_selects_the_multi_gold_instruction_and_names_both_ids():
     """
     The only in-distribution ladder that exercises the multi-gold path at all. The wording switches
