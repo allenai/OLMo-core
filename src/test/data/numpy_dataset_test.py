@@ -1227,7 +1227,7 @@ def test_numpy_packed_fsl_dataset_metadata_hash_registers_cached_path_clients(
 ):
     # Hashing `weka://` sidecars happens in the parent process, before `run_worker_func()` would
     # register the custom cached-path clients.
-    registered = []
+    registered: List[bool] = []
     sidecar = tmp_path / "shard.csv.gz"
     sidecar.write_bytes(gzip.compress(b"0,4\n", mtime=0))
 
