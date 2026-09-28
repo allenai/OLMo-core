@@ -23,6 +23,7 @@ Ported from ``corpus_reasoning/lib/metrics.py``.
 
 from __future__ import annotations
 
+import importlib
 import re
 import string
 from collections import Counter
@@ -379,13 +380,19 @@ def clustering_extras(pred_labels: Sequence[int], gold_labels: Sequence[int]) ->
     :returns: ``{"ari": ..., "nmi": ...}``, or an empty dict when scikit-learn is absent. Empty
         rather than zeros -- a missing metric must not be recorded as a score of zero.
     """
+    # Imported by name rather than with an `import` statement. The two are equivalent at runtime,
+    # but a static checker reads `from sklearn.metrics import ...` as a dependency this package
+    # declares and reports an unresolved module wherever scikit-learn is not installed -- which is
+    # every install that does not opt into the extra, including the downstream harness that vendors
+    # this file and type-checks it. Since the whole point of this function is that the dependency
+    # is optional, the import must be invisible to the dependency graph, not merely guarded.
     try:
-        from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score
+        skl = importlib.import_module("sklearn.metrics")
     except ImportError:
         return {}
     return {
-        "ari": float(adjusted_rand_score(gold_labels, pred_labels)),
-        "nmi": float(normalized_mutual_info_score(gold_labels, pred_labels)),
+        "ari": float(skl.adjusted_rand_score(gold_labels, pred_labels)),
+        "nmi": float(skl.normalized_mutual_info_score(gold_labels, pred_labels)),
     }
 
 
@@ -399,13 +406,16 @@ def ordering_extras(pred: Sequence[int], gold: Sequence[int]) -> Dict[str, float
     :returns: ``{"spearman_rho": ...}``, or an empty dict when scipy is absent -- never a zero,
         which would read as a real measurement.
     """
+    # Imported by name, for the same reason as :func:`clustering_extras` above: an optional
+    # dependency must not appear in the static import graph, or every install without scipy has an
+    # unresolved module reported against it.
     try:
-        from scipy.stats import spearmanr
+        stats = importlib.import_module("scipy.stats")
     except ImportError:
         return {}
     if len(pred) < 2:
         return {}
-    return {"spearman_rho": float(spearmanr(pred, gold).correlation)}
+    return {"spearman_rho": float(stats.spearmanr(pred, gold).correlation)}
 
 
 def aggregate(results: List[Dict], keys: Iterable[str]) -> Dict[str, float]:
