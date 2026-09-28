@@ -516,10 +516,14 @@ class FingerprintSet:
         candidates = self.for_task(eval_fp.task)
         if not candidates:
             raise TaskNotTrainedError(eval_fp.task, self.tasks)
-        attempts = [eval_fp.compare(c) for c in candidates]
+        attempts: List[List[Mismatch]] = [eval_fp.compare(c) for c in candidates]
         if any(not a for a in attempts):
             return
-        raise FormatMismatchError(min(attempts, key=len))
+        # key=lambda a: len(a), not the bare `len` builtin: `min`'s overload resolution binds the
+        # element type through `key`, and `len`'s parameter type is the unhelpful `Sized` rather
+        # than `List[Mismatch]` -- the lambda keeps the element type (and so `min`'s return type)
+        # statically `List[Mismatch]` instead of degrading to `Sized`. Same runtime behaviour.
+        raise FormatMismatchError(min(attempts, key=lambda a: len(a)))
 
     # ── i/o ─────────────────────────────────────────────────────────────────────────────────────
 
