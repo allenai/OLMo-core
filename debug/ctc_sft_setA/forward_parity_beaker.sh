@@ -17,7 +17,7 @@ export PATH=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:$HOME/.l
 
 CMD="set -euo pipefail
 python $P dump --ckpt $CKPT --out /tmp/train.pt
-pip install -q --no-deps --force-reinstall 'ai2-olmo-core @ git+$GIT@$EVAL_REF'
+pip install --no-deps --force-reinstall 'ai2-olmo-core @ git+$GIT@$EVAL_REF'
 python $P dump --ckpt $CKPT --out /tmp/eval.pt
 python $P compare /tmp/train.pt /tmp/eval.pt"
 

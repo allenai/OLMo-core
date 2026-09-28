@@ -61,24 +61,42 @@ def _drop_unknown_null_fields(node) -> list:
 
 
 def load_sequences(tasks, per_task, max_len):
-    """The first ``per_task`` EOS-terminated training sequences of each task that fit ``max_len``."""
+    """``per_task`` EOS-terminated training sequences of each task, spread over lengths up to
+    ``max_len``: the longest that fit in each of ``per_task`` equal-width length bands, scanning the
+    first shard part (so both the short and the long-context path are exercised)."""
     out = []
     for task in tasks:
         tok_path = sorted(glob.glob(f"{SHARDS}/{task}/token_ids_part_*.npy"))[0]
         mask_path = tok_path.replace("token_ids_part_", "labels_mask_part_")
         toks = np.memmap(tok_path, dtype=np.uint32, mode="r")
         mask = np.memmap(mask_path, dtype=np.bool_, mode="r")
-        start, got = 0, 0
-        for end in np.flatnonzero(toks[: 64 * max_len] == EOS):
-            seq, m = toks[start : end + 1], mask[start : end + 1]
+        bands = np.linspace(0, max_len, per_task + 1)
+        best = [None] * per_task  # (length, start, end) per band
+        start = 0
+        for end in np.flatnonzero(toks == EOS):
+            n = end + 1 - start
+            if n <= max_len and mask[start : end + 1].any():
+                b = min(int(np.searchsorted(bands, n, side="left")) - 1, per_task - 1)
+                if best[b] is None or n > best[b][0]:
+                    best[b] = (n, start, end + 1)
             start = end + 1
-            if len(seq) <= max_len and m.any():
-                out.append({"task": task, "ids": np.asarray(seq, dtype=np.int64),
-                            "mask": np.asarray(m)})
-                got += 1
-                if got == per_task:
-                    break
+        for pick in best:
+            if pick is not None:
+                _, s, e = pick
+                out.append({"task": task, "ids": np.asarray(toks[s:e], dtype=np.int64),
+                            "mask": np.asarray(mask[s:e])})
     return out
+
+
+def _which_olmo_core() -> str:
+    """Tell the two branches apart by a module only one of them has."""
+    import importlib.util
+
+    if importlib.util.find_spec("olmo_core.nn.attention.fla_autotune"):
+        return "eval-branch code (has nn.attention.fla_autotune)"
+    if importlib.util.find_spec("olmo_core.nn.attention.summary_token"):
+        return "training-branch code (has nn.attention.summary_token)"
+    return "unknown olmo_core"
 
 
 def dump(args) -> None:
@@ -92,7 +110,8 @@ def dump(args) -> None:
     with open(os.path.join(args.ckpt, "config.json")) as f:
         model_cfg = json.load(f)["model"]
     dropped = _drop_unknown_null_fields(model_cfg)
-    print(f"olmo_core from {os.path.dirname(olmo_core.__file__)}; dropped null fields: {dropped}")
+    print(f"olmo_core from {os.path.dirname(olmo_core.__file__)} = {_which_olmo_core()}; "
+          f"dropped null fields: {dropped}")
     gm = TransformerGenerationModule.from_checkpoint(
         checkpoint_dir=args.ckpt,
         transformer_config=TransformerConfig.from_dict(model_cfg),
@@ -143,8 +162,8 @@ def main() -> None:
     d.add_argument("--out", required=True)
     d.add_argument("--tasks", nargs="+",
                    default=["outlier", "contradiction", "nq", "oolong", "grouping", "strmatch"])
-    d.add_argument("--per-task", type=int, default=2)
-    d.add_argument("--max-len", type=int, default=16384)
+    d.add_argument("--per-task", type=int, default=3)
+    d.add_argument("--max-len", type=int, default=32768)
     c = sub.add_parser("compare")
     c.add_argument("a")
     c.add_argument("b")
