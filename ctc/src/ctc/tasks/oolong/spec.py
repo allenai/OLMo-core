@@ -31,12 +31,26 @@ from __future__ import annotations
 import re
 from typing import Dict, Optional
 
+from ...eval.stopping import OOLONG_ANSWER_MARKERS
 from ...format import assemble
 from ...format.prompts import OOLONG_INSTRUCTION
 from ...format.registry import TaskSpec
 from .._retrieval import questions_block
 
 __all__ = ["SPEC", "build_query", "build_target", "parse", "score", "normalize"]
+
+# A comma inside a number is a thousands separator ("1,234") only when it groups digits three at a
+# time with no space -- that shape is tried FIRST so "1,234" parses as the whole number 1234 rather
+# than the truncated 234 a plain digit-run regex would leave after the comma. The plain-number
+# alternative is tried second, for everything else ("1234", "-5", "3.5").
+#
+# Deliberately NOT merging separate numbers: a comma-separated list ("3, 5, 7") is spaced and each
+# piece is fewer than the three digits the grouped form requires, so it never matches the grouped
+# alternative and each number is matched on its own. That is the right trade-off here, because a
+# NUMERIC oolong answer is a single number and the LAST match wins (see :func:`score`) -- merging
+# "3, 5, 7" into one number would be actively wrong, while reconstructing a single big number that
+# grouping commas split is exactly what is needed.
+_NUMERIC_RE = re.compile(r"-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+\.?\d*")
 
 
 def normalize(s: str) -> str:
@@ -87,18 +101,31 @@ def build_target(example: Dict) -> str:
 
 def parse(text: str, n_docs: Optional[int] = None) -> Optional[str]:
     """
+    Strip the templated answer marker, keeping what the model actually answered.
+
+    The marker is whichever of :data:`~ctc.eval.stopping.OOLONG_ANSWER_MARKERS` the question
+    templated -- oolong questions say "Give your final answer in the form 'Label: answer'" as often
+    as "'Answer: number'", and a model that complies with the first emits ``Label: True``. Matching
+    only ``answer:`` left that prefix on, so ``normalize`` compared "label: true" against "true"
+    and scored a correct answer 0. The **last** marker wins, so a model that reasons aloud and
+    revises itself is graded on its final answer rather than its first.
+
     :param text: Raw model generation.
     :param n_docs: Unused.
 
-    :returns: The text after the templated ``answer:`` marker when present, else the whole
-        generation; ``None`` when empty.
+    :returns: The text after the templated marker when present, else the whole generation;
+        ``None`` when empty.
     """
     if not text.strip():
         return None
     lowered = text.lower()
-    if "answer:" in lowered:
-        at = lowered.rindex("answer:") + len("answer:")
-        return text[at:].strip()
+    ends = [
+        lowered.rindex(marker) + len(marker)
+        for marker in OOLONG_ANSWER_MARKERS
+        if marker in lowered
+    ]
+    if ends:
+        return text[max(ends) :].strip()
     return text.strip()
 
 
@@ -125,9 +152,9 @@ def score(parsed: Optional[str], gold, answer_type: str = "") -> Dict[str, float
         return {"score": 0.0, "exact_match": 0.0, "parsed": 0.0}
 
     if "NUMERIC" in (answer_type or ""):
-        nums = re.findall(r"-?\d+\.?\d*", parsed)
+        nums = _NUMERIC_RE.findall(parsed)
         try:
-            err = abs(float(gold_list[0]) - float(nums[-1]))
+            err = abs(float(gold_list[0]) - float(nums[-1].replace(",", "")))
             # Geometric decay, not a threshold: off-by-one must score better than off-by-ten, and
             # a hard exact-match would report both as total failure.
             return {"score": 0.75**err, "exact_match": float(err == 0), "parsed": 1.0}
