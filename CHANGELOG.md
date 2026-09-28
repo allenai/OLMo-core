@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/OLMo-core/pull/843).
+- Register the cached-path clients (e.g. `weka://`) before hashing metadata sidecars in the parent process, so preparing a metadata-backed packed dataset no longer fails when `prepare_cli_environment()` was not called first.
 - Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
 - Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
 - Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.

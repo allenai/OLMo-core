@@ -1220,3 +1220,33 @@ def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Pa
     # before the fix, which sized the file from the first occurrence's smaller allocation).
     assert len(ds) == small_tokens // seq_len + large_tokens // seq_len
     assert len(ds[len(ds) - 1]["input_ids"]) == seq_len
+
+
+def test_numpy_packed_fsl_dataset_metadata_hash_registers_cached_path_clients(
+    tmp_path, monkeypatch
+):
+    # Hashing `weka://` sidecars happens in the parent process, before `run_worker_func()` would
+    # register the custom cached-path clients.
+    registered = []
+    sidecar = tmp_path / "shard.csv.gz"
+    sidecar.write_bytes(gzip.compress(b"0,4\n", mtime=0))
+
+    def resource_path(folder, fname):
+        assert registered, "cached-path clients must be registered before resolving the sidecar"
+        return sidecar
+
+    monkeypatch.setattr(numpy_dataset, "add_cached_path_clients", lambda: registered.append(True))
+    monkeypatch.setattr(numpy_dataset, "resource_path", resource_path)
+    monkeypatch.setattr(numpy_dataset, "get_file_size", lambda path: 8)
+
+    ds = NumpyPackedFSLDataset(
+        "weka://bucket/shard.npy",
+        sequence_length=4,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        use_array_if_local=False,
+    )
+    ds.work_dir = tmp_path / "work"
+    assert len(ds._metadata_hashes) == 1
+    assert registered
