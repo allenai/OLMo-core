@@ -171,6 +171,39 @@ ACADEMIC_MIXTURE_DATASETS: Tuple[str, ...] = tuple(
     src.name for src in IMAGE_ONLY_V9_SUBMIXTURES[1].datasets
 )
 
+# The chart/document/diagram family inside `image_academic`. Pulled out so it can be
+# *removed* as a block: `single-image-only-v9-no-chartdoc` is the negative half of a
+# contrast pair used to check whether a cheaper training regime (e.g. LoRA) still ranks
+# two mixtures the same way a full finetune does. Dropping these must cost chart_qa /
+# doc_qa / info_qa / ai2d several points under any regime worth using, which is what makes
+# the sign of the contrast a usable ground truth rather than a coin flip.
+CHART_DOC_MIXTURE_DATASETS: Tuple[str, ...] = (
+    "chart_qa_weighted",
+    "doc_qa",
+    "info_qa",
+    "ai2_diagram_v2_mix_transparent",
+    "st_qa",
+    "tabwmp_da",
+    "dv_qa",
+    "figure_qa",
+    "plot_qa",
+    "cosyn_chart_exp",
+    "cosyn_document",
+    "cosyn_table_exp",
+)
+
+SINGLE_IMAGE_ONLY_V9_DATASETS: Tuple[str, ...] = tuple(
+    src.name for group in SINGLE_IMAGE_ONLY_V9_SUBMIXTURES for src in group.datasets
+)
+
+# Spelled out as an explicit allowlist rather than relying on a tier-name convention:
+# `Molmo2-Stage2._build_mixture` picks the single-image builder from a hardcoded tuple of
+# names, so any *other* tier name routes to the full v9 builder. Without the allowlist this
+# tier would quietly pull multi-image sources back in and take the 125-crop pack profile.
+SINGLE_IMAGE_ONLY_V9_NO_CHARTDOC_DATASETS: Tuple[str, ...] = tuple(
+    name for name in SINGLE_IMAGE_ONLY_V9_DATASETS if name not in CHART_DOC_MIXTURE_DATASETS
+)
+
 # Gradual validation ladder for stage-2 training (expand until image-only-v9 is green).
 VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "debug": DEBUG_MIXTURE_DATASETS,
@@ -182,6 +215,7 @@ VALIDATION_MIXTURES: Dict[str, Optional[Tuple[str, ...]]] = {
     "multi-image": MULTI_IMAGE_MIXTURE_DATASETS,
     "image-only-v9": None,
     "single-image-only-v9": None,
+    "single-image-only-v9-no-chartdoc": SINGLE_IMAGE_ONLY_V9_NO_CHARTDOC_DATASETS,
     # Pointing bisect (one source each).
     "pixmo_multi_points": ("pixmo_multi_points",),
     "pixmo_points_train": ("pixmo_points_train",),

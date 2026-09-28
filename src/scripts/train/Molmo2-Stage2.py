@@ -65,12 +65,18 @@ from olmo_core.data.multimodal.mixtures.tiers import (
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
+from olmo_core.internal.cli_overrides import (
+    read_bool_override,
+    read_float_override,
+    read_int_override,
+)
 from olmo_core.internal.common import (
     build_launch_config,
     get_beaker_username,
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.nn.lora import LLM_LORA_TARGET_MODULES, LoRAConfig
 from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
 from olmo_core.optim import (
@@ -81,6 +87,7 @@ from olmo_core.optim import (
 )
 from olmo_core.train import (
     Duration,
+    LoadStrategy,
     TrainerConfig,
     prepare_cli_environment,
     prepare_training_environment,
@@ -169,6 +176,27 @@ LLM_LR = 1e-5
 COMPONENT_WARMUP = 200
 ALPHA_F = 0.1
 
+# LoRA (off by default -- the shipped recipe is a full finetune).
+#
+# Purpose is cheap dataset/mixture ablations: freezing the LLM and the ViT and training
+# only low-rank adapters on the LLM's attention/MLP projections removes the weight-gradient
+# GEMMs, the fp32 gradient reduce-scatter, the optimizer state for ~4B parameters, and the
+# whole vision-encoder backward. The forward pass is unchanged, so this is not a free
+# speedup -- see the LoRA section of PROJECT_CONTEXT_olmo-core.md for the measured number.
+#
+# The connector stays FULL-RANK and trainable: it is the only path image features take into
+# the language model, and constraining it to low rank is the likeliest way to break a
+# vision-heavy ablation.
+USE_LORA = False
+LORA_RANK = 64
+LORA_ALPHA = 128.0
+LORA_DROPOUT = 0.0
+# NOT `LLM_LR`. 1e-5 is a full-finetune learning rate; LoRA's effective update is scaled by
+# `alpha/rank` over a randomly-initialised projection and conventionally wants 10-50x more.
+# Running LoRA at 1e-5 underfits badly and turns any LoRA-vs-full-FT comparison into a
+# strawman. Tuned by the phase-2 LR probe.
+LORA_LR = 2e-4
+
 MAX_STEPS = 300_000
 
 # Extra image-SFT sources beyond mm_olmo's image-only-v9 mixture, OFF by default.
@@ -203,13 +231,23 @@ FINEVISION_RATES: dict = {
 FINEVISION_MIN_VISUAL_DEPENDENCY: Optional[int] = None
 
 # Default init: latest step under this OLMo-core stage-1 run (model weights only).
-# HARDCODED personal checkpoint (donovanc's stage-1 run on weka). Point this at your own
-# stage-1 run via --trainer.load_path=/path/to/run, or --trainer.load_path=null to
-# initialise from the released HF Molmo2-4B weights instead.
+# Point this at your own stage-1 run via --trainer.load_path=/path/to/run, or
+# --trainer.load_path=null to initialise from the released HF Molmo2-4B weights instead.
+#
+# This used to be a personal path under `donovanc/molmofication/checkpoints/` that has
+# since been deleted. Because the trainer's stock `load_strategy` is `if_available`, the
+# missing directory did not raise -- it logged one warning and trained stage 2 from the
+# uninitialized weights `to_empty()` leaves behind, at a flat CE of 11.93 (= ln(vocab)).
+# The run completes, saves checkpoints, and evaluates as a very bad model rather than as
+# a misconfiguration. `LOAD_STRATEGY` below makes that a hard error.
 DEFAULT_LOAD_PATH = (
-    "/weka/oe-training-default/donovanc/molmofication/checkpoints/"
-    "molmo2-pretraining-olmo-core/8-gpu-holmes/8-gpu-holmes-olmo-core-stable"
+    "/weka/oe-training-default/ai2-llm/checkpoints/jasonr/molmo2-stage1-4b-full-20260814"
 )
+
+# Stage 2 is by definition a finetune of stage 1, so "no checkpoint anywhere, train from
+# scratch" is never the intent here. `always` still permits a preemption resume: the
+# trainer tries the save folder first and only raises when *neither* source has one.
+LOAD_STRATEGY = LoadStrategy.always
 
 # Phase-p0 ship-stack env vars, validated in the 8/16-GPU A/B sweeps (see
 # launch_scripts/donovan/beaker/sft/, gitignored on this branch). Applied only to
@@ -340,6 +378,18 @@ class ExperimentConfig(Config):
     """ChartGym corpus directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartgym/``."""
     chartgym_max_rows: Optional[int] = None
     """Optional row cap, for exposure-matched ablations against a smaller corpus."""
+    use_lora: bool = USE_LORA
+    """Train LoRA adapters on the LLM instead of finetuning it, with the ViT frozen and the
+    connector left full-rank. Resolved *pre-merge* in :func:`build_config` because it
+    reshapes ``freeze_params``, the optimizer group overrides and the per-group scheduler,
+    all of which are built before ``Config.merge`` runs."""
+
+    lora_rank: int = LORA_RANK
+    lora_alpha: float = LORA_ALPHA
+    lora_dropout: float = LORA_DROPOUT
+    lora_lr: float = LORA_LR
+    """Learning rate for the adapters. See :data:`LORA_LR` -- do not reuse ``LLM_LR``."""
+
     ignore_shuffle_algo_version_mismatch: bool = False
     """Resume a checkpoint whose mixture shuffle algorithm predates
     ``MixtureDataLoader.SHUFFLE_ALGO_VERSION``. Off by default: such a resume regenerates a
@@ -508,6 +558,61 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
 
     model_config = _build_model_config()
 
+    # Resolved pre-merge: these shape `freeze_params`, the optimizer group overrides and
+    # the per-group scheduler table, all of which are constructed below -- before
+    # `.merge(overrides)` gets a chance to apply the flag. `_check_lora_overrides_applied`
+    # re-validates after the merge that the two agree.
+    use_lora = read_bool_override(overrides, "use_lora", USE_LORA)
+    lora_rank = read_int_override(overrides, "lora_rank", LORA_RANK)
+    lora_alpha = read_float_override(overrides, "lora_alpha", LORA_ALPHA)
+    lora_dropout = read_float_override(overrides, "lora_dropout", LORA_DROPOUT)
+    lora_lr = read_float_override(overrides, "lora_lr", LORA_LR)
+
+    # Full finetune: three component groups at three LRs (mm_olmo SFT).
+    # LoRA: the LLM and the ViT are frozen, so their globs must be dropped -- a group
+    # override matching only frozen params is demoted to a warning by
+    # `OptimConfig.build_groups`, but leaving dead globs in the config is how Stage 1's
+    # `train_vit=False` path silently broke before. The connector keeps its own group.
+    if use_lora:
+        optim_group_overrides = [
+            OptimGroupOverride(
+                params=["vision_backbone.connector.*"],
+                opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+            ),
+            OptimGroupOverride(
+                params=["lm.*.lora_A", "lm.*.lora_B"],
+                opts=dict(lr=lora_lr, weight_decay=0.0, scheduler_name="lora"),
+            ),
+        ]
+        component_schedulers = {
+            "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+            "lora": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+        }
+        freeze_params = ["lm.*", "vision_backbone.vision.*"]
+        lora_config: Optional[LoRAConfig] = LoRAConfig(
+            rank=lora_rank,
+            alpha=lora_alpha,
+            dropout=lora_dropout,
+            target_modules=list(LLM_LORA_TARGET_MODULES),
+        )
+    else:
+        optim_group_overrides = [
+            OptimGroupOverride(
+                params=["vision_backbone.connector.*"],
+                opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
+            ),
+            OptimGroupOverride(
+                params=["vision_backbone.vision.*"],
+                opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
+            ),
+        ]
+        component_schedulers = {
+            "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+            "vision": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
+        }
+        freeze_params = []
+        lora_config = None
+
     collator_config = MultimodalCollatorConfig(
         pad_token_id=151643,
         label_ignore_index=-100,
@@ -522,26 +627,16 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             betas=(0.9, 0.95),
             eps=1e-6,
             weight_decay=0.0,
-            group_overrides=[
-                OptimGroupOverride(
-                    params=["vision_backbone.connector.*"],
-                    opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
-                ),
-                OptimGroupOverride(
-                    params=["vision_backbone.vision.*"],
-                    opts=dict(lr=VISION_LR, weight_decay=0.0, scheduler_name="vision"),
-                ),
-            ],
+            group_overrides=optim_group_overrides,
         ),
+        freeze_params=freeze_params or None,
+        lora=lora_config,
         z_loss_multiplier=1e-4,
         max_grad_norm=1.0,
         compile_model=COMPILE_MODEL,
         autocast_precision=DType.bfloat16,
         scheduler=PerGroupScheduler(
-            schedulers={
-                "connector": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
-                "vision": CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
-            },
+            schedulers=component_schedulers,
             default=CosWithWarmup(warmup=COMPONENT_WARMUP, alpha_f=ALPHA_F),
         ),
         dp_config=TransformerDataParallelConfig(
@@ -561,6 +656,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             save_folder=f"{root_dir}/checkpoints/{beaker_user.lower()}/{run_name}",
             save_overwrite=True,
             load_path=DEFAULT_LOAD_PATH,
+            load_strategy=LOAD_STRATEGY,
             load_trainer_state=False,
             load_optim_state=False,
             metrics_collect_interval=5,
@@ -651,7 +747,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 BeakerEnvVar(name=_var, value=_value)
             ]
 
-    return _apply_mixture_pack_profile(
+    config = _apply_mixture_pack_profile(
         ExperimentConfig(
             model=model_config,
             collator=collator_config,
@@ -661,6 +757,78 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
         ).merge(overrides),
         overrides,
     )
+    _check_lora_overrides_applied(config, (use_lora, lora_rank, lora_alpha, lora_dropout, lora_lr))
+    _check_dp_config(config)
+    return config
+
+
+def _check_dp_config(config: ExperimentConfig) -> None:
+    """Validate `--train_module.dp_config.name=ddp` (replicate instead of shard).
+
+    Two rules, both about failures that would otherwise be silent or late:
+
+    - **DDP is a LoRA-only option on this model.** A full finetune under DDP needs the
+      full fp32 replica (17.8 GiB) + fp32 grads (17.8) + AdamW state (35.7) per GPU
+      before activations (~180 GiB at this config; the no-chartdoc full-FT arm peaked at
+      226.3 GiB *under FSDP*). That OOM would land after the job has queued for a node.
+      Under LoRA the same sum is 18.7 GiB and measured FSDP-LoRA headroom is ~75 GiB.
+    - **The saved config must not lie.** The multimodal DDP branch ignores
+      `dp_config.param_dtype` (the model stays fp32; bf16 compute comes from autocast,
+      which mirrors FSDP's fp32-master/bf16-compute numerics). This script's default sets
+      `param_dtype=bf16` for FSDP, so flipping only `name=ddp` would record a bf16 cast
+      that never happened. Null it so `config.json` reflects the run. `reduce_dtype=fp32`
+      stays: DDP all-reduces in the param dtype, which *is* fp32, so it is accurate.
+    """
+    dp = config.train_module.dp_config
+    if dp is None or dp.name != DataParallelType.ddp:
+        return
+    if not config.use_lora:
+        raise OLMoConfigurationError(
+            "dp_config.name=ddp requires --use_lora=true: a full finetune replicates "
+            "71 GiB of fp32 weights+grads+optimizer state per GPU before activations "
+            "(~180 GiB at this config) and will OOM on 267.7 GiB B300s -- after the job "
+            "has already queued for a node. Shard (fsdp) for full finetunes."
+        )
+    if dp.param_dtype is not None:
+        log.info(
+            "dp_config.param_dtype=%s is ignored by the multimodal DDP path (params stay "
+            "fp32; bf16 compute comes from autocast) -- nulling it so the saved config "
+            "records what actually runs.",
+            dp.param_dtype,
+        )
+        dp.param_dtype = None
+
+
+def _check_lora_overrides_applied(config: ExperimentConfig, resolved: tuple) -> None:
+    """Fail if the merged config disagrees with what the pre-merge read built.
+
+    The LoRA flags are read out of the raw overrides *before* ``merge``, because they
+    reshape the optimizer groups, the scheduler table and ``freeze_params``. If the merge
+    then produced different values — a spelling the pre-merge reader missed, say — the
+    top-level fields would advertise one recipe while the optimizer was built from
+    another, and nothing would report it. Cheap to check, expensive to debug.
+    """
+    merged = (
+        config.use_lora,
+        config.lora_rank,
+        config.lora_alpha,
+        config.lora_dropout,
+        config.lora_lr,
+    )
+    if merged != resolved:
+        raise OLMoConfigurationError(
+            f"LoRA settings changed during merge: {resolved} -> {merged}. The optimizer "
+            "groups and freeze_params were built from the first tuple."
+        )
+    # Belt and braces on the piece the tuple check cannot see: the train module's actual
+    # `lora` / `freeze_params` must agree with `use_lora` after the merge, since a user can
+    # override `--train_module.lora=null` independently of `--use_lora`.
+    has_lora = config.train_module.lora is not None
+    if has_lora != config.use_lora:
+        raise OLMoConfigurationError(
+            f"use_lora={config.use_lora} but train_module.lora is "
+            f"{'set' if has_lora else 'None'}; override `use_lora`, not `train_module.lora`"
+        )
 
 
 def _load_tokenizer():
@@ -933,6 +1101,21 @@ def launch(config: ExperimentConfig):
             "job would fail at dataset build only after being scheduled. Export it before "
             "launching, e.g. /weka/oe-training-default/donovanc/molmo-experimental-data"
         )
+
+    # A `load_path` that resolves to nothing is the most expensive silent failure here:
+    # `LOAD_STRATEGY = always` now turns it into an error, but one raised after the job has
+    # queued for a node and spent minutes on setup. Weka is mounted on the submitting box,
+    # so answer it for free.
+    if config.trainer.load_path and config.trainer.load_strategy != LoadStrategy.never:
+        from olmo_core.train.checkpoint import Checkpointer
+
+        if not Checkpointer.contains_checkpoint(config.trainer.load_path):
+            raise OLMoConfigurationError(
+                f"trainer.load_path ({config.trainer.load_path!r}) contains no checkpoint. "
+                "Stage 2 finetunes a stage-1 model, so this is not something to train "
+                "through: pass --trainer.load_path=<a stage-1 run dir>, or =null to "
+                "initialise from the released HF Molmo2-4B weights instead."
+            )
 
     # The trainer asserts `global_batch_size % (rank_microbatch_size * dp_world_size) == 0`,
     # but only once every rank is up -- so a bad pack count costs a scheduling round trip.
