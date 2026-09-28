@@ -491,16 +491,30 @@ class MultimodalLM(nn.Module):
             self._n_connector_params_cache = sum(p.numel() for p in self.connector.parameters())
         return self._n_connector_params_cache
 
+    def vision_is_trainable(self) -> bool:
+        """True when any vision-encoder parameter requires grad.
+
+        Derived from ``requires_grad`` rather than from a config flag or a parameter-name
+        pattern, so it stays correct across renames of the vision subtree.
+        """
+        return any(p.requires_grad for p in self.vision.parameters())
+
     def image_encoder_flops(
         self, n_crops: int, n_patches_per_crop: int, n_pooled_tokens: int
     ) -> int:
         """Idealized FLOPs for the vision half of one batch, for MFU accounting.
 
         The ViT processes every (padded) crop in the batch, so ``n_crops`` should be the
-        full ``B * n_crops`` of the images tensor. The encoder is **frozen** → forward-only
-        (2 FLOPs/param/patch for the linear layers, plus the attention score+context
-        quadratic ``4·L·P·d`` per patch). The connector is **trained** → 6 FLOPs/param
-        (fwd+bwd) per pooled output token.
+        full ``B * n_crops`` of the images tensor. Per patch it costs 2 FLOPs/param for the
+        linear layers plus the attention score+context quadratic ``4·L·P·d``; that is the
+        **forward** cost, and a trainable encoder additionally pays backward, taken at the
+        usual 2x forward, so the whole term is tripled. The connector is always trained →
+        6 FLOPs/param (fwd+bwd) per pooled output token.
+
+        Stage 1 freezes the encoder and Stage 2 trains it (``VISION_LR``), so this is
+        decided per model instance from ``requires_grad`` rather than assumed. Assuming
+        "frozen" unconditionally under-counted Stage-2 vision FLOPs roughly 3x, and hence
+        under-reported Stage-2 MFU.
 
         :param n_crops: total number of image crops processed by the ViT this batch.
         :param n_patches_per_crop: patches per crop fed to the ViT (``P``).
@@ -509,7 +523,8 @@ class MultimodalLM(nn.Module):
         d = self.cfg.vision.image_emb_dim
         n_layers = self.cfg.vision.image_num_layers
         n_raw = n_crops * n_patches_per_crop
-        vit = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit_fwd = n_raw * (2 * self._n_vision_params + 4 * n_layers * n_patches_per_crop * d)
+        vit = vit_fwd * (3 if self.vision_is_trainable() else 1)
         connector = n_pooled_tokens * 6 * self._n_connector_params
         return int(vit + connector)
 
@@ -699,7 +714,16 @@ class MultimodalLM(nn.Module):
             images = images.to(device)
             pooled_patches_idx = pooled_patches_idx.to(device)
 
-            image_features = self._encode_images(images, pooled_patches_idx)  # (B, n_pooled, d)
+            # `record_function` scope so `torch.profiler` can attribute the vision path's
+            # time separately from the LM's. Without it the tables are operator-level only
+            # (`aten::mm`, `aten::_scaled_dot_product_*`), and a GEMM cannot be assigned to
+            # the ViT or the LM -- which is precisely the split that decides where the
+            # remaining throughput work goes. The annotation is a no-op when no profiler is
+            # active.
+            with torch.profiler.record_function("mm::vision_encode"):
+                image_features = self._encode_images(
+                    images, pooled_patches_idx
+                )  # (B, n_pooled, d)
 
             # Tie the connector output into the autograd graph on *every* forward that ran
             # the vision path, even when no rows are spliced below (e.g. an all-text
@@ -783,19 +807,20 @@ class MultimodalLM(nn.Module):
         if position_ids is not None:
             position_ids = position_ids.to(device)
 
-        out = self.lm(
-            input_ids,
-            input_embeddings=h,
-            labels=labels,
-            or_mask=or_mask,
-            and_mask=and_mask,
-            flex_attn_block_mask=flex_attn_block_mask,
-            position_ids=position_ids,
-            response_logits_only=response_logits_only,
-            response_mask=response_mask,
-            drop_mask=drop_mask,
-            **kwargs,
-        )
+        with torch.profiler.record_function("mm::lm_forward"):
+            out = self.lm(
+                input_ids,
+                input_embeddings=h,
+                labels=labels,
+                or_mask=or_mask,
+                and_mask=and_mask,
+                flex_attn_block_mask=flex_attn_block_mask,
+                position_ids=position_ids,
+                response_logits_only=response_logits_only,
+                response_mask=response_mask,
+                drop_mask=drop_mask,
+                **kwargs,
+            )
 
         # Mask the logit columns of the inputs-only image-special tokens (see
         # :attr:`MultimodalLMConfig.output_vocab_size`). ``finfo.min`` underflows to
