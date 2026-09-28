@@ -52,8 +52,10 @@ def _bool(v: str) -> bool:
 import base64  # noqa: E402
 import hashlib  # noqa: E402
 import json  # noqa: E402
+import logging  # noqa: E402
 from datetime import datetime  # noqa: E402
 from pathlib import Path  # noqa: E402
+from typing import Optional  # noqa: E402
 
 import yaml  # noqa: E402
 
@@ -79,6 +81,9 @@ from olmo_core.train import Duration  # noqa: E402
 DEFAULT_GLOBAL_BATCH_SIZE = 4 * 1024 * 1024
 
 
+log = logging.getLogger(__name__)
+
+
 def _wandb_run_id(save_folder: str) -> str:
     """A W&B run id keyed to the checkpoint folder, so the W&B run tracks the training run.
 
@@ -89,6 +94,50 @@ def _wandb_run_id(save_folder: str) -> str:
     splits a preempted job into one short run per attempt.
     """
     return hashlib.sha256(save_folder.encode()).hexdigest()[:16]
+
+
+def _verify_peak_lr(base_checkpoint: str, peak_lr: float) -> None:
+    """Check the declared peak LR against the one in the base checkpoint's optimizer state.
+
+    Logged, never fatal, because two different operations both land in this script and they want
+    different rates. OLMo3-7B-anneal.py takes no LR at all: it reads `optim.param_groups.<param>.lr`
+    out of `model_and_optim` and decays from the rate the run was actually training at. A midtraining
+    stage instead sets its own rate and re-warms to it, which is what OLMo3-7B-midtraining.py does
+    and what the olmo3-7b-anneal profile reproduces at 2.07e-4 against a base whose live rate is
+    ~3.9e-5. Neither is a mistake; annealing a trunk and emulating a midtrain stage are simply not
+    the same op.
+
+    So this reports the comparison rather than enforcing one reading of it. A gap means "check that
+    you meant a midtrain-style re-warm", and a match means the anneal continues the trunk. What it
+    catches is the third case, a profile that drifted from a base it was written against.
+    """
+    from olmo_core.distributed.checkpoint import load_state_dict
+    from olmo_core.io import join_path
+
+    for param in ("embeddings.weight", "embeddings.embedding.weight"):
+        key = f"optim.param_groups.{param}.lr"
+        state: dict[str, Optional[float]] = {key: None}
+        try:
+            load_state_dict(join_path(base_checkpoint, "model_and_optim"), state)
+        except Exception as e:
+            log.warning(f"could not read the base optimizer state to verify peak_lr ({e})")
+            return
+        found = state[key]
+        if found is None:
+            continue
+        found = float(found)
+        # Relative tolerance, not equality: the profile carries a rounded decimal of a value the
+        # optimizer holds in full precision.
+        if abs(found - peak_lr) / max(found, 1e-12) > 1e-6:
+            log.warning(
+                f"peak_lr {peak_lr} differs from the base optimizer state's {found} ({param}), a "
+                f"{peak_lr / found:.2f}x re-warm. Expected when this run emulates a midtraining "
+                f"stage with its own rate; a mistake if it meant to decay the trunk from where the "
+                f"base actually was, in which case pass --peak_lr={found}.")
+        else:
+            log.info(f"peak_lr {peak_lr} matches the base optimizer state ({param})")
+        return
+    log.warning("base optimizer state has no embeddings param group; peak_lr left unverified")
 
 
 def _scheduler(warmup_steps: int, kind: str):
@@ -200,6 +249,11 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     # mounted and validates for real (and the trainer's own load_checkpoint fails loudly if the
     # base is genuinely absent). Keeps a launch touching only the Beaker API, never weka.
     _initiator = cli_context.cmd in (SubCmd.launch, SubCmd.dry_run, SubCmd.launch_prep)
+    if not _initiator:
+        # Only the remote `train` hop has /weka, so this is where the declared LR meets the
+        # checkpoint. Before the trainer is built, so a mismatch costs the job's startup and not
+        # its first step.
+        _verify_peak_lr(b["base_checkpoint"], float(b["peak_lr"]))
     _saved_dir_is_empty = cookbook.dir_is_empty
     if _initiator:
         cookbook.dir_is_empty = lambda _p: False
