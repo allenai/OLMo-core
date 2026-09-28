@@ -7,8 +7,10 @@ from olmo_core.data.multimodal.chartverse import (
     build_supervision_target,
 )
 
-RAW = "<think>Read the two smallest segments, sum them per year, first year over 30%.</think>" \
-      "<answer>2011</answer>"
+RAW = (
+    "<think>Read the two smallest segments, sum them per year, first year over 30%.</think>"
+    "<answer>2011</answer>"
+)
 
 
 def test_prose_form_ends_in_final_answer():

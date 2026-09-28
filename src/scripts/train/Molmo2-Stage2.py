@@ -49,10 +49,6 @@ from olmo_core.data.multimodal.mixtures.image_only_v11 import (
     build_image_only_v11_mixture,
     build_single_image_only_v11_mixture,
 )
-from olmo_core.data.multimodal.mixtures.image_only_v10 import (
-    build_image_only_v10_mixture,
-    build_single_image_only_v10_mixture,
-)
 from olmo_core.data.multimodal.mixtures.mixture_pack_profiles import (
     MULTI_IMAGE_PACK_MAX_CROPS,
     SINGLE_IMAGE_HIGH_RES_PACK_MAX_CROPS,
@@ -371,6 +367,11 @@ class ExperimentConfig(Config):
     chartverse_max_cot_chars: Optional[int] = None
     """Skip ChartVerse rows whose raw derivation exceeds this many characters. 9000 keeps
     ~34% of ``sft_600k-cot`` and fits a 4,096-token decode budget."""
+    chartverse_exclude_ids: Optional[str] = None
+    """JSON ``{"ids": [...]}`` of ChartVerse row ids to drop (pHash decontamination)."""
+    mmfinereason_exclude_ids: Optional[str] = None
+    """JSON ``{"ids": [...]}`` of MMFineReason row ids to drop (pHash decontamination;
+    ``outputs/chartgym/stage0/mmfinereason_exclude_ids.json`` lists 908)."""
     chartgym_rate: float = 0.0
     """Mixture fraction for ChartGym, the synthetic chart-capability corpus (0 disables).
 
@@ -963,6 +964,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 cot_sidecar=config.chartverse_cot_sidecar,
                 cot_scratchpad=config.chartverse_cot_scratchpad,
                 max_cot_chars=config.chartverse_max_cot_chars,
+                exclude_ids_path=config.chartverse_exclude_ids,
             ).build(tokenizer)
         )
         weights.append(cv_rate)
@@ -984,6 +986,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 max_sequence_length=SEQUENCE_LENGTH,
                 supervise_cot=config.mmfinereason_supervise_cot,
                 cot_scratchpad=config.mmfinereason_cot_scratchpad,
+                exclude_ids_path=config.mmfinereason_exclude_ids,
             ).build(tokenizer)
         )
         weights.append(mmfr_rate)

@@ -43,7 +43,24 @@ __all__ = [
     "truncate_example",
     "get_example_with_skip",
     "extract_reasoning_text",
+    "load_exclude_ids",
 ]
+
+
+def load_exclude_ids(path: str) -> set:
+    """Read an eval-suite decontamination list: a JSON object with an ``ids`` list (or a
+    bare JSON list). Ids are compared as strings so int and string id columns both work.
+
+    Produced by ``outputs/chartgym/tools/phash_overlap_any.py`` plus a file:row -> id
+    conversion; consumed by the ``exclude_ids_path`` field of the MMFineReason and
+    ChartVerse loaders.
+    """
+    import json
+
+    with open(path) as f:
+        obj = json.load(f)
+    ids = obj["ids"] if isinstance(obj, dict) else obj
+    return {str(v) for v in ids}
 
 
 def encode_corpus_text(tokenizer, text: str) -> List[int]:

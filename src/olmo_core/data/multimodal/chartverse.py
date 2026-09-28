@@ -52,6 +52,7 @@ from .sft_common import (
     extract_reasoning_scratchpad,
     extract_reasoning_text,
     get_example_with_skip,
+    load_exclude_ids,
     strip_image_placeholders,
     truncate_example,
 )
@@ -173,6 +174,12 @@ class ChartVerseDatasetConfig(Config):
     emission dose it exists to deliver.
     """
 
+    exclude_ids_path: Optional[str] = None
+    """JSON file with an ``ids`` list of row ``id`` values to drop (eval-suite
+    decontamination). ``sft_600k`` was staged with ``decontaminate=False``; the pHash list
+    from ``outputs/chartgym/tools/phash_overlap_any.py`` goes here. Excluded rows are
+    skipped at read time (the sidecar stays row-aligned)."""
+
     max_crops: int = 8
     max_sequence_length: int = 4096
     loss_token_weighting: str = "root_subsegments_root_tokens"
@@ -272,12 +279,26 @@ class ChartVerseDataset:
                 len(self._cot),
             )
 
+        self._excluded: Optional[set] = None
+        if config.exclude_ids_path:
+            self._excluded = load_exclude_ids(config.exclude_ids_path)
+            log.info(
+                "ChartVerse[%s]: %d ids listed for exclusion in %s",
+                config.subset,
+                len(self._excluded),
+                config.exclude_ids_path,
+            )
+
     def __len__(self) -> int:
         return len(self._data)
 
     def _build(self, i: int) -> Dict[str, np.ndarray]:
         cfg = self.config
         row = self._data[i]
+        if self._excluded is not None and str(row.get("id")) in self._excluded:
+            # Skipped at read time (get_example_with_skip moves on) rather than filtered
+            # out of the table, so the derivation sidecar stays row-aligned.
+            raise ValueError(f"ChartVerse row {i} (id {row.get('id')!r}) is on the exclusion list")
 
         # Any inline <image> marker is stripped: the image is supplied as an explicit
         # token block by encode_sft_example instead.

@@ -45,6 +45,7 @@ from .sft_common import (
     extract_reasoning_scratchpad,
     extract_reasoning_text,
     get_example_with_skip,
+    load_exclude_ids,
     load_hf_dataset,
     strip_image_placeholders,
     truncate_example,
@@ -121,6 +122,14 @@ class MMFineReasonDatasetConfig(Config):
     require_consistent: Optional[bool] = None
     """If set, keep only rows whose ``is_consistent`` flag matches."""
 
+    exclude_ids_path: Optional[str] = None
+    """JSON file with an ``ids`` list of row ``id`` values to drop -- the eval-suite
+    decontamination list. MMFineReason re-annotates FineVision images, and a pHash pass
+    (``outputs/chartgym/tools/phash_overlap_any.py``) found 908 of 585,744 rows within
+    Hamming 8 of a CharXiv validation/test or MMMU-Pro image, including one exact CharXiv
+    test duplicate. Filtering by ``id`` rather than by position keeps the list valid across
+    shard re-downloads."""
+
     supervise_cot: bool = False
     """Supervise the ``<think>`` derivation instead of only the ``<answer>`` content.
 
@@ -183,6 +192,8 @@ class MMFineReasonDataset:
         if config.cot_scratchpad and config.short_answer_column:
             needed.append(config.short_answer_column)
         filter_cols = ["source", "pass_rate", "is_consistent"]
+        if config.exclude_ids_path:
+            filter_cols.append("id")
         self._data = load_hf_dataset(
             config.dataset_path,
             config.split,
@@ -197,11 +208,25 @@ class MMFineReasonDataset:
         Returns ``None`` when no filter is active (so ``__getitem__`` indexes directly).
         """
         cfg = self.config
-        if cfg.sources is None and cfg.max_pass_rate is None and cfg.require_consistent is None:
+        if (
+            cfg.sources is None
+            and cfg.max_pass_rate is None
+            and cfg.require_consistent is None
+            and not cfg.exclude_ids_path
+        ):
             return None
 
         cols = self._data.column_names
         keep = np.ones(len(self._data), dtype=bool)
+        if cfg.exclude_ids_path:
+            excluded = load_exclude_ids(cfg.exclude_ids_path)
+            if "id" not in cols:
+                raise ValueError("exclude_ids_path set but the dataset has no 'id' column")
+            hit = np.array([str(v) in excluded for v in self._data["id"]], dtype=bool)
+            log.info(
+                "MMFineReason: excluding %d rows listed in %s", int(hit.sum()), cfg.exclude_ids_path
+            )
+            keep &= ~hit
         if cfg.sources is not None and "source" in cols:
             wanted = set(cfg.sources)
             keep &= np.array(
