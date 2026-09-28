@@ -36,7 +36,7 @@
     "conv_size": 4,
     "conv_bias": false,
     "norm_eps": 1e-05,
-    "use_cute_kernel": true,
+    "use_experimental_kernels": true,
     "dtype": "float32",
     "_CLASS_": "olmo_core.nn.attention.kda.KimiDeltaAttentionConfig",
     "type": "kimi_delta_attention"
@@ -197,7 +197,7 @@
      "conv_size": 4,
      "conv_bias": false,
      "norm_eps": 1e-05,
-     "use_cute_kernel": true,
+     "use_experimental_kernels": true,
      "dtype": "float32",
      "_CLASS_": "olmo_core.nn.attention.kda.KimiDeltaAttentionConfig",
      "type": "kimi_delta_attention"

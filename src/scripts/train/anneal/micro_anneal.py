@@ -29,7 +29,7 @@ _BUILD_KEYS = {
     "base_checkpoint", "model_arch", "tokenizer", "source_mixture_yaml", "source_mixture_b64",
     "length_tokens", "seq_len", "peak_lr", "lr_schedule", "warmup_steps", "load_optim_state",
     "load_trainer_state", "save_folder", "save_freq", "ephemeral_save_freq", "seed", "num_nodes",
-    "global_batch_size",
+    "global_batch_size", "router_emo",
 }
 _BUILD: dict[str, str] = {}
 _build_argv: list[str] = []   # the stripped flags, re-appended to the remote launch cmd
@@ -70,8 +70,10 @@ from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixt
 from olmo_core.internal import cookbook  # noqa: E402
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir  # noqa: E402
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, SubCmd, main  # noqa: E402
-from olmo_core.launch.beaker import BeakerWekaBucket, OLMoCoreBeakerImage  # noqa: E402
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerWekaBucket, OLMoCoreBeakerImage  # noqa: E402
+from olmo_core.launch.beaker_presets import get_preset  # noqa: E402
 from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
+from olmo_core.nn.transformer.config import OLMoDDPModelConfig  # noqa: E402
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits, WSD  # noqa: E402
 from olmo_core.train import Duration  # noqa: E402
 
@@ -148,6 +150,20 @@ def _scheduler(warmup_steps: int, kind: str):
     return LinearWithWarmup(units=SchedulerUnits.steps, warmup=warmup_steps, alpha_f=0.0)
 
 
+def _disable_router_emo(model_config) -> None:
+    """Route with the full expert set: drop EMO document expert pools from every routed block.
+
+    Follows the olmoe3 ladder, whose downstream stages (midtraining, long context) run with EMO off
+    while leaving global load balancing and every other router setting as the base trained them.
+    """
+    blocks = [model_config.block, *(model_config.block_overrides or {}).values()]
+    routers = [r for blk in blocks if (r := getattr(blk, "routed_experts_router", None)) is not None]
+    if not routers:
+        raise ValueError("--router_emo=false, but the arch has no routed MoE blocks")
+    for router in routers:
+        router.emo = None
+
+
 def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     b = _BUILD
     seq_len = int(b["seq_len"])
@@ -181,8 +197,7 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         # train module and optimizer (OLMoDDPTrainModuleConfig + OLMoDDPOptimizerConfig, with param
         # groups for the routed experts); cookbook.configure_train_module builds a plain
         # SkipStepAdamW, whose state a `--load_optim_state=true` resume cannot match. Only the LR
-        # and the schedule are overridden here, which is the whole of what a micro-anneal changes
-        # about the optimization.
+        # and the schedule are overridden here, plus EMO routing when --router_emo=false.
         #
         # A FILE IN THE REPO rather than a read of the checkpoint: the builder runs on both hops and
         # the launch host has no /weka mount, so reading the checkpoint here would fail before
@@ -192,6 +207,8 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
             arch_path = Path(__file__).parent / arch_path
         arch = json.loads(arch_path.read_text())
         model_config = TransformerConfig.from_dict(arch["model"])
+        if not _bool(b.get("router_emo", "true")):
+            _disable_router_emo(model_config)
         train_module_config = Config.from_dict(arch["train_module"])
         train_module_config.optim.lr = float(b["peak_lr"])
         train_module_config.scheduler = scheduler
@@ -296,6 +313,17 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         nccl_debug=False,
         beaker_image=OLMoCoreBeakerImage.stable,  # override via --launch.beaker_image=
     )
+    # OLMoDDP models train on the olmo-ddp preset's image, env and symm-mem extension prebuild. KDA
+    # layers with experimental kernels also need kernel-fun and FLA, which the recipe image may lack.
+    if isinstance(model_config, OLMoDDPModelConfig):
+        _preset = get_preset("olmo-ddp")
+        launch_config.beaker_image = _preset.beaker_image
+        launch_config.env_vars.extend(BeakerEnvVar(name=k, value=v) for k, v in _preset.env_vars)
+        launch_config.post_setup = " && ".join([
+            "pip install 'kernel-fun==0.2.0' 'flash-linear-attention==0.5.2'",
+            _preset.post_setup,
+        ])
+
     # Mount every weka bucket this run touches. build_launch_config adds oe-training-default when
     # the root dir is on weka and nothing else, so a base in another bucket (the Olmo 3.5
     # checkpoints live in olmo-3p5-checkpoints) is simply absent in the job and the trainer fails on
