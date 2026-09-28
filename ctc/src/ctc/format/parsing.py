@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import List, Optional, Set
+from typing import List, Optional, Sequence, Set
 
 __all__ = [
     "parse_doc_ids",
@@ -136,16 +136,21 @@ def parse_pairs(text: str) -> Optional[List[List[int]]]:
             frag = candidate if isinstance(candidate, str) else candidate.group()
             try:
                 parsed = json.loads(frag)
+                if isinstance(parsed, list):
+                    # The int() conversions belong INSIDE this try, mirroring parse_qd_pairs below:
+                    # a pair like ["Doc 1", "Doc 3"] or [1, null] is not an integer pair, and letting
+                    # the ValueError/TypeError escape here would crash the whole function instead of
+                    # just disqualifying this candidate parse in favor of the next one (or the regex
+                    # fallback below).
+                    pairs = [
+                        sorted([int(p[0]), int(p[1])])
+                        for p in parsed
+                        if isinstance(p, list) and len(p) == 2
+                    ]
+                    if best is None or len(pairs) > len(best):
+                        best = pairs
             except (json.JSONDecodeError, ValueError, TypeError):
                 continue
-            if isinstance(parsed, list):
-                pairs = [
-                    sorted([int(p[0]), int(p[1])])
-                    for p in parsed
-                    if isinstance(p, list) and len(p) == 2
-                ]
-                if best is None or len(pairs) > len(best):
-                    best = pairs
     if best:
         return best
 
@@ -312,7 +317,11 @@ def parse_cycles(text: str) -> Optional[List[List[int]]]:
             continue
         if isinstance(parsed, list):
             if parsed and all(isinstance(x, int) for x in parsed):
-                return [sorted(set(parsed))]  # a single flat cycle
+                # Rebuild the set with an explicit int(x) conversion (rather than sorted(set(parsed)))
+                # so the element type is statically int -- the isinstance check above does not narrow
+                # `parsed: list` for a type checker, so sorted(set(parsed)) reads as sorted(set[object]).
+                # Runtime behaviour is unchanged: every element is already an int at this point.
+                return [sorted({int(x) for x in parsed})]  # a single flat cycle
             out = []
             for c in parsed:
                 if isinstance(c, list) and len(c) >= 2:
@@ -355,11 +364,24 @@ def _first_groups_object(text: str) -> Optional[List[List[int]]]:
         except (json.JSONDecodeError, ValueError):
             continue
         if isinstance(obj, dict) and "groups" in obj:
+            try:
+                groups = iter(obj["groups"])
+            except TypeError:
+                # {"groups": 5} and similar -- "groups" decoded but is not itself a sequence of
+                # group objects, so this is not a grouping object after all. Keep scanning for the
+                # next "{" rather than crashing on something that merely looks like our shape.
+                continue
             out = []
-            for g in obj["groups"]:
+            for g in groups:
                 ids = g.get("doc_ids") if isinstance(g, dict) else g
-                if isinstance(ids, list):
+                if not isinstance(ids, list):
+                    continue
+                try:
                     out.append([int(x) for x in ids])
+                except (ValueError, TypeError):
+                    # One group with a non-numeric id (e.g. "Doc 1") is not a valid group -- drop
+                    # just that group rather than discarding every group this object did decode.
+                    continue
             if out:
                 return out
     return None
@@ -417,13 +439,18 @@ def parse_partition(text: str, n_docs: int) -> Optional[List[List[int]]]:
     return groups or None
 
 
-def partition_to_labels(clusters: List[List[int]], n_docs: int) -> List[int]:
+def partition_to_labels(clusters: Sequence[Sequence[int]], n_docs: int) -> List[int]:
     """
     Convert 1-indexed clusters to a per-document label array, for clustering metrics.
 
     A document claimed by two clusters keeps its first assignment, and any document the model left
     out becomes its own singleton cluster -- so an under-specified answer is scored as
     under-specified rather than crashing the metric.
+
+    Takes ``Sequence[Sequence[int]]`` rather than ``List[List[int]]`` -- the body only ever
+    iterates over ``clusters`` and each cluster, never mutates or indexes by position, so it
+    accepts anything sequence-shaped. ``_grouping.py`` calls this with ``list(parsed)`` where
+    ``parsed`` is typed ``Sequence[Sequence[int]]``, which the narrower signature rejected.
 
     :param clusters: Clusters of 1-indexed document ids.
     :param n_docs: Corpus size; the length of the returned array.

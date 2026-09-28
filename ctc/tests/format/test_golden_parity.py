@@ -137,6 +137,24 @@ def test_parse_pairs_distinguishes_empty_from_unparseable():
     assert parsing.parse_pairs("not a pair anywhere") is None
 
 
+def test_parse_pairs_does_not_raise_on_a_non_integer_pair():
+    """A pair whose elements are not int-convertible is not a pair -- it must be disqualified,
+
+    not crash the function. int(p[0])/int(p[1]) used to live OUTSIDE the surrounding try, so
+    ["Doc 1", "Doc 3"] raised ValueError and [1, None] raised TypeError straight out of parse_pairs.
+    """
+    assert parsing.parse_pairs('[["Doc 1", "Doc 3"]]') is None
+    assert parsing.parse_pairs("[[1, null]]") is None
+
+
+def test_parse_pairs_falls_back_to_the_regex_scrape_on_a_mixed_bad_pair():
+    """A non-integer pair disqualifies the WHOLE json.loads candidate it came from (matching how
+    parse_qd_pairs treats a bad candidate), so the good [1, 2] pair here is recovered by the
+    digit-pair regex fallback rather than by the json.loads path -- this must not raise either way.
+    """
+    assert parsing.parse_pairs('[[1, 2], ["Doc 1", "Doc 3"]]') == [[1, 2]]
+
+
 @pytest.mark.parametrize("text", sorted(GOLDEN["parse_qd_pairs"]))
 def test_parse_qd_pairs(text):
     assert parsing.parse_qd_pairs(text) == GOLDEN["parse_qd_pairs"][text]
@@ -238,6 +256,15 @@ def test_a_flat_list_is_read_as_one_cycle():
     assert parsing.parse_cycles("[3, 8, 12]") == [[3, 8, 12]]
 
 
+def test_a_flat_list_cycle_deduplicates_too():
+    """Regression check for the sorted({int(x) for x in parsed}) rewrite (a `ty` type-narrowing
+
+    fix, not meant to change behaviour): a flat cycle with a repeated id must still dedup exactly
+    as sorted(set(parsed)) did.
+    """
+    assert parsing.parse_cycles("[3, 3, 8]") == [[3, 8]]
+
+
 @pytest.mark.parametrize("key", sorted(GOLDEN["cycle_metrics"]))
 def test_cycle_metrics(key):
     pred, gold = key.split("|")
@@ -270,6 +297,25 @@ def test_parse_partition_recovers_a_mid_array_start():
     assert parsing.parse_partition('2, 3, 4]}, {"doc_ids": [1, 6]}]}', 6) == [[2, 3, 4], [1, 6]]
 
 
+def test_parse_partition_does_not_raise_on_a_non_iterable_groups_value():
+    """{"groups": 5} decodes as valid JSON but "groups" is not a sequence of group objects --
+
+    iterating it used to raise TypeError straight out of _first_groups_object. It must instead be
+    treated as "not a grouping object after all" and let parse_partition fall through to its later
+    fallbacks (here, the per-line digit scrape finds nothing in-range and returns None).
+    """
+    assert parsing.parse_partition('{"groups": 5}', 3) is None
+
+
+def test_parse_partition_drops_a_group_with_non_numeric_ids_but_keeps_the_rest():
+    """One group with ids that are not int-convertible must not blank out every group this JSON
+
+    object did decode -- only that group is dropped.
+    """
+    text = '{"groups": [{"doc_ids": ["a", "b"]}, {"doc_ids": [1, 2]}]}'
+    assert parsing.parse_partition(text, 3) == [[1, 2]]
+
+
 @pytest.mark.parametrize("key", sorted(GOLDEN["partition_to_labels"]))
 def test_partition_to_labels(key):
     text, n = key.rsplit("|", 1)
@@ -280,6 +326,41 @@ def test_partition_to_labels(key):
 
 def test_partition_to_labels_gives_omitted_docs_their_own_cluster():
     assert parsing.partition_to_labels([[1, 2]], 4) == [0, 0, 1, 2]
+
+
+def test_partition_to_labels_accepts_any_sequence_of_sequences():
+    """The signature widened from List[List[int]] to Sequence[Sequence[int]] -- ctc.tasks._grouping
+
+    calls this with list(parsed), a list of whatever sequence type parse_partition returned, which
+    a type checker sees as Sequence[Sequence[int]]. The body only iterates, so tuples must work too.
+    """
+    assert parsing.partition_to_labels(((1, 2), (3,)), 4) == [0, 0, 1, 2]
+
+
+def test_pairwise_metrics_all_singletons_is_a_perfect_match():
+    """A gold partition with k == n (every document its own cluster) has no co-clustered pairs at
+
+    all, and neither does a prediction that also puts every document alone -- both pred_pairs and
+    gold_pairs are empty. That is an EXACT match, not a divide-by-zero 0.0: 48 of 500 grouping
+    examples at r2k had exactly this all-singleton gold shape and scored 0.0 before this fix.
+    """
+    labels = list(range(10))
+    assert metrics.pairwise_metrics(labels, labels) == {
+        "pairwise_precision": 1.0,
+        "pairwise_recall": 1.0,
+        "pairwise_f1": 1.0,
+    }
+
+
+def test_pairwise_metrics_one_sided_empty_is_still_zero():
+    """When only ONE side has no co-clustered pairs, the partitions genuinely disagree on every
+
+    pair the other side has -- that must stay 0.0, not be swept into the all-singleton exemption.
+    """
+    all_together = [0, 0, 0]
+    all_singleton = [0, 1, 2]
+    got = metrics.pairwise_metrics(all_together, all_singleton)
+    assert got == {"pairwise_precision": 0.0, "pairwise_recall": 0.0, "pairwise_f1": 0.0}
 
 
 @pytest.mark.parametrize("key", sorted(GOLDEN["parse_permutation"]))

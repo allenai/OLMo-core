@@ -304,7 +304,14 @@ def pairwise_metrics(pred_labels: Sequence[int], gold_labels: Sequence[int]) -> 
     :param pred_labels: Predicted cluster label per document.
     :param gold_labels: Gold cluster label per document.
 
-    :returns: ``pairwise_precision``, ``pairwise_recall``, ``pairwise_f1``.
+    :returns: ``pairwise_precision``, ``pairwise_recall``, ``pairwise_f1``. When BOTH the predicted
+        and gold partitions have no co-clustered pairs at all (e.g. an all-singleton partition, as
+        gold is at the finest grouping rung), all three are ``1.0``: an all-singleton partition is
+        still a partition, and a prediction that matches it exactly must score a perfect match, not
+        the 0.0 that falls out of dividing zero true positives by zero possible pairs. This exact
+        shape affected 48 of 500 examples at r2k before the fix. When only ONE side has no pairs,
+        the original 0.0 is correct -- the two partitions genuinely disagree on every pair that
+        exists on the other side.
 
     :raises ValueError: If the label arrays differ in length.
     """
@@ -316,6 +323,8 @@ def pairwise_metrics(pred_labels: Sequence[int], gold_labels: Sequence[int]) -> 
     n = len(pred_labels)
     pred_pairs = {(i, j) for i, j in combinations(range(n), 2) if pred_labels[i] == pred_labels[j]}
     gold_pairs = {(i, j) for i, j in combinations(range(n), 2) if gold_labels[i] == gold_labels[j]}
+    if not pred_pairs and not gold_pairs:
+        return {"pairwise_precision": 1.0, "pairwise_recall": 1.0, "pairwise_f1": 1.0}
     tp = len(pred_pairs & gold_pairs)
     p = tp / len(pred_pairs) if pred_pairs else 0.0
     r = tp / len(gold_pairs) if gold_pairs else 0.0
