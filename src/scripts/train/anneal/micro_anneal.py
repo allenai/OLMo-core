@@ -51,10 +51,13 @@ def _bool(v: str) -> bool:
 # Imports AFTER the argv strip (they're heavy; keeping them here also documents the olmo-core API).
 import base64  # noqa: E402
 import hashlib  # noqa: E402
+import json  # noqa: E402
 from datetime import datetime  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 import yaml  # noqa: E402
 
+from olmo_core.config import Config  # noqa: E402
 from olmo_core.data import (  # noqa: E402
     InstanceFilterConfig,
     NumpyDataLoaderConfig,
@@ -65,7 +68,7 @@ from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixt
 from olmo_core.internal import cookbook  # noqa: E402
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir  # noqa: E402
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, SubCmd, main  # noqa: E402
-from olmo_core.launch.beaker import OLMoCoreBeakerImage  # noqa: E402
+from olmo_core.launch.beaker import BeakerWekaBucket, OLMoCoreBeakerImage  # noqa: E402
 from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
 from olmo_core.optim.scheduler import LinearWithWarmup, SchedulerUnits, WSD  # noqa: E402
 from olmo_core.train import Duration  # noqa: E402
@@ -116,16 +119,49 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     }
     _named = _NAMED_TOKENIZERS.get(b["tokenizer"])
     tokenizer_config = _named() if _named else TokenizerConfig.from_hf(b["tokenizer"])
-    model_config = getattr(TransformerConfig, b["model_arch"])(
-        vocab_size=tokenizer_config.padded_vocab_size(),
-    )
 
-    train_module_config = cookbook.configure_train_module(
-        max_sequence_length=seq_len,
-        rank_microbatch_size=seq_len,
-        learning_rate=float(b["peak_lr"]),
-        scheduler=_scheduler(int(b.get("warmup_steps", 0)), b.get("lr_schedule", "linear_with_warmup")),
-    )
+    scheduler = _scheduler(int(b.get("warmup_steps", 0)), b.get("lr_schedule", "linear_with_warmup"))
+    if b["model_arch"].endswith(".json"):
+        # A base whose architecture no TransformerConfig classmethod describes: an MoE with per-layer
+        # block_overrides, a linear-attention sequence mixer, a router. Rebuilding it from a preset
+        # would mean maintaining a second description of the same model and being silently wrong
+        # when they disagree, so the `model` and `train_module` blocks are lifted verbatim from the
+        # base checkpoint's own config.json into a file under configs/ and rebuilt from there.
+        #
+        # THE TRAIN MODULE COMES WITH IT, not just the model. An MoE base is trained by its own
+        # train module and optimizer (OLMoDDPTrainModuleConfig + OLMoDDPOptimizerConfig, with param
+        # groups for the routed experts); cookbook.configure_train_module builds a plain
+        # SkipStepAdamW, whose state a `--load_optim_state=true` resume cannot match. Only the LR
+        # and the schedule are overridden here, which is the whole of what a micro-anneal changes
+        # about the optimization.
+        #
+        # A FILE IN THE REPO rather than a read of the checkpoint: the builder runs on both hops and
+        # the launch host has no /weka mount, so reading the checkpoint here would fail before
+        # anything is submitted. gantry clones the repo into the job, so both hops see this file.
+        arch_path = Path(b["model_arch"])
+        if not arch_path.is_file():   # else relative to this recipe, e.g. configs/<base>.json
+            arch_path = Path(__file__).parent / arch_path
+        arch = json.loads(arch_path.read_text())
+        model_config = TransformerConfig.from_dict(arch["model"])
+        train_module_config = Config.from_dict(arch["train_module"])
+        train_module_config.optim.lr = float(b["peak_lr"])
+        train_module_config.scheduler = scheduler
+        # The mix is tokenized with one vocab; a base built for another would train on garbage ids.
+        if model_config.vocab_size != tokenizer_config.padded_vocab_size():
+            raise ValueError(
+                f"{b['model_arch']} declares vocab_size {model_config.vocab_size}, but --tokenizer="
+                f"{b['tokenizer']} pads to {tokenizer_config.padded_vocab_size()}. The base and the "
+                f"tokenized mix must agree.")
+    else:
+        model_config = getattr(TransformerConfig, b["model_arch"])(
+            vocab_size=tokenizer_config.padded_vocab_size(),
+        )
+        train_module_config = cookbook.configure_train_module(
+            max_sequence_length=seq_len,
+            rank_microbatch_size=seq_len,
+            learning_rate=float(b["peak_lr"]),
+            scheduler=scheduler,
+        )
 
     # The varied ingredient: a source_mixtures spec (sources + target_ratio summing to 1.0).
     # Prefer the INLINED base64 YAML: sftlab passes the mix CONTENTS in the command, so neither the
@@ -206,6 +242,18 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
         nccl_debug=False,
         beaker_image=OLMoCoreBeakerImage.stable,  # override via --launch.beaker_image=
     )
+    # Mount every weka bucket this run touches. build_launch_config adds oe-training-default when
+    # the root dir is on weka and nothing else, so a base in another bucket (the Olmo 3.5
+    # checkpoints live in olmo-3p5-checkpoints) is simply absent in the job and the trainer fails on
+    # a path that exists. Derived from the paths rather than configured, so a profile that moves the
+    # base or the save folder needs no second edit here.
+    _mounted = {bucket.bucket for bucket in launch_config.weka_buckets}
+    for _path in (b["base_checkpoint"], b["save_folder"]):
+        _parts = str(_path).split("/")
+        if len(_parts) > 2 and _parts[1] == "weka" and _parts[2] not in _mounted:
+            launch_config.weka_buckets.append(BeakerWekaBucket(_parts[2], f"/weka/{_parts[2]}"))
+            _mounted.add(_parts[2])
+
     # build_launch_config attaches optional secrets (COMET_API_KEY, R2_ENDPOINT_URL,
     # WEKA_ENDPOINT_URL, SLACK_WEBHOOK_URL) that most workspaces do not define.
     # BeakerLaunchConfig._get_env_secrets skips its existence check whenever the launcher itself
