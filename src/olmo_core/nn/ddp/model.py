@@ -16,7 +16,6 @@ from typing import (
 
 import torch
 import torch.distributed as dist
-from torch.distributed._composable.replicate import replicate
 from torch.distributed.device_mesh import DeviceMesh
 from torch.utils.checkpoint import checkpoint, noop_context_fn
 
@@ -627,40 +626,13 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
-        assert False, "apply_ddp is deprecated"
         """
-        Apply DDP to the model.
+        Reject the retired DDP entry point. Use :meth:`apply_dp` instead.
+
+        :raises NotImplementedError: Always, including when Python assertions are disabled.
         """
-
-        # Cast model explicitly to the specified dtype before applying DDP
-        target_dtype = param_dtype or self.dtype
-        if target_dtype != self.dtype:
-            self.to(dtype=target_dtype)
-
-        # TODO: decide whether the commented-out torch._dynamo optimize_ddp setting below is needed
-        # for compiled DDP; left disabled for now.
-        # Adapted from
-        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
-        # if compile_enabled:
-        #     if autograd_compile_enabled:
-        #         torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-        #     else:
-        #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
-        self.to(self._training_dtype)
-
-        replicate(
-            self,
-            device_mesh=dp_mesh,
-            bucket_cap_mb=100,
-            gradient_as_bucket_view=True,
-            #   mixed_precision=
-        )
-        # Some inputs need to be on CPU initially, but DDP will move everything to model's
-        # device if we don't hide it.
-        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
-        self.register_forward_pre_hook(
-            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        raise NotImplementedError(
+            "OLMoDDPModel.apply_ddp() is no longer supported; use apply_dp() instead."
         )
 
     def apply_ep(

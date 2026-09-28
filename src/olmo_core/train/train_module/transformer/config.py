@@ -497,6 +497,11 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
 
     optim: OLMoDDPOptimizerConfig
     max_grad_norm: Optional[float] = None
+    """
+    Override the optimizer's gradient clipping threshold when set. If ``None``, use
+    :data:`~olmo_core.optim.moe_optimizer.OLMoDDPOptimizerConfig.max_grad_norm`.
+    Clipping is performed by the optimizer.
+    """
     scheduler: Optional[Scheduler] = None
 
     # Model settings.
@@ -549,6 +554,8 @@ class OLMoDDPTrainModuleConfig(TrainModuleConfig):
         from .ddp_train_module import OLMoDDPTrainModule
 
         kwargs = self.as_dict(exclude_none=True, recurse=False)
+        if (max_grad_norm := kwargs.pop("max_grad_norm", None)) is not None:
+            kwargs["optim"] = replace(self.optim, max_grad_norm=max_grad_norm)
 
         if (state_dict_save_opts := kwargs.pop("state_dict_save_opts", None)) is not None:
             kwargs["state_dict_save_opts"] = dist_cp_sd.StateDictOptions(**state_dict_save_opts)
