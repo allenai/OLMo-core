@@ -309,16 +309,25 @@ def test_default_sources():
         "dv_qa",
         "figure_qa",
         "plot_qa",
-        "pixmo_clocks",
     )
     assert acad_mix.STAGE1_ACADEMIC_SOURCES["plot_qa"].max_questions == 20
-    assert acad_mix.STAGE1_ACADEMIC_SOURCES["pixmo_clocks"].max_share == 0.05
+    assert all(src.max_share is None for src in acad_mix.STAGE1_ACADEMIC_SOURCES.values())
 
 
-def test_share_cap_holds_a_source_down_and_redistributes():
+@pytest.fixture
+def _capped_figure_qa(monkeypatch):
+    """No default source has a share cap; give FigureQA one of 5%."""
+    monkeypatch.setitem(
+        acad_mix.STAGE1_ACADEMIC_SOURCES,
+        "figure_qa",
+        acad_mix.Stage1AcademicSource(weighting_size_cap=10_000, max_share=0.05),
+    )
+
+
+def test_share_cap_holds_a_source_down_and_redistributes(_capped_figure_qa):
     """A source over its ``max_share`` is set to it; the rest of the rate goes to the others in
     proportion to their weights."""
-    names = ["cosyn_chart_exp", "dv_qa", "pixmo_clocks"]
+    names = ["cosyn_chart_exp", "dv_qa", "figure_qa"]
     frac = acad_mix.academic_group_fractions(names, [1.0, 3.0, 16.0])
     np.testing.assert_allclose(frac, [0.95 * 0.25, 0.95 * 0.75, 0.05])
     # A cap that does not bind changes nothing.
@@ -330,13 +339,79 @@ def test_share_cap_holds_a_source_down_and_redistributes():
     )
 
 
-def test_share_caps_that_cannot_fill_the_group_are_refused():
+def test_share_caps_that_cannot_fill_the_group_are_refused(_capped_figure_qa):
     """With only capped sources, the rest of the rate would have nowhere to go."""
     with pytest.raises(OLMoConfigurationError, match="share-capped"):
-        acad_mix.check_share_caps(["pixmo_clocks"])
+        acad_mix.check_share_caps(["figure_qa"])
     with pytest.raises(OLMoConfigurationError, match="share-capped"):
-        acad_mix.academic_group_fractions(["pixmo_clocks"], [1.0])
-    acad_mix.check_share_caps(["pixmo_clocks", "dv_qa"])
+        acad_mix.academic_group_fractions(["figure_qa"], [1.0])
+    acad_mix.check_share_caps(["figure_qa", "dv_qa"])
+
+
+# ---------------------------------------------------------------------------
+# PixMo-Clocks: a group of its own, tag-only prompt
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _fake_clocks(monkeypatch):
+    """The clocks registry entry, with one in-memory row in the shape the real formatter returns."""
+
+    def formatter(row, rng, split):
+        return {
+            "image": np.full((64, 64, 3), 255, dtype=np.uint8),
+            "prompt": "What time is being shown?",
+            "text": row["text"],
+            "style": "clocks",
+            "metadata": {},
+        }
+
+    rows = [{"text": "The time shown is 3:02 PM"}]
+    monkeypatch.setitem(
+        ACADEMIC_REGISTRY,
+        acad_mix.CLOCKS_SOURCE,
+        AcademicSpec(acad_mix.CLOCKS_SOURCE, lambda split: rows, formatter),
+    )
+    build_academic_data.cache_clear()
+    yield
+    build_academic_data.cache_clear()
+
+
+def test_clocks_group_sends_the_bare_tag(_fake_clocks):
+    """The question never varies, so the user turn is the tag alone, like the OCR sources'."""
+    ds = acad_mix.build_stage1_clocks_source(_FakeTok())
+    _, branches, _ = ds.format_row(0, ds.epoch_rng(0))
+    assert branches == [[("clocks:", "The time shown is 3:02 PM")]]
+    out = ds[0]
+    assert out["input_ids"].shape == out["loss_masks"].shape
+
+
+def test_tag_only_needs_single_question_rows(_many_question_source):
+    ds = Stage1AcademicDatasetConfig(name=_many_question_source, tag_only=True).build(_FakeTok())
+    with pytest.raises(ValueError, match="single-question"):
+        ds.format_row(0, ds.epoch_rng(0))
+
+
+def test_clocks_is_not_an_academic_source():
+    assert acad_mix.CLOCKS_SOURCE not in acad_mix.STAGE1_ACADEMIC_SOURCE_NAMES
+    with pytest.raises(OLMoConfigurationError, match="own group"):
+        acad_mix.build_stage1_academic_source("pixmo_clocks", _FakeTok())
+    with pytest.raises(OLMoConfigurationError, match="own group"):
+        acad_mix.academic_weighting_sizes(["pixmo_clocks"], [1])
+
+
+@pytest.mark.skipif(
+    not os.path.exists(os.path.join(registry.PIXMO_DATASETS, "clocks", "train.jsonl")),
+    reason="PixMo-Clocks data not available",
+)
+def test_clocks_group_real_data():
+    build_academic_data.cache_clear()
+    ds = acad_mix.build_stage1_clocks_source(_FakeTok())
+    assert len(ds) == 800_269
+    _, branches, _ = ds.format_row(0, ds.epoch_rng(0))
+    (((user, answer),),) = branches
+    assert user == "clocks:"
+    assert answer.startswith("The time")
 
 
 #: Training rows (one per image) measured on weka.
@@ -351,7 +426,6 @@ REAL_SIZES = {
     "dv_qa": 200_000,
     "figure_qa": 100_000,
     "plot_qa": 157_070,
-    "pixmo_clocks": 800_269,
 }
 TEMPLATED = ("dv_qa", "figure_qa", "plot_qa")
 
@@ -369,7 +443,6 @@ def test_academic_weighting_sizes_cap_the_templated_charts():
         10_000,
         10_000,
         20_000,
-        250_000,
     ]
     with pytest.raises(OLMoConfigurationError, match="stage-2 eval benchmark"):
         acad_mix.academic_weighting_sizes(["tally_qa"], [1])
@@ -420,6 +493,7 @@ def _data_config(**kw):
         text_rich=TextRichCaptionDatasetConfig(),
         academic_rate=0.1,
         academic_sources=acad_mix.DEFAULT_ACADEMIC_SOURCES,
+        clock_rate=0.0,
     )
     fields.update(kw)
     return SimpleNamespace(**fields)
@@ -430,27 +504,35 @@ def test_stage1_academic_group_wiring():
     assert mod.ACADEMIC_RATE == 0.0  # off by default: an ablation arm
     assert mod.ACADEMIC_SOURCES == acad_mix.DEFAULT_ACADEMIC_SOURCES
     fields = set(mod.ExperimentConfig.__dataclass_fields__)
-    assert {"academic_rate", "academic_sources"} <= fields
-    assert mod.RECIPES["v1"]["academic_rate"] == mod.RECIPES["v2"]["academic_rate"] == 0.0
+    assert {"academic_rate", "academic_sources", "clock_rate"} <= fields
+    assert mod.CLOCK_RATE == 0.0
+    for r in ("v1", "v2"):
+        assert mod.RECIPES[r]["academic_rate"] == mod.RECIPES[r]["clock_rate"] == 0.0
     mod.validate_data_config(_data_config())
 
 
 def test_v3_recipe():
-    """v3 is v2 plus the academic QA group, funded mostly from OCR: caption 0.475, pointing
-    0.225, OCR 0.15, academic 0.15, on the v2 pointing sources and no text-only data."""
+    """v3 is v2 plus the academic QA group and the clock group, funded mostly from OCR: caption
+    0.475, pointing 0.225, OCR 0.15, academic 0.14, clocks 0.01, on the v2 pointing sources and
+    no text-only data."""
     mod = _load_stage1_module()
     v3 = mod.RECIPES["v3"]
     assert v3 == dict(
-        pointing_rate=0.225, nlp_rate=0.0, ocr_rate=0.15, academic_rate=0.15, pointing_data="v2"
+        pointing_rate=0.225,
+        nlp_rate=0.0,
+        ocr_rate=0.15,
+        academic_rate=0.14,
+        clock_rate=0.01,
+        pointing_data="v2",
     )
-    caption = 1.0 - v3["pointing_rate"] - v3["nlp_rate"] - v3["ocr_rate"] - v3["academic_rate"]
-    assert caption == pytest.approx(0.475)
+    groups = ("pointing_rate", "nlp_rate", "ocr_rate", "academic_rate", "clock_rate")
+    assert 1.0 - sum(v3[k] for k in groups) == pytest.approx(0.475)
     assert mod.resolve_recipe(["--recipe=v3"]) == ("v3", v3)
     mod.validate_data_config(_data_config(recipe="v3", **v3))
     # With the real sizes, the ten default sources share exactly the recipe's academic rate.
     names = list(acad_mix.DEFAULT_ACADEMIC_SOURCES)
     frac = mod._academic_fractions(names, [REAL_SIZES[n] for n in names])
-    assert v3["academic_rate"] * frac.sum() == pytest.approx(0.15)
+    assert v3["academic_rate"] * frac.sum() == pytest.approx(0.14)
 
 
 @pytest.mark.parametrize("rate", [0.0, 0.1])
@@ -476,42 +558,34 @@ def test_stage1_academic_validation():
         mod.validate_data_config(_data_config(academic_rate=0.6))
     with pytest.raises(OLMoConfigurationError, match=">= 0"):
         mod.validate_data_config(_data_config(academic_rate=-0.1))
-    with pytest.raises(OLMoConfigurationError, match="share-capped"):
-        mod.validate_data_config(_data_config(academic_sources=("pixmo_clocks",)))
-    # Only checked when the group is on.
-    mod.validate_data_config(_data_config(academic_rate=0.0, academic_sources=("pixmo_clocks",)))
-    mod.validate_data_config(_data_config(academic_sources=("pixmo_clocks", "dv_qa")))
+    # PixMo-Clocks is its own group, not an academic source.
+    with pytest.raises(OLMoConfigurationError, match="own group"):
+        mod.validate_data_config(_data_config(academic_sources=("dv_qa", "pixmo_clocks")))
+    # The clock rate counts toward the total and must be >= 0.
+    with pytest.raises(OLMoConfigurationError, match="exceeds 1"):
+        mod.validate_data_config(_data_config(clock_rate=0.5))
+    with pytest.raises(OLMoConfigurationError, match=">= 0"):
+        mod.validate_data_config(_data_config(clock_rate=-0.01))
+    mod.validate_data_config(_data_config(clock_rate=0.01))
 
 
 def test_stage1_academic_fractions():
-    """The default split with the real sizes: Clocks held to 5% (21.6% by its row-capped size
-    alone), the templated chart sets 17.9% (18.8% without Clocks, 44.0% without their row caps),
-    CoSyn 77.1%."""
+    """The default split with the real sizes: CoSyn 81.2%, the templated chart sets 18.8% (44.0%
+    without their row caps)."""
     mod = _load_stage1_module()
     names = list(acad_mix.DEFAULT_ACADEMIC_SOURCES)
     frac = mod._academic_fractions(names, [REAL_SIZES[n] for n in names])
     share = dict(zip(names, frac))
     np.testing.assert_allclose(frac.sum(), 1.0)
-    np.testing.assert_allclose(share["pixmo_clocks"], 0.05)
-    np.testing.assert_allclose(sum(share[n] for n in TEMPLATED), 0.179, atol=5e-4)
+    np.testing.assert_allclose(sum(share[n] for n in TEMPLATED), 0.188, atol=5e-4)
     np.testing.assert_allclose(
-        sum(f for n, f in share.items() if n.startswith("cosyn_")), 0.771, atol=5e-4
+        sum(f for n, f in share.items() if n.startswith("cosyn_")), 0.812, atol=5e-4
     )
-    # The uncapped sources keep their sqrt(capped size) ratios.
     np.testing.assert_allclose(
         share["cosyn_chart_exp"] / share["dv_qa"], np.sqrt(116_814 / 10_000), rtol=1e-9
     )
-
-    no_clocks = [n for n in names if n != "pixmo_clocks"]
-    frac = mod._academic_fractions(no_clocks, [REAL_SIZES[n] for n in no_clocks])
-    templated = sum(f for n, f in zip(no_clocks, frac) if n in TEMPLATED)
-    np.testing.assert_allclose(templated, 0.188, atol=5e-4)
-    uncapped = np.sqrt([REAL_SIZES[n] for n in no_clocks])
-    share_uncapped = dict(zip(no_clocks, uncapped / uncapped.sum()))
+    uncapped = np.sqrt([REAL_SIZES[n] for n in names])
+    share_uncapped = dict(zip(names, uncapped / uncapped.sum()))
     np.testing.assert_allclose(sum(share_uncapped[n] for n in TEMPLATED), 0.440, atol=5e-4)
-    clocks_by_size = mod._size_fractions(
-        acad_mix.academic_weighting_sizes(names, [REAL_SIZES[n] for n in names]), "sqrt", names
-    )[-1]
-    np.testing.assert_allclose(clocks_by_size, 0.216, atol=5e-4)
     with pytest.raises(OLMoConfigurationError, match="dv_qa"):
         mod._academic_fractions(["dv_qa"], [0])  # an empty source is named

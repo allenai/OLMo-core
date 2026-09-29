@@ -1,4 +1,5 @@
-"""The academic QA source group for Molmo2 stage 1 (``Molmo2-Stage1.py --academic_rate``).
+"""The academic QA source group for Molmo2 stage 1 (``Molmo2-Stage1.py --academic_rate``), and
+PixMo-Clocks, which is a group of its own (``--clock_rate``).
 
 Stage 2's large synthetic QA sets, trained in stage 1 as well, so a stage 1 that is mixed into
 text midtraining has more distinct images to see than PixMo-Cap's ~717k. Every source is a
@@ -15,24 +16,26 @@ image):
 ========================  =========  ===================================================
 source                    rows       share of the group (default sources, real sizes)
 ========================  =========  ===================================================
-CoSyn, 7 categories       357,202    77.1%, split by sqrt(size)
-``plot_qa``               157,070    7.4%; weighted as 20,000 rows; 20 questions / image
-``dv_qa``                 200,000    5.2%; weighted as 10,000 rows
-``figure_qa``             100,000    5.2%; weighted as 10,000 rows
-``pixmo_clocks``          800,269    5.0%: capped (:attr:`Stage1AcademicSource.max_share`)
+CoSyn, 7 categories       357,202    81.2%, split by sqrt(size)
+``plot_qa``               157,070    7.8%; weighted as 20,000 rows; 20 questions / image
+``dv_qa``                 200,000    5.5%; weighted as 10,000 rows
+``figure_qa``             100,000    5.5%; weighted as 10,000 rows
 ========================  =========  ===================================================
 
-**Two constraints shape the split**, on top of sqrt(size):
+**Two constraints can shape the split**, on top of sqrt(size):
 
 * **Row caps** (:attr:`Stage1AcademicSource.weighting_size_cap`), stage 2's ``image_only_v9``
   ``root_size_factor``: a source is weighted as if it had at most that many rows. DVQA, FigureQA
   and PlotQA are templated charts with a handful of question forms; uncapped, their row counts
-  would give them 44% of the group rather than 18%.
+  would give them 44% of the group rather than 19%.
 * **Share caps** (:attr:`Stage1AcademicSource.max_share`): a source takes at most that fraction of
   the group's rate, and what it gives up goes to the uncapped sources in proportion to their
-  weights (:func:`academic_group_fractions`). PixMo-Clocks is one narrow skill, reading a clock
-  face, and even at its row cap its 800k synthetic rows would take 21.6% of the group; it is held
-  to 5%, no more than one templated chart set gets. Its images are then never repeated in a run.
+  weights (:func:`academic_group_fractions`). No default source has one.
+
+**PixMo-Clocks is a group of its own** (:data:`CLOCKS_SOURCE`, :func:`build_stage1_clocks_source`),
+not an academic source: one narrow skill, reading a clock face, from 800k synthetic images that
+always ask the same question. Its own rate sets how much of it a run sees, independent of the QA
+sources, and its user turn is the tag alone, ``clocks:``, since the question never varies.
 
 OKVQA, ST-VQA, ScienceQA and TabMWP are small (6k-25k rows) and are left out; ScienceQA and AI2D
 are multiple choice, which the stage-1 prompt family has no port of.
@@ -57,11 +60,13 @@ __all__ = [
     "STAGE1_ACADEMIC_SOURCES",
     "STAGE1_ACADEMIC_SOURCE_NAMES",
     "DEFAULT_ACADEMIC_SOURCES",
+    "CLOCKS_SOURCE",
     "STAGE2_EVAL_TRAIN_SETS",
     "academic_weighting_sizes",
     "check_share_caps",
     "academic_group_fractions",
     "build_stage1_academic_source",
+    "build_stage1_clocks_source",
 ]
 
 
@@ -94,15 +99,21 @@ STAGE1_ACADEMIC_SOURCES: Dict[str, Stage1AcademicSource] = {
     "dv_qa": Stage1AcademicSource(weighting_size_cap=10_000),
     "figure_qa": Stage1AcademicSource(weighting_size_cap=10_000),
     "plot_qa": Stage1AcademicSource(weighting_size_cap=20_000, max_questions=PLOT_QA_MAX_QUESTIONS),
-    "pixmo_clocks": Stage1AcademicSource(weighting_size_cap=250_000, max_share=0.05),
 }
 
 STAGE1_ACADEMIC_SOURCE_NAMES: Tuple[str, ...] = tuple(STAGE1_ACADEMIC_SOURCES)
 
 DEFAULT_ACADEMIC_SOURCES: Tuple[str, ...] = STAGE1_ACADEMIC_SOURCE_NAMES
 
+#: The clock-reading source, trained as its own group (see the module doc).
+CLOCKS_SOURCE = "pixmo_clocks"
+
 
 def _source(name: str) -> Stage1AcademicSource:
+    if name == CLOCKS_SOURCE:
+        raise OLMoConfigurationError(
+            f"{name!r} is not an academic source: it is its own group, set with --clock_rate"
+        )
     if name in STAGE2_EVAL_TRAIN_SETS:
         raise OLMoConfigurationError(
             f"{name!r} is the training set of a stage-2 eval benchmark "
@@ -191,4 +202,14 @@ def build_stage1_academic_source(
     src = _source(name)
     return Stage1AcademicDatasetConfig(
         name=name, max_crops=max_crops, max_questions=src.max_questions, seed=seed
+    ).build(tokenizer)
+
+
+def build_stage1_clocks_source(
+    tokenizer, *, max_crops: int = 8, seed: int = 0
+) -> Stage1AcademicDataset:
+    """Build the PixMo-Clocks group's one source: the clock-face images with the bare ``clocks:``
+    tag as the user turn, and the time (``The time shown is 3:02 PM``) as the answer."""
+    return Stage1AcademicDatasetConfig(
+        name=CLOCKS_SOURCE, max_crops=max_crops, tag_only=True, seed=seed
     ).build(tokenizer)

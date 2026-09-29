@@ -345,6 +345,7 @@ def test_stage1_refuses_the_olmocr_eval_split():
             text_rich=TextRichCaptionDatasetConfig(),
             academic_rate=0.0,
             academic_sources=DEFAULT_ACADEMIC_SOURCES,
+            clock_rate=0.0,
         )
 
     for split in ("eval", "validation"):
