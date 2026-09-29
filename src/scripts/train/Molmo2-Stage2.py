@@ -614,7 +614,10 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
             ),
             OptimGroupOverride(
-                params=["lm.*.lora_A", "lm.*.lora_B", "lm.*.token_delta"],
+                # `token_delta` exists only with `--lora_train_token_ids`; an unmatched
+                # pattern is a hard OLMoConfigurationError at build time.
+                params=["lm.*.lora_A", "lm.*.lora_B"]
+                + (["lm.*.token_delta"] if lora_train_token_ids else []),
                 opts=dict(lr=lora_lr, weight_decay=0.0, scheduler_name="lora"),
             ),
         ]
