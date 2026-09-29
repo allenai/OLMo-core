@@ -21,20 +21,28 @@ The tests here check that contract at three levels:
    the CP group must match the full-sequence gradients for every parameter and for the input.
    Parameters that are sliced per rank must additionally carry zero gradient outside the rank's
    slice, which is what makes the data-parallel gradient reduction correct in training.
+
+The forward parity check is also applied at every stage boundary inside the layer, not just at
+its output: the inputs and outputs of the three causal convolutions and the inputs and output of
+the recurrent kernel are captured on each rank and compared with the reference's slice of heads
+or channels, so a wrong stage cannot hide behind a later one.
 """
 
 from __future__ import annotations
 
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 import torch.distributed as dist
 from torch.distributed.device_mesh import init_device_mesh
 
+import olmo_core.nn.attention.kda as kda_module
+import olmo_core.nn.attention.recurrent as recurrent_module
 from olmo_core.distributed.checkpoint import (
     load_model_and_optim_state,
     save_model_and_optim_state,
@@ -267,6 +275,97 @@ def test_ulysses_cp_requires_divisible_heads(mixer_name: str, n_heads: int, cp_w
 # ---------------------------------------------------------------------------------------------
 
 
+# Dimension along which each recorded stage tensor is partitioned across CP ranks after the
+# exchange: channels for the conv tensors, heads for the kernel tensors, and the parameter axis
+# for the kernel's per-head / per-channel gate parameters.
+_STAGE_SPLIT_DIM = {
+    "q_conv1d.in": -1,
+    "q_conv1d.out": -1,
+    "k_conv1d.in": -1,
+    "k_conv1d.out": -1,
+    "v_conv1d.in": -1,
+    "v_conv1d.out": -1,
+    "kernel.q": 2,
+    "kernel.k": 2,
+    "kernel.v": 2,
+    "kernel.g": 2,
+    "kernel.beta": 2,
+    "kernel.out": 2,
+    "kernel.A_log": 0,
+    "kernel.dt_bias": 0,
+}
+
+
+class _StageRecorder:
+    """
+    Captures the tensors at every stage boundary inside a mixer's forward pass: the inputs and
+    outputs of the three causal convolutions, and the inputs and output of the recurrent kernel.
+    Under CP these are the post-exchange, head-parallel tensors, so each one should equal the
+    reference's slice along :data:`_STAGE_SPLIT_DIM`.
+    """
+
+    _KERNEL_KEYS = ("q", "k", "v", "g", "beta", "A_log", "dt_bias")
+
+    def __init__(self, module):
+        self.module = module
+        self.stages: Dict[str, torch.Tensor] = {}
+        self._handles: List[Any] = []
+        self._patch: Any = None
+
+    def _record(self, name: str, value: Any):
+        if isinstance(value, torch.Tensor):
+            self.stages[name] = value.detach().float().cpu()
+
+    def __enter__(self) -> "_StageRecorder":
+        for conv_name in ("q_conv1d", "k_conv1d", "v_conv1d"):
+            conv = getattr(self.module, conv_name)
+            self._handles.append(
+                conv.register_forward_pre_hook(
+                    lambda m, args, kwargs, n=conv_name: self._record(
+                        f"{n}.in", kwargs.get("x", args[0] if args else None)
+                    ),
+                    with_kwargs=True,
+                )
+            )
+            self._handles.append(
+                conv.register_forward_hook(
+                    lambda m, args, out, n=conv_name: self._record(f"{n}.out", out)
+                )
+            )
+
+        target: types.ModuleType
+        if isinstance(self.module, KimiDeltaAttention):
+            target, fn_name = kda_module, "dispatch_chunk_kda"
+        else:
+            target, fn_name = recurrent_module, "dispatch_chunk_gated_delta_rule"
+        original = getattr(target, fn_name)
+
+        def wrapped(*args, **kwargs):
+            for key in self._KERNEL_KEYS:
+                if key in kwargs:
+                    self._record(f"kernel.{key}", kwargs[key])
+            out = original(*args, **kwargs)
+            self._record("kernel.out", out[0])
+            return out
+
+        self._patch = patch.object(target, fn_name, wrapped)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        for handle in self._handles:
+            handle.remove()
+        if self._patch is not None:
+            self._patch.stop()
+
+
+def _rank_slice(tensor: torch.Tensor, dim: int, rank: int, world_size: int) -> torch.Tensor:
+    size = tensor.shape[dim]
+    assert size % world_size == 0, (tensor.shape, dim, world_size)
+    per_rank = size // world_size
+    return tensor.narrow(dim, rank * per_rank, per_rank)
+
+
 def _build_reference(
     mixer_name: str, case_name: str, ref_path: Path, checkpoint_dir: Path, device: torch.device
 ):
@@ -284,10 +383,11 @@ def _build_reference(
     loss_weight = torch.randn(case.batch_size, case.seq_len, D_MODEL, device=device)
     cu_doc_lens = case.cu_doc_lens(device)
 
-    with torch.autocast(device.type, dtype=torch.bfloat16):
+    with _StageRecorder(module) as recorder, torch.autocast(device.type, dtype=torch.bfloat16):
         y = module(x, cu_doc_lens=cu_doc_lens)
     (y.float() * loss_weight).sum().backward()
     assert x.grad is not None
+    assert set(recorder.stages) >= {"q_conv1d.in", "v_conv1d.out", "kernel.q", "kernel.out"}
 
     grads = {}
     for name, param in module.named_parameters():
@@ -301,6 +401,7 @@ def _build_reference(
             "y": y.detach().cpu(),
             "x_grad": x.grad.detach().cpu(),
             "grads": grads,
+            "stages": recorder.stages,
         },
         ref_path,
     )
@@ -329,9 +430,22 @@ def _run_ulysses_cp_parity(checkpoint_dir: str, ref_path: str, mixer_name: str, 
     x_local = ref["x"][:, local].clone().requires_grad_(True)
     cu_doc_lens = ref["cu_doc_lens"]
 
-    with torch.autocast(device.type, dtype=torch.bfloat16):
+    with _StageRecorder(module) as recorder, torch.autocast(device.type, dtype=torch.bfloat16):
         y_local = module(x_local, cu_doc_lens=cu_doc_lens)
     assert y_local.shape == x_local.shape, y_local.shape
+
+    # Every stage boundary inside the layer: the post-exchange tensor on this rank must equal
+    # the reference's slice of heads / channels for this rank.
+    assert set(recorder.stages) == set(ref["stages"]), (
+        f"rank{rank} recorded stages {sorted(recorder.stages)} but reference has "
+        f"{sorted(ref['stages'])}"
+    )
+    for stage_name, ref_tensor in ref["stages"].items():
+        expected = _rank_slice(ref_tensor, _STAGE_SPLIT_DIM[stage_name], rank, world_size)
+        _assert_close(
+            f"rank{rank} stage {stage_name}", recorder.stages[stage_name], expected, FWD_TOL
+        )
+
     _assert_close(f"rank{rank} output", y_local, ref["y"][:, local], FWD_TOL)
 
     (y_local.float() * ref["loss_weight"][:, local]).sum().backward()
