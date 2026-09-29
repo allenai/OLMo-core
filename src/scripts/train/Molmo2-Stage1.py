@@ -119,6 +119,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    UnshardedModelExportCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -810,13 +811,14 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             # Synchronous checkpointing: avoids the async checkpoint thread pool whose
             # teardown raced/failed on this cluster ("cannot schedule new futures after
             # interpreter shutdown"). Saves block briefly but complete reliably.
-            # max_checkpoints=None keeps every permanent checkpoint: the default of 3 deletes
-            # the intermediate steps that stage-1 evals score.
+            # The last 5 permanent checkpoints are kept (steps 24k-32k of a 32k run), each with
+            # its DCP state and the unsharded export, about 68 GB apiece. The v2 run scored
+            # within about a point across 24k-32k, so they span the checkpoints worth evaluating.
             CheckpointerCallback(
                 save_interval=2000,
                 ephemeral_save_interval=500,
                 save_async=False,
-                max_checkpoints=None,
+                max_checkpoints=5,
             ),
         )
         .with_callback(
@@ -830,6 +832,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
+        # Every permanent checkpoint also gets `model.safetensors` + `olmo_core_config.json`, so
+        # evals read one file instead of the 256-shard DCP state (olmo-eval issue #379).
+        .with_callback("unsharded_export", UnshardedModelExportCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
     )  # NOTE: no in-loop eval callbacks (out of scope for stage 1).
