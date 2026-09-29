@@ -62,6 +62,7 @@ from olmo_core.train.callbacks import (
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
+    UnshardedModelExportCallback,
     WandBCallback,
 )
 from olmo_core.train.train_module import (
@@ -307,6 +308,9 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             ),
         )
         .with_callback("config_saver", ConfigSaverCallback())
+        # Every permanent checkpoint also gets `model.safetensors` + `olmo_core_config.json`, so
+        # evals read one file instead of the 256-shard DCP state (olmo-eval issue #379).
+        .with_callback("unsharded_export", UnshardedModelExportCallback())
         .with_callback("garbage_collector", GarbageCollectorCallback())
         .with_callback("beaker", BeakerCallback())
     )
