@@ -768,7 +768,9 @@ class FlexAttentionBackend(AttentionBackend):
                 example_id = flex_attn_example_ids
             else:
                 om = or_mask.to(device=q.device, dtype=torch.bool) if or_mask is not None else None
-                am = and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                am = (
+                    and_mask.to(device=q.device, dtype=torch.bool) if and_mask is not None else None
+                )
                 is_image, seg_code, example_id = self._per_token_from_masks(om, am)
                 subsegment_ids = None
             mask_mod = self._build_mask_mod(is_image, subsegment_ids, seg_code, example_id)

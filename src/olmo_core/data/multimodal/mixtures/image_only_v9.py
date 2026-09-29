@@ -216,23 +216,31 @@ def build_image_only_v9_dataset(
 
     src = sources[name]
     if name == "correction_qa_multi_only_max5":
-        from olmo_core.data.multimodal.multi_image_datasets import CorrectionQaDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            CorrectionQaDatasetConfig,
+        )
 
         return CorrectionQaDatasetConfig(seed=seed).build(tokenizer)
     if name.startswith("mantis_instruct_"):
-        from olmo_core.data.multimodal.multi_image_datasets import MantisInstructDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            MantisInstructDatasetConfig,
+        )
 
         subset = name[len("mantis_instruct_") :].replace("_multi_only", "")
         return MantisInstructDatasetConfig(subset=subset, seed=seed).build(tokenizer)
     if name.startswith("cosyn_multidoc_"):
-        from olmo_core.data.multimodal.multi_image_datasets import CoSynMultiDocDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            CoSynMultiDocDatasetConfig,
+        )
 
         doc_type = name[len("cosyn_multidoc_") :].replace("_exp", "")
         return CoSynMultiDocDatasetConfig(
             doc_type=doc_type, use_exp=name.endswith("_exp"), seed=seed
         ).build(tokenizer)
     if name == "pixmo_multi_points":
-        from olmo_core.data.multimodal.multi_image_datasets import PixMoMultiPointsDatasetConfig
+        from olmo_core.data.multimodal.multi_image_datasets import (
+            PixMoMultiPointsDatasetConfig,
+        )
 
         return PixMoMultiPointsDatasetConfig(
             loss_token_weighting="none",

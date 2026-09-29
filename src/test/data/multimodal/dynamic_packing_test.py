@@ -128,9 +128,7 @@ def test_iter_dynamic_packs_flush_and_determinism():
     # Everything is emitted (flush drains the buffer) and the result is deterministic.
     total = sum(len(p["input_ids"]) for p in packs1)
     assert total == sum(len(p["input_ids"]) for p in packs2)
-    assert [p["input_ids"].tolist() for p in packs1] == [
-        p["input_ids"].tolist() for p in packs2
-    ]
+    assert [p["input_ids"].tolist() for p in packs1] == [p["input_ids"].tolist() for p in packs2]
     n_examples = sum(len(np.unique(p["example_ids"])) for p in packs1)
     assert n_examples == 40
     for p in packs1:

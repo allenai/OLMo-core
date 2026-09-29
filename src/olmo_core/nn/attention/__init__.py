@@ -4,7 +4,17 @@ import os
 import warnings
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple, Union, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+    cast,
+)
 
 import torch
 import torch.nn as nn

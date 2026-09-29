@@ -41,8 +41,14 @@ from olmo_core.internal.common import (
     get_root_dir,
 )
 from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig
+from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.nn.vision import MultimodalLM, MultimodalLMConfig
-from olmo_core.optim import AdamWConfig, CosWithWarmup, OptimGroupOverride, PerGroupScheduler
+from olmo_core.optim import (
+    AdamWConfig,
+    CosWithWarmup,
+    OptimGroupOverride,
+    PerGroupScheduler,
+)
 from olmo_core.train import (
     Duration,
     TrainerConfig,
@@ -58,7 +64,6 @@ from olmo_core.train.callbacks import (
     GPUMemoryMonitorCallback,
     WandBCallback,
 )
-from olmo_core.nn.transformer.config import TransformerActivationCheckpointingMode
 from olmo_core.train.train_module import (
     MultimodalTransformerTrainModuleConfig,
     TransformerActivationCheckpointingConfig,
@@ -379,7 +384,9 @@ def _build_mixture(tokenizer, config: ExperimentConfig):
         if names_filter is None
         else list(names_filter)
     )
-    datasets, weights, names = _append_extra_sft_sources(config, tokenizer, datasets, weights, names)
+    datasets, weights, names = _append_extra_sft_sources(
+        config, tokenizer, datasets, weights, names
+    )
     log.info(
         "Mixture %s sources / weights: %s",
         config.mixture,
@@ -402,9 +409,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
 
     per_config = config.finevision_rate / max(len(FINEVISION_RATES), 1)
     fv = {
-        name: rate + per_config
-        for name, rate in FINEVISION_RATES.items()
-        if rate + per_config > 0
+        name: rate + per_config for name, rate in FINEVISION_RATES.items() if rate + per_config > 0
     }
     mmfr_rate = config.mmfinereason_rate
     extra_total = mmfr_rate + sum(fv.values())

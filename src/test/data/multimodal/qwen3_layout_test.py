@@ -49,9 +49,9 @@ def test_image_prefix_has_no_bos(tokenizer):
 
 def test_single_branch_uses_suffix(tokenizer):
     q = "Where is the cat?"
-    assert branch_context_ids(tokenizer, q, branch_index=0, multi_branch=False) == user_turn_suffix_ids(
-        tokenizer, q
-    )
+    assert branch_context_ids(
+        tokenizer, q, branch_index=0, multi_branch=False
+    ) == user_turn_suffix_ids(tokenizer, q)
 
 
 def test_multi_branch_uses_suffix_for_all_branches(tokenizer):

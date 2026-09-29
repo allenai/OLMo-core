@@ -4,7 +4,10 @@ import torch
 
 from olmo_core.nn.vision.config import VisionEncoderConfig
 from olmo_core.nn.vision.image_vit import VisionTransformer
-from olmo_core.nn.vision.sdpa import vision_scaled_dot_product_attention, vision_sdpa_context
+from olmo_core.nn.vision.sdpa import (
+    vision_scaled_dot_product_attention,
+    vision_sdpa_context,
+)
 
 
 def test_vit_apply_activation_checkpointing_sets_fn():

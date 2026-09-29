@@ -255,7 +255,10 @@ def test_lm_head_response_logits_only(head_type, loss_implementation):
     d_model, vocab_size = 256, 1024
     B, S = 2, 32
 
-    if head_type == LMHeadType.normalized and loss_implementation == LMLossImplementation.fused_linear:
+    if (
+        head_type == LMHeadType.normalized
+        and loss_implementation == LMLossImplementation.fused_linear
+    ):
         pytest.skip("NormalizedLMHead does not support fused_linear")
 
     config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation)

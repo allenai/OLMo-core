@@ -33,9 +33,9 @@ from olmo_core.config import Config
 from .dataset_compat import load_from_disk_compat
 from .detect_counting_question import is_pixmo_point_and_count_question
 from .message_sequence import encode_sft_example
-from .sequence_builder import example_rng
 from .paths import ACADEMIC_DATASETS, PIXMO_DATASETS, TORCH_DATASETS
 from .pixmo_ama import NO_POINT_PREFIX
+from .sequence_builder import example_rng
 from .sft_formatter import SftFormatter
 
 __all__ = [
@@ -239,7 +239,12 @@ class CoSynMultiDocDataset(_MultiImageSftDataset):
         if self.config.use_exp:
             style += "_exp"
             message_list = [
-                dict(question=q["question"], answer=q["answer"], explanation=q["reasoning"], style=style)
+                dict(
+                    question=q["question"],
+                    answer=q["answer"],
+                    explanation=q["reasoning"],
+                    style=style,
+                )
                 for q in qas
             ]
         else:

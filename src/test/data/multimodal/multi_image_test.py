@@ -37,9 +37,7 @@ def _img(w=64, h=48, color=(255, 0, 0)):
 
 
 def test_multi_image_points_tag_continuing_indices_and_sep():
-    tag = format_multi_image_points_tag(
-        [(1, [(0.5, 0.5), (0.1, 0.2)]), (3, [(0.9, 0.9)])], "cat"
-    )
+    tag = format_multi_image_points_tag([(1, [(0.5, 0.5), (0.1, 0.2)]), (3, [(0.9, 0.9)])], "cat")
     # Per-image points sorted by (x, y); point ids continue across images; image
     # groups joined by ";" (html-v2); image indices are 1-based display indices.
     assert tag == '<points coords="1 1 100 200 2 500 500;3 3 900 900">cat</points>'
@@ -164,7 +162,9 @@ def _weka_or_skip(path: str):
 @pytest.mark.parametrize("subset", ["nlvr2", "spot-the-diff"])
 def test_mantis_dataset_smoke(tokenizer, subset):
     _weka_or_skip(f"{_WEKA}/academic_datasets/mantis-instruct/{subset}")
-    from olmo_core.data.multimodal.multi_image_datasets import MantisInstructDatasetConfig
+    from olmo_core.data.multimodal.multi_image_datasets import (
+        MantisInstructDatasetConfig,
+    )
 
     ds = MantisInstructDatasetConfig(subset=subset).build(tokenizer)
     assert len(ds) > 0
@@ -175,7 +175,9 @@ def test_mantis_dataset_smoke(tokenizer, subset):
 
 def test_cosyn_multidoc_dataset_smoke(tokenizer):
     _weka_or_skip(f"{_WEKA}/pixmo_datasets/pixmo_docs_multi/chart_metadata_v3.json")
-    from olmo_core.data.multimodal.multi_image_datasets import CoSynMultiDocDatasetConfig
+    from olmo_core.data.multimodal.multi_image_datasets import (
+        CoSynMultiDocDatasetConfig,
+    )
 
     ds = CoSynMultiDocDatasetConfig(doc_type="chart").build(tokenizer)
     assert len(ds) > 0
@@ -197,7 +199,9 @@ def test_correction_qa_dataset_smoke(tokenizer):
 
 def test_pixmo_multi_points_dataset_smoke(tokenizer):
     _weka_or_skip(f"{_WEKA}/pixmo_datasets/pixmo-multi-points")
-    from olmo_core.data.multimodal.multi_image_datasets import PixMoMultiPointsDatasetConfig
+    from olmo_core.data.multimodal.multi_image_datasets import (
+        PixMoMultiPointsDatasetConfig,
+    )
 
     ds = PixMoMultiPointsDatasetConfig(message_weight=0.2).build(tokenizer)
     assert len(ds) > 0

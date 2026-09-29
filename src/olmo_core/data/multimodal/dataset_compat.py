@@ -20,7 +20,7 @@ def _patch_list_feature_type() -> None:
     global _LIST_PATCHED
     if _LIST_PATCHED:
         return
-    from datasets.features.features import Sequence, _FEATURE_TYPES
+    from datasets.features.features import _FEATURE_TYPES, Sequence
 
     if "List" in _FEATURE_TYPES:
         # datasets >= 5 has a native ``List`` feature — aliasing it to ``Sequence``
