@@ -103,32 +103,31 @@ def test_stage1_family_refuses_multiple_choice():
 
 
 # ---------------------------------------------------------------------------
-# TallyQA: no image the VQAv2 eval samples from
+# TallyQA: no COCO val2017 image
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def _clear_heldout_caches():
-    registry.vqa2_eval_coco_ids.cache_clear()
+    registry.coco_val2017_ids.cache_clear()
     registry.vg_coco_ids.cache_clear()
     build_academic_data.cache_clear()
     yield
-    registry.vqa2_eval_coco_ids.cache_clear()
+    registry.coco_val2017_ids.cache_clear()
     registry.vg_coco_ids.cache_clear()
     build_academic_data.cache_clear()
 
 
 def _write_tally_tree(tmp_path, monkeypatch):
-    tally, vqa2 = tmp_path / "tally_qa", tmp_path / "vqa2"
+    tally = tmp_path / "tally_qa"
     tally.mkdir()
-    vqa2.mkdir()
     images = {
         "train2014/COCO_train2014_000000000001.jpg": "keep: a COCO train image",
-        "val2014/COCO_val2014_000000000002.jpg": "drop: in the VQAv2 eval pool",
-        "val2014/COCO_val2014_000000000003.jpg": "keep: a val2014 image not in the pool",
-        "VG_100K/10.jpg": "drop: VG 10 is COCO 2",
+        "val2014/COCO_val2014_000000000002.jpg": "drop: a val2017 image under its 2014 name",
+        "val2014/COCO_val2014_000000000003.jpg": "keep: a val2014 image that is not in val2017",
+        "VG_100K/10.jpg": "drop: VG 10 is COCO 2, a val2017 image",
         "VG_100K_2/11.jpg": "keep: VG 11 is not a COCO image",
-        "VG_100K/12.jpg": "keep: VG 12 is COCO 5, not in the pool",
+        "VG_100K/12.jpg": "keep: VG 12 is COCO 5, not in val2017",
     }
     rows = [
         {"image": im, "image_id": i, "question": f"How many {i}?", "answer": i, "question_id": i}
@@ -136,11 +135,8 @@ def _write_tally_tree(tmp_path, monkeypatch):
     ]
     for split in ("train", "test"):
         (tally / f"{split}.json").write_text(json.dumps(rows))
-    manifest = [
-        {"image": "/x/val2014/COCO_val2014_000000000002.jpg", "image_id": 2, "messages": []},
-        {"image": "/x/val2014/COCO_val2014_000000000004.jpg", "image_id": 4, "messages": []},
-    ]
-    (vqa2 / "molmo_val.json").write_text(json.dumps(manifest))
+    val2017 = tmp_path / "captions_val2017.json"
+    val2017.write_text(json.dumps({"images": [{"id": 2}, {"id": 4}], "annotations": []}))
     vg = tmp_path / "image_data.json"
     vg.write_text(
         json.dumps(
@@ -152,12 +148,12 @@ def _write_tally_tree(tmp_path, monkeypatch):
         )
     )
     monkeypatch.setattr(registry, "TALLY_QA_SOURCE", str(tally))
-    monkeypatch.setattr(registry, "VQA2_SOURCE", str(vqa2))
+    monkeypatch.setattr(registry, "COCO_VAL2017_ANNOTATIONS", str(val2017))
     monkeypatch.setattr(registry, "VG_IMAGE_DATA", str(vg))
     return images
 
 
-def test_tally_qa_train_drops_vqa2_eval_images(tmp_path, monkeypatch, _clear_heldout_caches):
+def test_tally_qa_train_drops_coco_val2017_images(tmp_path, monkeypatch, _clear_heldout_caches):
     images = _write_tally_tree(tmp_path, monkeypatch)
     kept = {"/".join(r["image"].split("/")[-2:]) for r in registry._load_tally_qa("train")}
     assert kept == {im for im, why in images.items() if why.startswith("keep")}
@@ -165,12 +161,13 @@ def test_tally_qa_train_drops_vqa2_eval_images(tmp_path, monkeypatch, _clear_hel
     assert len(registry._load_tally_qa("test")) == len(images)
 
 
+@pytest.mark.parametrize("missing", ["COCO_VAL2017_ANNOTATIONS", "VG_IMAGE_DATA"])
 def test_tally_qa_train_fails_without_its_heldout_sets(
-    tmp_path, monkeypatch, _clear_heldout_caches
+    tmp_path, monkeypatch, _clear_heldout_caches, missing
 ):
     """A guard that cannot be checked fails the build rather than passing silently."""
     _write_tally_tree(tmp_path, monkeypatch)
-    monkeypatch.setattr(registry, "VG_IMAGE_DATA", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(registry, missing, str(tmp_path / "missing.json"))
     with pytest.raises(OLMoConfigurationError, match="held-out set"):
         registry._load_tally_qa("train")
 
@@ -178,21 +175,25 @@ def test_tally_qa_train_fails_without_its_heldout_sets(
 @pytest.mark.skipif(
     not (
         os.path.exists(os.path.join(registry.TALLY_QA_SOURCE, "train.json"))
-        and os.path.exists(os.path.join(registry.VQA2_SOURCE, "molmo_val.json"))
+        and os.path.exists(registry.COCO_VAL2017_ANNOTATIONS)
         and os.path.exists(registry.VG_IMAGE_DATA)
     ),
-    reason="TallyQA / VQAv2 / Visual Genome data not available",
+    reason="TallyQA / COCO / Visual Genome data not available",
 )
 def test_tally_qa_train_real_data(_clear_heldout_caches):
-    """Measured on weka: 41,441 of the 132,981 train images are dropped (32,633 COCO val2014
-    files and 8,808 Visual Genome images that are COCO val2014 images)."""
+    """Measured on weka: 5,114 of the 132,981 train images are dropped (4,052 filed as COCO
+    val2014 images and 1,062 Visual Genome images that are val2017 images). The other 28,581
+    val2014 files are kept."""
     rows = registry._load_tally_qa("train")
-    assert len(rows) == 91_540
-    pool = registry.vqa2_eval_coco_ids()
-    assert len(pool) == 40_504
+    assert len(rows) == 127_867
+    val2017 = registry.coco_val2017_ids()
+    assert len(val2017) == 5_000
+    n_val2014 = 0
     for r in rows:
         src, fname = r["image"].split("/")[-2:]
-        assert registry._tally_coco_id(f"{src}/{fname}") not in pool
+        assert registry._tally_coco_id(f"{src}/{fname}") not in val2017
+        n_val2014 += src == "val2014"
+    assert n_val2014 == 28_581
 
 
 # ---------------------------------------------------------------------------
