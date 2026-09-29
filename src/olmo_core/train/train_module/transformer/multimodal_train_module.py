@@ -51,7 +51,10 @@ from olmo_core.utils import get_default_device, move_to_device, warn_once
 from ...common import ReduceType
 from ..config import TrainModuleConfig
 from ..train_module import EvalBatchSpec, TrainModule
-from .config import TransformerActivationCheckpointingConfig, TransformerDataParallelConfig
+from .config import (
+    TransformerActivationCheckpointingConfig,
+    TransformerDataParallelConfig,
+)
 from .train_module import TransformerTrainModule
 
 log = logging.getLogger(__name__)

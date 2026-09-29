@@ -20,7 +20,9 @@ def _open_image(path: str) -> Image.Image:
     return Image.open(path).convert("RGB")
 
 
-def format_pixmo_clocks_row(row: Dict[str, Any], rng: np.random.RandomState, *, aug: bool = True) -> Dict[str, Any]:
+def format_pixmo_clocks_row(
+    row: Dict[str, Any], rng: np.random.RandomState, *, aug: bool = True
+) -> Dict[str, Any]:
     """Format one PixMo clocks JSONL row into an mm_olmo-compatible example dict."""
     time_format = row["time_format"]
     shows_seconds = row["shows_seconds"]
@@ -119,7 +121,9 @@ def format_pixmo_clocks_row(row: Dict[str, Any], rng: np.random.RandomState, *, 
         else:
             h_pad = rng.randint(0, height * 2, (2,), dtype=np.int32)
             w_pad = rng.randint(0, width * 2, (2,), dtype=np.int32)
-        image = torchvision.transforms.Pad([h_pad[0], w_pad[0], h_pad[1], w_pad[1]], fill=255)(image)
+        image = torchvision.transforms.Pad([h_pad[0], w_pad[0], h_pad[1], w_pad[1]], fill=255)(
+            image
+        )
 
         image = VF.adjust_hue(image, rng.uniform(-0.05, 0.05))
         image = VF.adjust_brightness(image, rng.uniform(0.85, 1.2))

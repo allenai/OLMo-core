@@ -8,7 +8,9 @@ from olmo_core.data.multimodal.dataset_compat import _load_arrow_split
 
 def test_load_arrow_split_concatenates_shards_virtually(tmp_path):
     """Large list columns must not be merged with pa.concat_tables (offset overflow)."""
-    schema = pa.schema([("messages", pa.list_(pa.struct([("role", pa.string()), ("content", pa.string())])))])
+    schema = pa.schema(
+        [("messages", pa.list_(pa.struct([("role", pa.string()), ("content", pa.string())])))]
+    )
     shard0 = pa.table(
         {"messages": [[{"role": "user", "content": "hi"}]]},
         schema=schema,

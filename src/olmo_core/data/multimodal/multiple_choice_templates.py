@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import string
 
-
 __all__ = ["template_mc_question"]
 
 
@@ -83,7 +82,7 @@ def build_option_name_templates(question: str, options: str, option_type):
         f"Question: {question} Options: {options} Answer {option_type}:",
         f"Answer the question by selecting an answer {option_type}\nQuestion: {question}\nOptions: {options}",
         f"{question}\n{options}\nReturn only the {option_type} of the correct answer",
-        f"Help me answer this question: \"{question}\", by stating the correct option {option_type}\n{options}",
+        f'Help me answer this question: "{question}", by stating the correct option {option_type}\n{options}',
         f"Question: {question}\n\nChoose one {option_type}:\n{options}",
         f"{question}\n{options}\nReturn the right answer {option_type} and nothing else.",
     ]
@@ -104,26 +103,43 @@ def build_instruction_templates(question: str, options: str, option_type):
         f"Answer the question by selecting an answer option\nQuestion: {question}\nOptions: {options}",
         f"Answer the question by selecting an option\nQuestion: {question}\nOptions:\n{options}",
         f"{question}\n{options}\nReturn only the correct answer",
-        f"Help me answer this question: \"{question}\", by stating the correct option from:\n{options}.",
-        f"For the question \"{question}\", return the best option from:\n{options}.",
+        f'Help me answer this question: "{question}", by stating the correct option from:\n{options}.',
+        f'For the question "{question}", return the best option from:\n{options}.',
         f"Question: {question}\n\nChoose one:\n{options}",
         f"Question: {question}\nChoose from:\n{options}",
-        f"Question: \"{question}\"\nChoose from:\n{options}",
+        f'Question: "{question}"\nChoose from:\n{options}',
         f"Question: {question}. Options: {options}. Best Options:\n",
     ]
 
 
 COMMON_MARKERS = ["%s. ", "%s) ", "%s: ", "(%s) "]
-WEIRD_MARKERS = ["%s; ", "%s ", "%s.  ", "%s)", "%s=", "%s\t", "%s    ",
-                 "{%s} ", "%s => ", "[%s] ", "<%s> "]
-WEIRD_MARKERS = sorted(set(WEIRD_MARKERS + [
-    x.strip() for x in COMMON_MARKERS + WEIRD_MARKERS if x.strip() != "%s"]))
+WEIRD_MARKERS = [
+    "%s; ",
+    "%s ",
+    "%s.  ",
+    "%s)",
+    "%s=",
+    "%s\t",
+    "%s    ",
+    "{%s} ",
+    "%s => ",
+    "[%s] ",
+    "<%s> ",
+]
+WEIRD_MARKERS = sorted(
+    set(WEIRD_MARKERS + [x.strip() for x in COMMON_MARKERS + WEIRD_MARKERS if x.strip() != "%s"])
+)
 
 
 def template_mc_question(
-    question, options, rng, unlabelled=False,
-    p_inline=0.1, p_use_instruction_template=0.5,
-    p_label_only_output=0.25, p_label_options=0.8
+    question,
+    options,
+    rng,
+    unlabelled=False,
+    p_inline=0.1,
+    p_use_instruction_template=0.5,
+    p_label_only_output=0.25,
+    p_label_options=0.8,
 ):
     options = [str(x) for x in options]
 
@@ -147,13 +163,13 @@ def template_mc_question(
             (string.ascii_uppercase, "letter"),
             (string.ascii_lowercase, "letter"),
             ([str(i) for i in range(1, 21)], "number"),
-            (['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'], "numeral")
+            (["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"], "numeral"),
         ]
         option_names, option_name_type = names[rng.randint(0, len(names))]
         option_identifiers = [marker % n for n in option_names]
         option_text = [f"{opt_id}{opt}" for opt_id, opt in zip(option_identifiers, options)]
         if label_only_response:
-            outputs = option_names[:len(options)]
+            outputs = option_names[: len(options)]
         else:
             outputs = option_text
     else:
@@ -163,20 +179,25 @@ def template_mc_question(
         outputs = options
         marker = ""
 
-    inline_seps = [x for x in [";", " ||| "] if
-                   x not in marker.strip() and not any(opt.endswith(x) for opt in options)]
+    inline_seps = [
+        x
+        for x in [";", " ||| "]
+        if x not in marker.strip() and not any(opt.endswith(x) for opt in options)
+    ]
     if label_options:
         inline_seps.append("")
     if not inline_seps:
         inline = False
     if inline:
         sep = inline_seps[rng.randint(0, len(inline_seps))]
-        tmp = [x if (ix == (len(option_text)-1) or x.endswith(sep)) else x+sep
-               for ix, x in enumerate(option_text)]
+        tmp = [
+            x if (ix == (len(option_text) - 1) or x.endswith(sep)) else x + sep
+            for ix, x in enumerate(option_text)
+        ]
         option_string = " ".join(tmp)
     else:
         if not label_options and rng.random() < 0.5:
-            seps = ['•', '◦', '▪', '▫', '‣', '⁃', '∙', '○', '●', '□']
+            seps = ["•", "◦", "▪", "▫", "‣", "⁃", "∙", "○", "●", "□"]
             sep = f"\n{seps[rng.randint(0, len(seps))]} "
             option_string = sep.lstrip() + sep.join(option_text)
         else:
@@ -205,4 +226,4 @@ def template_mc_question(
         templates = build_instruction_templates(question, option_string, option_name_type)
 
     input_text = templates[rng.randint(0, len(templates))]
-    return input_text, option_names[:len(option_text)], outputs[:len(option_text)]
+    return input_text, option_names[: len(option_text)], outputs[: len(option_text)]
