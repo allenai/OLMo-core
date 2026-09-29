@@ -20,8 +20,10 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 ``--recipe`` selects the data mixture (see :data:`RECIPES`): ``v1`` (the default) is the released
 Molmo2-4B-Pretrain mixture -- caption 0.6, pointing and counting 0.3 on the v1 sources, Tulu
 text 0.1, no OCR. ``v2`` is caption 0.5, pointing and counting 0.25 on the v2 sources, OCR 0.25
-and no text-only data. A recipe only sets the defaults of ``pointing_rate`` / ``nlp_rate`` /
-``ocr_rate`` / ``pointing_data``; an explicit override of any of them still wins.
+and no text-only data. ``v3`` is v2 with an academic QA group: caption 0.475, pointing and counting
+0.225, OCR 0.15, academic QA 0.15. A recipe only sets the defaults of ``pointing_rate`` /
+``nlp_rate`` / ``ocr_rate`` / ``academic_rate`` / ``pointing_data``; an explicit override of any of
+them still wins.
 
 ``--pointing_data`` selects the pointing/counting group: ``v1`` (the released Molmo2 pretrain's
 sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, image-grouped
@@ -40,8 +42,8 @@ sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``
 ``nvidia_synth`` / ``receipts`` configure the synthetic sets, and ``--ocr_data_root`` relocates
 the tar tree.
 
-``--academic_rate`` (default 0) adds stage 2's large synthetic QA sets, also paid for by the
-caption group: CoSyn's seven single-image categories, DVQA, FigureQA and PlotQA, each question
+``--academic_rate`` (default 0; 0.15 in ``v3``) adds stage 2's large synthetic QA sets, also paid
+for by the caption group: CoSyn's seven single-image categories, DVQA, FigureQA and PlotQA, each question
 behind its source's style tag (``dv_qa: <question>``). The training set of a benchmark the
 stage-2 checkpoints are evaluated on is never a stage-1 source, nor is TallyQA, whose images
 overlap the VQAv2 eval's. ``--academic_sources=[...]`` picks the sources (see
@@ -338,8 +340,8 @@ OCR_SOURCES = DEFAULT_OCR_SOURCES
 # caps, so the group's sqrt(size) split gives them 19% of it. Each question is the bare question
 # behind its source's style tag. Never a source: the training set of a benchmark the stage-2
 # checkpoints are evaluated on (VQAv2, TextVQA, ChartQA, DocVQA, InfographicVQA, AI2D, A-OKVQA),
-# or TallyQA, whose images overlap the VQAv2 eval's. Paid for out of the caption group; off by
-# default. An ablation arm, not a default: no run has measured it yet.
+# or TallyQA, whose images overlap the VQAv2 eval's. Paid for out of the caption group; off unless
+# given, and 0.15 in the v3 recipe.
 ACADEMIC_RATE = 0.0
 ACADEMIC_SOURCES = DEFAULT_ACADEMIC_SOURCES
 
@@ -378,16 +380,35 @@ POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 # Data recipes: the group rates and the pointing sources, selected with `--recipe`. The caption
 # group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate - academic_rate. A recipe only
 # sets defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption at 0.55).
-# No recipe sets `academic_rate`, so it stays 0 unless given.
 #   "v1": the released Molmo2-4B-Pretrain mixture: caption 0.6, pointing and counting 0.3 (v1
 #         sources), Tulu text 0.1, no OCR.
 #   "v2": caption 0.5, pointing and counting 0.25 (v2 sources: audited PixMo-Points / PixMo-Count
 #         + CoSyn), OCR 0.25 (the default OCR sources, see `OCR_RATE`), no text-only data.
+#   "v3": v2 plus the academic QA group (`ACADEMIC_RATE`): caption 0.475, pointing and counting
+#         0.225, OCR 0.15, academic QA 0.15. The rates keep v2's balance of what is trained on:
+#         in a simulation of the packed mixture (80 sampled examples per source, this script's
+#         2D-knapsack packer at 2,560 tokens), the weighted loss splits caption / pointing /
+#         text-rich (OCR + academic) as 55.9% / 18.0% / 26.2% against v2's 55.2% / 18.4% / 26.3%.
+#         The academic QA share, 9.5% of the loss and 0.15 of the examples, comes out of OCR
+#         (0.25 -> 0.15): the one group a run never repeats (v2 sees 0.46 of its 3.09M rows,
+#         v3 0.28), and the one covering the same charts, tables and documents with a different
+#         task. Over 32k steps (1.39 examples per packed sequence, 5.7M examples) that is ~3.8
+#         passes of PixMo-Cap (v2: 4.0), ~3.9 of the pointing sources (v2: 4.4; mm_olmo's molmo3
+#         stage 1 targets 4) and ~1.05 of the academic group's 814k images.
 RECIPES = {
     "v1": dict(
-        pointing_rate=POINTING_RATE, nlp_rate=NLP_RATE, ocr_rate=OCR_RATE, pointing_data="v1"
+        pointing_rate=POINTING_RATE,
+        nlp_rate=NLP_RATE,
+        ocr_rate=OCR_RATE,
+        academic_rate=ACADEMIC_RATE,
+        pointing_data="v1",
     ),
-    "v2": dict(pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, pointing_data="v2"),
+    "v2": dict(
+        pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, academic_rate=0.0, pointing_data="v2"
+    ),
+    "v3": dict(
+        pointing_rate=0.225, nlp_rate=0.0, ocr_rate=0.15, academic_rate=0.15, pointing_data="v2"
+    ),
 }
 RECIPE = "v1"
 
@@ -563,8 +584,8 @@ def resolve_recipe(overrides: List[str]) -> Tuple[str, dict]:
     """The ``--recipe`` named in the raw overrides and the field defaults it sets.
 
     Read before :meth:`Config.merge`, so the recipe's rates become the config's starting values
-    and an explicit ``--pointing_rate`` / ``--nlp_rate`` / ``--ocr_rate`` / ``--pointing_data``
-    still overrides them.
+    and an explicit ``--pointing_rate`` / ``--nlp_rate`` / ``--ocr_rate`` / ``--academic_rate`` /
+    ``--pointing_data`` still overrides them.
 
     :raises OLMoConfigurationError: If the recipe is not one of :data:`RECIPES`.
     """
@@ -1381,8 +1402,8 @@ Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \
       --ocr_sources=[olmocr_documents,olmocr_books,olmocr_loc_transcripts,olmocr_national_archives]
 
-Academic QA group at 10% (CoSyn, DVQA, FigureQA, PlotQA), on top of the v2 recipe:
-› python {sys.argv[0]} launch molmo2-stage1-v2-qa --recipe=v2 --academic_rate=0.1
+The v3 recipe (v2 plus the academic QA group: caption 0.475, pointing 0.225, OCR 0.15, QA 0.15):
+› python {sys.argv[0]} launch molmo2-stage1-v3 --recipe=v3
 
 Local synthetic smoke test:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke \\

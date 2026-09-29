@@ -406,8 +406,26 @@ def test_stage1_academic_group_wiring():
     assert mod.ACADEMIC_SOURCES == acad_mix.DEFAULT_ACADEMIC_SOURCES
     fields = set(mod.ExperimentConfig.__dataclass_fields__)
     assert {"academic_rate", "academic_sources"} <= fields
-    assert all("academic_rate" not in r for r in mod.RECIPES.values())
+    assert mod.RECIPES["v1"]["academic_rate"] == mod.RECIPES["v2"]["academic_rate"] == 0.0
     mod.validate_data_config(_data_config())
+
+
+def test_v3_recipe():
+    """v3 is v2 plus the academic QA group, funded mostly from OCR: caption 0.475, pointing
+    0.225, OCR 0.15, academic 0.15, on the v2 pointing sources and no text-only data."""
+    mod = _load_stage1_module()
+    v3 = mod.RECIPES["v3"]
+    assert v3 == dict(
+        pointing_rate=0.225, nlp_rate=0.0, ocr_rate=0.15, academic_rate=0.15, pointing_data="v2"
+    )
+    caption = 1.0 - v3["pointing_rate"] - v3["nlp_rate"] - v3["ocr_rate"] - v3["academic_rate"]
+    assert caption == pytest.approx(0.475)
+    assert mod.resolve_recipe(["--recipe=v3"]) == ("v3", v3)
+    mod.validate_data_config(_data_config(recipe="v3", **v3))
+    # With the real sizes, the ten default sources share exactly the recipe's academic rate.
+    names = list(acad_mix.DEFAULT_ACADEMIC_SOURCES)
+    frac = mod._academic_fractions(names, [REAL_SIZES[n] for n in names])
+    assert v3["academic_rate"] * frac.sum() == pytest.approx(0.15)
 
 
 @pytest.mark.parametrize("rate", [0.0, 0.1])

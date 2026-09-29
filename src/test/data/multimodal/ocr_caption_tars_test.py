@@ -506,10 +506,14 @@ def test_stage1_recipes():
     mod = _load_stage1_module()
     v1, v2 = mod.RECIPES["v1"], mod.RECIPES["v2"]
     assert mod.RECIPE == "v1"
-    assert v1 == dict(pointing_rate=0.3, nlp_rate=0.1, ocr_rate=0.0, pointing_data="v1")
-    assert v2 == dict(pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, pointing_data="v2")
+    assert v1 == dict(
+        pointing_rate=0.3, nlp_rate=0.1, ocr_rate=0.0, academic_rate=0.0, pointing_data="v1"
+    )
+    assert v2 == dict(
+        pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, academic_rate=0.0, pointing_data="v2"
+    )
     for r in (v1, v2):
-        caption = 1.0 - r["pointing_rate"] - r["nlp_rate"] - r["ocr_rate"]
+        caption = 1.0 - r["pointing_rate"] - r["nlp_rate"] - r["ocr_rate"] - r["academic_rate"]
         assert caption == pytest.approx(0.6 if r is v1 else 0.5)
     # The ExperimentConfig defaults are the v1 recipe, so a config built without `--recipe`
     # (and the dataclass defaults a test builds) agree with it.
@@ -524,6 +528,7 @@ def test_stage1_recipes():
         ([], "v1"),
         (["--recipe=v2"], "v2"),
         (["--recipe=V2"], "v2"),
+        (["--recipe=v3"], "v3"),
         (["--recipe=v2", "--recipe=v1"], "v1"),  # later wins, as in `merge`
         (["--ocr_rate=0.1"], "v1"),
     ],
@@ -540,9 +545,9 @@ def test_resolve_recipe(overrides, expected):
 def test_unknown_recipe_is_refused():
     mod = _load_stage1_module()
     with pytest.raises(OLMoConfigurationError, match="recipe"):
-        mod.resolve_recipe(["--recipe=v3"])
+        mod.resolve_recipe(["--recipe=v9"])
     with pytest.raises(OLMoConfigurationError, match="recipe"):
-        mod.validate_data_config(_data_config(recipe="v3"))
+        mod.validate_data_config(_data_config(recipe="v9"))
 
 
 def test_v2_recipe_validates_and_splits_its_groups():
