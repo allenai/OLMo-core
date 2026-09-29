@@ -69,11 +69,13 @@ class BeakerCallback(Callback):
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback):
                     if callback.enabled and callback.run is not None:
+                        # A resumed W&B run already holds the previous job's values.
                         callback.run.config.update(
                             {
                                 "beaker_experiment_url": beaker_url,
                                 "beaker_experiment_id": self.experiment_id,
-                            }
+                            },
+                            allow_val_change=True,
                         )
                         log.info(f"Added beaker_experiment_url to W&B config: {beaker_url}")
                         log.info(f"Added beaker_experiment_id to W&B config: {self.experiment_id}")
@@ -113,7 +115,7 @@ class BeakerCallback(Callback):
             # Try to get W&B/Comet URL of experiment.
             for callback in self.trainer.callbacks.values():
                 if isinstance(callback, WandBCallback) and callback.enabled:
-                    if (url := callback.run.get_url()) is not None:
+                    if (url := callback.run.url) is not None:
                         self._url = url
                     break
                 elif isinstance(callback, CometCallback) and callback.enabled:

@@ -134,7 +134,7 @@ class WandBCallback(Callback):
                 log.warning("Finalizing failed W&B run...")
             else:
                 log.info("Finalizing successful W&B run...")
-            self.wandb.finish(exit_code=exit_code, quiet=True)
+            self.wandb.finish(exit_code=exit_code)
             self._finalized = True
 
     def pre_train(self):

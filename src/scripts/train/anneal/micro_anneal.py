@@ -319,14 +319,12 @@ def build_experiment_config(cli_context: CliContext) -> ExperimentConfig:
     )
     # OLMoDDP models train on the olmo-ddp preset's image, env and symm-mem extension prebuild. KDA
     # layers with experimental kernels also need kernel-fun and FLA, which the recipe image may lack.
-    # The preset image ships wandb 0.30, which drops Run.get_url and finish(quiet=...) that the
-    # beaker and wandb callbacks call.
     if isinstance(model_config, OLMoDDPModelConfig):
         _preset = get_preset("olmo-ddp")
         launch_config.beaker_image = _preset.beaker_image
         launch_config.env_vars.extend(BeakerEnvVar(name=k, value=v) for k, v in _preset.env_vars)
         launch_config.post_setup = " && ".join([
-            "pip install 'kernel-fun==0.2.0' 'flash-linear-attention==0.5.2' 'wandb<0.30'",
+            "pip install 'kernel-fun==0.2.0' 'flash-linear-attention==0.5.2'",
             _preset.post_setup,
         ])
 
