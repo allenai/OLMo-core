@@ -810,7 +810,14 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             # Synchronous checkpointing: avoids the async checkpoint thread pool whose
             # teardown raced/failed on this cluster ("cannot schedule new futures after
             # interpreter shutdown"). Saves block briefly but complete reliably.
-            CheckpointerCallback(save_interval=2000, ephemeral_save_interval=500, save_async=False),
+            # max_checkpoints=None keeps every permanent checkpoint: the default of 3 deletes
+            # the intermediate steps that stage-1 evals score.
+            CheckpointerCallback(
+                save_interval=2000,
+                ephemeral_save_interval=500,
+                save_async=False,
+                max_checkpoints=None,
+            ),
         )
         .with_callback(
             "wandb",
