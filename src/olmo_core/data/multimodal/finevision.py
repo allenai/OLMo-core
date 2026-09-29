@@ -77,6 +77,7 @@ from olmo_core.config import Config
 from .message_sequence import encode_sft_example
 from .sequence_builder import example_rng
 from .sft_common import (
+    boost_think_tokens,
     decode_pil_image,
     get_example_with_skip,
     load_hf_dataset,
@@ -487,6 +488,10 @@ class FineVisionDatasetConfig(Config):
     """Cap the number of rows after filtering. When set, rows are subsampled with
     :attr:`shuffle_seed` (mm_olmo v10 download script semantics)."""
 
+    think_token_weight: Optional[float] = None
+    """Raise the loss weight of ``<think>`` / ``</think>`` delimiters in scratchpad-form
+    targets (ChartGym ``train-v3-scratch``); see ``sft_common.boost_think_tokens``."""
+
     shuffle_seed: int = FINEVISION_V10_SHUFFLE_SEED
     """RNG seed for :attr:`max_rows` subsampling."""
 
@@ -753,7 +758,7 @@ class FineVisionDataset:
             loss_token_weighting=cfg.loss_token_weighting,
             shuffle_rng=example_rng(cfg.seed, i),
         )
-        return truncate_example(seq, cfg.max_sequence_length)
+        return boost_think_tokens(truncate_example(seq, cfg.max_sequence_length), cfg.think_token_weight)
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
         """Build the example at ``index``, skipping ahead over unusable rows.

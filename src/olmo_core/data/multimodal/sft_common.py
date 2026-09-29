@@ -44,7 +44,40 @@ __all__ = [
     "get_example_with_skip",
     "extract_reasoning_text",
     "load_exclude_ids",
+    "boost_think_tokens",
 ]
+
+
+THINK_OPEN_ID = 151667
+THINK_CLOSE_ID = 151668
+
+
+def boost_think_tokens(seq: Dict[str, np.ndarray], weight: Optional[float]) -> Dict[str, np.ndarray]:
+    """Raise the loss weight of the scratchpad delimiters ``<think>`` / ``</think>``.
+
+    Under ``root_subsegments_root_tokens`` every supervised token of a 2,000-token
+    scratchpad target weighs ~1/sqrt(2000) = 0.02-0.04, including the *decision* token
+    ``<think>`` -- the one position that determines whether the model emits a scratchpad
+    at inference. A five-token replay answer gives its first token ~0.45. Measured on
+    ``scr-mixA-lora`` at step 500: P(<think> | first token) is only 0.07 even on
+    ChartVerse's own training prompts, and 0.00-0.05 on CharXiv. This sets the delimiter
+    weights to ``max(existing, weight)`` so the decision is trained at short-answer
+    strength while the body keeps its length-normalised weight. ``None``/0 is a no-op.
+    """
+    if not weight:
+        return seq
+    labels = seq.get("labels")
+    lm = seq.get("loss_masks")
+    if labels is None or lm is None:
+        return seq
+    labels = np.asarray(labels)
+    lm = np.asarray(lm)
+    hit = ((labels == THINK_OPEN_ID) | (labels == THINK_CLOSE_ID)) & (lm > 0)
+    if hit.any():
+        lm = lm.copy()
+        lm[hit] = np.maximum(lm[hit], weight)
+        seq["loss_masks"] = lm
+    return seq
 
 
 def load_exclude_ids(path: str) -> set:

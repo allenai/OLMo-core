@@ -48,6 +48,7 @@ from .message_sequence import encode_sft_example
 from .paths import require_experiment_data_dir
 from .sequence_builder import example_rng
 from .sft_common import (
+    boost_think_tokens,
     decode_pil_image,
     extract_reasoning_scratchpad,
     extract_reasoning_text,
@@ -183,6 +184,11 @@ class ChartVerseDatasetConfig(Config):
     max_crops: int = 8
     max_sequence_length: int = 4096
     loss_token_weighting: str = "root_subsegments_root_tokens"
+
+    think_token_weight: Optional[float] = None
+    """Raise the loss weight of the ``<think>`` / ``</think>`` delimiters to this value (see
+    :func:`~olmo_core.data.multimodal.sft_common.boost_think_tokens`). ``None`` keeps the
+    length-normalised weight, under which the emission decision is barely trained."""
     seed: int = 0
 
     skip_overlong: bool = False
@@ -332,7 +338,7 @@ class ChartVerseDataset:
                 f"ChartVerse row {i}: {len(seq['input_ids'])} tokens exceeds "
                 f"max_sequence_length={cfg.max_sequence_length}"
             )
-        return truncate_example(seq, cfg.max_sequence_length)
+        return boost_think_tokens(truncate_example(seq, cfg.max_sequence_length), cfg.think_token_weight)
 
     def _supervision_target(self, i: int, row: dict, answer: str) -> str:
         """Return the derivation for row ``i``, guaranteed to end in the final answer.

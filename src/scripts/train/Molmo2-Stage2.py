@@ -369,6 +369,12 @@ class ExperimentConfig(Config):
     ~34% of ``sft_600k-cot`` and fits a 4,096-token decode budget."""
     chartverse_exclude_ids: Optional[str] = None
     """JSON ``{"ids": [...]}`` of ChartVerse row ids to drop (pHash decontamination)."""
+    scratchpad_think_weight: Optional[float] = None
+    """Loss weight given to the ``<think>`` / ``</think>`` delimiters in every scratchpad
+    source (ChartGym-scratch, ChartVerse, MMFineReason). Under length-normalised token
+    weighting a 2,000-token scratchpad puts 0.044 on its decision token vs ~0.45 for a
+    terse answer's first token; measured P(<think> | first) after 500 steps was 0.07 even
+    in-distribution. 1.0 trains the decision at short-answer strength."""
     mmfinereason_exclude_ids: Optional[str] = None
     """JSON ``{"ids": [...]}`` of MMFineReason row ids to drop (pHash decontamination;
     ``outputs/chartgym/stage0/mmfinereason_exclude_ids.json`` lists 908)."""
@@ -948,6 +954,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 # with the same count would silently reuse a stale index.
                 index_cache_dir="",
                 max_rows=config.chartgym_max_rows,
+                think_token_weight=config.scratchpad_think_weight,
                 max_crops=MAX_CROPS,
                 max_sequence_length=SEQUENCE_LENGTH,
             ).build(tokenizer)
@@ -965,6 +972,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 cot_scratchpad=config.chartverse_cot_scratchpad,
                 max_cot_chars=config.chartverse_max_cot_chars,
                 exclude_ids_path=config.chartverse_exclude_ids,
+                think_token_weight=config.scratchpad_think_weight,
             ).build(tokenizer)
         )
         weights.append(cv_rate)
@@ -987,6 +995,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
                 supervise_cot=config.mmfinereason_supervise_cot,
                 cot_scratchpad=config.mmfinereason_cot_scratchpad,
                 exclude_ids_path=config.mmfinereason_exclude_ids,
+                think_token_weight=config.scratchpad_think_weight,
             ).build(tokenizer)
         )
         weights.append(mmfr_rate)
