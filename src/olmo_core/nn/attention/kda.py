@@ -297,17 +297,13 @@ class KimiDeltaAttention(SequenceMixer):
         if cp_world_size == 1:
             return
 
-        # Ulysses CP partitions heads across ranks, so every head-shaped quantity must divide
-        # evenly: the heads themselves (n_v_heads == n_heads is enforced in __init__), and the
-        # key/value/gate channels sliced by the convolutions and the in-kernel gate.
+        # Ulysses CP partitions heads across ranks. Every sliced quantity (key/value/gate
+        # channels) is ``n_heads`` times a head dim, so this one check covers them all.
         if self.n_heads % cp_world_size != 0:
             raise ValueError(
                 f"KimiDeltaAttention n_heads ({self.n_heads}) must be divisible by the "
                 f"context parallel degree ({cp_world_size})"
             )
-        assert self.key_dim % cp_world_size == 0
-        assert self.value_dim % cp_world_size == 0
-        assert self.gate_dim % cp_world_size == 0
 
         cp_rank = cp_mesh.get_local_rank()
         local_heads = self.n_heads // cp_world_size
