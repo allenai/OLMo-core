@@ -15,6 +15,7 @@ extracted*; everything shared lives here:
 * :func:`truncate_example` — right-truncate a built example, refusing to cut image tokens
   or to drop every loss token.
 * :func:`get_example_with_skip` — deterministic bad-row skipping for ``__getitem__``.
+* :class:`EpochSeededExamples` — per-example RNG streams that rotate with the training epoch.
 
 Sequence assembly itself goes through
 :func:`~olmo_core.data.multimodal.message_sequence.encode_sft_example`, so these sources
@@ -28,13 +29,17 @@ import glob as _glob
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
 
+from .sequence_builder import example_rng
+
 __all__ = [
+    "heldout_ids",
     "IMAGE_PLACEHOLDER",
     "MAX_ROW_SKIP",
+    "EpochSeededExamples",
     "load_hf_dataset",
     "strip_image_placeholders",
     "count_image_placeholders",
@@ -47,6 +52,76 @@ log = logging.getLogger(__name__)
 
 MAX_ROW_SKIP = 32
 """How many following rows :func:`get_example_with_skip` tries before giving up."""
+
+
+def heldout_ids(paths: Sequence[str], column: str) -> Set[str]:
+    """The identifiers (image urls / hashes, row ids) a training source must not contain.
+
+    Each path is a ``save_to_disk`` dataset. For a ``DatasetDict`` every split except ``train`` is
+    held out; a flat ``Dataset`` (an eval set) is held out entirely.
+
+    :param paths: Held-out dataset directories.
+    :param column: The identifier column to read from each (``image_url`` / ``image_sha256`` /
+        ``id``).
+
+    :returns: The union of the held-out identifiers.
+
+    :raises OLMoConfigurationError: If a path is missing or lacks ``column``. A guard that cannot
+        be checked fails the build rather than passing silently; pass no paths to skip it on
+        purpose.
+    """
+    import os
+
+    from olmo_core.exceptions import OLMoConfigurationError
+
+    from .dataset_compat import load_from_disk_compat
+
+    ids: Set[str] = set()
+    for path in paths:
+        if not os.path.isdir(path):
+            raise OLMoConfigurationError(
+                f"held-out set {path!r} not found, so train/eval image overlap cannot be checked; "
+                "fix the path, or pass heldout_paths=() to skip the check deliberately"
+            )
+        ds = load_from_disk_compat(path)
+        splits = [ds[k] for k in ds.keys() if k != "train"] if hasattr(ds, "keys") else [ds]
+        for split in splits:
+            if column not in split.column_names:
+                raise OLMoConfigurationError(
+                    f"held-out set {path!r} has no {column!r} column (it has {split.column_names})"
+                )
+            ids.update(x for x in split.data.column(column).to_pylist() if x)
+    return ids
+
+
+class EpochSeededExamples:
+    """Mixin for map-style datasets whose ``__getitem__`` *samples* something.
+
+    A source that draws a subset per example — a few of an image's negatives, a render size —
+    must advance its RNG stream with the training epoch, or it redraws the same subset forever
+    and the remainder of each pool is never trained on. mm_olmo does this by folding the epoch
+    into the per-example seed (``dataset.py:70-73``); the data loader calls :meth:`set_epoch`
+    from ``reshuffle`` so the same happens here.
+
+    Requires the host class to expose ``config.seed`` and ``__len__``. The epoch is restored
+    with the loader's state, so a resumed run replays the epoch it was in.
+    """
+
+    _epoch: int = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Set the epoch used to derive per-example RNG streams (called by the data loader)."""
+        self._epoch = int(epoch)
+
+    def epoch_rng(self, index: int) -> np.random.RandomState:
+        """This row's RNG stream for the current epoch."""
+        return example_rng(
+            self.config.seed,  # type: ignore[attr-defined]
+            index,
+            epoch=self._epoch,
+            dataset_len=len(self),  # type: ignore[arg-type]
+        )
+
 
 IMAGE_PLACEHOLDER = "<image>"
 """Inline marker used by these corpora to indicate where an image belongs in the prompt."""

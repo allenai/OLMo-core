@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -29,7 +29,7 @@ def encode_sft_example(
     p_high_res: float = 0.0,
     high_res_max_crops: int = 24,
     loss_token_weighting: str = "root_subsegments_root_tokens",
-    message_weight: Optional[MessageWeight] = None,
+    message_weight: Union[None, float, MessageWeight] = None,
     seed: int = 0,
     shuffle_rng: Optional[np.random.RandomState] = None,
 ) -> Dict[str, np.ndarray]:

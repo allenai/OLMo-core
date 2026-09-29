@@ -30,6 +30,12 @@ from .mmfinereason import (
     MMFineReasonDatasetConfig,
     extract_answer_text,
 )
+from .ocr_caption_tars import (
+    OcrCaptionTarsDataset,
+    OcrCaptionTarsDatasetConfig,
+    TarShardIndex,
+)
+from .olmocr import OlmOcrMixDataset, OlmOcrMixDatasetConfig
 from .packing import pack_examples
 from .pixmo_cap import PixMoCapDataset, PixMoCapDatasetConfig
 from .pixmo_points import (
@@ -40,6 +46,12 @@ from .pixmo_points import (
     PixMoPointsDataset,
     PixMoPointsDatasetConfig,
 )
+from .pixmo_points_v2 import (
+    PixMoCountV2Dataset,
+    PixMoCountV2DatasetConfig,
+    PixMoPointsV2Dataset,
+    PixMoPointsV2DatasetConfig,
+)
 from .sequence_builder import (
     ATTEND_ALL_SUBSEGMENT_ID,
     build_branched_sequence,
@@ -48,7 +60,10 @@ from .sequence_builder import (
 from .paths import (
     ACADEMIC_DATASETS,
     MOLMO_DATA_DIR,
+    OE_ENCODER_DATA,
+    OLMOCR_MIX,
     PIXMO_DATASETS,
+    PIXMO_POINTS_V2,
     TORCH_DATASETS,
     TULU4_DATA,
 )
@@ -58,6 +73,13 @@ from .pixmo_cap_qa import PixMoCapQaDataset, PixMoCapQaDatasetConfig
 from .message_weight import MessageWeight, apply_message_weight_to_loss_masks
 from .mixture_weights import DatasetSource, SubMixture, compute_flat_mixture_weights
 from .sft_formatter import SftFormatter
+from .synthetic_ocr import (
+    NvidiaSynthOcrDataset,
+    NvidiaSynthOcrDatasetConfig,
+    SyntheticReceiptsDataset,
+    SyntheticReceiptsDatasetConfig,
+)
+from .text_rich_caption import TextRichCaptionDataset, TextRichCaptionDatasetConfig
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
 
 __all__ = [
@@ -77,6 +99,21 @@ __all__ = [
     "PixMoCountDatasetConfig",
     "CoSynPointDataset",
     "CoSynPointDatasetConfig",
+    "PixMoPointsV2Dataset",
+    "PixMoPointsV2DatasetConfig",
+    "PixMoCountV2Dataset",
+    "PixMoCountV2DatasetConfig",
+    "OlmOcrMixDataset",
+    "OlmOcrMixDatasetConfig",
+    "OcrCaptionTarsDataset",
+    "TextRichCaptionDataset",
+    "TextRichCaptionDatasetConfig",
+    "OcrCaptionTarsDatasetConfig",
+    "NvidiaSynthOcrDataset",
+    "NvidiaSynthOcrDatasetConfig",
+    "SyntheticReceiptsDataset",
+    "SyntheticReceiptsDatasetConfig",
+    "TarShardIndex",
     "Tulu4Dataset",
     "Tulu4DatasetConfig",
     "AcademicDataset",
@@ -92,8 +129,11 @@ __all__ = [
     "SubMixture",
     "compute_flat_mixture_weights",
     "PIXMO_DATASETS",
+    "PIXMO_POINTS_V2",
     "TULU4_DATA",
     "ACADEMIC_DATASETS",
+    "OLMOCR_MIX",
+    "OE_ENCODER_DATA",
     "MOLMO_DATA_DIR",
     "TORCH_DATASETS",
     "MultimodalCollator",

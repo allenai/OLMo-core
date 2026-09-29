@@ -1,6 +1,7 @@
 """CPU tests for the Molmo2 stage-1 data pipeline: grounding format, branched-sequence
 assembly, text-only handling, and the weighted mixture loader."""
 
+
 import numpy as np
 
 from olmo_core.data.multimodal import (
@@ -328,21 +329,6 @@ def _pixmo_cap(mode, **kw):
     return cfg.build(_FakeTok())
 
 
-def test_pixmo_cap_style_length_prefix_format():
-    ds = _pixmo_cap("caption")
-    rng = np.random.RandomState(0)
-    text = "x" * 300  # 300 chars -> bucket ~ 300//15 = 20
-    with_num = 0
-    for _ in range(400):
-        p = ds._style_length_prefix("long_caption", text, rng)
-        assert p.startswith("long_caption") and p.endswith(":")
-        rest = p[len("long_caption") : -1]
-        if rest:  # " <n>"
-            with_num += 1
-            assert -10 <= int(rest) <= 50  # ~20 +/- noise/15
-    assert 0.80 < with_num / 400 < 0.97  # ~90% include the length bucket
-
-
 def test_pixmo_cap_select_branches_styles():
     from olmo_core.data.multimodal.pixmo_cap import CAPTION_STYLE, TRANSCRIPT_STYLE
 
@@ -354,29 +340,47 @@ def test_pixmo_cap_select_branches_styles():
     assert [s for s, _ in both] == [CAPTION_STYLE, TRANSCRIPT_STYLE]
 
 
-def test_pixmo_cap_conditioning_injects_per_branch_prefix():
-    ds = _pixmo_cap("transcript_and_caption", style_length_conditioning=True)
+def test_pixmo_cap_tag_is_the_whole_user_turn():
+    ds = _pixmo_cap("transcript_and_caption", style_tag=True)
     seq = ds[0]
     # two branches -> subsegment ids present, two distinct annotations
     assert "subsegment_ids" in seq
     assert len(set(seq["subsegment_ids"].tolist())) == 3  # prefix + 2 branches
-    # the two user turns were templated with the long_caption / transcript style prefixes
-    prompts = ds.tokenizer.prompts
-    assert any(p.startswith("long_caption") and ":" in p for p in prompts)
-    assert any(p.startswith("transcript") and ":" in p for p in prompts)
+    assert ds.tokenizer.prompts == ["long_caption:", "transcript:"]
 
 
-def test_pixmo_cap_fixed_prompt_disables_conditioning():
+def test_pixmo_cap_tag_carries_no_instruction_and_no_length():
+    """Train/test consistency: the stage-1 caption eval sends the bare ``long_caption:``, so
+    training must send exactly that on every example -- no sampled instruction after it, and no
+    length number in it."""
+    from olmo_core.data.multimodal.pixmo_cap import CAPTION_PROMPTS, TRANSCRIPT_PROMPTS
+
+    ds = _pixmo_cap("transcript_and_caption", style_tag=True)
+    sentences = set(CAPTION_PROMPTS) | set(TRANSCRIPT_PROMPTS)
+    seen = set()
+    for i in range(24):
+        ds.tokenizer.prompts.clear()
+        _ = ds[i]
+        for p in ds.tokenizer.prompts:
+            assert not any(s in p for s in sentences), p
+            seen.add(p)
+    assert seen == {"long_caption:", "transcript:"}
+
+
+def test_pixmo_cap_fixed_prompt_overrides_the_tag():
     ds = _pixmo_cap("caption", fixed_prompt="Describe this image.")
     _ = ds[0]
     assert ds.tokenizer.prompts == ["Describe this image."]  # verbatim, no style prefix
 
 
-def test_pixmo_cap_conditioning_off():
-    ds = _pixmo_cap("caption", style_length_conditioning=False)
+def test_pixmo_cap_tag_off():
+    from olmo_core.data.multimodal.pixmo_cap import CAPTION_PROMPTS
+
+    ds = _pixmo_cap("caption", style_tag=False)
     _ = ds[0]
     # prompt is sampled from the pool verbatim, with no "long_caption ...:" prefix
     assert all(not p.startswith("long_caption") for p in ds.tokenizer.prompts)
+    assert all(p in CAPTION_PROMPTS for p in ds.tokenizer.prompts)
 
 
 # ---------------------------------------------------------------------------

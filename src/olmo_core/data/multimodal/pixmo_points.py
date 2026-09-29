@@ -17,7 +17,7 @@ assembled with :func:`~olmo_core.data.multimodal.sequence_builder.build_branched
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -35,9 +35,18 @@ __all__ = [
     "PixMoCountDataset",
     "CoSynPointDatasetConfig",
     "CoSynPointDataset",
+    "COSYN_POINT_STYLE",
+    "COSYN_POINT_V2_PATH",
+    "FAILED_AUDIT_RESULTS",
 ]
 
+from olmo_core.exceptions import OLMoConfigurationError
+
 from .paths import PIXMO_DATASETS
+
+#: ``audit_result`` values mm_olmo treats as a failed audit (``PixMoPointV2._keep``,
+#: ``CoSynPointConfigV2.FAILED``).
+FAILED_AUDIT_RESULTS = frozenset({"error", "clear_error"})
 
 
 def _build_example(
@@ -51,21 +60,33 @@ def _build_example(
     p_high_res: float = 0.0,
     shuffle_rng: np.random.RandomState | None = None,
     seed: int = 0,
+    branch_weights: Optional[Sequence[Optional[float]]] = None,
 ) -> Dict[str, np.ndarray]:
     """Preprocess the image and assemble a (possibly multi-branch) pointing example.
 
     :param branches_text: list of ``(user_question, assistant_answer)`` strings.
+    :param branch_weights: optional per-branch loss multipliers parallel to ``branches_text``
+        (``None`` entries mean 1). mm_olmo's per-message ``AssistantMessage.weight``: the
+        branch's response tokens are scaled by it on top of ``loss_token_weighting`` and
+        ``message_weight``, which stay example-wide.
     """
     import torch
 
     from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
     branches_text = list(branches_text)
+    weights = None if branch_weights is None else list(branch_weights)
+    if weights is not None and len(weights) != len(branches_text):
+        raise ValueError(
+            f"branch_weights has {len(weights)} entries for {len(branches_text)} branches"
+        )
     if len(branches_text) > 1:
         order = np.arange(len(branches_text))
         rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
         rng.shuffle(order)
         branches_text = [branches_text[i] for i in order]
+        if weights is not None:
+            weights = [weights[i] for i in order]
 
     preprocess_rng = shuffle_rng if shuffle_rng is not None else np.random.RandomState(seed)
     images_t, pooling_t, image_grid = preprocess_image_molmo2(
@@ -103,9 +124,35 @@ def _build_example(
     seq["loss_masks"] = apply_message_weight_to_loss_masks(
         seq["loss_masks"], subsegment_ids, mw, branch_scaling_already_applied=True
     )
+    if weights is not None:
+        seq["loss_masks"] = _apply_branch_weights(seq["loss_masks"], subsegment_ids, weights)
     seq["images"] = images_t[0].numpy()
     seq["pooled_patches_idx"] = pooling_t[0].numpy()
     return seq
+
+
+def _apply_branch_weights(
+    loss_masks: np.ndarray,
+    subsegment_ids: Optional[np.ndarray],
+    weights: Sequence[Optional[float]],
+) -> np.ndarray:
+    """Scale each branch's loss weights by its multiplier (``None`` / 1 leave it alone).
+
+    ``loss_masks`` is aligned with ``labels`` (shifted one position left), but every position
+    that carries loss for branch ``b`` -- the token before each of its response tokens, and its
+    segment-end token -- itself belongs to ``b``, so selecting by ``subsegment_ids`` is exact.
+    A single-branch example has no ``subsegment_ids``; its one weight applies to the whole mask.
+    """
+    out = loss_masks.astype(np.float32, copy=True)
+    if subsegment_ids is None:
+        w = weights[0]
+        if w is not None and w != 1.0:
+            out *= float(w)
+        return out
+    for branch_idx, w in enumerate(weights):
+        if w is not None and w != 1.0:
+            out[subsegment_ids == branch_idx] *= float(w)
+    return out
 
 
 def _load_split(path: str, split: str):
@@ -298,18 +345,42 @@ class PixMoCountDataset:
 # CoSyn point (document pointing; multi-branch, prompt = the question)
 # ---------------------------------------------------------------------------
 
+#: The style CoSyn pointing is tagged with, as in mm_olmo. Its question is an English request stored
+#: in the data (e.g. "Highlight the period that shows the largest five-year increase..."), not an
+#: object name: the ``names`` column is a short summary written for the answer's label and drops
+#: most of what the request asks. A tag of its own keeps ``pointing:`` meaning "an object name
+#: follows".
+COSYN_POINT_STYLE = "cosyn_point"
+
+#: mm_olmo's audited CoSyn build (``CoSynPointConfigV2``): the v1 build's images, questions,
+#: points and names unchanged (all 68,051 train rows match), plus a per-question ``audit_result``
+#: from a VLM audit (81.7% ``correct``, 17.3% ``clear_error``, 1.0% ``error`` on a 1-in-20
+#: sample) and agent masks. The masks feed segmentation messages, which this repo does not
+#: train, so they are ignored.
+COSYN_POINT_V2_PATH = f"{PIXMO_DATASETS}/cosyn-point-v2-masks"
+
 
 @dataclass
 class CoSynPointDatasetConfig(Config):
+    dataset_path: str = f"{PIXMO_DATASETS}/cosyn-point"
+    """HF dataset with ``image``, ``questions``, ``answer_points`` and ``names`` columns."""
+
     max_crops: int = 8
     loss_token_weighting: str = "root_subsegments"
     message_weight: float | None = None
     p_high_res: float = 0.0
     seed: int = 0
     prompt_templates: str = "uber_model_v2"
-    """Prompt family for the question text; stage 1 uses ``"none"`` (bare label)."""
+    """Unused: the question is always the one stored in the data. Kept so the source takes the
+    same kwargs as the other pointing sources."""
     system_prompt: str = "demo_or_style_v2"
-    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``."""
+    """Prompt family for the style prefix; stage 1 uses ``"style_and_length_v2"``, which prefixes
+    the question with ``"cosyn_point:"`` (:data:`COSYN_POINT_STYLE`)."""
+    audit_style: Optional[str] = None
+    """Style for the questions that failed the VLM audit (:data:`FAILED_AUDIT_RESULTS`), e.g.
+    ``"aux_cosyn_point"``: they are kept, behind a tag of their own, so the model learns them apart
+    from the questions that passed. Needs the audited build (:data:`COSYN_POINT_V2_PATH`). ``None``
+    treats every question alike, which is all the v1 build allows."""
 
     def build(self, tokenizer) -> "CoSynPointDataset":
         return CoSynPointDataset(self, tokenizer)
@@ -319,20 +390,37 @@ class CoSynPointDataset:
     def __init__(self, config: CoSynPointDatasetConfig, tokenizer):
         self.config = config
         self.tokenizer = tokenizer
-        self._data = _load_split(f"{PIXMO_DATASETS}/cosyn-point", "train")
+        self._data = _load_split(config.dataset_path, "train")
+        if config.audit_style is not None and "audit_result" not in self._data.column_names:
+            raise OLMoConfigurationError(
+                f"audit_style={config.audit_style!r} needs an audited CoSyn build with an "
+                f"`audit_result` column, such as {COSYN_POINT_V2_PATH!r}; {config.dataset_path!r} "
+                f"has {self._data.column_names}"
+            )
 
     def __len__(self) -> int:
         return len(self._data)
 
     def __getitem__(self, i: int) -> Dict[str, np.ndarray]:
         row = self._data[i]
+        cfg = self.config
+        # The prefix follows the checkpoint's family exactly as for the PixMo sources.
+        fmt = SftFormatter(
+            seed=cfg.seed, prompt_templates=cfg.prompt_templates, system_prompt=cfg.system_prompt
+        )
+        prefix = fmt.style_prefix(COSYN_POINT_STYLE)
+        failed_prefix = fmt.style_prefix(cfg.audit_style) if cfg.audit_style else prefix
+        audits = row["audit_result"] if cfg.audit_style else [None] * len(row["questions"])
         branches: List[Tuple[str, str]] = []
-        for question, points, name in zip(row["questions"], row["answer_points"], row["names"]):
+        for question, points, name, audit in zip(
+            row["questions"], row["answer_points"], row["names"], audits
+        ):
+            tag = failed_prefix if audit in FAILED_AUDIT_RESULTS else prefix
             xy = np.array([points["x"], points["y"]], dtype=np.float64).T.reshape(-1, 2)
             norm = normalize_points(xy, point_scale=100, image_size=None)
             # cosyn_point uses the "pointing" answer (just the points tag), label = name.
             answer = pointing_answer(norm, name.lower(), "pointing", count=len(norm))
-            branches.append((question, answer))
+            branches.append((f"{tag} {question}" if tag else question, answer))
         return _build_example(
             self.tokenizer,
             _open_image(row["image"]),
