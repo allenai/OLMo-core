@@ -147,9 +147,29 @@ def merge(src: Path, dst: Path, *, alpha: Optional[float], save_overwrite: bool)
         weight_key = dkey[: -len(".token_delta")] + ".weight"
         if weight_key not in tensors:
             raise RuntimeError(f"{dkey} has no embedding weight {weight_key} to fold into")
+        # Tied models save the head as its OWN tensor (a copy of the embedding table at
+        # save time, without the delta). load_model_and_optim_state writes both keys into
+        # the single tied Parameter, last one wins -- so the head copy must be folded too,
+        # or the export silently reverts to the un-adapted rows (observed on
+        # scr-mixA-tok-lora: merged embeddings had the new rows, the HF export did not).
+        head_key = weight_key.replace(".embeddings.weight", ".lm_head.w_out.weight")
+        tied = (
+            head_key in tensors
+            and tensors[head_key].shape == tensors[weight_key].shape
+            and torch.equal(tensors[head_key], tensors[weight_key])
+        )
         n = fold_token_rows(tensors, weight_key=weight_key)
-        log.info("Folded %d trainable token rows into %s", n, weight_key)
-    assert not any(k.endswith((".lora_A", ".lora_B", ".token_delta", ".token_delta_ids")) for k in tensors)
+        if tied:
+            tensors[head_key] = tensors[weight_key].clone()
+        log.info(
+            "Folded %d trainable token rows into %s%s",
+            n,
+            weight_key,
+            " and the tied head copy " + head_key if tied else "",
+        )
+    assert not any(
+        k.endswith((".lora_A", ".lora_B", ".token_delta", ".token_delta_ids")) for k in tensors
+    )
     log.info("Merged %d adapters at alpha=%.4g; writing %s ...", merged, alpha, dst)
     save_state_dict(dst / CHECKPOINT_SUBDIR, tensors, save_overwrite=save_overwrite)
 

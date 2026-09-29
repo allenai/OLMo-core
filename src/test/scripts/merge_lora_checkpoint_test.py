@@ -137,3 +137,28 @@ def test_missing_alpha_is_an_error_rather_than_a_guess(tmp_path, script):
     (src / "config.json").write_text(json.dumps({"train_module": {}}))
     with pytest.raises(RuntimeError, match="--alpha"):
         script.merge(src, tmp_path / "out", alpha=None, save_overwrite=False)
+
+
+def test_token_rows_fold_reaches_tied_head_copy():
+    """A tied model saves lm_head.w_out.weight as a separate copy of the embedding table;
+    folding only the embedding lets the un-adapted head copy win on load."""
+    import torch
+
+    from olmo_core.nn.lora import fold_token_rows
+
+    emb = torch.randn(10, 4)
+    tensors = {
+        "model.lm.embeddings.weight": emb.clone(),
+        "model.lm.lm_head.w_out.weight": emb.clone(),
+        "model.lm.embeddings.token_delta": torch.ones(2, 4),
+        "model.lm.embeddings.token_delta_ids": torch.tensor([3, 7]),
+    }
+    # mirror merge(): detect the tie before folding, then copy the folded table over
+    wk, hk = "model.lm.embeddings.weight", "model.lm.lm_head.w_out.weight"
+    tied = torch.equal(tensors[hk], tensors[wk])
+    n = fold_token_rows(tensors, weight_key=wk)
+    if tied:
+        tensors[hk] = tensors[wk].clone()
+    assert n == 2 and tied
+    assert torch.equal(tensors[hk], tensors[wk])
+    assert torch.allclose(tensors[wk][3], emb[3] + 1) and torch.allclose(tensors[wk][0], emb[0])
