@@ -21,7 +21,7 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 Molmo2-4B-Pretrain mixture -- caption 0.6, pointing and counting 0.3 on the v1 sources, Tulu
 text 0.1, no OCR. ``v2`` is caption 0.5, pointing and counting 0.25 on the v2 sources, OCR 0.25
 and no text-only data. ``v3`` is v2 with an academic QA group and a clock-reading group: caption
-0.475, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.01. A recipe only sets the
+0.455, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.03. A recipe only sets the
 defaults of ``pointing_rate`` / ``nlp_rate`` / ``ocr_rate`` / ``academic_rate`` / ``clock_rate`` /
 ``pointing_data``; an explicit override of any of them still wins.
 
@@ -49,9 +49,9 @@ the stage-2 checkpoints are evaluated on is never a stage-1 source, nor is Tally
 overlap the VQAv2 eval's. ``--academic_sources=[...]`` picks the sources (see
 :mod:`olmo_core.data.multimodal.mixtures.stage1_academic`).
 
-``--clock_rate`` (default 0; 0.01 in ``v3``) adds PixMo-Clocks as a group of its own, also paid
-for by the caption group: synthetic clock faces, with the bare tag ``clocks:`` as the user turn
-and the time as the answer.
+``--clock_rate`` (default 0; 0.03 in ``v3``) adds PixMo-Clocks as a group of its own, also paid
+for by the caption group: synthetic clock faces, with ``clocks: What time is being shown?`` as the
+user turn and the time as the answer.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -355,9 +355,9 @@ ACADEMIC_SOURCES = DEFAULT_ACADEMIC_SOURCES
 # The clock-reading group (`mixtures.stage1_academic.build_stage1_clocks_source`): PixMo-Clocks'
 # 800k synthetic clock faces, a group of its own rather than an academic source because it is one
 # narrow skill with one fixed question. Its own rate caps how much of it a run sees whatever the
-# QA group's size, and its user turn is the bare tag `clocks:`, since the question ("What time is
-# being shown?") never varies. Paid for out of the caption group; off unless given, and 0.01 in
-# the v3 recipe.
+# QA group's size. Its user turn keeps the question, `clocks: What time is being shown?`: stage 1
+# may become the only place the model learns to read clocks, so the question text is trained too.
+# Paid for out of the caption group; off unless given, and 0.03 in the v3 recipe.
 CLOCK_RATE = 0.0
 
 # Which sources `POINTING_RATE` buys.
@@ -394,23 +394,24 @@ POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 
 # Data recipes: the group rates and the pointing sources, selected with `--recipe`. The caption
 # group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate - academic_rate - clock_rate. A
-# recipe only sets defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption at 0.55).
+# recipe only sets defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption
+# at 0.55).
 #   "v1": the released Molmo2-4B-Pretrain mixture: caption 0.6, pointing and counting 0.3 (v1
 #         sources), Tulu text 0.1, no OCR.
 #   "v2": caption 0.5, pointing and counting 0.25 (v2 sources: audited PixMo-Points / PixMo-Count
 #         + CoSyn), OCR 0.25 (the default OCR sources, see `OCR_RATE`), no text-only data.
 #   "v3": v2 plus the academic QA group (`ACADEMIC_RATE`) and the clock group (`CLOCK_RATE`):
-#         caption 0.475, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.01. The
+#         caption 0.455, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.03. The
 #         rates keep v2's balance of what is trained on: from 80 sampled examples per source, the
 #         expected weighted loss splits caption / pointing / text-rich (OCR + academic) as
-#         56.1% / 17.8% / 26.0% against v2's 55.0% / 18.5% / 26.5%. The academic QA share, 9.0% of
+#         55.0% / 18.3% / 26.7% against v2's 55.1% / 18.5% / 26.5%. The academic QA share, 9.3% of
 #         the loss and 0.14 of the examples, comes out of OCR (0.25 -> 0.15): the one group a run
 #         never repeats (v2 sees 0.46 of its 3.09M rows, v3 0.28), and the one covering the same
 #         charts, tables and documents with a different task. Packed by this script's 2D-knapsack
-#         packer at 2,560 tokens, a 32k-step run is 1.40 examples per sequence, 5.7M examples:
-#         ~3.8 passes of PixMo-Cap (v2: 4.0), ~4.0 of the pointing sources (v2: 4.4; mm_olmo's
-#         molmo3 stage 1 targets 4), ~1.0 of the academic group's 814k images, and ~57k clock
-#         examples (0.07 of PixMo-Clocks' 800k images; under 0.1% of the loss).
+#         packer at 2,560 tokens, a 32k-step run is 1.43 examples per sequence, 5.8M examples:
+#         ~3.7 passes of PixMo-Cap (v2: 4.0), ~4.0 of the pointing sources (v2: 4.4; mm_olmo's
+#         molmo3 stage 1 targets 4), ~1.0 of the academic group's 814k images, and ~175k clock
+#         examples (0.22 of PixMo-Clocks' 800k images; 2.0% of the tokens, 0.08% of the loss).
 RECIPES = {
     "v1": dict(
         pointing_rate=POINTING_RATE,
@@ -433,7 +434,7 @@ RECIPES = {
         nlp_rate=0.0,
         ocr_rate=0.15,
         academic_rate=0.14,
-        clock_rate=0.01,
+        clock_rate=0.03,
         pointing_data="v2",
     ),
 }
@@ -1236,7 +1237,8 @@ def _pointing_group_fractions(
 def _academic_fractions(names: Sequence[str], sizes: Sequence[int]):
     """How the academic group's rate is split among its sources: by sqrt(size), with the templated
     chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``), then each
-    source held to its share cap, if it has one (``mixtures.stage1_academic.academic_group_fractions``).
+    source held to its share cap, if it has one
+    (``mixtures.stage1_academic.academic_group_fractions``).
     """
     import numpy as np
 
@@ -1457,7 +1459,7 @@ Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \
       --ocr_sources=[olmocr_documents,olmocr_books,olmocr_loc_transcripts,olmocr_national_archives]
 
-The v3 recipe (caption 0.475, pointing 0.225, OCR 0.15, academic QA 0.14, clocks 0.01):
+The v3 recipe (caption 0.455, pointing 0.225, OCR 0.15, academic QA 0.14, clocks 0.03):
 › python {sys.argv[0]} launch molmo2-stage1-v3 --recipe=v3
 
 Local synthetic smoke test:

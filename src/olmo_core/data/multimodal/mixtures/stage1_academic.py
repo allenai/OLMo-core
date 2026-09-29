@@ -35,7 +35,8 @@ CoSyn, 7 categories       357,202    81.2%, split by sqrt(size)
 **PixMo-Clocks is a group of its own** (:data:`CLOCKS_SOURCE`, :func:`build_stage1_clocks_source`),
 not an academic source: one narrow skill, reading a clock face, from 800k synthetic images that
 always ask the same question. Its own rate sets how much of it a run sees, independent of the QA
-sources, and its user turn is the tag alone, ``clocks:``, since the question never varies.
+sources. Its user turn keeps the question, ``clocks: What time is being shown?``: stage 1 may be
+the only place the model learns to read clocks, so the question text has to be trained too.
 
 OKVQA, ST-VQA, ScienceQA and TabMWP are small (6k-25k rows) and are left out; ScienceQA and AI2D
 are multiple choice, which the stage-1 prompt family has no port of.
@@ -208,8 +209,9 @@ def build_stage1_academic_source(
 def build_stage1_clocks_source(
     tokenizer, *, max_crops: int = 8, seed: int = 0
 ) -> Stage1AcademicDataset:
-    """Build the PixMo-Clocks group's one source: the clock-face images with the bare ``clocks:``
-    tag as the user turn, and the time (``The time shown is 3:02 PM``) as the answer."""
-    return Stage1AcademicDatasetConfig(
-        name=CLOCKS_SOURCE, max_crops=max_crops, tag_only=True, seed=seed
-    ).build(tokenizer)
+    """Build the PixMo-Clocks group's one source: the clock-face images, the user turn
+    ``clocks: What time is being shown?`` and the time (``The time shown is 3:02 PM``) as the
+    answer."""
+    return Stage1AcademicDatasetConfig(name=CLOCKS_SOURCE, max_crops=max_crops, seed=seed).build(
+        tokenizer
+    )
