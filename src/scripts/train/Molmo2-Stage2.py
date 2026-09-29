@@ -391,6 +391,13 @@ class ExperimentConfig(Config):
     """ChartGym corpus directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartgym/``."""
     chartgym_max_rows: Optional[int] = None
     """Optional row cap, for exposure-matched ablations against a smaller corpus."""
+    arxelem_rate: float = 0.0
+    """Mixture fraction for ``arxiv-elem`` -- real arXiv chart figures with element-level
+    answers verified from the PDF text+drawing layers (0 disables). Staged in the ChartGym
+    schema by ``outputs/chartgym/tools/arxiv_elem/stage.py``; a second FineVision-schema
+    source so it can be mixed alongside (not instead of) ChartGym."""
+    arxelem_subset: str = "arxiv-elem-v1/train"
+    """Directory under ``$MOLMO_EXPERIMENT_DATA_DIR/chartgym/`` holding the staged parquet."""
     use_lora: bool = USE_LORA
     """Train LoRA adapters on the LLM instead of finetuning it, with the ViT frozen and the
     connector left full-rank. Resolved *pre-merge* in :func:`build_config` because it
@@ -907,8 +914,9 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
     mmfr_rate = config.mmfinereason_rate
     cv_rate = config.chartverse_rate
     cg_rate = config.chartgym_rate
+    ax_rate = config.arxelem_rate
     extra_total = (
-        mmfr_rate + cv_rate + cg_rate + sum(fv.values()) + sum(captions.values())
+        mmfr_rate + cv_rate + cg_rate + ax_rate + sum(fv.values()) + sum(captions.values())
     )
     if extra_total <= 0:
         return datasets, weights, names
@@ -922,6 +930,7 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
         (["mmfinereason"] if mmfr_rate > 0 else [])
         + (["chartverse"] if cv_rate > 0 else [])
         + (["chartgym"] if cg_rate > 0 else [])
+        + (["arxelem"] if ax_rate > 0 else [])
         + list(captions)
         + [f"finevision[{name}]" for name in fv]
     )
@@ -961,6 +970,21 @@ def _append_extra_sft_sources(config: "ExperimentConfig", tokenizer, datasets, w
         )
         weights.append(cg_rate)
         names.append("chartgym")
+    if ax_rate > 0:
+        datasets.append(
+            FineVisionDatasetConfig(
+                dataset_path=os.path.join(
+                    require_experiment_data_dir("the staged arxiv-elem corpus"),
+                    "chartgym",
+                    config.arxelem_subset,
+                ),
+                index_cache_dir="",
+                max_crops=MAX_CROPS,
+                max_sequence_length=SEQUENCE_LENGTH,
+            ).build(tokenizer)
+        )
+        weights.append(ax_rate)
+        names.append("arxelem")
     if cv_rate > 0:
         datasets.append(
             ChartVerseDatasetConfig(
