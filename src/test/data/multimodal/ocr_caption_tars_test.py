@@ -458,6 +458,7 @@ def _data_config(**kw):
         text_rich=TextRichCaptionDatasetConfig(),
         academic_rate=0.0,
         academic_sources=DEFAULT_ACADEMIC_SOURCES,
+        clock_rate=0.0,
     )
     fields.update(kw)
     return SimpleNamespace(**fields)
@@ -507,13 +508,24 @@ def test_stage1_recipes():
     v1, v2 = mod.RECIPES["v1"], mod.RECIPES["v2"]
     assert mod.RECIPE == "v1"
     assert v1 == dict(
-        pointing_rate=0.3, nlp_rate=0.1, ocr_rate=0.0, academic_rate=0.0, pointing_data="v1"
+        pointing_rate=0.3,
+        nlp_rate=0.1,
+        ocr_rate=0.0,
+        academic_rate=0.0,
+        clock_rate=0.0,
+        pointing_data="v1",
     )
     assert v2 == dict(
-        pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, academic_rate=0.0, pointing_data="v2"
+        pointing_rate=0.25,
+        nlp_rate=0.0,
+        ocr_rate=0.25,
+        academic_rate=0.0,
+        clock_rate=0.0,
+        pointing_data="v2",
     )
+    groups = ("pointing_rate", "nlp_rate", "ocr_rate", "academic_rate", "clock_rate")
     for r in (v1, v2):
-        caption = 1.0 - r["pointing_rate"] - r["nlp_rate"] - r["ocr_rate"] - r["academic_rate"]
+        caption = 1.0 - sum(r[k] for k in groups)
         assert caption == pytest.approx(0.6 if r is v1 else 0.5)
     # The ExperimentConfig defaults are the v1 recipe, so a config built without `--recipe`
     # (and the dataclass defaults a test builds) agree with it.
