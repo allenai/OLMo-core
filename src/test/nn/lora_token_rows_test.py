@@ -57,11 +57,11 @@ def test_identity_at_init_then_only_delta_trains():
     ids = torch.tensor([[1, 40, 7, 41]])
     ref = m(ids).detach().clone()
     names = apply_trainable_token_rows(m, ROWS)
-    assert names == [f"lm.embeddings.{TOKEN_DELTA_NAME}"]
+    assert names == [f"lm.embeddings.{TOKEN_DELTA_NAME}", f"lm.embeddings.{TOKEN_DELTA_IDS_NAME}"]
     out = m(ids)
     torch.testing.assert_close(out, ref)  # zero delta -> bit-identical
     trainable = [n for n, p in m.named_parameters() if p.requires_grad]
-    assert trainable == names
+    assert trainable == [f"lm.embeddings.{TOKEN_DELTA_NAME}"]
     out[..., 40].sum().backward()
     d = m.lm.embeddings.token_delta
     assert d.grad is not None and d.grad.abs().sum() > 0

@@ -169,7 +169,9 @@ class LoRAConfig(Config):
             raise OLMoConfigurationError("LoRA 'target_modules' must not be empty")
         if self.trainable_token_ids is not None:
             if not self.trainable_token_ids:
-                raise OLMoConfigurationError("LoRA 'trainable_token_ids' must not be empty when set")
+                raise OLMoConfigurationError(
+                    "LoRA 'trainable_token_ids' must not be empty when set"
+                )
             if len(set(self.trainable_token_ids)) != len(self.trainable_token_ids):
                 raise OLMoConfigurationError("LoRA 'trainable_token_ids' must be unique")
 
@@ -305,7 +307,10 @@ def apply_trainable_token_rows(model: nn.Module, token_ids: List[int]) -> List[s
     ``freeze_params`` has been applied (as the train module does for LoRA), so the new
     parameter is left trainable.
 
-    :returns: The new parameter's FQN in a one-element list.
+    :returns: The FQNs of the new parameter and of its ``token_delta_ids`` buffer. Both are
+        absent from a base checkpoint, and the train module's non-strict-load guard uses
+        this list as the set of keys allowed to be missing; the buffer's value is fixed at
+        construction, so a missing checkpoint entry costs nothing.
     """
     emb_fqn, emb, w_out = _find_tied_embedding(model)
     if hasattr(emb, TOKEN_DELTA_NAME):
@@ -356,7 +361,7 @@ def apply_trainable_token_rows(model: nn.Module, token_ids: List[int]) -> List[s
         ids.tolist(),
         "adjusted" if w_out is not None else "not tied -- head rows unchanged",
     )
-    return [f"{emb_fqn}.{TOKEN_DELTA_NAME}"]
+    return [f"{emb_fqn}.{TOKEN_DELTA_NAME}", f"{emb_fqn}.{TOKEN_DELTA_IDS_NAME}"]
 
 
 def fold_token_rows(tensors: dict, *, weight_key: str) -> int:
