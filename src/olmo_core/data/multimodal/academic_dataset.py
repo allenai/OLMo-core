@@ -5,10 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-
 from olmo_core.config import Config
 
-from .academic.registry import ACADEMIC_REGISTRY, build_academic_data, format_academic_example
+from .academic.registry import (
+    ACADEMIC_REGISTRY,
+    build_academic_data,
+    format_academic_example,
+)
 from .message_sequence import encode_sft_example
 from .sequence_builder import example_rng
 from .sft_formatter import SftFormatter
@@ -50,7 +53,9 @@ class AcademicDataset:
         formatted = format_academic_example(self.config.name, row, rng)
         turns = self._formatter.format_branches(formatted, index=index, rng=rng)
         example_weight = formatted.get("weight")
-        message_weight = example_weight if example_weight is not None else self.config.message_weight
+        message_weight = (
+            example_weight if example_weight is not None else self.config.message_weight
+        )
         return encode_sft_example(
             self.tokenizer,
             formatted["image"],

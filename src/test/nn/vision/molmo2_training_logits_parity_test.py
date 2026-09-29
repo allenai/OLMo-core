@@ -26,7 +26,12 @@ from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.testing import requires_gpu
 
 from .molmo2_logits_parity_test import MOLMO2_VARIANTS, _build_ours, _hf_cache_has
-from .multimodal_test import _IMAGE_PATCH_TOKEN, _LM_VOCAB, _make_inputs, _tiny_multimodal_cfg
+from .multimodal_test import (
+    _IMAGE_PATCH_TOKEN,
+    _LM_VOCAB,
+    _make_inputs,
+    _tiny_multimodal_cfg,
+)
 
 # ---------------------------------------------------------------------------
 # 1. Training-loss parity vs HF (single caption branch)

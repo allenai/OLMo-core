@@ -26,9 +26,7 @@ def format_vqa_short(example: Dict[str, Any], *, style: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "style": style,
         "metadata": {
-            k: example[k]
-            for k in ("image_id", "example_id", "question_id")
-            if k in example
+            k: example[k] for k in ("image_id", "example_id", "question_id") if k in example
         },
         "image": example["image"],
         "question": example["question"],

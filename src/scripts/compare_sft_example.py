@@ -71,7 +71,9 @@ class ParityResult:
 
 
 def image_only_v9_dataset_names() -> list[str]:
-    from olmo_core.data.multimodal.mixtures.image_only_v9 import IMAGE_ONLY_V9_SUBMIXTURES
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+        IMAGE_ONLY_V9_SUBMIXTURES,
+    )
 
     return [src.name for group in IMAGE_ONLY_V9_SUBMIXTURES for src in group.datasets]
 
@@ -250,8 +252,10 @@ def _run_parity(args: argparse.Namespace) -> int:
     if not datasets:
         raise SystemExit("Either --dataset or --sweep is required")
 
-    artifact_dir = Path(args.artifact_dir) if args.artifact_dir else Path(
-        tempfile.mkdtemp(prefix="molmo2-parity.")
+    artifact_dir = (
+        Path(args.artifact_dir)
+        if args.artifact_dir
+        else Path(tempfile.mkdtemp(prefix="molmo2-parity."))
     )
     artifact_dir.mkdir(parents=True, exist_ok=True)
     script = Path(args.script) if args.script else _SCRIPT_PATH
@@ -287,7 +291,8 @@ def _run_parity(args: argparse.Namespace) -> int:
     else:
         with ProcessPoolExecutor(max_workers=args.jobs) as executor:
             futures = {
-                executor.submit(_compare_one_task, kwargs): kwargs["dataset"] for kwargs in task_kwargs
+                executor.submit(_compare_one_task, kwargs): kwargs["dataset"]
+                for kwargs in task_kwargs
             }
             for future in as_completed(futures):
                 result = future.result()
@@ -439,6 +444,7 @@ def compare_artifacts(mm_path: Path, oc_path: Path) -> list[str]:
             continue
         if a is None or b is None:
             if key in ("images", "pooled_patches_idx"):
+
                 def _empty(arr):
                     return arr is not None and getattr(arr, "shape", (None,))[0] == 0
 
@@ -693,7 +699,9 @@ def _export_olmo_core(args: argparse.Namespace) -> None:
         build_academic_data,
         format_academic_example,
     )
-    from olmo_core.data.multimodal.mixtures.image_only_v9 import build_image_only_v9_datasets
+    from olmo_core.data.multimodal.mixtures.image_only_v9 import (
+        build_image_only_v9_datasets,
+    )
     from olmo_core.data.multimodal.sft_formatter import SftFormatter
 
     tokenizer = AutoTokenizer.from_pretrained("allenai/Molmo2-4B", trust_remote_code=True)
@@ -761,22 +769,34 @@ def main(argv: Iterable[str] | None = None) -> int:
         "run",
         help="export mm_olmo + olmo-core artifacts and compare (supports --sweep and --jobs)",
     )
-    run_parser.add_argument("--dataset", action="append", help="image-only-v9 dataset name (repeatable)")
-    run_parser.add_argument("--sweep", action="store_true", help="compare index 0 of all image-only-v9 datasets")
+    run_parser.add_argument(
+        "--dataset", action="append", help="image-only-v9 dataset name (repeatable)"
+    )
+    run_parser.add_argument(
+        "--sweep", action="store_true", help="compare index 0 of all image-only-v9 datasets"
+    )
     run_parser.add_argument("--index", type=int, default=0)
     run_parser.add_argument("--seed", type=int, default=0)
     run_parser.add_argument("--seq_len", type=int, default=16384)
-    run_parser.add_argument("--jobs", "-j", type=int, default=1, help="parallel dataset workers (default: 1)")
-    run_parser.add_argument("--inspect", action="store_true", help="print formatted text + image fingerprints")
+    run_parser.add_argument(
+        "--jobs", "-j", type=int, default=1, help="parallel dataset workers (default: 1)"
+    )
+    run_parser.add_argument(
+        "--inspect", action="store_true", help="print formatted text + image fingerprints"
+    )
     run_parser.add_argument("--diff-tokens", action="store_true", help="decode and diff input_ids")
-    run_parser.add_argument("--keep-artifacts", action="store_true", help="retain artifacts even on success")
+    run_parser.add_argument(
+        "--keep-artifacts", action="store_true", help="retain artifacts even on success"
+    )
     run_parser.add_argument(
         "--artifact-dir",
         help="directory for per-dataset artifact folders (default: temp dir, removed on full success)",
     )
     run_parser.add_argument("--conda", default=_DEFAULT_CONDA, help="path to conda executable")
     run_parser.add_argument("--mm-env", default="mm_olmo", help="conda env for export-mm")
-    run_parser.add_argument("--olmo-core-env", default="olmo-core", help="conda env for export-olmo-core")
+    run_parser.add_argument(
+        "--olmo-core-env", default="olmo-core", help="conda env for export-olmo-core"
+    )
     run_parser.add_argument(
         "--mm-activate-script",
         default=_DEFAULT_MM_OLMO_ACTIVATE,

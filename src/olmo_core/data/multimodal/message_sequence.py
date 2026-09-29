@@ -102,9 +102,7 @@ def encode_sft_example(
         segments = []
         for turn_ix, (q, a) in enumerate(branch):
             if turn_ix == 0:
-                ctx = branch_context_ids(
-                    tokenizer, q, branch_index=0, multi_branch=multi_branch
-                )
+                ctx = branch_context_ids(tokenizer, q, branch_index=0, multi_branch=multi_branch)
             else:
                 ctx = followup_turn_context_ids(tokenizer, q)
             segments.append((ctx, tokenizer.encode(a, add_special_tokens=False)))
@@ -131,14 +129,17 @@ def encode_sft_example(
     )
     if not crops_list:
         # Text-only example: zero crops / pooled rows (same shape convention as Tulu).
-        from olmo_core.nn.vision.molmo2_tokens import N_PATCHES_SQ, PATCH_DIM, POOL_H, POOL_W
+        from olmo_core.nn.vision.molmo2_tokens import (
+            N_PATCHES_SQ,
+            PATCH_DIM,
+            POOL_H,
+            POOL_W,
+        )
 
         seq["images"] = np.zeros((0, N_PATCHES_SQ, PATCH_DIM), dtype=np.float32)
         seq["pooled_patches_idx"] = np.full((0, POOL_H * POOL_W), -1, dtype=np.int64)
         return seq
-    seq["images"] = (
-        np.concatenate(crops_list, axis=0) if len(crops_list) > 1 else crops_list[0]
-    )
+    seq["images"] = np.concatenate(crops_list, axis=0) if len(crops_list) > 1 else crops_list[0]
     seq["pooled_patches_idx"] = (
         np.concatenate(pooling_list, axis=0) if len(pooling_list) > 1 else pooling_list[0]
     )

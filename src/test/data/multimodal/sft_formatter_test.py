@@ -22,7 +22,9 @@ def test_message_weight_scalar():
 
 def test_loss_token_weighting_for_build():
     assert loss_token_weighting_for_build(MessageWeight()) == "none"
-    assert loss_token_weighting_for_build(MessageWeight(root_subsegments=True)) == "root_subsegments"
+    assert (
+        loss_token_weighting_for_build(MessageWeight(root_subsegments=True)) == "root_subsegments"
+    )
     assert (
         loss_token_weighting_for_build(MessageWeight(root_subsegments=True, root_length=True))
         == "root_subsegments_root_tokens"
@@ -141,7 +143,11 @@ def test_format_cosyn_exp_chain_of_thought_and_explanation():
 def test_pixmo_clocks_style_prefix():
     fmt = SftFormatter(seed=0)
     turns = fmt.format_turns(
-        {"style": "clocks", "prompt": "What time is being shown?", "text": "The time shown is 3:00"},
+        {
+            "style": "clocks",
+            "prompt": "What time is being shown?",
+            "text": "The time shown is 3:00",
+        },
         index=0,
     )
     assert turns[0][0].startswith("clocks:")

@@ -18,10 +18,10 @@ from PIL import Image
 from olmo_core.config import Config
 
 from .detect_counting_question import is_pixmo_point_and_count_question
-from .sequence_builder import example_rng
 from .message_sequence import encode_sft_example
 from .paths import PIXMO_DATASETS
 from .pixmo_ama import NO_POINT_PREFIX
+from .sequence_builder import example_rng
 from .sft_formatter import SftFormatter
 
 __all__ = ["PixMoCapQaDatasetConfig", "PixMoCapQaDataset"]
