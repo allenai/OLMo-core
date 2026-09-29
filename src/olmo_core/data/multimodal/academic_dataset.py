@@ -87,8 +87,7 @@ class Stage1AcademicDatasetConfig(Config):
     the user turn is the bare question behind the source's ``"<style>:"`` tag (``dv_qa: What is
     the label of the third bar?``), with no template, instruction or chain-of-thought request. A
     ``*_exp`` source still answers ``"<explanation> Answer: <answer>"``; its tag is what asks for
-    the explanation. With :attr:`tag_only` the question is dropped too, and the user turn is the
-    tag alone (``clocks:``).
+    the explanation.
 
     The training set of a benchmark the stage-2 checkpoints are evaluated on
     (:data:`~.academic.registry.STAGE2_EVAL_TRAIN_SETS`) is refused: it stays stage-2 data.
@@ -103,10 +102,6 @@ class Stage1AcademicDatasetConfig(Config):
     its images carry 131 questions on average, which do not fit in a stage-1 sequence."""
     loss_token_weighting: str = "none"
     """Every response token weighted equally, as for the other stage-1 sources."""
-    tag_only: bool = False
-    """Send the style tag alone as the user turn, with no question: for a source whose question
-    never varies (PixMo-Clocks always asks "What time is being shown?"), the tag already says
-    everything the question does, as the OCR sources' tags do. Single-question sources only."""
     seed: int = 0
 
     def build(self, tokenizer) -> "Stage1AcademicDataset":
@@ -128,7 +123,8 @@ class Stage1AcademicDataset(EpochSeededExamples):
             )
         if config.name not in ACADEMIC_REGISTRY:
             raise OLMoConfigurationError(
-                f"Unknown academic dataset {config.name!r}; expected one of {ACADEMIC_DATASET_NAMES}"
+                f"Unknown academic dataset {config.name!r}; "
+                f"expected one of {ACADEMIC_DATASET_NAMES}"
             )
         if config.max_questions is not None and config.max_questions < 1:
             raise OLMoConfigurationError(f"max_questions={config.max_questions} must be >= 1")
@@ -149,13 +145,6 @@ class Stage1AcademicDataset(EpochSeededExamples):
     ) -> Tuple[Any, List[List[Tuple[str, str]]], Optional[float]]:
         """The image, the branches trained this epoch, and the example weight of one row."""
         formatted = format_academic_example(self.config.name, self._data[index], rng)
-        if self.config.tag_only:
-            if "message_list" in formatted:
-                raise ValueError(
-                    f"tag_only needs single-question rows; {self.config.name} has several"
-                )
-            formatted = {k: v for k, v in formatted.items() if k != "question"}
-            formatted["prompt"] = ""
         branches = self._formatter.format_branches(formatted, index=index, rng=rng)
         cap = self.config.max_questions
         if cap is not None and len(branches) > cap:

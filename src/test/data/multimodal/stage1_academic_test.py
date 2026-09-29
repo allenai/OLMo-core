@@ -349,7 +349,7 @@ def test_share_caps_that_cannot_fill_the_group_are_refused(_capped_figure_qa):
 
 
 # ---------------------------------------------------------------------------
-# PixMo-Clocks: a group of its own, tag-only prompt
+# PixMo-Clocks: a group of its own
 # ---------------------------------------------------------------------------
 
 
@@ -377,19 +377,14 @@ def _fake_clocks(monkeypatch):
     build_academic_data.cache_clear()
 
 
-def test_clocks_group_sends_the_bare_tag(_fake_clocks):
-    """The question never varies, so the user turn is the tag alone, like the OCR sources'."""
+def test_clocks_group_asks_the_question(_fake_clocks):
+    """The user turn keeps the question behind the tag, as for the academic sources: stage 1 may be
+    the only place the model learns to read clocks, so the question text is trained too."""
     ds = acad_mix.build_stage1_clocks_source(_FakeTok())
     _, branches, _ = ds.format_row(0, ds.epoch_rng(0))
-    assert branches == [[("clocks:", "The time shown is 3:02 PM")]]
+    assert branches == [[("clocks: What time is being shown?", "The time shown is 3:02 PM")]]
     out = ds[0]
     assert out["input_ids"].shape == out["loss_masks"].shape
-
-
-def test_tag_only_needs_single_question_rows(_many_question_source):
-    ds = Stage1AcademicDatasetConfig(name=_many_question_source, tag_only=True).build(_FakeTok())
-    with pytest.raises(ValueError, match="single-question"):
-        ds.format_row(0, ds.epoch_rng(0))
 
 
 def test_clocks_is_not_an_academic_source():
@@ -410,7 +405,7 @@ def test_clocks_group_real_data():
     assert len(ds) == 800_269
     _, branches, _ = ds.format_row(0, ds.epoch_rng(0))
     (((user, answer),),) = branches
-    assert user == "clocks:"
+    assert user == "clocks: What time is being shown?"
     assert answer.startswith("The time")
 
 
@@ -512,9 +507,8 @@ def test_stage1_academic_group_wiring():
 
 
 def test_v3_recipe():
-    """v3 is v2 plus the academic QA group and the clock group, funded mostly from OCR: caption
-    0.475, pointing 0.225, OCR 0.15, academic 0.14, clocks 0.01, on the v2 pointing sources and
-    no text-only data."""
+    """v3 is v2 plus the academic QA group and the clock group: caption 0.455, pointing 0.225,
+    OCR 0.15, academic 0.14, clocks 0.03, on the v2 pointing sources and no text-only data."""
     mod = _load_stage1_module()
     v3 = mod.RECIPES["v3"]
     assert v3 == dict(
@@ -522,11 +516,11 @@ def test_v3_recipe():
         nlp_rate=0.0,
         ocr_rate=0.15,
         academic_rate=0.14,
-        clock_rate=0.01,
+        clock_rate=0.03,
         pointing_data="v2",
     )
     groups = ("pointing_rate", "nlp_rate", "ocr_rate", "academic_rate", "clock_rate")
-    assert 1.0 - sum(v3[k] for k in groups) == pytest.approx(0.475)
+    assert 1.0 - sum(v3[k] for k in groups) == pytest.approx(0.455)
     assert mod.resolve_recipe(["--recipe=v3"]) == ("v3", v3)
     mod.validate_data_config(_data_config(recipe="v3", **v3))
     # With the real sizes, the ten default sources share exactly the recipe's academic rate.
