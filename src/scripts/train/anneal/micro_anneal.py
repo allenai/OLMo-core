@@ -113,6 +113,8 @@ def _verify_peak_lr(base_checkpoint: str, peak_lr: float) -> None:
     you meant a midtrain-style re-warm", and a match means the anneal continues the trunk. What it
     catches is the third case, a profile that drifted from a base it was written against.
     """
+    from torch.distributed.checkpoint.api import CheckpointException
+
     from olmo_core.distributed.checkpoint import load_state_dict
     from olmo_core.io import join_path
 
@@ -121,7 +123,9 @@ def _verify_peak_lr(base_checkpoint: str, peak_lr: float) -> None:
         state: dict[str, Optional[float]] = {key: None}
         try:
             load_state_dict(join_path(base_checkpoint, "model_and_optim"), state)
-        except Exception as e:
+        # CheckpointException derives from BaseException, not Exception. A base whose optimizer
+        # names its param groups differently (OLMoDDP) raises it for a missing key.
+        except (Exception, CheckpointException) as e:
             log.warning(f"could not read the base optimizer state to verify peak_lr ({e})")
             return
         found = state[key]
