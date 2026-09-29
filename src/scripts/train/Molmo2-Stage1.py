@@ -43,10 +43,11 @@ sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``
 the tar tree.
 
 ``--academic_rate`` (default 0; 0.15 in ``v3``) adds stage 2's large synthetic QA sets, also paid
-for by the caption group: CoSyn's seven single-image categories, DVQA, FigureQA and PlotQA, each question
-behind its source's style tag (``dv_qa: <question>``). The training set of a benchmark the
-stage-2 checkpoints are evaluated on is never a stage-1 source, nor is TallyQA, whose images
-overlap the VQAv2 eval's. ``--academic_sources=[...]`` picks the sources (see
+for by the caption group: CoSyn's seven single-image categories, DVQA, FigureQA, PlotQA and
+PixMo-Clocks (held to 5% of the group), each question behind its source's style tag
+(``dv_qa: <question>``). The training set of a benchmark the stage-2 checkpoints are evaluated
+on is never a stage-1 source, nor is TallyQA, whose images overlap the VQAv2 eval's.
+``--academic_sources=[...]`` picks the sources (see
 :mod:`olmo_core.data.multimodal.mixtures.stage1_academic`).
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
@@ -99,8 +100,10 @@ from olmo_core.data.multimodal.mixtures.stage1_academic import (
     DEFAULT_ACADEMIC_SOURCES,
     STAGE1_ACADEMIC_SOURCE_NAMES,
     STAGE2_EVAL_TRAIN_SETS,
+    academic_group_fractions,
     academic_weighting_sizes,
     build_stage1_academic_source,
+    check_share_caps,
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
@@ -336,8 +339,8 @@ OCR_SOURCES = DEFAULT_OCR_SOURCES
 # The academic QA group (`olmo_core.data.multimodal.mixtures.stage1_academic`): stage 2's large
 # synthetic QA sets, trained in stage 1 as well so a stage 1 mixed into text midtraining has more
 # distinct images than PixMo-Cap's. CoSyn's seven single-image categories (357k images), DVQA
-# (200k), PlotQA (157k) and FigureQA (100k); the templated chart sets are weighted at stage 2's
-# caps, so the group's sqrt(size) split gives them 19% of it. Each question is the bare question
+# (200k), PlotQA (157k) and FigureQA (100k), weighted at stage 2's row caps so the group's
+# sqrt(size) split gives them 18% of it; and PixMo-Clocks (800k), held to 5% of the group. Each question is the bare question
 # behind its source's style tag. Never a source: the training set of a benchmark the stage-2
 # checkpoints are evaluated on (VQAv2, TextVQA, ChartQA, DocVQA, InfographicVQA, AI2D, A-OKVQA),
 # or TallyQA, whose images overlap the VQAv2 eval's. Paid for out of the caption group; off unless
@@ -388,13 +391,14 @@ POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 #         0.225, OCR 0.15, academic QA 0.15. The rates keep v2's balance of what is trained on:
 #         in a simulation of the packed mixture (80 sampled examples per source, this script's
 #         2D-knapsack packer at 2,560 tokens), the weighted loss splits caption / pointing /
-#         text-rich (OCR + academic) as 55.9% / 18.0% / 26.2% against v2's 55.2% / 18.4% / 26.3%.
-#         The academic QA share, 9.5% of the loss and 0.15 of the examples, comes out of OCR
+#         text-rich (OCR + academic) as 56.1% / 18.1% / 25.8% against v2's 55.2% / 18.4% / 26.3%.
+#         The academic QA share, 9.1% of the loss and 0.15 of the examples, comes out of OCR
 #         (0.25 -> 0.15): the one group a run never repeats (v2 sees 0.46 of its 3.09M rows,
 #         v3 0.28), and the one covering the same charts, tables and documents with a different
-#         task. Over 32k steps (1.39 examples per packed sequence, 5.7M examples) that is ~3.8
-#         passes of PixMo-Cap (v2: 4.0), ~3.9 of the pointing sources (v2: 4.4; mm_olmo's molmo3
-#         stage 1 targets 4) and ~1.05 of the academic group's 814k images.
+#         task. Over 32k steps (1.40 examples per packed sequence, 5.7M examples) that is ~3.8
+#         passes of PixMo-Cap (v2: 4.0), ~4.0 of the pointing sources (v2: 4.4; mm_olmo's molmo3
+#         stage 1 targets 4), ~1.0 of the academic group's 814k non-clock images, and ~43k clock
+#         examples (5% of the group: 0.05 of PixMo-Clocks' 800k images).
 RECIPES = {
     "v1": dict(
         pointing_rate=POINTING_RATE,
@@ -700,6 +704,8 @@ def validate_data_config(config) -> None:
         )
     if len(set(config.academic_sources)) != len(config.academic_sources):
         raise OLMoConfigurationError(f"academic_sources has duplicates: {config.academic_sources}")
+    if config.academic_rate > 0:
+        check_share_caps(config.academic_sources)
     rates = (config.pointing_rate, config.nlp_rate, config.ocr_rate, config.academic_rate)
     if any(r < 0 for r in rates):
         raise OLMoConfigurationError(f"group rates must be >= 0, got {rates}")
@@ -1194,8 +1200,13 @@ def _pointing_group_fractions(
 
 def _academic_fractions(names: Sequence[str], sizes: Sequence[int]):
     """How the academic group's rate is split among its sources: by sqrt(size), with the templated
-    chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``)."""
-    return _size_fractions(academic_weighting_sizes(names, sizes), "sqrt", names)
+    chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``), then each
+    source held to its share cap (``mixtures.stage1_academic.academic_group_fractions``: PixMo-Clocks
+    takes at most 5% of the group)."""
+    import numpy as np
+
+    base = _size_fractions(academic_weighting_sizes(names, sizes), "sqrt", names)
+    return np.asarray(academic_group_fractions(names, base))
 
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):

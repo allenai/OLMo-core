@@ -309,9 +309,34 @@ def test_default_sources():
         "dv_qa",
         "figure_qa",
         "plot_qa",
+        "pixmo_clocks",
     )
-    assert "pixmo_clocks" in acad_mix.STAGE1_ACADEMIC_SOURCE_NAMES
     assert acad_mix.STAGE1_ACADEMIC_SOURCES["plot_qa"].max_questions == 20
+    assert acad_mix.STAGE1_ACADEMIC_SOURCES["pixmo_clocks"].max_share == 0.05
+
+
+def test_share_cap_holds_a_source_down_and_redistributes():
+    """A source over its ``max_share`` is set to it; the rest of the rate goes to the others in
+    proportion to their weights."""
+    names = ["cosyn_chart_exp", "dv_qa", "pixmo_clocks"]
+    frac = acad_mix.academic_group_fractions(names, [1.0, 3.0, 16.0])
+    np.testing.assert_allclose(frac, [0.95 * 0.25, 0.95 * 0.75, 0.05])
+    # A cap that does not bind changes nothing.
+    np.testing.assert_allclose(
+        acad_mix.academic_group_fractions(names, [10.0, 9.0, 1.0]), [0.5, 0.45, 0.05]
+    )
+    np.testing.assert_allclose(
+        acad_mix.academic_group_fractions(names, [10.0, 9.5, 0.5]), [0.5, 0.475, 0.025]
+    )
+
+
+def test_share_caps_that_cannot_fill_the_group_are_refused():
+    """With only capped sources, the rest of the rate would have nowhere to go."""
+    with pytest.raises(OLMoConfigurationError, match="share-capped"):
+        acad_mix.check_share_caps(["pixmo_clocks"])
+    with pytest.raises(OLMoConfigurationError, match="share-capped"):
+        acad_mix.academic_group_fractions(["pixmo_clocks"], [1.0])
+    acad_mix.check_share_caps(["pixmo_clocks", "dv_qa"])
 
 
 #: Training rows (one per image) measured on weka.
@@ -451,24 +476,42 @@ def test_stage1_academic_validation():
         mod.validate_data_config(_data_config(academic_rate=0.6))
     with pytest.raises(OLMoConfigurationError, match=">= 0"):
         mod.validate_data_config(_data_config(academic_rate=-0.1))
-    mod.validate_data_config(_data_config(academic_sources=("pixmo_clocks",)))
+    with pytest.raises(OLMoConfigurationError, match="share-capped"):
+        mod.validate_data_config(_data_config(academic_sources=("pixmo_clocks",)))
+    # Only checked when the group is on.
+    mod.validate_data_config(_data_config(academic_rate=0.0, academic_sources=("pixmo_clocks",)))
+    mod.validate_data_config(_data_config(academic_sources=("pixmo_clocks", "dv_qa")))
 
 
 def test_stage1_academic_fractions():
-    """sqrt(capped size): the templated chart sets get 18.8% of the group; uncapped they would
-    get 44.0%. Clocks, when selected, 21.6%."""
+    """The default split with the real sizes: Clocks held to 5% (21.6% by its row-capped size
+    alone), the templated chart sets 17.9% (18.8% without Clocks, 44.0% without their row caps),
+    CoSyn 77.1%."""
     mod = _load_stage1_module()
     names = list(acad_mix.DEFAULT_ACADEMIC_SOURCES)
     frac = mod._academic_fractions(names, [REAL_SIZES[n] for n in names])
+    share = dict(zip(names, frac))
     np.testing.assert_allclose(frac.sum(), 1.0)
-    templated = sum(f for n, f in zip(names, frac) if n in TEMPLATED)
-    np.testing.assert_allclose(templated, 0.188, atol=5e-4)
-    uncapped = np.sqrt([REAL_SIZES[n] for n in names])
-    uncapped_templated = sum(u for n, u in zip(names, uncapped) if n in TEMPLATED) / uncapped.sum()
-    np.testing.assert_allclose(uncapped_templated, 0.440, atol=5e-4)
+    np.testing.assert_allclose(share["pixmo_clocks"], 0.05)
+    np.testing.assert_allclose(sum(share[n] for n in TEMPLATED), 0.179, atol=5e-4)
+    np.testing.assert_allclose(
+        sum(f for n, f in share.items() if n.startswith("cosyn_")), 0.771, atol=5e-4
+    )
+    # The uncapped sources keep their sqrt(capped size) ratios.
+    np.testing.assert_allclose(
+        share["cosyn_chart_exp"] / share["dv_qa"], np.sqrt(116_814 / 10_000), rtol=1e-9
+    )
 
-    with_clocks = names + ["pixmo_clocks"]
-    frac = mod._academic_fractions(with_clocks, [REAL_SIZES[n] for n in with_clocks])
-    np.testing.assert_allclose(frac[-1], 0.216, atol=5e-4)
+    no_clocks = [n for n in names if n != "pixmo_clocks"]
+    frac = mod._academic_fractions(no_clocks, [REAL_SIZES[n] for n in no_clocks])
+    templated = sum(f for n, f in zip(no_clocks, frac) if n in TEMPLATED)
+    np.testing.assert_allclose(templated, 0.188, atol=5e-4)
+    uncapped = np.sqrt([REAL_SIZES[n] for n in no_clocks])
+    share_uncapped = dict(zip(no_clocks, uncapped / uncapped.sum()))
+    np.testing.assert_allclose(sum(share_uncapped[n] for n in TEMPLATED), 0.440, atol=5e-4)
+    clocks_by_size = mod._size_fractions(
+        acad_mix.academic_weighting_sizes(names, [REAL_SIZES[n] for n in names]), "sqrt", names
+    )[-1]
+    np.testing.assert_allclose(clocks_by_size, 0.216, atol=5e-4)
     with pytest.raises(OLMoConfigurationError, match="dv_qa"):
         mod._academic_fractions(["dv_qa"], [0])  # an empty source is named
