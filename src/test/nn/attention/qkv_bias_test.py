@@ -26,3 +26,15 @@ def test_nondefault_attention_rejects_explicit_qkv_bias(name, qkv_bias):
         AttentionConfig(name=name, n_heads=4, qkv_bias=qkv_bias).build(
             layer_idx=0, n_layers=1, d_model=32
         )
+
+
+def test_existing_positional_gate_argument_keeps_its_meaning():
+    from olmo_core.nn.attention import GateConfig
+
+    gate = GateConfig()
+    config = AttentionConfig(AttentionType.default, 4, None, None, False, gate)
+    attention = config.build(layer_idx=0, n_layers=1, d_model=32, init_device="meta")
+    assert config.gate is gate
+    assert config.qkv_bias is None
+    assert attention.gate is not None
+    assert attention.w_q.bias is None

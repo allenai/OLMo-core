@@ -3,7 +3,7 @@ import math
 import os
 import warnings
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Iterator, List, Optional, Tuple, Union, cast
 
 import torch
@@ -358,7 +358,7 @@ class AttentionConfig(SequenceMixerConfig["SequenceMixer"]):
     n_kv_heads: Optional[int] = None
     head_dim: Optional[int] = None
     bias: Optional[bool] = None
-    qkv_bias: Optional[bool] = None
+    qkv_bias: Optional[bool] = field(default=None, kw_only=True)
     """Override Q/K/V bias independently of the output projection (default attention only)."""
     gate: Optional[GateConfig] = None
     rope: Optional[RoPEConfig] = None

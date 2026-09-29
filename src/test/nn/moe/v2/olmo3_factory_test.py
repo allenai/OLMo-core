@@ -12,6 +12,7 @@ from olmo_core.nn.attention import (
     AttentionType,
     KimiDeltaAttention,
 )
+from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.hf import config as hf_config_utils
 from olmo_core.nn.moe.v2 import olmo3
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
@@ -145,13 +146,8 @@ def test_hero_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, he
     config = olmo3.build_olmo3_moe_config_from_hf_config(
         hf, dtype=DType.bfloat16, attention_backend=AttentionBackendName.torch
     )
-    reverse = olmo3.build_olmo3_moe_hf_config_from_native_config(
-        config,
-        max_position_embeddings=hf.max_position_embeddings,
-        pad_token_id=hf.pad_token_id,
-        bos_token_id=hf.bos_token_id,
-        eos_token_id=hf.eos_token_id,
-    )
+    native = config.build(init_device="cpu")
+    reverse = hf_config_utils.get_hf_config(native)
     fields = [
         "hidden_size",
         "num_attention_heads",
@@ -177,21 +173,17 @@ def test_hero_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, he
         "latent_moe_up_proj_input_norm",
         "n_routed_experts",
         "num_experts_per_tok",
+        "use_peri_ln",
+        "embed_norm",
+        "embed_scale",
+        "gating_function",
+        "normalize_expert_weights",
+        "restore_weight_scale",
+        "rms_norm_eps",
+        "moe_intermediate_size",
+        "shared_expert_intermediate_size",
     ]
     assert {k: getattr(reverse, k) for k in fields} == {k: getattr(hf, k) for k in fields}
-    native = config.build(init_device="cpu")
-    exported = hf_config_utils.get_hf_config(native)
-    for field in (
-        "qk_norm_per_head_gains",
-        "scalable_softmax",
-        "latent_moe_dim",
-        "latent_moe_bias",
-        "latent_moe_up_proj_input_norm",
-        "layer_types",
-        "dense_layers_indices",
-        "use_peri_ln",
-    ):
-        assert getattr(exported, field) == getattr(hf, field), field
     attention = native.blocks["1"].attention
     assert tuple(attention.q_norm.weight.shape) == ((heads, 8) if head_gains else (8,))
     assert tuple(attention.k_norm.weight.shape) == ((kv, 8) if head_gains else (8,))
@@ -219,7 +211,8 @@ def test_hero_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, he
 def test_reverse_config_rejects_heterogeneous_attention_features():
     hf = hybrid_config()
     hf.num_hidden_layers = 3
-    hf.layer_types = ["linear_attention", "full_attention", "full_attention"]
+    hf.layer_types = ["full_attention", "full_attention", "full_attention"]
+    hf.use_rope = True
     config = olmo3.build_olmo3_moe_config_from_hf_config(
         hf, attention_backend=AttentionBackendName.torch
     )
@@ -228,14 +221,8 @@ def test_reverse_config_rejects_heterogeneous_attention_features():
     config.block["other_full"] = deepcopy(config.block["full_attention"])
     config.block["other_full"].sequence_mixer.scalable_softmax = True
     config.block_pattern[-1] = "other_full"
-    with pytest.raises(ValueError, match="consistent across layers"):
-        olmo3.build_olmo3_moe_hf_config_from_native_config(
-            config,
-            max_position_embeddings=32,
-            pad_token_id=0,
-            bos_token_id=None,
-            eos_token_id=1,
-        )
+    with pytest.raises(NotImplementedError, match="Heterogeneous attention"):
+        hf_config_utils.get_hf_config(config.build(init_device="cpu"))
 
 
 @pytest.mark.parametrize("feature", ["qk_norm_per_head_gains", "scalable_softmax"])
@@ -282,13 +269,7 @@ def test_hf_ordinary_dense_layout_imports_without_mutating_config(global_lb):
     for key in expected:
         torch.testing.assert_close(streamed[key], expected[key], rtol=0, atol=0, check_dtype=False)
         torch.testing.assert_close(gathered[key], expected[key], rtol=0, atol=0, check_dtype=False)
-    reverse = olmo3.build_olmo3_moe_hf_config_from_native_config(
-        config,
-        max_position_embeddings=32,
-        pad_token_id=0,
-        bos_token_id=None,
-        eos_token_id=1,
-    )
+    reverse = hf_config_utils.get_hf_config(model)
     assert reverse.dense_layers_use_shared_expert is True
     assert reverse.global_load_balancing == global_lb
 
@@ -303,26 +284,21 @@ def test_sliding_window_size_matches_hf_in_both_config_directions():
     )
     native = config.build(init_device="cpu")
     assert native.blocks["1"].attention.backend.window_size == (3, 0)
-    reverse = olmo3.build_olmo3_moe_hf_config_from_native_config(
-        config,
-        max_position_embeddings=32,
-        pad_token_id=0,
-        bos_token_id=None,
-        eos_token_id=1,
-    )
-    assert reverse.sliding_window == 4
-    assert reverse.layer_types == hf.layer_types
     exported = hf_config_utils.get_hf_config(native)
     assert exported.layer_types == hf.layer_types
     assert exported.sliding_window == hf.sliding_window
 
 
 @pytest.mark.parametrize("peri_ln", [False, True])
-def test_full_attention_shared_dense_config_export(peri_ln):
+@pytest.mark.parametrize("sliding", [False, True])
+def test_full_attention_shared_dense_config_export(peri_ln, sliding):
     hf = hybrid_config(None)
     hf.layer_types = ["full_attention", "full_attention"]
     hf.use_rope = True
     hf.use_peri_ln = peri_ln
+    if sliding:
+        hf.layer_types[1] = "sliding_attention"
+        hf.sliding_window = 4
     config = olmo3.build_olmo3_moe_config_from_hf_config(
         hf, attention_backend=AttentionBackendName.torch
     )
@@ -332,3 +308,49 @@ def test_full_attention_shared_dense_config_export(peri_ln):
     assert exported.dense_layers_use_shared_expert
     assert exported.dense_mlp_intermediate_size == hf.dense_mlp_intermediate_size
     assert exported.use_peri_ln == peri_ln
+
+    assert exported.layer_types == hf.layer_types
+    if sliding:
+        assert exported.sliding_window == hf.sliding_window
+    # The model exporter cannot infer tokenizer IDs or a serving context limit.
+    # Those remain checkpoint/serving metadata, rather than architecture defaults.
+    assert exported.max_position_embeddings == -1
+    assert exported.bos_token_id is None and exported.eos_token_id is None
+    reference = Olmo3MoeForCausalLM(hf).to(torch.bfloat16)
+    expected = reference.state_dict()
+    olmo3.load_olmo3_moe_hf_state(native, hf, expected)
+    # Export using the canonical config, then import into a second native model.
+    streamed = dict(olmo3.iter_olmo3_moe_hf_state(native, exported))
+    rebuilt = olmo3.build_olmo3_moe_config_from_hf_config(
+        exported, attention_backend=AttentionBackendName.torch
+    ).build(init_device="cpu")
+    olmo3.load_olmo3_moe_hf_state(rebuilt, exported, streamed)
+    actual = dict(olmo3.iter_olmo3_moe_hf_state(rebuilt, exported))
+    assert actual.keys() == expected.keys()
+    for name in expected:
+        torch.testing.assert_close(actual[name], expected[name], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "feature", ["expert_weight_scale", "qkv_bias", "norm_precision", "clip_qkv"]
+)
+def test_canonical_export_rejects_unrepresentable_settings(feature):
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "full_attention"]
+    hf.use_rope = True
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf, attention_backend=AttentionBackendName.torch
+    )
+    for block in config.resolved_block_configs:
+        assert isinstance(block, OLMoDDPTransformerBlockConfig)
+        assert block.layer_norm is not None
+        if feature == "expert_weight_scale" and block.routed_experts_router is not None:
+            block.routed_experts_router.expert_weight_scale = 2.0
+        elif feature == "qkv_bias":
+            block.sequence_mixer.qkv_bias = True
+        elif feature == "norm_precision":
+            block.layer_norm.full_precision = False
+        elif feature == "clip_qkv":
+            block.sequence_mixer.clip_qkv = 0.5
+    with pytest.raises(NotImplementedError):
+        hf_config_utils.get_hf_config(config.build(init_device="cpu"))

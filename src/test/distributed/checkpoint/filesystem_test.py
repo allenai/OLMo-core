@@ -186,3 +186,36 @@ def test_compact_checkpoint_tensor_preserves_values_and_bounds_storage(kind):
     assert stream.tell() < result.nbytes + 4096
     stream.seek(0)
     torch.testing.assert_close(torch.load(stream, weights_only=True), original, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("profile", [False, True])
+def test_checkpoint_writer_and_planner_only_profile_when_enabled(tmp_path, monkeypatch, profile):
+    import time
+    from types import SimpleNamespace
+    from unittest import mock
+
+    from olmo_core.distributed.checkpoint import filesystem
+    from olmo_core.train.train_module.transformer import ddp_train_module
+
+    clock = mock.Mock(
+        side_effect=time.perf_counter if profile else AssertionError("profiling is off")
+    )
+    monkeypatch.setattr(filesystem, "time", SimpleNamespace(perf_counter=clock))
+    monkeypatch.setattr(ddp_train_module, "time", SimpleNamespace(perf_counter=clock))
+    writer = RemoteFileSystemWriter(tmp_path, thread_count=1, profile=profile)
+    planner = FlatSavePlanner(profile=profile)
+    expected = {"weights": torch.arange(12).reshape(3, 4), "step": 3}
+    distcp.save(expected, storage_writer=writer, planner=planner)
+    restored = {"weights": torch.zeros_like(expected["weights"]), "step": 0}
+    distcp.load(restored, storage_reader=RemoteFileSystemReader(tmp_path))
+    torch.testing.assert_close(restored["weights"], expected["weights"])
+    assert restored["step"] == 3
+    if profile:
+        assert writer.timings["tensor_bytes"] == expected["weights"].nbytes
+        assert writer.timings["items"] == 2
+        assert "metadata_seconds" in writer.timings
+        assert "local_plan_seconds" in planner.timings
+        assert "global_plan_seconds" in planner.timings
+    else:
+        clock.assert_not_called()
+        assert writer.timings == planner.timings == {}

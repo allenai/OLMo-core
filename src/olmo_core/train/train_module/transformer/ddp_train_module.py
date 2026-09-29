@@ -112,15 +112,16 @@ def cpu_mesh_like(gpu_mesh: DeviceMesh) -> DeviceMesh:
 class FlatSavePlanner(DefaultSavePlanner):
     """Default planner with separately observable metadata planning cost."""
 
-    def __init__(self, *, constant_memory_planning=False, **kwargs):
+    def __init__(self, *, constant_memory_planning=False, profile=False, **kwargs):
         super().__init__(**kwargs)
         if constant_memory_planning and getattr(self, "_enable_plan_caching", False):
             raise ValueError("Constant-memory planner does not support plan caching")
         self.constant_memory_planning = constant_memory_planning
+        self.profile = profile
         self.timings: Dict[str, float] = {}
 
     def create_local_plan(self):
-        start = time.perf_counter()
+        start = time.perf_counter() if self.profile else 0.0
         if self.constant_memory_planning:
             result = contiguous_planner.create_contiguous_local_save_plan(
                 self.state_dict, self.is_coordinator
@@ -130,13 +131,15 @@ class FlatSavePlanner(DefaultSavePlanner):
             self.plan = result
         else:
             result = super().create_local_plan()
-        self.timings["local_plan_seconds"] = time.perf_counter() - start
+        if self.profile:
+            self.timings["local_plan_seconds"] = time.perf_counter() - start
         return result
 
     def create_global_plan(self, all_plans):
-        start = time.perf_counter()
+        start = time.perf_counter() if self.profile else 0.0
         result = super().create_global_plan(all_plans)
-        self.timings["global_plan_seconds"] = time.perf_counter() - start
+        if self.profile:
+            self.timings["global_plan_seconds"] = time.perf_counter() - start
         return result
 
 
@@ -1171,7 +1174,8 @@ class OLMoDDPTrainModule(TrainModule):
         def timestamp():
             if profile:
                 torch.cuda.synchronize()
-            return time.perf_counter()
+                return time.perf_counter()
+            return 0.0
 
         start = timestamp()
         timings: Dict[str, float] = {}
@@ -1190,11 +1194,14 @@ class OLMoDDPTrainModule(TrainModule):
         planner = FlatSavePlanner(
             dedup_save_to_lowest_rank=dedup_save_to_lowest_rank,
             constant_memory_planning=constant_memory_planning,
+            profile=profile,
         )
-        timings["prepare_seconds"] = timestamp() - start
+        if profile:
+            timings["prepare_seconds"] = timestamp() - start
         phase_start = timestamp()
         state_dict = optim.state_dict()
-        timings["state_dict_seconds"] = timestamp() - phase_start
+        if profile:
+            timings["state_dict_seconds"] = timestamp() - phase_start
         try:
             phase_start = timestamp()
             save_dict = dict(state_dict)
@@ -1203,23 +1210,26 @@ class OLMoDDPTrainModule(TrainModule):
                     key not in save_dict
                 ), f"Buffer key '{key}' collides with an optimizer state key"
                 save_dict[key] = buffer
-            timings["buffers_seconds"] = timestamp() - phase_start
+            if profile:
+                timings["buffers_seconds"] = timestamp() - phase_start
             phase_start = timestamp()
             dist_cp.state_dict_saver.save(
                 save_dict, storage_writer=writer, process_group=process_group, planner=planner
             )
-            timings["distributed_save_seconds"] = timestamp() - phase_start
-            timings.update(writer.timings)
-            timings.update(planner.timings)
+            if profile:
+                timings["distributed_save_seconds"] = timestamp() - phase_start
+                timings.update(writer.timings)
+                timings.update(planner.timings)
         finally:
             phase_start = timestamp()
             optim.load_state_dict(state_dict, reset_optimizer_moments_on_load=False)
-            timings["optimizer_reload_seconds"] = timestamp() - phase_start
+            if profile:
+                timings["optimizer_reload_seconds"] = timestamp() - phase_start
             phase_start = timestamp()
             torch.cuda.empty_cache()
-            timings["empty_cache_seconds"] = timestamp() - phase_start
-            timings["total_seconds"] = timestamp() - start
             if profile:
+                timings["empty_cache_seconds"] = timestamp() - phase_start
+                timings["total_seconds"] = timestamp() - start
                 log.info("checkpoint_save %s", json.dumps(timings, sort_keys=True))
         return timings if profile else None
 
@@ -1240,16 +1250,16 @@ class OLMoDDPTrainModule(TrainModule):
 
         if profile:
             torch.cuda.synchronize()
-        load_start = time.perf_counter()
+        load_start = time.perf_counter() if profile else 0.0
         load_pass_seconds = []
 
         def load_pass(*args, **kwargs):
-            if profile:
-                torch.cuda.synchronize()
+            if not profile:
+                return dist_cp.state_dict_loader.load(*args, **kwargs)
+            torch.cuda.synchronize()
             phase_start = time.perf_counter()
             dist_cp.state_dict_loader.load(*args, **kwargs)
-            if profile:
-                torch.cuda.synchronize()
+            torch.cuda.synchronize()
             load_pass_seconds.append(time.perf_counter() - phase_start)
 
         dir = normalize_path(dir)

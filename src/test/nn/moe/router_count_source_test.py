@@ -119,3 +119,25 @@ def test_default_and_invalid_source():
     assert MoERouterConfigV2(d_model=3, num_experts=3, top_k=1).lb_loss_count_source == "dispatch"
     with pytest.raises(OLMoConfigurationError):
         build("unknown")
+
+
+def test_existing_positional_balancing_argument_keeps_its_meaning():
+    config = MoERouterConfigV2(
+        8,
+        4,
+        2,
+        False,
+        None,
+        None,
+        False,
+        False,
+        None,
+        MoERouterGatingFunction.softmax,
+        None,
+        False,
+        0.1,
+        MoELoadBalancingLossGranularity.instance,
+    )
+    router = config.build()
+    assert router.lb_loss_granularity == MoELoadBalancingLossGranularity.instance
+    assert router.lb_loss_count_source == "dispatch"

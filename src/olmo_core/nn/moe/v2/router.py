@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union, cast
 
 import torch
@@ -56,7 +56,7 @@ class MoERouterConfigV2(Config):
     dtype: Optional[DType] = None
     record_routing_batch_size: bool = False
     lb_loss_weight: Optional[float] = None
-    lb_loss_count_source: Literal["dispatch", "current"] = "dispatch"
+    lb_loss_count_source: Literal["dispatch", "current"] = field(default="dispatch", kw_only=True)
     """Use actual dispatch counts (including replay), or current router top-k for balancing only."""
     lb_loss_granularity: MoELoadBalancingLossGranularity = (
         MoELoadBalancingLossGranularity.local_batch

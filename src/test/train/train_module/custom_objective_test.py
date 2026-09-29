@@ -71,3 +71,38 @@ def test_router_replay_keeps_experts_and_router_gradients(recompute):
     assert seen and all(torch.equal(actual, indices) for actual in seen)
     assert torch.isfinite(router.weight.grad).all() and router.weight.grad.abs().sum() > 0
     assert router.replay_expert_indices is None
+
+
+def test_replay_rejects_emo_before_setting_router_state():
+    from olmo_core.nn.moe.emo import EmoRouterConfig
+
+    model = nn.Module()
+    standard = MoERouterConfigV2(d_model=4, num_experts=4, top_k=2).build()
+    emo = MoERouterConfigV2(
+        d_model=4,
+        num_experts=4,
+        top_k=2,
+        emo=EmoRouterConfig(eos_token_id=0, min_document_expert_pool=4, max_document_expert_pool=4),
+    ).build()
+    model.add_module("first_routed_experts_router", standard)
+    model.add_module("emo_routed_experts_router", emo)
+    routes = {name: torch.tensor([[[0, 1]]]) for name, _ in model.named_children()}
+    with pytest.raises(ValueError, match="does not support EmoRouterV2"):
+        with replay_routes(model, routes):
+            pytest.fail("Unsupported replay must fail before entering the context")
+    assert getattr(standard, "replay_expert_indices", None) is None
+    assert getattr(emo, "replay_expert_indices", None) is None
+
+
+def test_nested_replay_restores_routes_after_failure():
+    model = nn.Module()
+    router = MoERouterConfigV2(d_model=4, num_experts=4, top_k=2).build()
+    model.add_module("routed_experts_router", router)
+    outer, inner = torch.tensor([[[0, 1]]]), torch.tensor([[[2, 3]]])
+    with replay_routes(model, {"routed_experts_router": outer}):
+        with pytest.raises(RuntimeError, match="injected"):
+            with replay_routes(model, {"routed_experts_router": inner}):
+                assert router.replay_expert_indices is inner
+                raise RuntimeError("injected")
+        assert router.replay_expert_indices is outer
+    assert router.replay_expert_indices is None
