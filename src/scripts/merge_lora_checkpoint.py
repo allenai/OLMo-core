@@ -80,12 +80,18 @@ def _read_alpha(step_dir: Path) -> Optional[float]:
     return None
 
 
+def _token_delta_keys(keys) -> list:
+    return sorted(k for k in keys if k.endswith(".token_delta"))
+
+
 def check(step_dir: Path) -> int:
     keys = _model_keys(step_dir)
     prefixes = _adapter_prefixes(keys)
-    if prefixes:
+    rows = _token_delta_keys(keys)
+    if prefixes or rows:
         print(
-            f"UNMERGED: {step_dir} carries {len(prefixes)} LoRA adapter(s). "
+            f"UNMERGED: {step_dir} carries {len(prefixes)} LoRA adapter(s) and "
+            f"{len(rows)} trainable-token-row delta(s). "
             "Evaluating it directly would silently score the base model.\n"
             f"Run: python src/scripts/merge_lora_checkpoint.py {step_dir} {step_dir}-merged"
         )
@@ -97,7 +103,7 @@ def check(step_dir: Path) -> int:
 def merge(src: Path, dst: Path, *, alpha: Optional[float], save_overwrite: bool) -> None:
     keys = _model_keys(src)
     prefixes = _adapter_prefixes(keys)
-    if not prefixes:
+    if not prefixes and not _token_delta_keys(keys):
         raise RuntimeError(
             f"{src} contains no LoRA adapters — nothing to merge. If this is a "
             "full-finetune checkpoint, evaluate it directly."
@@ -133,7 +139,17 @@ def merge(src: Path, dst: Path, *, alpha: Optional[float], save_overwrite: bool)
         tensors[weight_key] = (weight.float() + delta).to(weight.dtype)
         merged += 1
 
-    assert not any(k.endswith((".lora_A", ".lora_B")) for k in tensors)
+    # Trainable special-token rows (LoRAConfig.trainable_token_ids): fold the per-row delta
+    # into the tied embedding table so the merged checkpoint is a plain model.
+    from olmo_core.nn.lora import fold_token_rows
+
+    for dkey in _token_delta_keys(list(tensors)):
+        weight_key = dkey[: -len(".token_delta")] + ".weight"
+        if weight_key not in tensors:
+            raise RuntimeError(f"{dkey} has no embedding weight {weight_key} to fold into")
+        n = fold_token_rows(tensors, weight_key=weight_key)
+        log.info("Folded %d trainable token rows into %s", n, weight_key)
+    assert not any(k.endswith((".lora_A", ".lora_B", ".token_delta", ".token_delta_ids")) for k in tensors)
     log.info("Merged %d adapters at alpha=%.4g; writing %s ...", merged, alpha, dst)
     save_state_dict(dst / CHECKPOINT_SUBDIR, tensors, save_overwrite=save_overwrite)
 

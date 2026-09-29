@@ -49,6 +49,8 @@ __all__ = [
     "LoRAConfig",
     "LoRALinear",
     "apply_lora",
+    "apply_trainable_token_rows",
+    "fold_token_rows",
     "lora_param_names",
     "merge_lora_",
 ]
@@ -147,12 +149,29 @@ class LoRAConfig(Config):
     """fnmatch globs over *module* fully-qualified names (not parameter names)."""
     init_seed: int = 7919
     """Seeds ``lora_A`` identically on every rank, so no collective is needed to agree."""
+    trainable_token_ids: Optional[List[int]] = None
+    """Vocabulary rows that get a trainable per-row delta on the (tied) embedding table.
+
+    Motivation, measured on Molmo2-4B: the rows for ``<think>`` / ``</think>`` /
+    ``<tool_call>`` / ``</tool_call>`` are near-initialisation vectors (norm 0.37 vs 1.09
+    for ordinary tokens) that are almost collinear with each other (cos 0.92-0.99), and
+    ``freeze_params=["lm.*"]`` keeps them frozen under LoRA. The head therefore cannot
+    raise ``<think>`` without raising its siblings, and P(<think> | first token) plateaued
+    at ~0.07 in every scratchpad arm regardless of dose or loss weight. The delta reaches
+    both the input lookup and the tied LM head; it is folded into the table by
+    :func:`fold_token_rows` / ``merge_lora_checkpoint.py``.
+    """
 
     def __post_init__(self):
         if self.rank <= 0:
             raise OLMoConfigurationError(f"LoRA rank must be positive, got {self.rank}")
         if not self.target_modules:
             raise OLMoConfigurationError("LoRA 'target_modules' must not be empty")
+        if self.trainable_token_ids is not None:
+            if not self.trainable_token_ids:
+                raise OLMoConfigurationError("LoRA 'trainable_token_ids' must not be empty when set")
+            if len(set(self.trainable_token_ids)) != len(self.trainable_token_ids):
+                raise OLMoConfigurationError("LoRA 'trainable_token_ids' must be unique")
 
 
 def _matches(name: str, patterns: List[str]) -> bool:
@@ -232,6 +251,9 @@ def apply_lora(model: nn.Module, config: LoRAConfig) -> List[str]:
         _set_submodule(model, name, adapted)
         new_param_names.extend([f"{name}.lora_A", f"{name}.lora_B"])
 
+    if config.trainable_token_ids:
+        new_param_names.extend(apply_trainable_token_rows(model, config.trainable_token_ids))
+
     n_lora = sum(p.numel() for n, p in model.named_parameters() if n in set(new_param_names))
     log.info(
         "Applied LoRA (rank=%d, alpha=%.1f) to %d linear layers: %s trainable adapter params",
@@ -241,6 +263,121 @@ def apply_lora(model: nn.Module, config: LoRAConfig) -> List[str]:
         f"{n_lora:,d}",
     )
     return sorted(new_param_names)
+
+
+TOKEN_DELTA_NAME = "token_delta"
+TOKEN_DELTA_IDS_NAME = "token_delta_ids"
+
+
+def _find_tied_embedding(model: nn.Module):
+    """Return ``(fqn, embedding_module, head_linear_or_None)`` for the LM's word embedding.
+
+    Works on a bare ``Transformer`` or anything wrapping one under ``.lm``; the head is
+    returned only when its weight *is* the embedding weight (tied), because an untied head
+    keeps its own rows and would be adjusted separately.
+    """
+    for name, module in model.named_modules():
+        emb = getattr(module, "embeddings", None)
+        head = getattr(module, "lm_head", None)
+        if emb is None or head is None or not hasattr(emb, "weight"):
+            continue
+        w_out = getattr(head, "w_out", None)
+        tied = w_out is not None and getattr(w_out, "weight", None) is emb.weight
+        emb_fqn = f"{name}.embeddings" if name else "embeddings"
+        return emb_fqn, emb, (w_out if tied else None)
+    raise OLMoConfigurationError("No module with both 'embeddings' and 'lm_head' found")
+
+
+def apply_trainable_token_rows(model: nn.Module, token_ids: List[int]) -> List[str]:
+    """
+    Give the vocabulary rows ``token_ids`` a trainable additive delta while the embedding
+    table itself stays frozen.
+
+    The delta is registered on the embedding module as ``token_delta`` (zero-initialised,
+    ``(len(token_ids), d_model)``) with a persistent ``token_delta_ids`` buffer, and reaches:
+
+    * the **input lookup** -- ``embedding.forward`` is wrapped to add ``delta[row]`` wherever
+      ``input_ids`` hits one of the rows;
+    * the **tied LM head** -- a forward hook on ``lm_head.w_out`` adds ``h @ delta.T`` into
+      the corresponding logit columns.
+
+    Zero init keeps the model bit-identical to the unadapted one at step 0. Call after
+    ``freeze_params`` has been applied (as the train module does for LoRA), so the new
+    parameter is left trainable.
+
+    :returns: The new parameter's FQN in a one-element list.
+    """
+    emb_fqn, emb, w_out = _find_tied_embedding(model)
+    if hasattr(emb, TOKEN_DELTA_NAME):
+        raise OLMoConfigurationError("trainable token rows were already applied")
+    weight = emb.weight
+    ids = torch.tensor(sorted(set(int(i) for i in token_ids)), dtype=torch.long)
+    if int(ids.max()) >= weight.shape[0]:
+        raise OLMoConfigurationError(
+            f"trainable_token_ids up to {int(ids.max())} exceed the base vocab {weight.shape[0]}"
+        )
+    device = weight.device
+    delta = nn.Parameter(
+        torch.zeros(len(ids), weight.shape[1], device=device, dtype=weight.dtype)
+        if device.type != "meta"
+        else torch.empty(len(ids), weight.shape[1], device=device, dtype=weight.dtype)
+    )
+    emb.register_parameter(TOKEN_DELTA_NAME, delta)
+    emb.register_buffer(TOKEN_DELTA_IDS_NAME, ids.to(device), persistent=True)
+
+    orig_forward = emb.forward
+
+    def forward_with_rows(input: torch.Tensor) -> torch.Tensor:  # noqa: A002
+        out = orig_forward(input)
+        d = getattr(emb, TOKEN_DELTA_NAME)
+        rows = getattr(emb, TOKEN_DELTA_IDS_NAME)
+        # positions whose id is one of the trainable rows -> add that row's delta
+        match = input.unsqueeze(-1) == rows  # (..., n_rows)
+        if match.any():
+            out = out + (match.to(d.dtype) @ d.to(out.dtype)).to(out.dtype)
+        return out
+
+    emb.forward = forward_with_rows  # type: ignore[method-assign]
+
+    if w_out is not None:
+
+        def head_hook(module, inputs, output):
+            d = getattr(emb, TOKEN_DELTA_NAME)
+            rows = getattr(emb, TOKEN_DELTA_IDS_NAME)
+            h = inputs[0]
+            extra = (h.to(d.dtype) @ d.T).to(output.dtype)  # (..., n_rows)
+            return output.index_add(-1, rows, extra)
+
+        w_out.register_forward_hook(head_hook)
+    log.info(
+        "Trainable token rows on %s: %d rows (%s), tied head %s",
+        emb_fqn,
+        len(ids),
+        ids.tolist(),
+        "adjusted" if w_out is not None else "not tied -- head rows unchanged",
+    )
+    return [f"{emb_fqn}.{TOKEN_DELTA_NAME}"]
+
+
+def fold_token_rows(tensors: dict, *, weight_key: str) -> int:
+    """
+    Fold a saved ``token_delta`` into the embedding table inside a plain state dict
+    (``{name: tensor}``), removing the delta and its ids. Used by
+    ``merge_lora_checkpoint.py``; returns the number of rows folded (0 if none present).
+    """
+    prefix = weight_key[: -len(".weight")]
+    dkey, ikey = f"{prefix}.{TOKEN_DELTA_NAME}", f"{prefix}.{TOKEN_DELTA_IDS_NAME}"
+    if dkey not in tensors:
+        return 0
+    if ikey not in tensors:
+        raise RuntimeError(f"{dkey} present without {ikey}; cannot tell which rows it applies to")
+    delta = tensors.pop(dkey)
+    ids = tensors.pop(ikey).long()
+    weight = tensors[weight_key]
+    w = weight.float()
+    w[ids] = w[ids] + delta.float()
+    tensors[weight_key] = w.to(weight.dtype)
+    return int(len(ids))
 
 
 def merge_lora_(model: nn.Module) -> List[str]:

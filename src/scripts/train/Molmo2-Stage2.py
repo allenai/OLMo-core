@@ -65,6 +65,7 @@ from olmo_core.internal.cli_overrides import (
     read_bool_override,
     read_float_override,
     read_int_override,
+    read_override,
 )
 from olmo_core.internal.common import (
     build_launch_config,
@@ -409,6 +410,12 @@ class ExperimentConfig(Config):
     lora_dropout: float = LORA_DROPOUT
     lora_lr: float = LORA_LR
     """Learning rate for the adapters. See :data:`LORA_LR` -- do not reuse ``LLM_LR``."""
+    lora_train_token_ids: Optional[List[int]] = None
+    """Vocabulary rows given a trainable delta alongside the adapters (LoRA only). Use
+    ``[151667,151668,151657,151658]`` (``<think>``, ``</think>``, ``<tool_call>``,
+    ``</tool_call>``) for scratchpad arms: these rows are frozen, near-initialisation and
+    almost collinear in the Molmo2-4B table, which capped P(<think> | first) at ~0.07 in
+    every scratchpad arm. Trained at ``lora_lr``; folded in by ``merge_lora_checkpoint.py``."""
 
     ignore_shuffle_algo_version_mismatch: bool = False
     """Resume a checkpoint whose mixture shuffle algorithm predates
@@ -587,6 +594,13 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
     lora_alpha = read_float_override(overrides, "lora_alpha", LORA_ALPHA)
     lora_dropout = read_float_override(overrides, "lora_dropout", LORA_DROPOUT)
     lora_lr = read_float_override(overrides, "lora_lr", LORA_LR)
+    # `[151667,151668]` / `151667,151668` -> [151667, 151668]; empty / "null" -> None
+    _ids_raw = read_override(overrides, "lora_train_token_ids", "").strip().strip("[]")
+    lora_train_token_ids: Optional[List[int]] = (
+        [int(x) for x in _ids_raw.replace(" ", "").split(",") if x]
+        if _ids_raw and _ids_raw.lower() not in ("null", "none")
+        else None
+    )
 
     # Full finetune: three component groups at three LRs (mm_olmo SFT).
     # LoRA: the LLM and the ViT are frozen, so their globs must be dropped -- a group
@@ -600,7 +614,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
                 opts=dict(lr=CONNECTOR_LR, weight_decay=0.0, scheduler_name="connector"),
             ),
             OptimGroupOverride(
-                params=["lm.*.lora_A", "lm.*.lora_B"],
+                params=["lm.*.lora_A", "lm.*.lora_B", "lm.*.token_delta"],
                 opts=dict(lr=lora_lr, weight_decay=0.0, scheduler_name="lora"),
             ),
         ]
@@ -614,6 +628,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             alpha=lora_alpha,
             dropout=lora_dropout,
             target_modules=list(LLM_LORA_TARGET_MODULES),
+            trainable_token_ids=lora_train_token_ids,
         )
     else:
         optim_group_overrides = [
