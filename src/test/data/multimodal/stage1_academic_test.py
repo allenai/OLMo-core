@@ -522,21 +522,25 @@ def test_stage1_academic_group_wiring():
 
 
 def test_v3_recipe():
-    """v3 is v2 plus the academic QA group and the clock group: caption 0.455, pointing 0.225,
-    OCR 0.15, academic 0.14, clocks 0.03, on the v2 pointing sources and no text-only data."""
+    """v3 is v2 plus the academic QA group and the clock group, with more OCR, for 50k steps:
+    caption 0.33, pointing 0.16, OCR 0.34, academic 0.14, clocks 0.03, on the v2 pointing sources
+    and no text-only data."""
     mod = _load_stage1_module()
     v3 = mod.RECIPES["v3"]
     assert v3 == dict(
-        pointing_rate=0.225,
+        pointing_rate=0.16,
         nlp_rate=0.0,
-        ocr_rate=0.15,
+        ocr_rate=0.34,
         academic_rate=0.14,
         clock_rate=0.03,
         pointing_data="v2",
     )
     groups = ("pointing_rate", "nlp_rate", "ocr_rate", "academic_rate", "clock_rate")
-    assert 1.0 - sum(v3[k] for k in groups) == pytest.approx(0.455)
+    assert 1.0 - sum(v3[k] for k in groups) == pytest.approx(0.33)
     assert mod.resolve_recipe(["--recipe=v3"]) == ("v3", v3)
+    # v3's rates are set for 50k steps; the other recipes keep the script's 32k.
+    assert mod.RECIPE_MAX_STEPS == {"v3": 50_000}
+    assert mod.MAX_STEPS == 32_000
     mod.validate_data_config(_data_config(recipe="v3", **v3))
     # With the real sizes, the ten default sources share exactly the recipe's academic rate.
     names = list(acad_mix.DEFAULT_ACADEMIC_SOURCES)

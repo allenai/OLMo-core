@@ -20,10 +20,11 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 ``--recipe`` selects the data mixture (see :data:`RECIPES`): ``v1`` (the default) is the released
 Molmo2-4B-Pretrain mixture -- caption 0.6, pointing and counting 0.3 on the v1 sources, Tulu
 text 0.1, no OCR. ``v2`` is caption 0.5, pointing and counting 0.25 on the v2 sources, OCR 0.25
-and no text-only data. ``v3`` is v2 with an academic QA group and a clock-reading group: caption
-0.455, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.03. A recipe only sets the
-defaults of ``pointing_rate`` / ``nlp_rate`` / ``ocr_rate`` / ``academic_rate`` / ``clock_rate`` /
-``pointing_data``; an explicit override of any of them still wins.
+and no text-only data. ``v3`` is v2 with an academic QA group, a clock-reading group and more OCR,
+for 50,000 steps rather than 32,000: caption 0.33, pointing and counting 0.16, OCR 0.34, academic
+QA 0.14, clocks 0.03. A recipe only sets the defaults of ``pointing_rate`` / ``nlp_rate`` /
+``ocr_rate`` / ``academic_rate`` / ``clock_rate`` / ``pointing_data`` and the step count; an
+explicit override of any of them still wins.
 
 ``--pointing_data`` selects the pointing/counting group: ``v1`` (the released Molmo2 pretrain's
 sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, image-grouped
@@ -400,18 +401,19 @@ POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 #         sources), Tulu text 0.1, no OCR.
 #   "v2": caption 0.5, pointing and counting 0.25 (v2 sources: audited PixMo-Points / PixMo-Count
 #         + CoSyn), OCR 0.25 (the default OCR sources, see `OCR_RATE`), no text-only data.
-#   "v3": v2 plus the academic QA group (`ACADEMIC_RATE`) and the clock group (`CLOCK_RATE`):
-#         caption 0.455, pointing and counting 0.225, OCR 0.15, academic QA 0.14, clocks 0.03. The
-#         rates keep v2's balance of what is trained on: from 80 sampled examples per source, the
-#         expected weighted loss splits caption / pointing / text-rich (OCR + academic) as
-#         55.0% / 18.3% / 26.7% against v2's 55.1% / 18.5% / 26.5%. The academic QA share, 9.3% of
-#         the loss and 0.14 of the examples, comes out of OCR (0.25 -> 0.15): the one group a run
-#         never repeats (v2 sees 0.46 of its 3.09M rows, v3 0.28), and the one covering the same
-#         charts, tables and documents with a different task. Packed by this script's 2D-knapsack
-#         packer at 2,560 tokens, a 32k-step run is 1.43 examples per sequence, 5.8M examples:
-#         ~3.7 passes of PixMo-Cap (v2: 4.0), ~4.0 of the pointing sources (v2: 4.4; mm_olmo's
-#         molmo3 stage 1 targets 4), ~1.0 of the academic group's 814k images, and ~175k clock
-#         examples (0.22 of PixMo-Clocks' 800k images; 2.0% of the tokens, 0.08% of the loss).
+#   "v3": v2 plus the academic QA group (`ACADEMIC_RATE`) and the clock group (`CLOCK_RATE`), with
+#         more OCR, for 50,000 steps (`RECIPE_MAX_STEPS`): caption 0.33, pointing and counting
+#         0.16, OCR 0.34, academic QA 0.14, clocks 0.03. The OCR rate is what one pass over the
+#         OCR group takes in 50k steps: from 80 sampled examples per source, packed by this
+#         script's 2D-knapsack packer at 2,560 tokens, a run is 1.41 examples per sequence, 9.0M
+#         examples, 3.07M of them OCR for its 3.09M rows. Within the group the split is still by
+#         task, then sqrt(size) with the synthetic sets capped (`_ocr_fractions`), so that pass
+#         is uneven: the figure captions ~1 pass, olmOCR documents 2.1, the small olmOCR subsets,
+#         TextOCR and the receipts 7-10, NVIDIA's 1.46M synthetic images 0.32. Caption and
+#         pointing keep about v2's passes (4.2 over PixMo-Cap, v2 4.0; 4.4 over the pointing
+#         sources, v2 4.4); the academic group gets 1.55 passes and the clock group 271k examples
+#         (0.34 passes). The expected weighted loss splits caption / pointing / OCR / academic as
+#         39.2% / 12.8% / 38.9% / 9.1% (v2: 55.1% / 18.5% / 26.5% / 0), clocks 0.08%.
 RECIPES = {
     "v1": dict(
         pointing_rate=POINTING_RATE,
@@ -430,15 +432,18 @@ RECIPES = {
         pointing_data="v2",
     ),
     "v3": dict(
-        pointing_rate=0.225,
+        pointing_rate=0.16,
         nlp_rate=0.0,
-        ocr_rate=0.15,
+        ocr_rate=0.34,
         academic_rate=0.14,
         clock_rate=0.03,
         pointing_data="v2",
     ),
 }
 RECIPE = "v1"
+# Training steps a recipe runs for, where it differs from `MAX_STEPS`: v3's OCR rate is set to cover
+# the OCR group once in 50k steps. An explicit `--trainer.max_duration.value` still wins.
+RECIPE_MAX_STEPS = {"v3": 50_000}
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -922,7 +927,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(MAX_STEPS),
+            max_duration=Duration.steps(RECIPE_MAX_STEPS.get(recipe, MAX_STEPS)),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
@@ -1459,7 +1464,7 @@ Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \
       --ocr_sources=[olmocr_documents,olmocr_books,olmocr_loc_transcripts,olmocr_national_archives]
 
-The v3 recipe (caption 0.455, pointing 0.225, OCR 0.15, academic QA 0.14, clocks 0.03):
+The v3 recipe (50k steps; caption 0.33, pointing 0.16, OCR 0.34, academic QA 0.14, clocks 0.03):
 › python {sys.argv[0]} launch molmo2-stage1-v3 --recipe=v3
 
 Local synthetic smoke test:
