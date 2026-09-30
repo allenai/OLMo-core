@@ -76,10 +76,10 @@ def build_olmo3_moe_config_from_hf_config(
             "emo_eval_document_expert_pool",
         )
     ):
-        raise NotImplementedError("The MILES factory does not support EMo.")
+        raise NotImplementedError("The OLMo3 MoE builder does not support EMo.")
     rope_parameters = config.get("rope_parameters") or config.get("rope_scaling") or {}
     if rope_parameters and rope_parameters.get("rope_type", "default") != "default":
-        raise NotImplementedError("Scaled RoPE is not supported by this stage-one factory.")
+        raise NotImplementedError("The OLMo3 MoE builder does not support scaled RoPE.")
     if config.get("attention_bias", False):
         raise NotImplementedError("Biased Olmo3Moe attention is not supported.")
     if config.get("hidden_act", "silu") != "silu":

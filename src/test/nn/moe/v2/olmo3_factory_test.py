@@ -1,4 +1,4 @@
-"""Exercise the adapter factory against gdn2's real hybrid modules and HF tensors."""
+"""Check OLMo3 MoE configuration and weight round trips against native and HF models."""
 
 from copy import deepcopy
 
@@ -131,7 +131,7 @@ def test_streaming_export_splits_fused_attention_weights():
 @pytest.mark.parametrize("hidden,heads,kv,latent", [(32, 4, 2, 16), (48, 6, 3, 24)])
 @pytest.mark.parametrize("head_gains,ssmax", [(False, False), (True, False), (True, True)])
 @requires_fla
-def test_hero_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, head_gains, ssmax):
+def test_hybrid_config_and_streaming_state_roundtrip(hidden, heads, kv, latent, head_gains, ssmax):
     hf = hybrid_config(latent)
     hf.hidden_size = hidden
     hf.attention_hidden_size = hidden
@@ -226,7 +226,7 @@ def test_reverse_config_rejects_heterogeneous_attention_features():
 
 
 @pytest.mark.parametrize("feature", ["qk_norm_per_head_gains", "scalable_softmax"])
-def test_fused_attention_rejects_unsupported_hero_features(feature):
+def test_fused_attention_rejects_unsupported_attention_features(feature):
     hf = hybrid_config()
     hf.layer_types = ["full_attention", "full_attention"]
     setattr(hf, feature, True)
