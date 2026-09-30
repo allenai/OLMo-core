@@ -88,6 +88,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .objective import Objective, train_batch_with_loss
 
 log = logging.getLogger(__name__)
 
@@ -1548,6 +1549,10 @@ class OLMoDDPTrainModule(TrainModule):
                 f"(+{elapsed:.2f}s since last log, {total:.2f}s total)",
                 flush=True,
             )
+
+    def train_batch_with_loss(self, micro_batches, objective: Objective, context_factory=None):
+        """Accumulate a caller-normalized objective with Core gradient synchronization."""
+        return train_batch_with_loss(self, micro_batches, objective, context_factory)
 
     @nvtx.annotate("train_batch")
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
