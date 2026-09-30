@@ -29,7 +29,12 @@ import sys
 REPO = "/accounts/projects/berkeleynlp/prasann/projects/OLMo-core"
 LAUNCHER = f"{REPO}/src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py"
 WEKA = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
-BASE = f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"
+# FS35_BASE swaps the SFT base (drop-CPT study, records/ffndrop-cpt-plan.md: SFT from a CPT export);
+# FS35_BASE_TAG is appended to every run name so those runs never resume into the base-model runs.
+BASE = os.environ.get("FS35_BASE", f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim")
+BASE_TAG = os.environ.get("FS35_BASE_TAG", "")
+if os.environ.get("FS35_BASE") and not BASE_TAG:
+    raise SystemExit("FS35_BASE set without FS35_BASE_TAG: runs would collide with the base-model runs")
 CKPTS = f"{WEKA}/ctc_suite/ckpts"
 LEDGER = f"{REPO}/debug/flop_scaling/LAUNCH_LEDGER.tsv"
 FFN_LADDER = "1,16,64,256,1024,9728"  # Qwen3.5-4B hidden is also 9728
@@ -61,12 +66,16 @@ FFN_TAG = os.environ.get("FS35_FFN_TAG", "r2")
 
 def run_name(task, arm, budget):
     tag = FFN_TAG if arm.startswith(("ffnmoe", "attnroute", "flex")) else ""
-    return f"fs35{tag}-{task}-{arm}-s{budget}"
+    return f"fs35{tag}-{task}-{arm}-s{budget}{BASE_TAG}"
 
 
 def arm_args(task, arm, budget):
     packed = ["--pack", "--seq-len", "65536", "--global-batch", "8", "--micro-batch-instances", "1"]
     data = f"{WEKA}/{ARMS[task][budget]}"
+    if arm == "dense":
+        # dense SFT reference; only needed on a non-default base (the base-model dense points are the
+        # prior campaigns' numbers and are never retrained)
+        return "full", data, packed + ["--base-checkpoint", BASE], ""
     if arm == "ffnmoe-s1":
         extra = (f"--ffn-moe-start-layer 12 --ffn-moe-divisors {FFN_LADDER} --ffn-moe-width-multiple 1 "
                  "--ffn-moe-target 0.01 --ffn-moe-target-anneal-frac 0.3 --ffn-moe-explore-anneal-frac 0.3")
