@@ -1,0 +1,64 @@
+{
+ "emo": false,
+ "seq": 8192,
+ "windows": 1,
+ "mean_ce": 1.7535002529621124,
+ "results": [
+  {
+   "file": 0,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/cc_all_dressed/all_dressed_v5",
+   "ce": 2.954617738723755,
+   "tokens": 8191,
+   "seconds": 79.1
+  },
+  {
+   "file": 150,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/cc_all_dressed/all_dressed_v5",
+   "ce": 2.777815341949463,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 300,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/cc_all_dressed/all_dressed_v5_addons",
+   "ce": 2.1453871726989746,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 450,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/dolma4pdfs/dolma4pdfs_full_deduped_partitioned_resharded_qualitytagged_partitioned_decon",
+   "ce": 1.5914822816848755,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 600,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/dolma4pdfs/dolma4pdfs_full_deduped_partitioned_resharded_qualitytagged_partitioned_decon",
+   "ce": 1.6477028131484985,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 750,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/dolma4pdfs/dolma4pdfs_full_deduped_partitioned_resharded_qualitytagged_partitioned_decon",
+   "ce": 1.1366796493530273,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 900,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/the-stack-v2/spring2code_v2",
+   "ce": 0.9044920802116394,
+   "tokens": 8191,
+   "seconds": 0.3
+  },
+  {
+   "file": 1050,
+   "source": "dolma3p5-14t-e6c5a51bd6b9/the-stack-v2/spring2code_v2",
+   "ce": 0.8698249459266663,
+   "tokens": 8191,
+   "seconds": 0.3
+  }
+ ]
+}
