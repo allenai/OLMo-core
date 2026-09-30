@@ -64,7 +64,7 @@ def main():
 
     text_cfg = json.load(open(args.text_config))["config"]
     model_cfg = OLMoDDPModelConfig.from_dict(text_cfg["model"])
-    print("model config from text MT recipe:", {"backend(7)": model_cfg.block_overrides["7"].sequence_mixer.backend if model_cfg.block_overrides else None})
+    print("model config from text MT recipe: block overrides", sorted((model_cfg.block_overrides or {}).keys()))
     model = model_cfg.build(init_device="meta").to_empty(device="cuda").to(torch.bfloat16)
     W.set_router_groups(model, W.init_single_process_group())
     ckpt_cfg = W.load_config()
