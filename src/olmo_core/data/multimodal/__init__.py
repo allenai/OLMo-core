@@ -1,8 +1,8 @@
 """
-Multimodal (vision-language) training data: datasets and collation for Molmo2.
+Multimodal (vision-language) training data, replay, packing, and collation.
 
-This subpackage provides a standalone, ``mm_olmo``-free pipeline for Molmo2 "stage 1"
-caption pretraining:
+This subpackage provides a standalone, ``mm_olmo``-free pipeline shared by Molmo2 recipes and
+the separate vision-alignment continued-pretraining recipe:
 
 * :class:`~olmo_core.data.multimodal.pixmo_cap.PixMoCapDataset` — map-style dataset
   yielding packed image + caption/transcript training examples.
@@ -10,12 +10,19 @@ caption pretraining:
   into batches for :class:`~olmo_core.nn.vision.MultimodalLM`.
 * :func:`~olmo_core.data.multimodal.sequence_builder.build_packed_sequence` — the
   core multi-annotation (branch-packing) sequence assembly with float loss weights.
+* :class:`~olmo_core.data.multimodal.pretraining_replay.PretrainingReplayDataset` — native
+  text replay resolved from the parent checkpoint or an explicit dataset config.
 
 Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
 """
 
 from .academic_dataset import AcademicDataset, AcademicDatasetConfig
+from .alignment import (
+    MultimodalDatasetMixture,
+    MultimodalMixtureConfig,
+    MultimodalSourceConfig,
+)
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
 from .finevision import (
@@ -67,6 +74,7 @@ from .pixmo_points_v2 import (
     PixMoPointsV2Dataset,
     PixMoPointsV2DatasetConfig,
 )
+from .pretraining_replay import PretrainingReplayConfig, PretrainingReplayDataset
 from .sequence_builder import (
     ATTEND_ALL_SUBSEGMENT_ID,
     build_branched_sequence,
@@ -81,6 +89,13 @@ from .synthetic_ocr import (
 )
 from .text_rich_caption import TextRichCaptionDataset, TextRichCaptionDatasetConfig
 from .tulu import Tulu4Dataset, Tulu4DatasetConfig
+from .vision_alignment_perception import (
+    VISION_ALIGNMENT_OCR_SOURCES,
+    VisionAlignmentAuditedAlignmentDataset,
+    VisionAlignmentAuditedAlignmentDatasetConfig,
+    VisionAlignmentOcrDocumentDataset,
+    VisionAlignmentOcrDocumentDatasetConfig,
+)
 
 __all__ = [
     "FineVisionDataset",
@@ -140,8 +155,18 @@ __all__ = [
     "MultimodalCollatorConfig",
     "MultimodalDataLoader",
     "MixtureDataLoader",
+    "MultimodalDatasetMixture",
+    "MultimodalMixtureConfig",
+    "MultimodalSourceConfig",
+    "PretrainingReplayConfig",
+    "PretrainingReplayDataset",
     "build_packed_sequence",
     "build_branched_sequence",
     "ATTEND_ALL_SUBSEGMENT_ID",
     "pack_examples",
+    "VISION_ALIGNMENT_OCR_SOURCES",
+    "VisionAlignmentAuditedAlignmentDataset",
+    "VisionAlignmentAuditedAlignmentDatasetConfig",
+    "VisionAlignmentOcrDocumentDataset",
+    "VisionAlignmentOcrDocumentDatasetConfig",
 ]
