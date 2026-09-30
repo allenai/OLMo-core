@@ -6,10 +6,7 @@ from os.path import join
 from typing import Any, Dict
 
 import numpy as np
-import torchvision
-import torchvision.transforms.functional as VF
 from PIL import Image, ImageOps
-from torchvision.transforms.functional import InterpolationMode, affine
 
 from .paths import PIXMO_DATASETS
 
@@ -24,6 +21,14 @@ def format_pixmo_clocks_row(
     row: Dict[str, Any], rng: np.random.RandomState, *, aug: bool = True
 ) -> Dict[str, Any]:
     """Format one PixMo clocks JSONL row into an mm_olmo-compatible example dict."""
+    # torchvision is imported here, not at module load: the academic registry imports this module,
+    # and so does every stage-1 run, clocks or not. An image whose torchvision does not match its
+    # torch (e.g. torch upgraded to 2.13 by the package install, torchvision left at 0.25) then only
+    # fails a run that actually trains on clocks.
+    import torchvision
+    import torchvision.transforms.functional as VF
+    from torchvision.transforms.functional import InterpolationMode, affine
+
     time_format = row["time_format"]
     shows_seconds = row["shows_seconds"]
     hour, minute, second = [int(row[k]) for k in ("hour", "minute", "second")]
