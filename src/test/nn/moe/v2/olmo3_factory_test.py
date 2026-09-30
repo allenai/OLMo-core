@@ -332,7 +332,7 @@ def test_full_attention_shared_dense_config_export(peri_ln, sliding):
 
 
 @pytest.mark.parametrize(
-    "feature", ["expert_weight_scale", "qkv_bias", "norm_precision", "clip_qkv"]
+    "feature", ["expert_weight_scale", "attention_bias", "norm_precision", "clip_qkv"]
 )
 def test_canonical_export_rejects_unrepresentable_settings(feature):
     hf = hybrid_config(None)
@@ -346,8 +346,8 @@ def test_canonical_export_rejects_unrepresentable_settings(feature):
         assert block.layer_norm is not None
         if feature == "expert_weight_scale" and block.routed_experts_router is not None:
             block.routed_experts_router.expert_weight_scale = 2.0
-        elif feature == "qkv_bias":
-            block.sequence_mixer.qkv_bias = True
+        elif feature == "attention_bias":
+            block.sequence_mixer.bias = True
         elif feature == "norm_precision":
             block.layer_norm.full_precision = False
         elif feature == "clip_qkv":
