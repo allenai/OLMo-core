@@ -112,6 +112,35 @@ class CausalConv1d(nn.Conv1d):
             xt = F.pad(xt, (w - xt.shape[-1], 0))
         return xt[:, :, -w:].contiguous()
 
+    def forward_with_state(self, x: torch.Tensor, conv_state: torch.Tensor) -> torch.Tensor:
+        """
+        Multi-token causal convolution that *continues* from a cached window, for chunked prefill.
+
+        :meth:`forward` left-pads with zeros, which is correct only when ``x`` starts at position 0.
+        Feeding a long prompt in chunks means every chunk after the first must instead see the real
+        preceding ``kernel_size - 1`` inputs, or each chunk boundary silently gets a zero-padded
+        convolution. This prepends the cached window, convolves, and drops the window's outputs, so
+        the result is identical to convolving the whole prompt at once. ``conv_state`` is updated in
+        place to this chunk's trailing window, ready for the next chunk (or for :meth:`step`).
+
+        :param x: Conv input of shape ``(batch_size, seq_len, hidden_size)``.
+        :param conv_state: Cached window of shape ``(batch_size, hidden_size, kernel_size - 1)``,
+            updated in place.
+
+        :returns: Conv output of shape ``(batch_size, seq_len, hidden_size)``.
+        """
+        w = self.state_width
+        if w == 0:
+            return self.forward(x)
+        prefix = conv_state.transpose(1, 2).to(x.dtype)  # (B, kernel_size - 1, hidden)
+        # The new window is the tail of [prefix ; x], not of x alone: a chunk shorter than the
+        # window still has to carry the older inputs forward.
+        combined = torch.cat([prefix, x], dim=1)
+        conv_state.copy_(self.prefill_state(combined))
+        # dispatch_causal_conv1d zero-pads the front, so the first ``w`` outputs belong to the
+        # prepended window and are discarded; the rest are exactly the chunk's outputs.
+        return self.forward(combined)[:, w:]
+
     def step(self, x_t: torch.Tensor, conv_state: torch.Tensor) -> torch.Tensor:
         """
         Single-step causal convolution for cached decoding, updating ``conv_state`` in place.

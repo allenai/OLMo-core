@@ -56,6 +56,25 @@ class GenerationConfig(Config):
     """How often (in decode steps) to run the :data:`stop_strings` / finished-all check. Larger values
     cut the per-step GPU->CPU sync at the cost of a few extra decode steps before stopping. Default 1."""
 
+    prefill_chunk_size: Optional[int] = None
+    """
+    Feed the prompt to the prefill forward in slices of this many tokens instead of all at once.
+    ``None`` (the default) keeps the single-shot prefill.
+
+    A one-shot prefill materializes every intermediate at the full prompt length, and those
+    intermediates are *wider* than the KV cache they produce: one layer's SwiGLU holds three
+    ``hidden_size`` tensors (~59 KiB/token for a 4B Qwen3.5) against ~32 KiB/token of cached K/V.
+    Past a few hundred thousand tokens that transient, not the cache, is what exhausts the GPU.
+    Chunking bounds it by the chunk length while the cache still accumulates the whole prompt, so
+    peak memory becomes roughly ``weights + KV(prompt) + activations(chunk)``.
+
+    The result is mathematically identical to a one-shot prefill: attention offsets each chunk's
+    RoPE positions by the cache position and attends over the full cached prefix, and the recurrent
+    (Gated DeltaNet) layers carry their conv window and delta-rule state across chunk boundaries.
+    Smaller chunks trade a little kernel-launch overhead for a lower ceiling; 32768 is a good
+    starting point.
+    """
+
     landmark_mem_id: Optional[int] = None
     """
     For landmark-attention models only: the token ID used as the landmark ("memory") token. When the
