@@ -23,10 +23,25 @@ from .image_vit import (
 )
 from .molmo2_image_processor import preprocess_image_molmo2
 from .molmo2_loader import (
+    load_molmo2_hf_vision_config,
+    load_molmo2_hf_vision_state_dict,
     molmo2_hf_state_dict_to_multimodal_lm,
-    multimodal_lm_state_dict_to_hf,
+    molmo2_hf_state_dict_to_vision,
+    multimodal_config_from_molmo2_vision,
 )
-from .multimodal import MultimodalLM, MultimodalLMConfig
+from .molmo2_tokens import Molmo2TokenIds, prepare_molmo2_tokenizer
+from .multimodal import (
+    MOLMO2_BASE_VOCAB_SIZE,
+    MOLMO2_N_EXTRA_TOKENS,
+    MOLMO2_VOCAB_SIZE,
+    MultimodalLM,
+    MultimodalLMConfig,
+    MultimodalOLMoDDPModel,
+)
+from .siglip_loader import (
+    load_siglip_hf_vision_state_dict,
+    siglip_hf_state_dict_to_vision,
+)
 
 __all__ = [
     "VisionEncoderType",
@@ -38,12 +53,24 @@ __all__ = [
     "ViTBlock",
     "VisionTransformer",
     "siglip_state_dict_to_vision_encoder",
+    "MOLMO2_BASE_VOCAB_SIZE",
+    "MOLMO2_N_EXTRA_TOKENS",
+    "MOLMO2_VOCAB_SIZE",
     "ImagePoolingType",
     "ImageProjectorType",
     "VisionConnectorConfig",
     "VisionConnector",
     "MultimodalLMConfig",
     "MultimodalLM",
+    "MultimodalOLMoDDPModel",
     "molmo2_hf_state_dict_to_multimodal_lm",
+    "molmo2_hf_state_dict_to_vision",
+    "load_molmo2_hf_vision_config",
+    "load_molmo2_hf_vision_state_dict",
+    "multimodal_config_from_molmo2_vision",
     "preprocess_image_molmo2",
+    "Molmo2TokenIds",
+    "prepare_molmo2_tokenizer",
+    "load_siglip_hf_vision_state_dict",
+    "siglip_hf_state_dict_to_vision",
 ]

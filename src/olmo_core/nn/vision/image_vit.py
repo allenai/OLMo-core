@@ -1,3 +1,5 @@
+"""Configurable CLIP- and SigLIP-style vision transformer encoders."""
+
 import math
 from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple
@@ -42,7 +44,7 @@ def _get_activation(name: str) -> Callable[[torch.Tensor], torch.Tensor]:
 
 
 def _vit_activation_checkpoint_function(cfg: VisionEncoderConfig) -> Callable:
-    preserve_rng_state = (cfg.attention_dropout != 0.0) or (cfg.residual_dropout != 0.0)
+    preserve_rng_state = cfg.attention_dropout != 0.0 or cfg.residual_dropout != 0.0
     return partial(checkpoint, preserve_rng_state=preserve_rng_state, use_reentrant=False)
 
 
@@ -92,11 +94,13 @@ class ViTAttention(nn.Module):
         self.resid_drop = nn.Dropout(cfg.residual_dropout)
 
     def reset_parameters(self):
+        """Initialize attention projections and zero their biases."""
         for w in (self.wq, self.wk, self.wv, self.wo):
             nn.init.normal_(w.weight, std=self.initializer_range)
             nn.init.zeros_(w.bias)
 
     def forward(self, x: torch.Tensor, kv: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Apply self-attention or attend to an explicit key/value input."""
         B, N, _ = x.shape
         src = x if kv is None else kv
 
@@ -139,12 +143,14 @@ class ViTMLP(nn.Module):
         self._mlp_dim = cfg.image_mlp_dim
 
     def reset_parameters(self):
+        """Initialize the MLP projections and zero their biases."""
         nn.init.trunc_normal_(self.w1.weight, std=math.sqrt(1 / self._emb_dim), a=-2.0, b=2.0)
         nn.init.trunc_normal_(self.w2.weight, std=math.sqrt(1 / self._mlp_dim), a=-2.0, b=2.0)
         nn.init.zeros_(self.w1.bias)
         nn.init.zeros_(self.w2.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the configured activation between two linear projections."""
         return self.w2(self.act(self.w1(x)))
 
 
@@ -164,12 +170,14 @@ class ViTBlock(nn.Module):
         self.ffn = ViTMLP(cfg, init_device=init_device)
 
     def reset_parameters(self):
+        """Initialize the block's normalization, attention, and MLP parameters."""
         self.attn_norm.reset_parameters()
         self.ffn_norm.reset_parameters()
         self.attn.reset_parameters()
         self.ffn.reset_parameters()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply pre-normalized attention and MLP residual updates."""
         x = x + self.attn(self.attn_norm(x))
         x = x + self.ffn(self.ffn_norm(x))
         return x
@@ -267,7 +275,7 @@ class VisionTransformer(nn.Module):
         self.reset_parameters()
 
     def apply_activation_checkpointing(self) -> None:
-        """Per-block activation checkpointing (mm_olmo ``VitConfig.activation_checkpointing``)."""
+        """Enable non-reentrant checkpointing of each vision block."""
         self._activation_checkpoint_fn = _vit_activation_checkpoint_function(self.cfg)
 
     def apply_compile(self) -> None:
@@ -332,10 +340,10 @@ class VisionTransformer(nn.Module):
 
         hidden_states: List[torch.Tensor] = []
         for block in self.blocks:
-            if self._activation_checkpoint_fn is not None:
-                x = self._activation_checkpoint_fn(block, x)
-            else:
+            if self._activation_checkpoint_fn is None:
                 x = block(x)
+            else:
+                x = self._activation_checkpoint_fn(block, x)
             hidden_states.append(x)
         return hidden_states
 
