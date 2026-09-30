@@ -229,11 +229,16 @@ def get_transformer_config(
             n_layers=2,
             block=TransformerBlockConfig(
                 name=TransformerBlockType.reordered_norm,
-                sequence_mixer=KimiDeltaAttentionConfig(n_heads=8, allow_neg_eigval=True),
+                sequence_mixer=KimiDeltaAttentionConfig(
+                    n_heads=8, allow_neg_eigval=True, dtype=DType.from_pt(dtype)
+                ),
                 layer_norm=layer_norm,
-                feed_forward=FeedForwardConfig(hidden_size=512, bias=False),
+                feed_forward=FeedForwardConfig(
+                    hidden_size=512, bias=False, dtype=DType.from_pt(dtype)
+                ),
             ),
-            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False),
+            lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=DType.from_pt(dtype)),
+            dtype=DType.from_pt(dtype),
         )
     else:
         raise NotImplementedError(architecture)
