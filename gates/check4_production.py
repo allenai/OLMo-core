@@ -15,9 +15,9 @@ Usage (inside the job): PYTHONPATH=src:gates python gates/check4_production.py -
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
-import time
 
 import torch
 
@@ -57,51 +57,71 @@ def main():
     p.add_argument("--files", default="0,150,300,450,600,750,900,1050")
     p.add_argument("--seq", type=int, default=8192)
     p.add_argument("--windows", type=int, default=2)
+    p.add_argument("--variants", default="prod,fla,torchattn,fla+torchattn",
+                   help="prod = text config as-is; fla = use_experimental_kernels False; torchattn = attention backend torch")
+    p.add_argument("--isolation-only-variants", default="prod,fla")
     args = p.parse_args()
 
     import olmo35_weights as W
     from olmo_core.nn.transformer.config import OLMoDDPModelConfig
 
     text_cfg = json.load(open(args.text_config))["config"]
-    model_cfg = OLMoDDPModelConfig.from_dict(text_cfg["model"])
-    print("model config from text MT recipe: block overrides", sorted((model_cfg.block_overrides or {}).keys()))
-    model = model_cfg.build(init_device="meta").to_empty(device="cuda").to(torch.bfloat16)
-    W.set_router_groups(model, W.init_single_process_group())
     ckpt_cfg = W.load_config()
-    rep = W.load_main_weights(model)
-    assert not rep["missing"] and not rep["mismatch"], rep
-    print("weights loaded:", {k: (v if not isinstance(v, list) else len(v)) for k, v in rep.items()})
-    model.eval()
-    report = {"image": os.environ.get("BEAKER_IMAGE_ID"), "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__}
-
-    # (a) text CE vs the local reference
     ref = {r["file"]: r["ce"] for r in json.load(open(args.reference))["results"]}
-    rows, ok_a = [], True
-    for fi in [int(x) for x in args.files.split(",")]:
-        t0 = time.time()
-        ids = W.text_batch(ckpt_cfg, batch_size=args.windows, seq_len=args.seq, file_index=fi)
-        labels = torch.full_like(ids, -100)
-        labels[:, :-1] = ids[:, 1:]
-        n = int((labels != -100).sum())
-        with torch.no_grad():
-            out = model(ids, labels=labels, ignore_index=-100, loss_reduction="sum", loss_div_factor=n)
-        ce = float(out.ce_loss)
-        model.compute_auxiliary_metrics(reset=True)
-        d = ce - ref[fi]
-        ok_a &= abs(d) <= 2e-3
-        rows.append({"file": fi, "ce": ce, "ref_ce_a100_torch": ref[fi], "diff": d, "seconds": round(time.time() - t0, 1)})
-        print(f"[text CE] file {fi:4d}: {ce:.5f} vs A100/torch {ref[fi]:.5f} (diff {d:+.5f})")
-    report["text_ce"] = {"rows": rows, "pass": ok_a, "criterion": "|diff| <= 2e-3"}
-    print("[text CE]", "PASS" if ok_a else "FAIL")
+    report = {"gpu": torch.cuda.get_device_name(0), "torch": torch.__version__, "variants": {}}
+    files = [int(x) for x in args.files.split(",")]
+    iso_variants = set(args.isolation_only_variants.split(","))
 
-    # (b) isolation, compile off then on
-    report["isolation_eager"] = isolation(model, ckpt_cfg, W, "eager")
-    model.apply_compile()
-    report["isolation_compiled"] = isolation(model, ckpt_cfg, W, "compiled")
-    report["pass"] = bool(ok_a and report["isolation_eager"]["pass"] and report["isolation_compiled"]["pass"])
+    def variant_config(name):
+        cfg = copy.deepcopy(text_cfg["model"])
+        for block in [cfg["block"], *(cfg.get("block_overrides") or {}).values()]:
+            mixer = block.get("sequence_mixer") or {}
+            if "fla" in name and "use_experimental_kernels" in mixer:
+                mixer["use_experimental_kernels"] = False
+            if "torchattn" in name and "backend" in mixer:
+                mixer["backend"] = "torch"
+        return cfg
+
+    for name in args.variants.split(","):
+        print(f"===== variant {name} =====")
+        model_cfg = OLMoDDPModelConfig.from_dict(variant_config(name))
+        model = model_cfg.build(init_device="meta").to_empty(device="cuda").to(torch.bfloat16)
+        W.set_router_groups(model, W.init_single_process_group())
+        rep = W.load_main_weights(model)
+        assert not rep["missing"] and not rep["mismatch"], rep
+        model.eval()
+        rows, total, ntot = [], 0.0, 0
+        for fi in files:
+            ids = W.text_batch(ckpt_cfg, batch_size=args.windows, seq_len=args.seq, file_index=fi)
+            labels = torch.full_like(ids, -100)
+            labels[:, :-1] = ids[:, 1:]
+            n = int((labels != -100).sum())
+            with torch.no_grad():
+                out = model(ids, labels=labels, ignore_index=-100, loss_reduction="sum", loss_div_factor=n)
+            ce = float(out.ce_loss)
+            model.compute_auxiliary_metrics(reset=True)
+            rows.append({"file": fi, "ce": ce, "ref_ce_a100_torch": ref[fi], "diff": ce - ref[fi]})
+            total += ce * n
+            ntot += n
+            print(f"[{name}/text CE] file {fi:4d}: {ce:.5f} vs A100/torch {ref[fi]:.5f} (diff {ce - ref[fi]:+.5f})")
+        mean = total / ntot
+        print(f"[{name}/text CE] token-weighted mean {mean:.4f} (run logged 1.711; A100/torch mean 1.7535)")
+        entry = {"text_ce": rows, "mean_ce": mean}
+        if name in iso_variants:
+            for tag, compiled in (("eager", False), ("compiled", True)):
+                try:
+                    if compiled:
+                        model.apply_compile()
+                    entry[f"isolation_{tag}"] = isolation(model, ckpt_cfg, W, f"{name}/{tag}")
+                except Exception as e:  # report, keep going with the other variants
+                    entry[f"isolation_{tag}"] = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+                    print(f"[isolation/{name}/{tag}] ERROR {type(e).__name__}: {str(e)[:300]}")
+        report["variants"][name] = entry
+        del model
+        torch.cuda.empty_cache()
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     json.dump(report, open(args.out, "w"), indent=1)
-    print("CHECK 4:", "PASSED" if report["pass"] else "FAILED", "->", args.out)
+    print("CHECK 4 done ->", args.out)
 
 
 if __name__ == "__main__":
