@@ -4,6 +4,8 @@ from copy import deepcopy
 
 import pytest
 import torch
+import torch.distributed as dist
+from torch.distributed.device_mesh import init_device_mesh
 
 from olmo_core.config import DType
 from olmo_core.exceptions import OLMoConfigurationError
@@ -17,6 +19,7 @@ from olmo_core.nn.hf import config as hf_config_utils
 from olmo_core.nn.moe.v2 import olmo3
 from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
 from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import Olmo3MoeForCausalLM
+from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla
 
 
@@ -108,7 +111,8 @@ def test_streaming_export_matches_complete_export_and_is_lazy(latent_dim):
         dict(stream)
 
 
-def test_streaming_export_splits_fused_attention_weights():
+@pytest.mark.parametrize("export", ["stream", "gather", "gather_cpu"])
+def test_exports_split_fused_attention_weights(export):
     hf = hybrid_config(None)
     hf.layer_types = ["full_attention", "full_attention"]
     hf.attention_gate_type = None
@@ -122,7 +126,11 @@ def test_streaming_export_splits_fused_attention_weights():
     reference = Olmo3MoeForCausalLM(hf).to(torch.bfloat16)
     olmo3.load_olmo3_moe_hf_state(native, hf, reference.state_dict())
     expected = reference.state_dict()
-    actual = dict(olmo3.iter_olmo3_moe_hf_state(native, hf))
+    actual = (
+        dict(olmo3.iter_olmo3_moe_hf_state(native, hf))
+        if export == "stream"
+        else olmo3.gather_olmo3_moe_hf_state(native, hf, cpu=export == "gather_cpu")
+    )
     assert actual.keys() == expected.keys()
     for name in expected:
         torch.testing.assert_close(actual[name], expected[name], rtol=0, atol=0)
@@ -354,3 +362,37 @@ def test_canonical_export_rejects_unrepresentable_settings(feature):
             block.sequence_mixer.clip_qkv = 0.5
     with pytest.raises(NotImplementedError):
         hf_config_utils.get_hf_config(config.build(init_device="cpu"))
+
+
+def _run_ep_exports_match_hf():
+    torch.manual_seed(37)
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "full_attention"]
+    hf.attention_gate_type = None
+    native = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf,
+        attention_backend=AttentionBackendName.torch,
+        attention_type=AttentionType.fused_v2,
+    ).build(init_device="cpu")
+    reference = Olmo3MoeForCausalLM(hf).to(torch.bfloat16)
+    expected = reference.state_dict()
+    mesh = init_device_mesh("cpu", (1, dist.get_world_size()), mesh_dim_names=("ep_dp", "ep_mp"))
+    for block in native.blocks.values():
+        if block.routed_experts is not None:
+            block.routed_experts.apply_ep(mesh)
+    olmo3.load_olmo3_moe_hf_state(native, hf, expected)
+    for export in ("gather", "gather_cpu", "stream"):
+        actual = (
+            dict(olmo3.iter_olmo3_moe_hf_state(native, hf))
+            if export == "stream"
+            else olmo3.gather_olmo3_moe_hf_state(native, hf, cpu=export == "gather_cpu")
+        )
+        assert actual.keys() == expected.keys()
+        for name, value in expected.items():
+            torch.testing.assert_close(actual[name], value, rtol=0, atol=0, msg=name)
+
+
+def test_ep_exports_gather_experts_and_split_fused_qkv():
+    run_distributed_test(
+        _run_ep_exports_match_hf, world_size=2, backend="gloo", start_method="spawn"
+    )

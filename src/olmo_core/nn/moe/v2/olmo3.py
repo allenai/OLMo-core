@@ -371,6 +371,25 @@ def load_olmo3_moe_hf_state(
             target.copy_(source.to(device=target.device, dtype=target.dtype))
 
 
+def _gather_native_tensor(model: torch.nn.Module, name: str, value: torch.Tensor) -> torch.Tensor:
+    """Gather an expert-sharded tensor in EP rank order; leave other tensors local."""
+    local = get_local_tensor(value) if isinstance(value, DTensor) else value
+    owner = model.get_submodule(name.rsplit(".", 1)[0])
+    if getattr(owner, "_ep_sharded", False):
+        group = owner.ep_mesh["ep_mp"].get_group()
+        gathered = [torch.empty_like(local) for _ in range(dist.get_world_size(group))]
+        dist.all_gather(gathered, local.contiguous(), group=group)
+        local = torch.cat(gathered, dim=0)
+    return local
+
+
+def _split_fused_qkv(weight: torch.Tensor, config: PretrainedConfig) -> tuple[torch.Tensor, ...]:
+    """Return separate Q/K/V views using the checkpoint's query and KV head counts."""
+    q_dim = config.num_attention_heads * config.head_dim
+    kv_dim = config.num_key_value_heads * config.head_dim
+    return weight.split((q_dim, kv_dim, kv_dim), dim=0)
+
+
 def gather_olmo3_moe_hf_state(
     model: torch.nn.Module, hf_config: PretrainedConfig, *, cpu: bool = False
 ) -> dict[str, torch.Tensor]:
@@ -378,23 +397,14 @@ def gather_olmo3_moe_hf_state(
     model = _unwrap_model(model)
     native_state: dict[str, torch.Tensor] = {}
     for name, value in model.state_dict().items():
-        local = get_local_tensor(value) if isinstance(value, DTensor) else value
-        owner_name = name.rsplit(".", 1)[0]
-        owner = model.get_submodule(owner_name)
-        if getattr(owner, "_ep_sharded", False):
-            group = owner.ep_mesh["ep_mp"].get_group()
-            gathered = [torch.empty_like(local) for _ in range(dist.get_world_size(group))]
-            dist.all_gather(gathered, local.contiguous(), group=group)
-            local = torch.cat(gathered, dim=0)
+        local = _gather_native_tensor(model, name, value)
         native_state[name] = local.cpu() if cpu else local
 
-    q_dim = hf_config.num_attention_heads * hf_config.head_dim
-    kv_dim = hf_config.num_key_value_heads * hf_config.head_dim
     for layer_idx in range(hf_config.num_hidden_layers):
         prefix = f"blocks.{layer_idx}.attention."
         fused_key = f"{prefix}w_qkv.weight"
         if fused_key in native_state:
-            q, k, v = native_state.pop(fused_key).split((q_dim, kv_dim, kv_dim), dim=0)
+            q, k, v = _split_fused_qkv(native_state.pop(fused_key), hf_config)
             native_state[f"{prefix}w_q.weight"] = q
             native_state[f"{prefix}w_k.weight"] = k
             native_state[f"{prefix}w_v.weight"] = v
@@ -409,11 +419,7 @@ class _GatheredMoEState(Mapping[str, torch.Tensor]):
         self.model = _unwrap_model(model)
         self.state = self.model.state_dict()
         self.aliases: dict[str, tuple[str, int]] = {}
-        self.dimensions = (
-            config.num_attention_heads * config.head_dim,
-            config.num_key_value_heads * config.head_dim,
-            config.num_key_value_heads * config.head_dim,
-        )
+        self.config = config
         self.inventory = list(self.state)
         for key in list(self.inventory):
             if key.endswith(".attention.w_qkv.weight"):
@@ -431,16 +437,9 @@ class _GatheredMoEState(Mapping[str, torch.Tensor]):
 
     def __getitem__(self, name):
         key, part = self.aliases.get(name, (name, None))
-        value = self.state[key]
-        local = get_local_tensor(value) if isinstance(value, DTensor) else value
-        owner = self.model.get_submodule(key.rsplit(".", 1)[0])
-        if getattr(owner, "_ep_sharded", False):
-            group = owner.ep_mesh["ep_mp"].get_group()
-            gathered = [torch.empty_like(local) for _ in range(dist.get_world_size(group))]
-            dist.all_gather(gathered, local.contiguous(), group=group)
-            local = torch.cat(gathered, dim=0)
+        local = _gather_native_tensor(self.model, key, self.state[key])
         if part is not None:
-            local = local.split(self.dimensions, dim=0)[part]
+            local = _split_fused_qkv(local, self.config)[part]
         return local
 
 
