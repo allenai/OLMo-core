@@ -80,14 +80,7 @@ class Stage1AcademicSource:
     max_share: Optional[float] = None
     """Largest fraction of the group's rate the source may take; see
     :func:`academic_group_fractions`."""
-    max_questions: Optional[int] = None
-    """Questions trained per image per epoch (:attr:`Stage1AcademicDatasetConfig.max_questions`)."""
 
-
-#: 20 questions of a PlotQA image fit a 2,560-token sequence: over 300 sampled images, p99 2,360
-#: tokens and max 2,437 with the Qwen3 tokenizer and 8 crops (at 24, 1.3% overflow). The images
-#: average 131 questions, so an image's questions are spread over its epochs.
-PLOT_QA_MAX_QUESTIONS = 20
 
 STAGE1_ACADEMIC_SOURCES: Dict[str, Stage1AcademicSource] = {
     "cosyn_chart_exp": Stage1AcademicSource(),
@@ -99,7 +92,9 @@ STAGE1_ACADEMIC_SOURCES: Dict[str, Stage1AcademicSource] = {
     "cosyn_table_exp": Stage1AcademicSource(),
     "dv_qa": Stage1AcademicSource(weighting_size_cap=10_000),
     "figure_qa": Stage1AcademicSource(weighting_size_cap=10_000),
-    "plot_qa": Stage1AcademicSource(weighting_size_cap=20_000, max_questions=PLOT_QA_MAX_QUESTIONS),
+    # 20 questions per image per epoch: the dataset's own default
+    # (`academic_dataset.STAGE1_DEFAULT_MAX_QUESTIONS`).
+    "plot_qa": Stage1AcademicSource(weighting_size_cap=20_000),
 }
 
 STAGE1_ACADEMIC_SOURCE_NAMES: Tuple[str, ...] = tuple(STAGE1_ACADEMIC_SOURCES)
@@ -200,10 +195,8 @@ def build_stage1_academic_source(
 
     :raises OLMoConfigurationError: If ``name`` is a stage-2 eval training set or unknown.
     """
-    src = _source(name)
-    return Stage1AcademicDatasetConfig(
-        name=name, max_crops=max_crops, max_questions=src.max_questions, seed=seed
-    ).build(tokenizer)
+    _source(name)
+    return Stage1AcademicDatasetConfig(name=name, max_crops=max_crops, seed=seed).build(tokenizer)
 
 
 def build_stage1_clocks_source(

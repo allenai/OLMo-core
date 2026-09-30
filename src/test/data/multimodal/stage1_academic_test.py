@@ -245,6 +245,19 @@ def test_stage1_dataset_formats_with_the_stage1_family(_many_question_source):
     assert out["input_ids"].shape == out["loss_masks"].shape
 
 
+def test_default_max_questions_applies_without_the_recipe(_many_question_source, monkeypatch):
+    """A config built directly, not through the recipe helper, still gets the source's cap, so a
+    PlotQA-like source cannot overflow the sequence and be silently tail-truncated. An explicit
+    value wins."""
+    from olmo_core.data.multimodal import academic_dataset
+
+    monkeypatch.setitem(academic_dataset.STAGE1_DEFAULT_MAX_QUESTIONS, _many_question_source, 7)
+    ds = Stage1AcademicDatasetConfig(name=_many_question_source).build(_FakeTok())
+    assert len(ds.format_row(0, ds.epoch_rng(0))[1]) == 7
+    ds = Stage1AcademicDatasetConfig(name=_many_question_source, max_questions=12).build(_FakeTok())
+    assert len(ds.format_row(0, ds.epoch_rng(0))[1]) == 12
+
+
 def test_max_questions_rotates_across_epochs(_many_question_source):
     """The cap draws a subset per epoch, so over a run an image's other questions are reached;
     pinned to one draw, the rest would never be trained on."""
@@ -310,7 +323,9 @@ def test_default_sources():
         "figure_qa",
         "plot_qa",
     )
-    assert acad_mix.STAGE1_ACADEMIC_SOURCES["plot_qa"].max_questions == 20
+    from olmo_core.data.multimodal.academic_dataset import STAGE1_DEFAULT_MAX_QUESTIONS
+
+    assert STAGE1_DEFAULT_MAX_QUESTIONS == {"plot_qa": 20}
     assert all(src.max_share is None for src in acad_mix.STAGE1_ACADEMIC_SOURCES.values())
 
 
