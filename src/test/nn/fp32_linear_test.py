@@ -41,9 +41,9 @@ def test_cpu_reference_and_state_dict_compatibility():
 @requires_gpu
 @pytest.mark.parametrize("bias", [False, True])
 @pytest.mark.parametrize("autocast", [False, True])
-def test_cuda_forward_and_gradients_against_fp32_reference(bias, autocast):
+def test_cuda_forward_and_gradients_against_fp32_reference(bias, autocast, monkeypatch):
     torch.manual_seed(29)
-    torch.backends.cuda.matmul.allow_tf32 = False
+    monkeypatch.setattr(torch.backends.cuda.matmul, "allow_tf32", False)
     dtype = torch.float32 if autocast else torch.bfloat16
     layer = FP32OutputLinear(64, 128, bias=bias, device="cuda", dtype=dtype)
     # Noncontiguous input and a frozen/nonfrozen operand are covered below.
