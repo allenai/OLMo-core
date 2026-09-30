@@ -8,8 +8,13 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.moe.v2.replay import replay_routes
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
+from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.optim import AdamWConfig
+from olmo_core.train.train_module.transformer import TransformerTrainModuleConfig
 from olmo_core.train.train_module.transformer.objective import train_batch_with_loss
 
 
@@ -106,3 +111,54 @@ def test_nested_replay_restores_routes_after_failure():
                 raise RuntimeError("injected")
         assert router.replay_expert_indices is outer
     assert router.replay_expert_indices is None
+
+
+@pytest.mark.parametrize("objective_fails", [False, True])
+def test_eval_after_custom_objective_restores_eval_mode(objective_fails):
+    model = TransformerConfig.llama_like(
+        d_model=16,
+        vocab_size=32,
+        n_layers=1,
+        n_heads=2,
+        feed_forward=FeedForwardConfig(hidden_size=32, bias=False),
+        attn_backend=AttentionBackendName.torch,
+    ).build(init_device="cpu")
+    module = TransformerTrainModuleConfig(
+        rank_microbatch_size=4,
+        max_sequence_length=4,
+        optim=AdamWConfig(),
+    ).build(model, device=torch.device("cpu"))
+    batch = {"input_ids": torch.tensor([[1, 2, 3, 4]])}
+    forward_modes = []
+    hook = module.model.register_forward_pre_hook(
+        lambda model, _args: forward_modes.append(model.training)
+    )
+
+    def objective(module, batch):
+        logits = module.model_forward(batch["input_ids"])
+        assert isinstance(logits, torch.Tensor)
+        if objective_fails:
+            raise RuntimeError("injected objective failure")
+        loss = logits.square().mean()
+        return loss, {"loss": loss}
+
+    try:
+        before = module.eval_batch(dict(batch))
+        module.zero_grads()
+        with (
+            pytest.raises(RuntimeError, match="injected objective failure")
+            if objective_fails
+            else contextlib.nullcontext()
+        ):
+            module.train_batch_with_loss([batch], objective)
+        after = module.eval_batch(dict(batch))
+    finally:
+        hook.remove()
+
+    # Check the mode at the actual forwards, including after a failed objective.
+    assert forward_modes == [False, True, False]
+    assert not module.model.training
+    # No optimizer step occurred, so evaluation must still give the same logits.
+    torch.testing.assert_close(after, before, rtol=0, atol=0)
+    if not objective_fails:
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in model.parameters())

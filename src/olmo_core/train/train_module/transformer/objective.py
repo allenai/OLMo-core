@@ -28,8 +28,14 @@ def train_batch_with_loss(
     if not micro_batches:
         raise ValueError("A custom-objective batch must contain at least one microbatch")
     models = getattr(module, "model_parts", [module.model])
-    for model in models:
-        model.train()
+    # Keep the standard train module's cached mode in sync with the model.
+    # OLMoDDP has no mode cache and switches each model part directly.
+    set_model_mode = getattr(module, "_set_model_mode", None)
+    if set_model_mode is not None:
+        set_model_mode("train")
+    else:
+        for model in models:
+            model.train()
     metrics = []
     for index, batch in enumerate(micro_batches):
         with (
