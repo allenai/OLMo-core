@@ -15,9 +15,9 @@ from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
 from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
+from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
-from olmo_core.nn.convolution import CausalConv1d
 from olmo_core.nn.lm_head import LMHeadConfig
 from olmo_core.nn.rope import RoPEConfig, RoPEType
 from olmo_core.nn.transformer import (
