@@ -25,10 +25,11 @@ from olmo_core.data.composable import (
     InstanceSourceConfig,
 )
 from olmo_core.data.numpy_dataset import NumpyFSLDatasetConfig
-from olmo_core.distributed.utils import get_local_rank
+from olmo_core.distributed.utils import barrier, get_local_rank
 from olmo_core.launch.beaker import BeakerLaunchConfig, OLMoCoreBeakerImage
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import (
+    Trainer,
     TrainerConfig,
     prepare_training_environment,
     teardown_training_environment,
@@ -143,11 +144,12 @@ class SubCmd(StrEnum):
     def run(self, config: ExperimentConfig):
         if get_local_rank() == 0:
             print(config)
-            print(
-                "\n"
-                f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
-                f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
-            )
+            if isinstance(config.model, TransformerConfig):
+                print(
+                    "\n"
+                    f"[b blue]Total parameters:[/]         {config.model.num_params:,d} ({config.model.num_active_params:,d} active)\n"
+                    f"[b blue]Non-embedding parameters:[/] {config.model.num_non_embedding_params:,d} ({config.model.num_active_non_embedding_params:,d} active)"
+                )
 
         if self == SubCmd.launch:
             launch(config)
@@ -426,6 +428,14 @@ def _build_data_loader(
             assert isinstance(source, InstanceSourceConfig)
             sources.append(source.build(work_dir))
         return config.data_loader.build(*sources, dp_process_group=dp_process_group)
+    elif isinstance(config.dataset, Config) and callable(getattr(config.dataset, "build", None)):
+        # A self-contained dataset config (e.g. a multimodal mixture) that builds without arguments
+        # and whose loader config takes the built dataset directly.
+        dataset = config.dataset.build()
+        loader = config.data_loader.build(dataset, dp_process_group=dp_process_group)
+        # Finish source preparation on all ranks before the trainer creates bookkeeping groups.
+        barrier()
+        return loader
     else:
         raise NotImplementedError(type(config.data_loader))
 
@@ -442,7 +452,7 @@ def prep(config: ExperimentConfig):
     data_loader.reshuffle(epoch=1)
 
 
-def train(config: ExperimentConfig):
+def train(config: ExperimentConfig) -> Trainer:
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
@@ -458,6 +468,7 @@ def train(config: ExperimentConfig):
 
     # Train (also handles checkpoint loading)
     trainer.fit()
+    return trainer
 
 
 def eval_checkpoints(config: ExperimentConfig):
@@ -506,6 +517,14 @@ def main(*, config_builder: ConfigBuilder) -> None:
             main(config_builder=config_builder)
 
     """
+    cli_context = parse_cli_args()
+    config: ExperimentConfig = config_builder(cli_context)
+    cli_context.cmd.prepare_environment(config)
+    cli_context.cmd.run(config)
+
+
+def parse_cli_args() -> CliContext:
+    """Parse the standard internal-experiment command line into a :class:`CliContext`."""
 
     usage = f"""
 [yellow]Usage:[/] [i blue]python[/] [i cyan]{sys.argv[0]}[/] [i b magenta]{"|".join(SubCmd)}[/] [i b]RUN_NAME CLUSTER[/] [i][OVERRIDES...][/]
@@ -531,8 +550,4 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
 
     script, cmd, run_name, cluster, *overrides = sys.argv
     cmd = SubCmd(cmd)
-    cli_context = CliContext(script, cmd, run_name, cluster, overrides)
-
-    config: ExperimentConfig = config_builder(cli_context)
-    cmd.prepare_environment(config)
-    cmd.run(config)
+    return CliContext(script, cmd, run_name, cluster, overrides)
