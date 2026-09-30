@@ -1,0 +1,5 @@
+run	arm	budget	cluster	launched	state	note
+fdcpt-q35-4b-dense-u1B	dense	1B	ai2/jupiter-cirrascale-2	2026-09-29 23:30	LAUNCHED	"01M3RG35QS2AG8KX949RXEGVCX   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"
+fdcpt-q35-4b-drop75l12-u1B	drop75l12	1B	ai2/jupiter-cirrascale-2	2026-09-29 23:30	LAUNCHED	"01M3RG4EZ5KG4D17S6NM86SS4D   warnings.warn(msg, UserWarning)
+Secret 'PRASANNS_COMET_API_KEY' not configured in beaker workspace ai2/flex2"

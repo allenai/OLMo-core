@@ -51,6 +51,10 @@ class FFNTokenDropHolder:
     :param layer_prob: Probability that a (row, layer) pair drops the layer's FFN for every token.
     :param seed: Base seed for the draws.
     :param rank: Data-parallel rank, mixed into the seed so ranks draw different patterns.
+    :param fixed_rate: If set, every row uses exactly this token drop rate instead of
+        ``U[0, max_rate]`` (evaluation: CE under a known drop rate).
+    :param active_in_eval: Also drop in eval mode (the drop-robustness probe). Off by default:
+        inference normally runs the full FFN.
     """
 
     def __init__(
@@ -60,6 +64,8 @@ class FFNTokenDropHolder:
         layer_prob: float = 0.0,
         seed: int = 0,
         rank: int = 0,
+        fixed_rate: Optional[float] = None,
+        active_in_eval: bool = False,
     ):
         if not 0.0 <= max_rate <= 1.0:
             raise ValueError(f"max_rate must be in [0, 1], got {max_rate}")
@@ -69,6 +75,8 @@ class FFNTokenDropHolder:
         self.layer_prob = float(layer_prob)
         self.seed = int(seed)
         self.rank = int(rank)
+        self.fixed_rate = None if fixed_rate is None else float(fixed_rate)
+        self.active_in_eval = bool(active_in_eval)
         self.calls = 0
         self.enabled = True
         self._row_rates: Optional[torch.Tensor] = None
@@ -90,6 +98,8 @@ class FFNTokenDropHolder:
 
     def row_rates(self, n_rows: int, device: torch.device) -> torch.Tensor:
         """Per-row drop rates for this forward, shared by every layer."""
+        if self.fixed_rate is not None:
+            return torch.full((n_rows,), self.fixed_rate, device=device)
         if self._row_rates is None or self._row_rates.shape[0] != n_rows:
             gen = self.generator(device, -1)
             self._row_rates = (
@@ -111,7 +121,9 @@ class FFNTokenDropHolder:
 def _drop_forward(self: nn.Module, x: torch.Tensor) -> torch.Tensor:
     holder: FFNTokenDropHolder = self._fdrop_holder  # type: ignore[attr-defined]
     orig = self._fdrop_orig_forward  # type: ignore[attr-defined]
-    if not (self.training and holder.enabled) or (holder.max_rate <= 0 and holder.layer_prob <= 0):
+    active = holder.enabled and (self.training or holder.active_in_eval)
+    no_drop = holder.max_rate <= 0 and holder.layer_prob <= 0 and not holder.fixed_rate
+    if not active or no_drop:
         return orig(x)
 
     layer: int = self._fdrop_layer_idx  # type: ignore[attr-defined]

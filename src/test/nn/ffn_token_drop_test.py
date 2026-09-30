@@ -120,3 +120,20 @@ def test_full_model_trains_under_drop():
     loss.backward()
     assert torch.isfinite(loss)
     assert m._ffn_token_drop["holder"].calls == 1
+
+
+def test_fixed_rate_probe_in_eval_mode():
+    seed_all(8)
+    m = _model(max_rate=0.0)
+    holder = m._ffn_token_drop["holder"]
+    holder.fixed_rate, holder.active_in_eval = 0.5, True
+    m.eval()
+    ff = m.blocks["1"].feed_forward
+    x = torch.randn(4, 256, m.d_model)
+    with torch.no_grad():
+        holder.begin_forward(training=False)
+        first = ff(x)
+        again = ff(x)  # eval forwards do not advance the call counter: the same pattern (paired)
+    torch.testing.assert_close(first, again)
+    frac = holder.pop_metrics()["ffn_drop/frac"]
+    assert frac == pytest.approx(0.5, abs=0.03)

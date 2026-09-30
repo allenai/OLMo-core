@@ -7,6 +7,7 @@ SFT stage compute-optimal at matched SFT FLOPs? Plan + status: `records/ffndrop-
 | file | role |
 |---|---|
 | `launch_ffndrop_cpt.py` | Beaker launcher via `beaker_ctc_suite.py` (urgent, unallocated): `dense` control vs `drop75l12`, on the soft-detach CPT shards (`softdetach_cpt/shards/cpt_u1B`), same base/rows/LR as `cpt/softdetach/` |
+| `eval_drop_devloss.py` / `eval_drop_devloss_beaker.sh` | drop-robustness dev loss: body-token CE on `cpt_dev` with FFNs (layers >= 1) skipped per token at fixed r = 0/0.25/0.5/0.75; same pattern for every checkpoint (paired) -> weka `ffndrop_cpt/devloss/<name>.json` |
 | `LAUNCH_LEDGER.tsv` | every launch (written by the launcher) |
 
 Mechanism: `olmo_core.nn.ffn_token_drop` (`Transformer.enable_ffn_token_drop`), trainer flags
