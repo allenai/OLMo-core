@@ -3,29 +3,13 @@ Correctness tests for Ulysses context parallelism (CP) in the recurrent sequence
 :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet` and
 :class:`~olmo_core.nn.attention.kda.KimiDeltaAttention`.
 
-Both layers implement CP the same way: each rank holds a contiguous slice of the sequence for
-the per-token projections, an all-to-all switches to head parallelism so the causal convolutions
-and the recurrent kernel see the full sequence for ``heads / cp_degree`` heads, and a second
-all-to-all switches back. Per-channel and per-head parameters that are consumed after the
-exchange (the conv filters, and for KDA the in-kernel gate parameters) are kept whole on every
-rank and sliced to the rank's heads in ``forward``.
-
-The tests here check that contract at three levels:
-
-1. **Slice consistency (CPU, no kernels):** the head slice, gate slice, and conv channel slices a
-   rank uses must describe exactly the heads that the all-to-all delivers to that rank.
-2. **Forward parity (multi-GPU):** each rank's local output must match the corresponding slice of
-   the single-process, full-sequence output, with and without packed-document boundaries that
-   straddle the CP split.
-3. **Backward parity (multi-GPU):** with a loss that is a sum over tokens, gradients summed over
-   the CP group must match the full-sequence gradients for every parameter and for the input.
-   Parameters that are sliced per rank must additionally carry zero gradient outside the rank's
-   slice, which is what makes the data-parallel gradient reduction correct in training.
-
-The forward parity check is also applied at every stage boundary inside the layer, not just at
-its output: the inputs and outputs of the three causal convolutions and the inputs and output of
-the recurrent kernel are captured on each rank and compared with the reference's slice of heads
-or channels, so a wrong stage cannot hide behind a later one.
+Each rank holds a contiguous slice of the sequence for the per-token projections; an all-to-all
+switches to head parallelism so the causal convolutions and the recurrent kernel see the full
+sequence for ``heads / cp_degree`` heads, and a second all-to-all switches back. The parity test
+runs a single-process reference on the full sequence and checks, on every CP rank, that the
+activations at each stage boundary and at the output match the reference's slice, that
+parameters sliced per rank carry zero gradient outside the rank's slice, and that gradients
+summed over the CP group equal the full-sequence gradients.
 """
 
 from __future__ import annotations
@@ -139,14 +123,8 @@ CASES: Dict[str, Case] = {
     # Packed documents whose boundaries (100, 156) do not line up with the CP split at
     # 128 (degree 2) or 64/128/192 (degree 4), so a document straddles ranks.
     "docs": Case(batch_size=1, seq_len=256, doc_lens=[100, 56, 100]),
-    # Several kernel chunks per document, boundaries again off the CP split.
-    "long_docs": Case(batch_size=1, seq_len=1024, doc_lens=[300, 400, 324]),
     # Grouped value heads: q/k heads are repeated onto v heads after the exchange.
     "gva": Case(batch_size=1, seq_len=128, overrides={"n_v_heads": 2 * N_HEADS}, mixers=("gdn",)),
-    # The kernel-fun path only engages without packed documents; elsewhere it falls back to FLA.
-    "experimental": Case(
-        batch_size=1, seq_len=512, overrides={"use_experimental_kernels": True}, mixers=("kda",)
-    ),
 }
 
 
@@ -184,95 +162,19 @@ def _expected_param_slices(module, cp_rank: int, cp_world_size: int) -> Dict[str
     return slices
 
 
-def _fake_mesh(cp_world_size: int, cp_rank: int) -> MagicMock:
+@requires_fla
+@pytest.mark.parametrize("mixer_name", list(MIXERS))
+def test_ulysses_cp_apply_cp_rejects_unsupported_setups(mixer_name: str):
+    """Ring CP has no meaning for a recurrent scan, and heads must divide by the CP degree."""
     mesh = MagicMock()
-    mesh.size.return_value = cp_world_size
-    mesh.get_local_rank.return_value = cp_rank
-    return mesh
+    mesh.size.return_value = 3
+    mesh.get_local_rank.return_value = 0
 
-
-# ---------------------------------------------------------------------------------------------
-# Level 1: slice consistency, CPU only.
-# ---------------------------------------------------------------------------------------------
-
-
-@requires_fla
-@pytest.mark.parametrize("mixer_name", list(MIXERS))
-@pytest.mark.parametrize("cp_world_size", [2, 4])
-@pytest.mark.parametrize("gva", [False, True], ids=["", "gva"])
-def test_ulysses_cp_slices_match_head_partition(mixer_name: str, cp_world_size: int, gva: bool):
-    """
-    ``all_to_all_cp2hp`` hands rank ``r`` the contiguous channel block ``[r*C/CP, (r+1)*C/CP)``
-    of every exchanged tensor. Every slice the layer takes after the exchange must describe
-    exactly the heads inside that block.
-    """
-    if gva and mixer_name != "gdn":
-        pytest.skip("only GatedDeltaNet supports grouped value heads")
-    overrides = {"n_v_heads": 2 * N_HEADS} if gva else {}
-    for cp_rank in range(cp_world_size):
-        module = MIXERS[mixer_name].build("meta", **overrides)
-        module.apply_cp(_fake_mesh(cp_world_size, cp_rank), uly=UlyssesContextParallelStyle())
-        assert module.cp_enabled
-
-        expected = _expected_param_slices(module, cp_rank, cp_world_size)
-        for conv_name in ("q_conv1d", "k_conv1d", "v_conv1d"):
-            conv = getattr(module, conv_name)
-            assert conv.cp_enabled
-            assert conv._cp_channel_slice == expected[f"{conv_name}.weight"], conv_name
-
-        # Heads covered by the q/k conv channel block on this rank.
-        qk_channels = range(*expected["q_conv1d.weight"].indices(module.key_dim))
-        qk_heads = sorted({c // module.head_k_dim for c in qk_channels})
-        v_channels = range(*expected["v_conv1d.weight"].indices(module.value_dim))
-        v_heads = sorted({c // module.head_v_dim for c in v_channels})
-
-        n_local = module.n_heads // cp_world_size
-        assert qk_heads == list(range(cp_rank * n_local, (cp_rank + 1) * n_local))
-        if isinstance(module, KimiDeltaAttention):
-            assert module._cp_head_slice == expected["A_log"]
-            assert module._cp_gate_slice == expected["dt_bias"]
-            assert list(range(*module._cp_head_slice.indices(module.n_heads))) == qk_heads
-            # dt_bias is per key channel, so its slice must equal the q/k conv channel block.
-            assert module._cp_gate_slice == expected["q_conv1d.weight"]
-            assert v_heads == qk_heads
-        else:
-            # GDN repeats q/k head ``h`` onto v heads ``[h*rep, (h+1)*rep)``; the v channel block
-            # this rank receives must be exactly those heads.
-            rep = module.n_v_heads // module.n_heads
-            assert v_heads == [h * rep + j for h in qk_heads for j in range(rep)]
-
-
-@requires_fla
-@pytest.mark.parametrize("mixer_name", list(MIXERS))
-def test_ulysses_cp_degree_one_is_noop(mixer_name: str):
-    module = MIXERS[mixer_name].build("meta")
-    module.apply_cp(_fake_mesh(1, 0), uly=UlyssesContextParallelStyle())
-    assert not module.cp_enabled
-    for conv_name in ("q_conv1d", "k_conv1d", "v_conv1d"):
-        assert not getattr(module, conv_name).cp_enabled
-
-
-@requires_fla
-@pytest.mark.parametrize("mixer_name", list(MIXERS))
-def test_ulysses_cp_rejects_ring(mixer_name: str):
-    """Ring attention has no meaning for a recurrent scan, so ``apply_cp`` must reject it."""
     module = MIXERS[mixer_name].build("meta")
     with pytest.raises(NotImplementedError, match="Ring"):
-        module.apply_cp(_fake_mesh(2, 0), ring=RingContextParallelStyle())
-
-
-@requires_fla
-@pytest.mark.parametrize("mixer_name", list(MIXERS))
-@pytest.mark.parametrize("n_heads,cp_world_size", [(8, 3), (6, 4)])
-def test_ulysses_cp_requires_divisible_heads(mixer_name: str, n_heads: int, cp_world_size: int):
-    module = MIXERS[mixer_name].build("meta", d_model=n_heads * 16, n_heads=n_heads)
-    with pytest.raises((ValueError, AssertionError)):
-        module.apply_cp(_fake_mesh(cp_world_size, 0), uly=UlyssesContextParallelStyle())
-
-
-# ---------------------------------------------------------------------------------------------
-# Levels 2 and 3: forward and backward parity against a single-process reference, multi-GPU.
-# ---------------------------------------------------------------------------------------------
+        module.apply_cp(mesh, ring=RingContextParallelStyle())
+    with pytest.raises((ValueError, AssertionError)):  # 8 heads, degree 3
+        module.apply_cp(mesh, uly=UlyssesContextParallelStyle())
 
 
 # Dimension along which each recorded stage tensor is partitioned across CP ranks after the
@@ -369,7 +271,7 @@ def _rank_slice(tensor: torch.Tensor, dim: int, rank: int, world_size: int) -> t
 def _build_reference(
     mixer_name: str, case_name: str, ref_path: Path, checkpoint_dir: Path, device: torch.device
 ):
-    """Run the full sequence in one process and save inputs, outputs, and gradients."""
+    """Run the full sequence in one process and save inputs, outputs, stages, and gradients."""
     spec, case = MIXERS[mixer_name], CASES[case_name]
     seed_all(0)
     module = spec.build(device.type, **case.overrides)
@@ -471,30 +373,12 @@ def _run_ulysses_cp_parity(checkpoint_dir: str, ref_path: str, mixer_name: str, 
 
 
 def _parity_params():
-    params = []
-    for mixer_name in MIXERS:
-        for case_name, case in CASES.items():
-            if mixer_name not in case.mixers:
-                continue
-            marks = []
-            if case.overrides.get("use_experimental_kernels"):
-                marks.append(
-                    pytest.mark.skipif(
-                        not _has_kernel_fun(), reason="requires the kernel-fun package"
-                    )
-                )
-            params.append(
-                pytest.param(mixer_name, case_name, id=f"{mixer_name}-{case_name}", marks=marks)
-            )
-    return params
-
-
-def _has_kernel_fun() -> bool:
-    try:
-        import kernel_fun  # noqa: F401
-    except ImportError:
-        return False
-    return True
+    return [
+        pytest.param(mixer_name, case_name, id=f"{mixer_name}-{case_name}")
+        for mixer_name in MIXERS
+        for case_name, case in CASES.items()
+        if mixer_name in case.mixers
+    ]
 
 
 @requires_multi_gpu

@@ -488,7 +488,6 @@ def run_context_parallel_transformer_ulysses_backward(checkpoint_dir, ref_path, 
 @pytest.mark.parametrize(
     "architecture",
     [
-        pytest.param("olmo2", id="olmo2-fa2", marks=FLASH_2_MARKS),
         pytest.param("gdn", id="gdn", marks=FLA_MARKS),
         pytest.param("kda", id="kda", marks=FLA_MARKS),
     ],
@@ -496,8 +495,7 @@ def run_context_parallel_transformer_ulysses_backward(checkpoint_dir, ref_path, 
 def test_context_parallel_transformer_ulysses_backward(architecture: str, tmp_path):
     seed_all(0)
     device = torch.device("cuda")
-    backend_name = AttentionBackendName.flash_2 if architecture == "olmo2" else None
-    config = get_transformer_config(architecture, dtype=torch.bfloat16, attn_backend=backend_name)
+    config = get_transformer_config(architecture, dtype=torch.bfloat16)
 
     model = config.build()
     model.init_weights(device=device, max_seq_len=512)

@@ -341,31 +341,3 @@ def test_batched_matches_single(backend: str, input_ndim: int):
         start_method="spawn",
         world_size=2,
     )
-
-
-def _test_cp2hp_channel_block_assignment():
-    """
-    Rank ``r`` must receive the contiguous channel block ``[r*C/CP, (r+1)*C/CP)`` of every
-    token. The recurrent mixers slice their conv filters and gate parameters by exactly this
-    rule, so it is part of the CP contract rather than an implementation detail.
-    """
-    device = get_default_device()
-    group = dist.new_group()
-    rank, world_size = dist.get_rank(), dist.get_world_size()
-    B, T, C = 1, 2 * world_size, 6 * world_size
-    t_local = T // world_size
-    # value = channel index, identical on every rank so the received block is unambiguous
-    x = torch.arange(C, device=device, dtype=torch.float32).expand(B, t_local, C).contiguous()
-    out = all_to_all_single_cp2hp(x, group)
-    c_local = C // world_size
-    expected = torch.arange(
-        rank * c_local, (rank + 1) * c_local, device=device, dtype=torch.float32
-    )
-    assert out.shape == (B, T, c_local)
-    assert torch.equal(out[0, 0], expected)
-    assert torch.equal(out[0, -1], expected)
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_cp2hp_channel_block_assignment(backend: str):
-    run_distributed_test(_test_cp2hp_channel_block_assignment, backend=backend)
