@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a FlexAttention backend supporting the bidirectional-image and sub-segment masks, `RoPE` `position_ids`, `SplitVocabEmbedding` / `TransformerConfig.n_extra_vocab` (separately freezable extra-token rows), `response_logits_only` for `LMHead`, and `masked_dropout` (per-token residual dropout) on `ResidualStream`.
 - Added Ulysses context parallelism for `KimiDeltaAttention` (`apply_cp`), mirroring the `GatedDeltaNet` all-to-all head/sequence exchange, with the in-kernel gate parameters sliced to each rank's heads.
 - Added a Ulysses context-parallel parity test for the recurrent mixers (`GatedDeltaNet`, `KimiDeltaAttention`) that compares per-stage activations, outputs, and gradients against a single-process reference, including packed documents that straddle the CP split, plus a model-level gradient-parity test for `gdn` and `kda` under Ulysses CP.
+- Added opt-in router replay and current-policy balancing counts, custom training objectives,
+  bounded checkpoint planning, and streaming Olmo3Moe HF interchange for RL adapters.
+  Custom objectives reject auxiliary-loss-free balancing routers with `bias_gamma` set.
+- Added an opt-in FP32-output LM head with low-precision GEMMs and mixed-precision backward.
+- Added optional eager-rounding parity and dynamic-row specialization for no-gradient SwiGLU.
 
 ## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
 
