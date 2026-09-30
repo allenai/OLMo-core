@@ -145,6 +145,8 @@ class Transformer(nn.Module):
         self._role_gated_ffn: Optional[Dict[str, Any]] = None
         # Nested-width FFN mixture (learned router): set by ``enable_nested_ffn_moe``.
         self._nested_ffn_moe: Optional[Dict[str, Any]] = None
+        # Random per-token FFN dropping for drop-CPT: set by ``enable_ffn_token_drop``.
+        self._ffn_token_drop: Optional[Dict[str, Any]] = None
         # Per-layer KV-cache allocation router: set by ``enable_kv_route``.
         self._kv_route: Optional[Dict[str, Any]] = None
         # Joint FFN+attention budget over both routers: set by ``joint_budget.install_joint_budget``.
@@ -728,6 +730,54 @@ class Transformer(nn.Module):
             target_cost,
         )
 
+    def enable_ffn_token_drop(
+        self,
+        *,
+        max_rate: float,
+        layer_prob: float = 0.0,
+        start_layer: int = 1,
+        seed: int = 0,
+        rank: int = 0,
+    ) -> None:
+        """
+        Enable random per-token FFN dropping during training (see
+        :mod:`olmo_core.nn.ffn_token_drop`): each token skips a block's FFN (identity residual)
+        with a per-row rate ``r ~ U[0, max_rate]``, and each (row, layer) is dropped whole with
+        probability ``layer_prob``. Training-only; adds no parameters, so the checkpoint stays a
+        plain dense checkpoint.
+
+        Call BEFORE applying data parallelism.
+
+        :param max_rate: Upper end of the per-row token drop rate.
+        :param layer_prob: Probability of dropping a layer's FFN for a whole row.
+        :param start_layer: First layer that may drop.
+        :param seed: Base seed for the draws.
+        :param rank: Data-parallel rank (mixed into the seed).
+
+        :raises OLMoConfigurationError: If no blocks were patched.
+        """
+        from ..ffn_token_drop import FFNTokenDropHolder, install_ffn_token_drop
+
+        holder = FFNTokenDropHolder(
+            max_rate=max_rate, layer_prob=layer_prob, seed=seed, rank=rank
+        )
+        patched = install_ffn_token_drop(self.blocks, holder, start_layer=start_layer)
+        if not patched:
+            raise OLMoConfigurationError("enable_ffn_token_drop patched no blocks")
+        self._ffn_token_drop = {
+            "max_rate": float(max_rate),
+            "layer_prob": float(layer_prob),
+            "start_layer": int(start_layer),
+            "holder": holder,
+        }
+        log.info(
+            "FFN token drop enabled on %d blocks (start_layer=%d, max_rate=%.3f, layer_prob=%.3f)",
+            len(patched),
+            start_layer,
+            max_rate,
+            layer_prob,
+        )
+
     def enable_kv_route(
         self,
         *,
@@ -1027,6 +1077,7 @@ class Transformer(nn.Module):
                 doc_start_id=cfg["doc_start_id"],
                 doc_end_id=cfg["doc_end_id"],
                 n_docs=n_docs,
+                free_markers=cfg.get("keep_token_mask_markers", False) or False,
             )
         # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row
         # trains uncompressed. With the gold-aware hook installed the hook already applied it
@@ -1591,6 +1642,11 @@ class Transformer(nn.Module):
             all_block_kwargs["aux_capture"] = aux_capture
         if (kv_grad_mask := kwargs.pop("kv_grad_mask", None)) is not None:
             all_block_kwargs["kv_grad_mask"] = move_to_device(kv_grad_mask, self.device)
+        if (soft_keep := kwargs.pop("soft_keep", None)) is not None:
+            # Differentiable token removal (debug/learned_router, 2026-09-27): a (B, T) keep
+            # probability every sequence mixer applies without compacting the row -- attention as
+            # a +log(p) key bias, GatedDeltaNet as p-scaled q/k/v/beta/g. Absent -> untouched.
+            all_block_kwargs["soft_keep"] = move_to_device(soft_keep, self.device)
         # Oracle slot K/V overrides (soft-token pooling): one gathered slot stack for the batch,
         # sliced per layer into per-block kwargs (each Attention rotates + injects its own slice).
         if (oracle_ovr := kwargs.pop("soft_kv_override_layers", None)) is not None:
@@ -1948,6 +2004,8 @@ class Transformer(nn.Module):
         # schedules. Loss terms are only collected when we are actually computing a loss.
         if self._nested_ffn_moe is not None:
             self._nested_ffn_moe["holder"].begin_forward(collect_loss=labels is not None)
+        if self._ffn_token_drop is not None:
+            self._ffn_token_drop["holder"].begin_forward(training=self.training)
         if self._kv_route is not None:
             self._kv_route["holder"].begin_forward(collect_loss=labels is not None)
         if self._block_skip is not None:

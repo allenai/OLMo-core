@@ -85,6 +85,7 @@ from olmo_core.train.callbacks import (
     FlopMeterCallback,
     GPUMemoryMonitorCallback,
     KVRouteCallback,
+    FFNTokenDropCallback,
     NestedFFNMoECallback,
     WandBCallback,
 )
@@ -1355,6 +1356,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     "mix_start_p": opts.mix_start_p if opts.variant == "chunked-mix" else None,
                     "mix_end_p": opts.mix_end_p if opts.variant == "chunked-mix" else None,
                     "base_checkpoint": base_checkpoint,
+                    "ffn_drop_max_rate": opts.ffn_drop_max_rate,
+                    "ffn_drop_layer_prob": opts.ffn_drop_layer_prob,
                     "data": opts.data,
                 },
             ),
@@ -1406,6 +1409,21 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             f"[ctc-suite] ffnmoe: routed from layer {opts.ffn_moe_start_layer}, rungs="
             f"{model._nested_ffn_moe['widths']}, target {opts.ffn_moe_target} annealed over "
             f"{int(total_calls * opts.ffn_moe_target_anneal_frac)}/{total_calls} calls",
+            flush=True,
+        )
+    if opts.ffn_drop_max_rate > 0 or opts.ffn_drop_layer_prob > 0:
+        if opts.variant in ("ffnmoe", "flexcompute"):
+            raise SystemExit("--ffn-drop-* (drop-CPT) cannot be combined with a routed variant")
+        model.enable_ffn_token_drop(
+            max_rate=opts.ffn_drop_max_rate,
+            layer_prob=opts.ffn_drop_layer_prob,
+            start_layer=opts.ffn_drop_start_layer,
+            seed=opts.seed,
+            rank=get_rank(),
+        )
+        print(
+            f"[ctc-suite] ffn-drop: layers >= {opts.ffn_drop_start_layer}, per-row token rate "
+            f"U[0, {opts.ffn_drop_max_rate}], whole-layer prob {opts.ffn_drop_layer_prob}",
             flush=True,
         )
     if opts.variant in ("ffnmoe", "kvroute", "flexcompute"):
@@ -1596,6 +1614,8 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         trainer_config = trainer_config.with_callback(
             "ffn_moe", NestedFFNMoECallback(calls_per_step=accum)
         )
+    if opts.ffn_drop_max_rate > 0 or opts.ffn_drop_layer_prob > 0:
+        trainer_config = trainer_config.with_callback("ffn_drop", FFNTokenDropCallback())
     if kv_route_enabled(opts):
         trainer_config = trainer_config.with_callback(
             "kv_route", KVRouteCallback(calls_per_step=accum)
@@ -1761,6 +1781,16 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                 "dataset": {"tokenizer": plan["tokenizer_config"].as_config_dict()},
                 # Recorded so the eval scores with the routing the run trained with (the
                 # evaluator reads this block and enables the router before loading).
+                # Provenance only: the drop is training-time, the export is a plain dense model.
+                "ffn_token_drop": (
+                    {
+                        "max_rate": opts.ffn_drop_max_rate,
+                        "layer_prob": opts.ffn_drop_layer_prob,
+                        "start_layer": opts.ffn_drop_start_layer,
+                    }
+                    if opts.ffn_drop_max_rate > 0 or opts.ffn_drop_layer_prob > 0
+                    else None
+                ),
                 "ffn_moe": (
                     {
                         "start_layer": opts.ffn_moe_start_layer,
@@ -1924,6 +1954,22 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ffn-moe-recon-weight", type=float, default=0.0)
     ap.add_argument("--ffn-moe-entropy-weight", type=float, default=0.0)
     ap.add_argument("--ffn-moe-layer-curriculum-frac", type=float, default=0.0)
+    ap.add_argument(
+        "--ffn-drop-max-rate",
+        type=float,
+        default=0.0,
+        help="drop-CPT (olmo_core.nn.ffn_token_drop): each row draws r ~ U[0, this] and every token "
+        "skips each droppable layer's FFN with prob r (training only; no params; 0 = off)",
+    )
+    ap.add_argument(
+        "--ffn-drop-layer-prob",
+        type=float,
+        default=0.0,
+        help="drop-CPT: probability a (row, layer) drops the layer's FFN for EVERY token",
+    )
+    ap.add_argument(
+        "--ffn-drop-start-layer", type=int, default=1, help="drop-CPT: first droppable layer"
+    )
     ap.add_argument(
         "--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)"
     )
