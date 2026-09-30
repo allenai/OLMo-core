@@ -63,9 +63,9 @@ def test_cuda_forward_and_gradients_against_fp32_reference(bias, autocast, monke
     torch.testing.assert_close(actual, expected, atol=2e-6, rtol=1e-5)
     grad = torch.randn_like(actual) / 8
     actual.backward(grad)
-    expected.backward(grad)
-    # Backward deliberately retains ordinary BF16 GEMMs, so compare against the
-    # high-precision derivative with a tolerance for BF16 upstream rounding.
+    expected.backward(grad.bfloat16().float())
+    # Compare BF16 GEMMs against the high-precision derivative after the same
+    # upstream rounding, allowing for low-precision gradient outputs.
     torch.testing.assert_close(x.grad.float(), xr.grad, atol=0.002, rtol=0.025)
     torch.testing.assert_close(layer.weight.grad.float(), wr.grad, atol=0.012, rtol=0.025)
     if bias:
@@ -99,3 +99,27 @@ def test_cuda_compiled_loss_backward_and_frozen_weight():
     x = eager.detach().clone().requires_grad_(True)
     head(x).sum().backward()
     assert torch.isfinite(x.grad).all()
+
+
+@requires_gpu
+@pytest.mark.parametrize("operand_dtype", [torch.bfloat16, torch.float16])
+@pytest.mark.parametrize("autocast", [False, True])
+def test_cuda_backward_matches_low_precision_linear(operand_dtype, autocast):
+    torch.manual_seed(43)
+    dtype = torch.float32 if autocast else operand_dtype
+    layer = FP32OutputLinear(64, 128, bias=True, device="cuda", dtype=dtype)
+    reference = torch.nn.Linear(64, 128, bias=True, device="cuda", dtype=dtype)
+    reference.load_state_dict(layer.state_dict())
+    x = torch.randn(2048, 64, device="cuda", dtype=dtype, requires_grad=True)
+    xr = x.detach().clone().requires_grad_(True)
+    with torch.autocast("cuda", dtype=operand_dtype, enabled=autocast):
+        actual = layer(x)
+        expected = reference(xr)
+    # FP32 logits receive FP32 upstream gradients. Ordinary low-precision linear
+    # rounds these before both its GEMMs and bias reduction.
+    upstream = torch.randn_like(actual)
+    actual.backward(upstream)
+    expected.backward(upstream)
+    torch.testing.assert_close(x.grad, xr.grad, rtol=0, atol=0)
+    torch.testing.assert_close(layer.weight.grad, reference.weight.grad, rtol=0, atol=0)
+    torch.testing.assert_close(layer.bias.grad, reference.bias.grad, rtol=0, atol=0)

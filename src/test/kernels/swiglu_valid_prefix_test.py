@@ -159,7 +159,7 @@ def test_swiglu_valid_prefix_accepts_device_start_offset():
 @requires_triton
 @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
 @pytest.mark.parametrize("valid_rows", [0, 3, 6])
-def test_scoring_swiglu_preserves_eager_rounding(dtype, valid_rows):
+def test_scoring_swiglu_matches_eager_on_rounding_regression_values(dtype, valid_rows):
     # Stable finite values expose the missing intermediate BF16/FP16 rounding
     # without relying on a broad tolerance that hides the original discrepancy.
     up = torch.tensor([1.5, -2.75, 0.25, 16.0], device="cuda", dtype=dtype)
@@ -318,3 +318,24 @@ def test_routed_experts_rounding_preserves_selected_numerics(rounding):
         actual = experts.chunk_and_activate(x, num_elements=count)
     expected = x[:, :4] * F.silu(x[:, 4:]) if rounding else swiglu_valid_prefix(x, count)
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@requires_gpu
+@requires_triton
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+@pytest.mark.parametrize("scale", [1.0, 4.0])
+@pytest.mark.parametrize("mode", ["static", "dynamic"])
+def test_scoring_swiglu_randomized_eager_agreement(dtype, scale, mode):
+    generator = torch.Generator(device="cuda").manual_seed(47)
+    x = (torch.randn(1024, 2 * 257, device="cuda", generator=generator) * scale).to(dtype)
+    count = torch.tensor(x.shape[0], device="cuda", dtype=torch.long)
+    actual = swiglu_valid_prefix(x, count, match_eager_rounding=True, row_specialization=mode)
+    expected = x[:, :257] * F.silu(x[:, 257:])
+    # BF16 agrees exactly on this sample. FP16/FP32 can expose differences in
+    # sigmoid approximations despite matching the intermediate rounding step.
+    if dtype == torch.bfloat16:
+        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    elif dtype == torch.float16:
+        torch.testing.assert_close(actual, expected, rtol=2e-3, atol=1e-6)
+    else:
+        torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-7)

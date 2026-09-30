@@ -241,7 +241,9 @@ def swiglu_valid_prefix(
     ``[x.shape[0], x.shape[1] // 2]``; rows outside the requested range are
     intentionally left untouched. With ``match_eager_rounding=True``, the CUDA
     kernel rounds ``silu(gate)`` to the input dtype before multiplication, as
-    the eager training expression does. The default preserves the fused
+    the eager training expression does. This matches the rounding boundary,
+    not necessarily every output bit: Triton and PyTorch sigmoid approximations
+    can still differ, particularly in FP16/FP32. The default preserves the fused
     arithmetic used by explicit fused forward/backward callers.
 
     ``row_specialization="static"`` preserves the capacity-specialized kernel.

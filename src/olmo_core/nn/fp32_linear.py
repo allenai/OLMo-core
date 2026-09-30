@@ -22,7 +22,7 @@ class _FP32Output(torch.autograd.Function):
     def backward(ctx, grad_output):
         inputs, weight = ctx.saved_tensors
         # Preserve ordinary mixed-precision linear backward: the upstream gradient
-        # is rounded to the operand dtype before the two Tensor Core GEMMs.
+        # is rounded to the operand dtype before the GEMMs and bias reduction.
         # Forward FP32 logits do not imply FP32 gradient GEMMs.
         with torch.autocast(device_type=inputs.device.type, enabled=False):
             grad = grad_output.reshape(-1, weight.shape[0]).to(inputs.dtype)
@@ -32,7 +32,7 @@ class _FP32Output(torch.autograd.Function):
             if ctx.needs_input_grad[1]:
                 grad_weight = torch.mm(grad.T, inputs.reshape(-1, inputs.shape[-1]))
             if ctx.needs_input_grad[2]:
-                grad_bias = grad_output.reshape(-1, weight.shape[0]).sum(0).to(ctx.bias_dtype)
+                grad_bias = grad.sum(0).to(ctx.bias_dtype)
         return grad_input, grad_weight, grad_bias
 
 
@@ -40,7 +40,7 @@ class FP32OutputLinear(nn.Linear):
     """Linear layer retaining FP32 logits with low-precision GEMM operands.
 
     CUDA BF16/FP16 uses an FP32-output GEMM and a first-order custom backward
-    with ordinary BF16/FP16 gradient GEMMs. Autocast selects operand precision;
+    with ordinary BF16/FP16 gradient GEMMs and bias reduction. Autocast selects operand precision;
     parameter storage and state-dict names are unchanged. CPU and FP32 operands
     use a differentiable FP32 reference projection. Tensor parallelism and
     higher-order gradients are not supported by the low-precision CUDA path.
