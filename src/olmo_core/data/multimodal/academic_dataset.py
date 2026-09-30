@@ -28,9 +28,16 @@ __all__ = [
     "ACADEMIC_DATASET_NAMES",
     "Stage1AcademicDatasetConfig",
     "Stage1AcademicDataset",
+    "STAGE1_DEFAULT_MAX_QUESTIONS",
 ]
 
 ACADEMIC_DATASET_NAMES = sorted(ACADEMIC_REGISTRY.keys())
+
+#: Questions per image a stage-1 source trains per epoch when its config leaves ``max_questions``
+#: unset. 20 questions of a PlotQA image fit a 2,560-token sequence: over 300 sampled images, p99
+#: 2,360 tokens and max 2,437 with the Qwen3 tokenizer and 8 crops (at 24, 1.3% overflow). Its
+#: images average 131 questions, all of which would be tail-truncated past the sequence length.
+STAGE1_DEFAULT_MAX_QUESTIONS: Dict[str, int] = {"plot_qa": 20}
 
 
 @dataclass
@@ -97,9 +104,10 @@ class Stage1AcademicDatasetConfig(Config):
     """Registry name (:data:`ACADEMIC_DATASET_NAMES`)."""
     max_crops: int = 8
     max_questions: Optional[int] = None
-    """Most questions trained per image per epoch; ``None`` trains all of them. Which ones are
-    drawn moves with the epoch, so over several epochs the rest are reached too. PlotQA needs it:
-    its images carry 131 questions on average, which do not fit in a stage-1 sequence."""
+    """Most questions trained per image per epoch. ``None`` takes the source's default from
+    :data:`STAGE1_DEFAULT_MAX_QUESTIONS` (20 for PlotQA, whose images carry 131 questions on
+    average and do not fit a stage-1 sequence) and otherwise trains all of them. Which ones are
+    drawn moves with the epoch, so over several epochs the rest are reached too."""
     loss_token_weighting: str = "none"
     """Every response token weighted equally, as for the other stage-1 sources."""
     seed: int = 0
@@ -130,6 +138,11 @@ class Stage1AcademicDataset(EpochSeededExamples):
             raise OLMoConfigurationError(f"max_questions={config.max_questions} must be >= 1")
         self.config = config
         self.tokenizer = tokenizer
+        self._max_questions = (
+            config.max_questions
+            if config.max_questions is not None
+            else STAGE1_DEFAULT_MAX_QUESTIONS.get(config.name)
+        )
         self._formatter = SftFormatter(
             seed=config.seed,
             prompt_templates=STAGE1_PROMPT_FAMILY["prompt_templates"],
@@ -146,7 +159,7 @@ class Stage1AcademicDataset(EpochSeededExamples):
         """The image, the branches trained this epoch, and the example weight of one row."""
         formatted = format_academic_example(self.config.name, self._data[index], rng)
         branches = self._formatter.format_branches(formatted, index=index, rng=rng)
-        cap = self.config.max_questions
+        cap = self._max_questions
         if cap is not None and len(branches) > cap:
             keep = np.sort(rng.choice(len(branches), size=cap, replace=False))
             branches = [branches[i] for i in keep]
