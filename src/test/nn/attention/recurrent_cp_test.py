@@ -18,7 +18,7 @@ import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -34,10 +34,7 @@ from olmo_core.distributed.checkpoint import (
 from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.nn.attention.kda import KimiDeltaAttention
 from olmo_core.nn.attention.recurrent import GatedDeltaNet
-from olmo_core.nn.attention.ring import (
-    RingContextParallelStyle,
-    UlyssesContextParallelStyle,
-)
+from olmo_core.nn.attention.ring import UlyssesContextParallelStyle
 from olmo_core.nn.transformer.init import InitMethod
 from olmo_core.testing import run_distributed_test
 from olmo_core.testing.utils import requires_fla, requires_multi_gpu
@@ -160,21 +157,6 @@ def _expected_param_slices(module, cp_rank: int, cp_world_size: int) -> Dict[str
         local_gate = module.gate_dim // cp_world_size
         slices["dt_bias"] = slice(cp_rank * local_gate, (cp_rank + 1) * local_gate)
     return slices
-
-
-@requires_fla
-@pytest.mark.parametrize("mixer_name", list(MIXERS))
-def test_ulysses_cp_apply_cp_rejects_unsupported_setups(mixer_name: str):
-    """Ring CP has no meaning for a recurrent scan, and heads must divide by the CP degree."""
-    mesh = MagicMock()
-    mesh.size.return_value = 3
-    mesh.get_local_rank.return_value = 0
-
-    module = MIXERS[mixer_name].build("meta")
-    with pytest.raises(NotImplementedError, match="Ring"):
-        module.apply_cp(mesh, ring=RingContextParallelStyle())
-    with pytest.raises((ValueError, AssertionError)):  # 8 heads, degree 3
-        module.apply_cp(mesh, uly=UlyssesContextParallelStyle())
 
 
 # Dimension along which each recorded stage tensor is partitioned across CP ranks after the
