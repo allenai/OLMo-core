@@ -43,6 +43,13 @@ the base swapped to each CPT export, on contradiction / oolong / nq / outlier, d
 - FLOP meter charges dense FFN cost on the drop arm (CPT is amortized, so this is only a wall-clock note).
 
 ## Status
-- 2026-09-29 ~00:00: CPU tests pass (`src/test/nn/ffn_token_drop_test.py`); both CPT arms launched
+- 2026-09-30 01:00: login-node `cpt/ffndrop/pipeline.py` (log `debug/ffndrop_cpt/pipeline.log`) waits for the
+  drop-CPT run, then submits its dev-loss eval + routed SFT (`ffnmoe-t10`) from the export on contradiction 28M
+  and nq 32M (base-model t10: 0.808 vs dense 0.924; 0.853 @572 PF vs dense-16M 0.878 @379 PF), then scores
+  them with the fs35 native ladder evaluator. Runs `fs35r2-*-ffnmoe-t10-s*-bfdrop`, wandb group fdcpt-q35-4b-sft.
+- 2026-09-30 00:47: dense-CPT control CANCELED before it started (Prasann: not needed). SFT
+  comparisons use the existing fs35 dense points from the unmodified base; caveat: a drop-CPT gain then
+  mixes the drop effect with the CPT data itself (drop-CPT -> dense SFT is the partial check).
+- 2026-09-29 ~23:30: CPU tests pass (`src/test/nn/ffn_token_drop_test.py`); both CPT arms launched
   (ledger `src/scripts/train/memexpress/cpt/ffndrop/LAUNCH_LEDGER.tsv`),
   wandb https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/fdcpt-q35-4b
