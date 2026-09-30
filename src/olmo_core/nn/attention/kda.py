@@ -188,7 +188,7 @@ class KimiDeltaAttention(SequenceMixer):
         if self.cp_enabled and cu_doc_lens is not None and batch_size > 1:
             raise RuntimeError(
                 "Batch size must equal 1 when using context parallelism with "
-                "intra-document masking (got {batch_size} instances)"
+                f"intra-document masking (got {batch_size} instances)"
             )
         if cu_doc_lens is not None and batch_size > 1:
             # FLA's variable-length KDA and causal-convolution kernels represent packed
