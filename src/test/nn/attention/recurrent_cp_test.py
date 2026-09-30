@@ -64,7 +64,7 @@ GRAD_TOL = Tolerance(rel_fro=3e-2, rtol=5e-2, atol=1e-4)
 
 def _assert_close(name: str, actual: torch.Tensor, expected: torch.Tensor, tol: Tolerance):
     actual = actual.detach().float()
-    expected = expected.detach().float()
+    expected = expected.detach().float().to(actual.device)
     assert actual.shape == expected.shape, f"{name}: shape {actual.shape} != {expected.shape}"
     diff = actual - expected
     rel_fro = (diff.norm() / expected.norm().clamp_min(1e-6)).item()
