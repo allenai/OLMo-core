@@ -36,6 +36,9 @@ HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"model.layers.{LAYER}.self_attn.k_proj.weight": f"blocks.{LAYER}.attention.w_k.weight",
     f"model.layers.{LAYER}.self_attn.v_proj.weight": f"blocks.{LAYER}.attention.w_v.weight",
     f"model.layers.{LAYER}.self_attn.o_proj.weight": f"blocks.{LAYER}.attention.w_out.weight",
+    f"model.layers.{LAYER}.self_attn.q_proj.bias": f"blocks.{LAYER}.attention.w_q.bias",
+    f"model.layers.{LAYER}.self_attn.k_proj.bias": f"blocks.{LAYER}.attention.w_k.bias",
+    f"model.layers.{LAYER}.self_attn.v_proj.bias": f"blocks.{LAYER}.attention.w_v.bias",
     # MLP.
     f"model.layers.{LAYER}.mlp.gate_proj.weight": f"blocks.{LAYER}.feed_forward.w1.weight",
     f"model.layers.{LAYER}.mlp.down_proj.weight": f"blocks.{LAYER}.feed_forward.w2.weight",
@@ -99,6 +102,9 @@ HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, str] = {
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen2": {
+        f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
+    },
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm.weight": f"blocks.{LAYER}.feed_forward_norm.weight"
     },
@@ -120,6 +126,9 @@ MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_WEIGHT_MAPPINGS: Dict[str, Dict[str, str]] =
 #: different OLMo Core states depending on the HF model architecture. You may configure this to change
 #: how HF state maps to OLMo Core state.
 MODEL_TYPE_SPECIFIC_HF_TO_OLMO_CORE_MODULE_MAPPINGS: Dict[str, Dict[str, str]] = {
+    "qwen2": {
+        f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
+    },
     "llama": {
         f"model.layers.{LAYER}.post_attention_layernorm": f"blocks.{LAYER}.feed_forward_norm"
     },
@@ -189,6 +198,9 @@ OLMO_CORE_TO_HF_WEIGHT_MAPPINGS: Dict[str, str] = {
     f"blocks.{LAYER}.attention.w_k.weight": f"model.layers.{LAYER}.self_attn.k_proj.weight",
     f"blocks.{LAYER}.attention.w_v.weight": f"model.layers.{LAYER}.self_attn.v_proj.weight",
     f"blocks.{LAYER}.attention.w_out.weight": f"model.layers.{LAYER}.self_attn.o_proj.weight",
+    f"blocks.{LAYER}.attention.w_q.bias": f"model.layers.{LAYER}.self_attn.q_proj.bias",
+    f"blocks.{LAYER}.attention.w_k.bias": f"model.layers.{LAYER}.self_attn.k_proj.bias",
+    f"blocks.{LAYER}.attention.w_v.bias": f"model.layers.{LAYER}.self_attn.v_proj.bias",
     # MLP.
     f"blocks.{LAYER}.feed_forward.w1.weight": f"model.layers.{LAYER}.mlp.gate_proj.weight",
     f"blocks.{LAYER}.feed_forward.w2.weight": f"model.layers.{LAYER}.mlp.down_proj.weight",
@@ -314,6 +326,18 @@ MODEL_TYPE_SPECIFIC_OLMO_CORE_TO_HF_TEMPLATE_MAPPINGS: Dict[
             f"blocks.{LAYER}.feed_forward_moe.router.weight",
             f"model.layers.{LAYER}.mlp.gate.weight",
             unflatten_dim=(0, (TemplatePlaceholder.EXPERT, -1)),
+        ),
+    },
+    "qwen2": {
+        f"blocks.{LAYER}.attention_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.attention_norm.weight",
+            f"model.layers.{LAYER}.input_layernorm.weight",
+            state_type=StateType.weight,
+        ),
+        f"blocks.{LAYER}.feed_forward_norm.weight": StateMappingTemplate(
+            f"blocks.{LAYER}.feed_forward_norm.weight",
+            f"model.layers.{LAYER}.post_attention_layernorm.weight",
+            state_type=StateType.weight,
         ),
     },
     "llama": {
