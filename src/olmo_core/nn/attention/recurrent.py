@@ -191,9 +191,7 @@ class GatedDeltaNet(SequenceMixer):
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
             o = all_to_all_single_hp2cp(o, self._cp_group)
 
-        # The output gate is computed from this rank's local tokens, so it is shaped with the
-        # local sequence length (``T_og``); under CP ``T`` is the full sequence length here.
-        g = self.w_g(x).view(B, T_og, -1, self.head_v_dim)
+        g = self.w_g(x).view(B, T, -1, self.head_v_dim)
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(self.o_norm(o, g).view(B, T_og, -1))
