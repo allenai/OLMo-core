@@ -23,6 +23,7 @@ from olmo_core.distributed.utils import (
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ...output_discard_checkpoint import OutputDiscardCheckpoint
+from ..emo import EmoRouterConfig
 from ..loss import MoELoadBalancingLossGranularity, load_balancing_loss, router_z_loss
 from ..router import MoERouterGatingFunction, _uniform_expert_assignment
 
@@ -70,6 +71,10 @@ class MoERouterConfigV2(Config):
     n_group: Optional[int] = None
     topk_group: Optional[int] = None
     sigmoid_stability_epsilon: float = 1e-7
+    global_load_balancing: bool = False
+    """Compute load-balancing loss from assignment counts averaged across the DP group."""
+    emo: Optional[EmoRouterConfig] = None
+    """Optional EMO document-pool routing policy."""
 
     def num_params(self) -> int:
         """
@@ -101,6 +106,10 @@ class MoERouterConfigV2(Config):
         if self.dtype is not None:
             kwargs["dtype"] = self.dtype.as_pt()
 
+        if self.emo is not None:
+            from .emo_router import EmoRouterV2
+
+            return EmoRouterV2(**kwargs, init_device=init_device)
         return MoERouterV2(**kwargs, init_device=init_device)
 
 
@@ -147,6 +156,7 @@ class MoERouterV2(nn.Module):
         n_group: Optional[int] = None,
         topk_group: Optional[int] = None,
         sigmoid_stability_epsilon: float = 1e-7,
+        global_load_balancing: bool = False,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -177,6 +187,18 @@ class MoERouterV2(nn.Module):
         self.n_group = n_group
         self.topk_group = topk_group
         self.sigmoid_stability_epsilon = sigmoid_stability_epsilon
+        self.global_load_balancing = global_load_balancing
+        self.lb_process_group: Optional[dist.ProcessGroup] = None
+
+        if (
+            self.global_load_balancing
+            and self.lb_loss_granularity == MoELoadBalancingLossGranularity.instance
+        ):
+            raise OLMoConfigurationError(
+                "global_load_balancing does not support instance-granularity load-balancing "
+                "loss because per-instance assignments cannot be combined across unrelated "
+                "data-parallel batches"
+            )
 
         if (self.n_group is None) != (self.topk_group is None):
             # Grouped routing needs both knobs; with only one set, the group-masking branch
@@ -233,6 +255,7 @@ class MoERouterV2(nn.Module):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=init_device)
         )
+        self._global_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._score_bias_batch_size_per_expert: Optional[_HiddenTensor] = None
         self._load_balancing_loss: Optional[_HiddenTensor] = None
         self._z_loss: Optional[_HiddenTensor] = None
@@ -256,6 +279,10 @@ class MoERouterV2(nn.Module):
         self._batch_size_per_expert = hide_from_torch(
             torch.zeros(self.num_experts, device=self.device)
         )
+        if self.global_load_balancing:
+            self._global_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
 
         if self.score_bias is not None:
             score_bias = cast(torch.Tensor, self.score_bias)
@@ -317,6 +344,22 @@ class MoERouterV2(nn.Module):
     @batch_size_per_expert.setter
     def batch_size_per_expert(self, value: torch.Tensor):
         self._batch_size_per_expert = hide_from_torch(value)
+
+    @property
+    def global_batch_size_per_expert(self) -> Optional[torch.Tensor]:
+        if not self.global_load_balancing:
+            return None
+        if self._global_batch_size_per_expert is None:
+            self._global_batch_size_per_expert = hide_from_torch(
+                torch.zeros(self.num_experts, device=self.device)
+            )
+        elif self._global_batch_size_per_expert.device != self.device:
+            self._global_batch_size_per_expert = self._global_batch_size_per_expert.to(self.device)
+        return unhide_from_torch(self._global_batch_size_per_expert)
+
+    @global_batch_size_per_expert.setter
+    def global_batch_size_per_expert(self, value: torch.Tensor):
+        self._global_batch_size_per_expert = hide_from_torch(value)
 
     @property
     def load_balancing_loss(self) -> Optional[torch.Tensor]:
@@ -465,6 +508,16 @@ class MoERouterV2(nn.Module):
             ReduceType.max,
         )
 
+        if self.global_load_balancing:
+            global_batch_size_per_expert = self.global_batch_size_per_expert
+            assert global_batch_size_per_expert is not None
+            out["global load imbalance"] = (
+                global_batch_size_per_expert.max()
+                / global_batch_size_per_expert.mean(dtype=torch.float),
+                # All DP ranks accumulate the same globally reduced counts.
+                ReduceType.mean,
+            )
+
         # record the number of tokens routed to each routed expert.
         if self.record_routing_batch_size:
             for i in range(self.num_experts):
@@ -507,6 +560,8 @@ class MoERouterV2(nn.Module):
     def reset_metrics(self):
         if (bz_per_expert := self.batch_size_per_expert) is not None:
             bz_per_expert.zero_()
+        if (global_bz_per_expert := self.global_batch_size_per_expert) is not None:
+            global_bz_per_expert.zero_()
         if (lb_loss := self.load_balancing_loss) is not None:
             lb_loss.zero_()
         if (z_loss := self.z_loss) is not None:
@@ -536,6 +591,7 @@ class MoERouterV2(nn.Module):
         scores_only: bool,
         *,
         loss_div_factor: Optional[Union[torch.Tensor, float]] = None,
+        segment_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[
         torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]
     ]:
@@ -547,6 +603,8 @@ class MoERouterV2(nn.Module):
             the total number of items routed to each expert, with shape ``(num_experts,)``,
             and optionally the auxiliary losses.
         """
+        del segment_ids
+
         # shape: (batch_size, seq_len, d_model)
         x = self.jitter(x)
 
@@ -720,6 +778,28 @@ class MoERouterV2(nn.Module):
         # Maybe compute auxiliary losses and accumulate metrics.
         aux_loss: Optional[torch.Tensor] = None
         if self.training and torch.is_grad_enabled():
+            global_batch_size_per_expert = None
+            if self.global_load_balancing:
+                if self.lb_process_group is None:
+                    raise RuntimeError(
+                        "global_load_balancing requires a load-balancing process group; "
+                        "apply data parallelism before training"
+                    )
+                # DDP averages parameter gradients, and the training module supplies a
+                # loss_div_factor normalized by the DP world size. Average the global counts
+                # to preserve the single-rank-equivalent auxiliary-loss scale.
+                global_batch_size_per_expert = batch_size_per_expert.float().clone()
+                # TODO: This is a tiny but synchronous collective for every routed MoE layer
+                # and microbatch, so latency can dominate its bandwidth cost, especially across
+                # nodes. Consider coalescing count reductions across layers/microbatches or
+                # overlapping asynchronous reductions with other work.
+                dist.all_reduce(
+                    global_batch_size_per_expert,
+                    op=dist.ReduceOp.SUM,
+                    group=self.lb_process_group,
+                )
+                global_batch_size_per_expert.div_(dist.get_world_size(self.lb_process_group))
+
             if self.lb_loss_weight is not None:
                 assert self.load_balancing_loss is not None
 
@@ -727,11 +807,17 @@ class MoERouterV2(nn.Module):
                 if self.gating_function == MoERouterGatingFunction.sigmoid:
                     scores = scores / scores.sum(dim=-1, keepdim=True)
 
+                lb_batch_size_per_expert = (
+                    global_batch_size_per_expert
+                    if global_batch_size_per_expert is not None
+                    else batch_size_per_expert
+                )
+
                 lb_loss = load_balancing_loss(
                     num_experts=self.num_experts,
                     top_k=self.top_k,
                     expert_scores=scores,
-                    batch_size_per_expert=batch_size_per_expert,
+                    batch_size_per_expert=lb_batch_size_per_expert,
                     batched_batch_size_per_expert=batched_batch_size_per_expert,
                     granularity=self.lb_loss_granularity,
                     loss_div_factor=loss_div_factor,
@@ -787,11 +873,17 @@ class MoERouterV2(nn.Module):
                 aux_loss = scaled_orth_loss if aux_loss is None else aux_loss + scaled_orth_loss
             if accumulate_metrics:
                 self.batch_size_per_expert += batch_size_per_expert
+                if global_batch_size_per_expert is not None:
+                    assert self.global_batch_size_per_expert is not None
+                    self.global_batch_size_per_expert += global_batch_size_per_expert
                 if self.bias_gamma is not None:
                     assert self.score_bias_batch_size_per_expert is not None
                     self.score_bias_batch_size_per_expert += batch_size_per_expert
 
         return aux_loss
+
+    def set_load_balancing_process_group(self, group: dist.ProcessGroup) -> None:
+        self.lb_process_group = group
 
     def compute_orthogonal_loss(self) -> torch.Tensor:
         """

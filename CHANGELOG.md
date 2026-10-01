@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `use_array_if_local` to `pack_documents_into_instances`, `segment_documents_into_instances`, `NumpyPackedFSLDataset` and `NumpyPackedFSLDatasetConfig`, forwarded to `iter_document_indices`. Set it to `False` to take document boundaries from the source metadata file instead of inferring them by scanning the token array for the EOS token. Inferring is only correct when every document is EOS-terminated: a producer that truncates documents and drops the terminator with the tail causes the affected document to merge with the one after it, and `LongDocStrategy.truncate` then keeps only the head of the merged span, so the following document never reaches training. Measured on an SFT cache, 97.98% of tokens reached instances via the inferred path versus 100.00% via the metadata file, with an identical maximum document length. Whenever the metadata boundaries are the effective source -- set explicitly, or because the source is a URL, for which `iter_document_indices` always reads the metadata -- `doc_lens` is derived from them rather than by rescanning the packed tokens for EOS, so the block-diagonal attention mask cannot merge an unterminated document into the one after it. The hazard is now documented on `iter_document_indices`. Default behavior is unchanged.
+- Added opt-in paired SwiGLU backward and BF16-rounded weight-gradient accumulation for OLMoDDP experts, including Torch 2.13 support, checkpoint/recomputation coverage, and explicit backend and bucket-ownership guards.
+- Added independent per-head Q/K norm gains and scalable softmax, EMO document-pool routing/global load balancing, and opt-in FP32 gradient-accumulation/reduce-scatter fast paths with explicit hardware/version guards.
+- Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
+- Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
+
+### Removed
+
+- Removed the `src/scripts/train/private-olmo.py` training script.
+
+- Removed the `olmo_core.model_ladder` API, its internal CLI wrapper, all eleven ladder training scripts (including the standalone Gemma-like ladder), two Slurm launchers, and the API documentation. Existing ladder orchestration configs and commands require an earlier revision; this does not change the model or optimizer checkpoint formats. The internal experiment framework remains available.
+
+### Fixed
+
+- Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/OLMo-core/pull/843).
+- Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
+- Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
+- Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
+- Preserve the resolved tokenizer BOS ID in exported model and generation configs, including when the training config leaves BOS unspecified.
+- Reject hybrid KDA HF exports with sliding-window attention and EMO exports with restricted evaluation pools in any routed layer. Disable scalable-softmax HF generation caching and reject explicit cache use.
+- Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.
+- Keep legacy fused attention configs compatible when the new attention options are disabled. Reject unsupported scalable-softmax context parallelism and KV caching at setup.
+- Assign EOS tokens to their preceding document for EMO routing, matching attention document boundaries.
+- Preserve serialized tokenizer behavior during HF export, including source BOS settings when the training config leaves BOS unspecified.
+- Preserve FP32 router probabilities and accumulation when combining BF16 experts in the HF reference model.
+- Avoid graph breaks from no-op profiling decorators, including compiled router load-balancing collectives.
+- `dispatch_flash_attn_4` passed `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q` and `max_seqlen_k` positionally. flash-attn 4 inserted a `qv` parameter at position 3 (present from ~`4.0.0b19` onward), which shifts every following argument by one, so `max_seqlen_q` — an `int` — lands where `cu_seqlens_k` is expected and the call fails with `AttributeError: 'int' object has no attribute 'shape'`. These are now passed by keyword; the parameter names are unchanged across flash-attn 4 releases, so this is correct against both old and new versions. Only reachable on Blackwell, where `has_flash_attn_4()` returns True.
+
 ### Changed
+
+- `OLMoDDPModel.apply_ddp()` now raises `NotImplementedError` directing callers to `apply_dp()`, including under `python -O`. Removed its unreachable legacy DDP implementation.
+
+- `OLMoDDPTrainModuleConfig.max_grad_norm` now overrides the optimizer clipping threshold when set, matching the train-module configuration API used by `TransformerTrainModuleConfig`. When unset, the optimizer threshold is retained. Previously this field was ignored, so old configs with differing values now use the train-module value. The supplied optimizer config is not mutated. Removed the unused `OLMoDDPTrainModule.max_grad_norm` constructor argument and attribute; clipping remains inside the DDP optimizer.
+
+- Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
+
+- Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.
+
+- Replaced `FusedAttention` with `FusedAttentionV2` and migrated its applicable tests to V2. Legacy `AttentionConfig(name="fused")` configs still load through V2 with the same packed QKV parameter names and shapes, preserving model and optimizer checkpoint compatibility. Legacy fused RoPE is mapped to regular RoPE: floating-point results (especially low-precision RoPE gradients) differ, so resumed training is not numerically identical. `TransformerConfig.llama_like(fused_ops=True)` now selects V2 with regular RoPE when it previously selected fused attention.
 
 - Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.
 
@@ -15,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `KimiDeltaAttentionConfig.use_experimental_kernels` (**experimental**), which routes both the KDA chunk kernel and the layer's short convolutions to the CuTe/Triton kernels in the `kernel-fun` package, installed with the new `kernel-fun` extra. Both are drop-ins that fall back to FLA off their supported hardware (Blackwell for KDA, Hopper and up for the conv) and shapes.
+- Added `KimiDeltaAttentionConfig` / `KimiDeltaAttention`, a Kimi Delta Attention sequence mixer built on Moonshot's released Triton kernel (via the `fla` extra). KDA uses a vector-valued decay per key channel plus a scalar delta gate per value head, and plugs into the existing sequence-mixer interfaces (packed-document short convolutions, initialization, context parallelism).
 - Added the OLMoDDP fused Mixture-of-Experts training stack: the fused MoE transformer model and block (`OLMoDDPModel` / `OLMoDDPTransformerBlock` in `olmo_core.nn.ddp`, selected via `TransformerType.moe_fused_v2`), the `OLMoDDPTrainModule` train module with its fused distributed MoE optimizer (`OLMoDDPOptimizerConfig`) and `MultiGroupDistributedDataParallel` wrapper, and DP/EP/TP/CP/PP parallelism — including expert-parallel all-to-all over symmetric-memory / NCCL-RMA transports and a custom pipeline-parallel schedule (`CustomSchedule1F1BV` / `CustomScheduleInterleaved1F1B`) that reuses point-to-point buffers across micro-batches.
 - Added the supporting kernels for the OLMoDDP stack under `olmo_core.kernels` (beta): grouped matmul (`grouped_mm` / `scaled_grouped_mm`), MXFP8 rowwise quantization (`OlmoMXFP8Tensor`), MoE token permute/unpermute, symmetric-memory / NCCL-RMA point-to-point communication, and a JIT loader for CUDA/C++ extensions; plus `FP8WeightStore` for fp32-main / FP8-model training and an experimental CPU activation-offload context.
 - Added HuggingFace interop for the OLMoDDP model (beta): the standalone `olmo3moe` HF model (`Olmo3MoeConfig` + `modeling_olmo3moe`, since transformers has no OLMoE-MoE architecture) and olmo-core ↔ HF checkpoint conversion in `olmo_core.nn.hf` (`convert_olmo3moe_state_{from,to}_hf`), with per-layer-type RoPE and a `torch grouped_mm` routed-expert path.

@@ -14,6 +14,7 @@ def test_rowwise_tbo_fails_closed_for_fp8():
     block = SimpleNamespace(
         ep=SimpleNamespace(path=ExpertParallelPath.rowwise_nvshmem),
         rowwise_fp8=SimpleNamespace(enabled=True),
+        routed_experts_router=None,
     )
 
     with pytest.raises(NotImplementedError, match="Rowwise FP8"):

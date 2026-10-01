@@ -52,8 +52,9 @@ def parse_args():
     parser.add_argument(
         "-t",
         "--tokenizer",
-        help="Identifier of the HuggingFace tokenizer to save the model with. If not set, the tokenizer from the experiment config will be used, or no tokenizer will be saved if not present in the experiment config.",
+        help="Tokenizer directory or HF identifier; overrides checkpoint-side tokenizer files. Encoding is checked against tokenizer.json before and after saving.",
     )
+    parser.add_argument("--tokenizer-revision", help="Immutable HF tokenizer revision.")
     parser.add_argument(
         "--skip-validation",
         dest="validate",
@@ -116,6 +117,7 @@ def main():
         dtype=args.dtype,
         max_sequence_length=args.max_sequence_length,
         tokenizer_id=args.tokenizer,
+        tokenizer_revision=args.tokenizer_revision,
         validate=args.validate,
         debug=args.debug,
         device=args.device,

@@ -1,7 +1,36 @@
+import torch
 import torch.nn as nn
+from torch.distributed.device_mesh import init_device_mesh
+from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 
 from olmo_core.optim.config import OptimGroupOverride
-from olmo_core.optim.moe_optimizer import OLMoDDPOptimizerConfig
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
+from olmo_core.testing.distributed import run_distributed_test
+
+
+def _run_refresh_main_params():
+    mesh = init_device_mesh("cpu", (2,))
+    param = nn.Parameter(torch.arange(12, dtype=torch.bfloat16).reshape(3, 4))
+    optim = object.__new__(OLMoDDPOptimizer)
+    optim.should_maintain_fp32_main_param = True
+    optim.param_groups = [{"named_params": {"weight": param}}]
+    for placement in (Replicate(), Shard(0)):
+        main = distribute_tensor(torch.full((12,), -1.0), mesh, [placement])
+        moment = distribute_tensor(torch.full((12,), 0.5), mesh, [placement])
+        optim.states = {"weight.main": main, "weight.exp_avg": moment}
+        optim._copy_model_params_to_main_params()
+        assert optim.states["weight.main"] is main
+        torch.testing.assert_close(main.full_tensor(), torch.arange(12).float(), rtol=0, atol=0)
+        torch.testing.assert_close(moment.full_tensor(), torch.full((12,), 0.5), rtol=0, atol=0)
+        torch.testing.assert_close(
+            param, torch.arange(12, dtype=torch.bfloat16).reshape(3, 4), rtol=0, atol=0
+        )
+
+
+def test_refresh_main_params_after_model_load():
+    run_distributed_test(
+        _run_refresh_main_params, world_size=2, backend="gloo", start_method="spawn"
+    )
 
 
 def test_build_groups_applies_overrides():

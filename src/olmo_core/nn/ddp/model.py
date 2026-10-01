@@ -3,6 +3,7 @@ import os
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Dict,
     Iterator,
     List,
@@ -15,7 +16,6 @@ from typing import (
 
 import torch
 import torch.distributed as dist
-from torch.distributed._composable.replicate import replicate
 from torch.distributed.device_mesh import DeviceMesh
 from torch.utils.checkpoint import checkpoint, noop_context_fn
 
@@ -78,7 +78,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
     """
     An MoE transformer implementation, to be used with one of the
     :class:`MoETransformerBlock` block types.
+
+    Training currently uses BF16 activations, regardless of the parameter initialization dtype.
+    Symmetric-buffer prewarming and model materialization share this precision contract.
     """
+
+    _training_dtype: ClassVar[torch.dtype] = torch.bfloat16
 
     def __init__(self, *args, **kwargs):
         self.tbo = kwargs.pop("two_batch_overlap")
@@ -388,9 +393,17 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         param = next((p for p in self.parameters() if p.is_floating_point()), None)
         if param is None:
             raise RuntimeError("Cannot infer dtype/device for EP no-sync symmetric prewarm")
-        dtype = param.dtype
+        # This prewarm runs before apply_dp(), which currently casts the model to
+        # BF16 for forward/backward. Using param.dtype here therefore allocates
+        # FP32 lifetime-lease slots that the BF16 rowwise runtime cannot reuse.
+        # A non-PP dry run can hide the mismatch by resizing one slot, but PP can
+        # retain several concurrent forward activations and needs every prewarmed
+        # slot to match the eventual activation dtype.
+        dtype = self._training_dtype
         device = param.device
-        d_model = self.d_model
+        if first_block.routed_experts is None:
+            raise RuntimeError("EP no-sync block is missing routed experts during prewarm")
+        dummy_d_model = first_block.routed_experts.d_model
         prewarm_local_microbatch_size = max_local_microbatch_size
         if self.tbo:
             if max_local_microbatch_size % 2 != 0:
@@ -404,6 +417,9 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
 
         for block_key, block in ep_blocks:
             assert block.routed_experts_router is not None
+            if block.routed_experts is None:
+                raise RuntimeError("EP no-sync block is missing routed experts during prewarm")
+            routed_d_model = block.routed_experts.d_model
             top_k = block.routed_experts_router.top_k
             num_out_tokens = prewarm_local_microbatch_size * top_k
             rank_capacity = compute_ep_no_sync_rank_capacity(block, num_out_tokens)
@@ -490,7 +506,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                         dispatch_out_cap=rank_capacity,
                         combine_in_cap=rank_capacity,
                         combine_out_cap=prewarm_local_microbatch_size,
-                        d_model=d_model,
+                        d_model=routed_d_model,
                         dtype=dtype,
                         device=device,
                         slot_idx=slot_idx,
@@ -510,7 +526,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     combine_out_cap=prewarm_local_microbatch_size,
                     combine_gather_cap=prewarm_local_microbatch_size,
                     combine_gather_top_k=top_k,
-                    d_model=d_model,
+                    d_model=routed_d_model,
                     dtype=dtype,
                     device=device,
                     use_rowwise_fp8=use_rowwise_fp8,
@@ -530,7 +546,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                         combine_in_cap=rank_capacity,
                         combine_gather_cap=prewarm_local_microbatch_size,
                         combine_gather_top_k=top_k,
-                        d_model=d_model,
+                        d_model=routed_d_model,
                         block_size=rowwise_fp8_cfg.block_size,
                         device=device,
                         lease_combine_gather=False,
@@ -545,7 +561,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                     dispatch_out_cap=rank_capacity,
                     combine_in_cap=rank_capacity,
                     combine_out_cap=num_out_tokens,
-                    d_model=d_model,
+                    d_model=routed_d_model,
                     dtype=dtype,
                     device=device,
                 )
@@ -572,7 +588,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
             for _ in range(pad_count):
                 if olmo_symm_mem.is_enabled():
                     tensor = olmo_symm_mem.empty(
-                        (max_rank_capacity, d_model),
+                        (max_rank_capacity, dummy_d_model),
                         dtype=dtype,
                         device=device,
                         group=first_block.ep_pg,
@@ -581,7 +597,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
                 else:
                     assert symm_mem is not None
                     tensor = symm_mem.empty(
-                        (max_rank_capacity, d_model),
+                        (max_rank_capacity, dummy_d_model),
                         dtype=dtype,
                         device=device,
                     )
@@ -610,40 +626,13 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         compile_enabled: bool = False,
         autograd_compile_enabled: bool = False,
     ):
-        assert False, "apply_ddp is deprecated"
         """
-        Apply DDP to the model.
+        Reject the retired DDP entry point. Use :meth:`apply_dp` instead.
+
+        :raises NotImplementedError: Always, including when Python assertions are disabled.
         """
-
-        # Cast model explicitly to the specified dtype before applying DDP
-        target_dtype = param_dtype or self.dtype
-        if target_dtype != self.dtype:
-            self.to(dtype=target_dtype)
-
-        # TODO: decide whether the commented-out torch._dynamo optimize_ddp setting below is needed
-        # for compiled DDP; left disabled for now.
-        # Adapted from
-        # https://github.com/pytorch/torchtitan/blob/90c889e972b56b9faadebbb78fc985dedc537ed9/torchtitan/parallelisms/parallelize_llama.py#L328
-        # if compile_enabled:
-        #     if autograd_compile_enabled:
-        #         torch._dynamo.config.optimize_ddp = "python_reducer_without_compiled_forward"  # type: ignore
-        #     else:
-        #         torch._dynamo.config.optimize_ddp = "ddp_optimizer"  # type: ignore
-
-        self.to(torch.bfloat16)  # HACK, need fix
-
-        replicate(
-            self,
-            device_mesh=dp_mesh,
-            bucket_cap_mb=100,
-            gradient_as_bucket_view=True,
-            #   mixed_precision=
-        )
-        # Some inputs need to be on CPU initially, but DDP will move everything to model's
-        # device if we don't hide it.
-        self.register_forward_pre_hook(_hide_cpu_inputs_from_torch, prepend=True, with_kwargs=True)
-        self.register_forward_pre_hook(
-            _unhide_cpu_inputs_from_torch, prepend=False, with_kwargs=True
+        raise NotImplementedError(
+            "OLMoDDPModel.apply_ddp() is no longer supported; use apply_dp() instead."
         )
 
     def apply_ep(
@@ -761,10 +750,15 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         # TODO(dtype): broad bf16 casting is a current MoE V2 shortcut. Replace
         # this with explicit dtype ownership so FP8 state, optimizer main params,
         # and normal model params are not coupled to a blanket module cast.
-        self.to(torch.bfloat16)
+        self.to(self._training_dtype)
         self.disable_mxfp8_expert_anchor_grads()
 
         dp_group = dense_process_group if dense_process_group is not None else dp_mesh.get_group()
+        load_balancing_group = dp_mesh.get_group()
+
+        for block in self.routed_blocks():
+            assert block.routed_experts_router is not None
+            block.routed_experts_router.set_load_balancing_process_group(load_balancing_group)
 
         if ep_mesh is None:
             epdp_group = dp_group
@@ -884,12 +878,12 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         :param world_mesh: The parallel meshes; required only when pipeline or expert parallelism
             is enabled (used to derive per-rank init seeds). Optional for standalone/non-parallel init.
         """
-        from olmo_core.nn.attention import Attention, FusedAttention
+        from olmo_core.nn.attention import Attention
 
         device = device or self.device
         # TODO(dtype): materialization currently relies on the same broad bf16
         # cast as apply_dp(); replace with an explicit precision policy.
-        self.to(torch.bfloat16)
+        self.to(self._training_dtype)
         self.to_empty(device=device)
         for _, module in self.named_modules():
             if hasattr(module, "reset_parameters"):
@@ -932,7 +926,7 @@ class OLMoDDPModel(olmo_core.nn.transformer.Transformer):
         for _, block in self.named_required_ddp_blocks():
             # This might fail if it's wrapped.
             # v2 MoE/shared-only DDP blocks.
-            att = cast(Union[Attention, FusedAttention], block.attention)
+            att = cast(Attention, block.attention)
 
             # Attention weights.
             self.init_method.init_attention(

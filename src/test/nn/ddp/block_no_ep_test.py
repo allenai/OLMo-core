@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from olmo_core.config import DType
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.ddp.block import (
     OLMoDDPTransformerBlock,
     OLMoDDPTransformerBlockConfig,
@@ -59,7 +59,7 @@ def _build_block(
             n_heads=2,
             n_kv_heads=2,
             bias=False,
-            use_flash=False,
+            backend=AttentionBackendName.torch,
             dtype=DType.float32,
         ),
         attention_norm=layer_norm,
@@ -277,7 +277,7 @@ def _build_model_config(*, d_model: int = 128, n_layers: int = 2) -> OLMoDDPMode
                 name=AttentionType.default,
                 n_heads=4,
                 bias=False,
-                use_flash=False,
+                backend=AttentionBackendName.torch,
                 dtype=dtype,
             ),
             routed_experts=RoutedExpertsConfig(

@@ -123,6 +123,7 @@ def combined_forward_ep_no_sync_rowwise(
     block_inp = x
     del x
 
+    segment_ids = kwargs.pop("segment_ids", None)
     attn_res_out = self._checkpointed_res_norm_attn(block_inp, **kwargs)
 
     kwargs.pop("max_doc_len", None)
@@ -139,6 +140,7 @@ def combined_forward_ep_no_sync_rowwise(
         moe_inp,
         False,
         loss_div_factor=loss_div_factor,
+        **({"segment_ids": segment_ids} if segment_ids is not None else {}),
     )
     rowwise_stage_debug_print(
         "rowwise:router-exit",

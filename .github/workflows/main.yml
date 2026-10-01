@@ -154,9 +154,9 @@ jobs:
   gpu_checks:
     name: ${{ matrix.task.name }}
     runs-on: ubuntu-latest
-    # Per-task override (default 15m); the catch-all "Test (GPU)" job runs a large slice of the
-    # suite (~27m of mostly distributed tests) and needs more, even after excluding nn/ddp.
-    timeout-minutes: ${{ matrix.task.timeout_minutes || 15 }}
+    # Queueing and image pulls consume GitHub time before Beaker starts its runtime cap.
+    # Keep the per-task runtime caps below while allowing time to acquire shared GPUs.
+    timeout-minutes: 90
     env:
       GANTRY_GITHUB_TESTING: "true" # force better logging for CI
     strategy:
@@ -170,7 +170,6 @@ jobs:
             gpus: 2
             # This catch-all slice runs ~27m of mostly distributed tests (even with nn/ddp excluded),
             # so give it a larger beaker run cap and a GH step timeout above it (pull + log flush).
-            timeout_minutes: 40
             task_timeout: 35m
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             # nn/ddp (fused MoE-v2 block/model tests) runs in the "Test MoE kernels" job; it also
@@ -198,7 +197,6 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             # Runs right up against 15m (~14m57s), so give it headroom.
-            timeout_minutes: 25
             task_timeout: 20m
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn --cluster ai2/titan
             run: |
@@ -209,9 +207,27 @@ jobs:
             image: *gpu_test_image
             gpus: 2
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/titan
+            # Experimental KDA needs the CUDA 13 CuTe compiler; exercised below.
             run: |
               pytest -v --color=yes --durations=3 -m gpu \
-                src/test/nn/attention*
+                -k 'not experimental_kernels' src/test/nn/attention*
+
+          - name: Test experimental KDA (GPU)
+            image: akshitab/olmo-core-tch2130cu130-fa4-rma-2026-09-11
+            torch_backend: cu130
+            gpus: 1
+            clusters: --cluster ai2/holmes
+            task_timeout: 25m
+            # CUDA 12 CuTe fails to lower KDA's MMA backward, despite reporting
+            # support. Use CUDA 13 on Blackwell and reject a silently skipped suite.
+            run: |
+              bash -ec '
+                python -m pip install ".[kernel-fun]" "nvidia-cutlass-dsl[cu13]==4.5.3"
+                pytest -v --color=yes --durations=3 -m gpu \
+                  -k experimental_kernels src/test/nn/attention/kda_test.py \
+                  --junitxml=/tmp/experimental-kda.xml
+                python -c "import xml.etree.ElementTree as E; r = E.parse(\"/tmp/experimental-kda.xml\"); assert r.findall(\".//testcase\"); assert not r.findall(\".//skipped\"), \"Experimental KDA tests must execute on Blackwell\""
+              '
 
           - name: Test MoE (GPU)
             image: *gpu_test_image
@@ -252,7 +268,6 @@ jobs:
             gpus: 2
             # Builds the symm_mem ext then runs kernels + nn/ddp + MoE-v2 EP tests; needs more than
             # 15m (reached 80% at the cap), so give it a larger beaker run cap + GH step timeout.
-            timeout_minutes: 35
             task_timeout: 30m
             # Runs on h100/b200 (not a100, which lacks the sm_90+ kernels). NOTE: the v1 grouped_gemm
             # CUTLASS kernels have no Blackwell/sm_100 build, so any grouped_gemm test that isn't
@@ -320,6 +335,8 @@ jobs:
             --host-networking \
             ${{ matrix.task.clusters || '--cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/saturn' }} \
             --system-python \
+            --uv-extra all \
+            --uv-torch-backend ${{ matrix.task.torch_backend || 'cu129' }} \
             --dataset-secret 'GOOGLE_CREDENTIALS:/.google/credentials.json' \
             --env 'GOOGLE_APPLICATION_CREDENTIALS=/.google/credentials.json' \
             --env 'TOKENIZERS_PARALLELISM=false' \
