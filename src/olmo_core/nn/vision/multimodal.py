@@ -790,9 +790,17 @@ class MultimodalOLMoDDPModel(MultimodalLM):
     context parallelism are deliberately not exposed: multimodal masks and image embeddings need
     the full sequence on each rank.
 
-    Given ``labels``, the forward computes the multimodal objective itself: a float-weighted,
-    response-only cross entropy (``loss_masks``) normalized by the global loss weight, plus the
-    LM's z-loss over the same positions. Without labels it returns logits like the parent.
+    Given ``labels`` and ``loss_masks``, the forward computes the multimodal objective itself: a
+    float-weighted, response-only cross entropy normalized by the global loss weight, plus the
+    LM's z-loss over the same positions. Given ``labels`` alone (a text-only batch) it defers to
+    the language model's plain per-token loss, and without labels it returns logits like the
+    parent.
+
+    The router token mask of #868 is **not** carried: ``router_token_mask`` only feeds the train
+    module's router-loss divisor and data metrics, while the routers themselves see every
+    position, so their load-balancing and z-loss statistics include packed padding tokens. The
+    bridge phase trains with a zero load-balancing weight; this matters once the language model
+    itself trains (perception/joint and mid-training).
     """
 
     _olmo_ddp_compatible = True
@@ -990,9 +998,10 @@ class MultimodalOLMoDDPModel(MultimodalLM):
         :param loss_weight_div_factor: Divisor for the weighted CE and z-loss.
         :param response_logits_only: Compute logits only where ``loss_masks > 0``. Always on
             when ``labels`` are given; opt-in otherwise.
-        :param router_token_mask: Accepted from the collator and ignored by the language model
-            (padding still takes part in routing statistics); the train module uses it for the
-            router loss divisor and data metrics.
+        :param router_token_mask: Accepted from the collator for the train module (router loss
+            divisor, data metrics) and dropped here: the router token mask of #868 is not
+            carried, so the language model's routers see every position and their
+            load-balancing and z-loss statistics include padding tokens (see the class docstring).
         """
         del router_token_mask
         if loss_masks is not None:
@@ -1005,7 +1014,19 @@ class MultimodalOLMoDDPModel(MultimodalLM):
                 **kwargs,
             )
         if loss_masks is None:
-            raise ValueError("`loss_masks` are required to compute the multimodal loss")
+            # A text-only batch (e.g. a downstream evaluator's): the language model computes
+            # the plain per-token cross entropy with the LM-only divisor and reduction.
+            return super().forward(
+                input_ids,
+                labels=labels,
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+                response_logits_only=response_logits_only,
+                **kwargs,
+            )
         if loss_reduction != "sum":
             raise ValueError(
                 f"{type(self).__name__} computes a weighted sum loss; got "

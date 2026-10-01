@@ -131,27 +131,47 @@ def test_multimodal_eval_can_return_detached_response_logits_in_mask_row_order()
     assert output.logits[:, 0].tolist() == [7.0, 21.0, 35.0, 63.0]
 
 
-def test_multimodal_text_eval_delegates_to_standard_full_logits_path(monkeypatch):
+def _tiny_text_eval_module(model):
     train_module = object.__new__(MultimodalOLMoDDPTrainModule)
-    captured = {}
-    loss = torch.ones(1, 2, requires_grad=True)
-    expected = LMOutputWithLoss(torch.ones(1, 2, 3, requires_grad=True), loss, loss, None)
+    train_module._cp_config = None
+    train_module._tp_config = None
+    train_module._pp_config = None
+    train_module.response_logits_only = True
+    train_module.label_ignore_index = -100
+    train_module.trim_microbatch_image_padding = False
+    train_module.device = torch.device("cpu")
+    object.__setattr__(train_module, "model_parts", [model])
+    return train_module
 
-    def standard_eval(self, batch, labels=None):
-        captured.update(self=self, batch=batch, labels=labels)
-        return expected
 
-    monkeypatch.setattr(OLMoDDPTrainModule, "eval_batch", standard_eval)
-    batch = {"input_ids": torch.tensor([[1, 2]])}
-    labels = torch.tensor([[2, -100]])
+def test_multimodal_text_eval_runs_the_plain_lm_loss_on_the_real_model():
+    """A downstream (text-only) batch has no ``loss_masks``: the wrapper must defer to the
+    language model's per-token loss with ``loss_reduction="none"`` and return full logits."""
+    from test.nn.vision.multimodal_olmo_ddp_test import _model, _text_batch
+
+    model = _model()
+    train_module = _tiny_text_eval_module(model)
+    input_ids, labels, _ = _text_batch()
+    batch = {"input_ids": input_ids.clone()}
 
     output = train_module.eval_batch(batch, labels=labels)
 
-    assert torch.equal(output.logits, expected.logits)
-    assert not output.logits.requires_grad
-    assert not output.loss.requires_grad
-    assert not output.ce_loss.requires_grad
-    assert captured == {"self": train_module, "batch": batch, "labels": labels}
+    assert isinstance(output, LMOutputWithLoss)
+    assert output.logits is not None and output.logits.shape == (2, 8, 64)
+    assert output.loss.shape == (2, 8) and output.ce_loss.shape == (2, 8)
+    assert not output.logits.requires_grad and not output.loss.requires_grad
+    with torch.no_grad():
+        logits = model(input_ids)
+    expected = torch.nn.functional.cross_entropy(
+        logits.float().reshape(-1, 64), labels.reshape(-1), ignore_index=-100, reduction="none"
+    ).reshape(2, 8)
+    # The OLMoDDP LM head runs its loss path in BF16 activations.
+    torch.testing.assert_close(output.ce_loss.float(), expected, rtol=2e-2, atol=2e-2)
+    torch.testing.assert_close(output.logits.float(), logits.float(), rtol=2e-2, atol=2e-2)
+    # Ignored positions contribute no loss, like the LM-only path.
+    assert torch.equal(
+        output.ce_loss[labels == -100], torch.zeros_like(output.ce_loss[labels == -100])
+    )
 
 
 def test_response_only_logits_are_limited_to_loss_mask_batches(monkeypatch):

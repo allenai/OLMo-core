@@ -6,7 +6,6 @@ from typing import Optional
 import pytest
 import torch
 import torch.distributed as dist
-from torch.distributed.tensor import DTensor
 
 import olmo_core.train.train_module.transformer.multimodal_train_module as multimodal_train_module
 from olmo_core.config import DType
@@ -301,6 +300,9 @@ def test_multimodal_checkpoint_frozen_params_can_become_trainable():
     train_module._load_deferred = {}
     train_module._load_in_place_keys = set()
     train_module._load_resync_names = set()
+    train_module._load_expansions = {}
+    train_module._load_metadata = None
+    train_module.expand_shared_qk_norm_on_load = False
     fresh_master = torch.zeros(4)
     checkpoint_state = train_module._optimizer_state_dict_for_load(
         {"lm.weight.main": torch.zeros(1), "vision.weight.main": fresh_master},
@@ -811,17 +813,24 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, unfrozen_connector_before[name], rtol=0, atol=0)
     unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
-    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(
+    # Frozen expert weights under expert parallelism are a documented limitation of this
+    # layer: they cannot be checkpointed, so a model with frozen LM blocks refuses to save.
+    frozen_blocks = _build_multimodal_ddp_train_module_for_checkpoint(
         freeze_lm_head=True,
         freeze_lm_blocks=True,
     )
-    multimodal = hybrid.multimodal_model
-    assert all(not param.requires_grad for param in multimodal.lm.blocks.parameters())
-    assert not any(
-        "lm.blocks." in name
-        for group in hybrid._require_optimizer().param_groups
-        for name in group["named_params"]
+    assert all(
+        not param.requires_grad for param in frozen_blocks.multimodal_model.lm.blocks.parameters()
     )
+    with pytest.raises(NotImplementedError, match="frozen expert-parallel"):
+        frozen_blocks._frozen_model_param_state_dict()
+    with pytest.raises(NotImplementedError, match="frozen expert-parallel"):
+        frozen_blocks.save_state_dict_direct(hybrid_dir)
+    del frozen_blocks
+
+    hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_lm_head=True)
+    multimodal = hybrid.multimodal_model
+    assert not multimodal.lm.lm_head.w_out.weight.requires_grad
     connector_before = {
         name: param.detach().clone() for name, param in multimodal.connector.named_parameters()
     }
@@ -836,17 +845,13 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
         torch.testing.assert_close(param, connector_before[name], rtol=0, atol=0)
 
     frozen_state = hybrid._frozen_model_param_state_dict()
-    frozen_expert_keys = []
-    for name, param in multimodal.lm.named_parameters():
-        if ".routed_experts.w_" not in name:
-            continue
-        key = f"frozen_model.lm.{name}"
-        checkpoint_view = frozen_state[key]
-        assert isinstance(checkpoint_view, DTensor)
-        assert checkpoint_view.numel() == 2 * param.numel()
-        assert checkpoint_view.to_local().data_ptr() == param.data.data_ptr()
-        frozen_expert_keys.append(key)
-    assert frozen_expert_keys
+    assert set(frozen_state) == {
+        f"frozen_model.{name}"
+        for name, param in multimodal.named_parameters()
+        if not param.requires_grad
+    }
+    assert "frozen_model.lm.lm_head.w_out.weight" in frozen_state
+    assert not any(".routed_experts." in key for key in frozen_state)
 
     optim = hybrid._require_optimizer()
     embedding_name = next(
@@ -906,8 +911,8 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     hybrid.save_state_dict_direct(hybrid_dir)
 
     metadata = RemoteFileSystemReader(hybrid_dir).read_metadata()
-    for key in frozen_expert_keys:
-        assert metadata.state_dict_metadata[key].size.numel() == frozen_state[key].numel()
+    for key, tensor in frozen_state.items():
+        assert metadata.state_dict_metadata[key].size.numel() == tensor.numel()
 
     with torch.no_grad():
         for param in multimodal.parameters():

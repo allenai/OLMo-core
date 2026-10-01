@@ -196,11 +196,19 @@ def test_loss_falls_back_to_the_lm_divisor_and_skips_z_loss_when_unset():
     torch.testing.assert_close(out.loss, out.ce_loss)
 
 
-def test_loss_arguments_are_validated_and_the_router_mask_is_ignored():
+def test_text_only_labels_use_the_plain_lm_loss_and_the_router_mask_is_dropped():
     model = _model()
     input_ids, labels, loss_masks = _text_batch()
-    with pytest.raises(ValueError, match="loss_masks"):
-        model(input_ids, labels=labels, loss_reduction="sum")
+    # Labels without loss masks (a text-only batch) take the language model's plain loss path.
+    with torch.no_grad():
+        text_only = model(input_ids, labels=labels, loss_reduction="none", return_logits=True)
+        logits = model(input_ids)
+    assert isinstance(text_only, LMOutputWithLoss)
+    assert text_only.ce_loss.shape == (2, 8) and text_only.logits is not None
+    reference = torch.nn.functional.cross_entropy(
+        logits.float().reshape(-1, _VOCAB), labels.reshape(-1), ignore_index=-100, reduction="none"
+    ).reshape(2, 8)
+    torch.testing.assert_close(text_only.ce_loss.float(), reference, rtol=2e-2, atol=2e-2)
     with pytest.raises(ValueError, match="loss_reduction"):
         model(input_ids, labels=labels, loss_masks=loss_masks, loss_reduction="mean")
     with torch.no_grad():
