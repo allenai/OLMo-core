@@ -28,6 +28,7 @@ Between them they separate "the model failed" from "we truncated it".
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -67,8 +68,9 @@ class StopCondition:
         against the leading formatting newline described in the module docstring, which otherwise
         returns an empty generation for every example.
     :param require_before: Suppress text stops until one of these substrings appears
-        (case-insensitive); the **last** match also becomes the point the stop search starts from,
-        matching what the task's parser reads -- see :func:`should_stop`. Used where the answer
+        (case-insensitive); the **last** match in the text so far also becomes the point the stop
+        search starts from, matching what the task's parser reads -- see :func:`should_stop`, and
+        :func:`apply` for why that is only safe on a growing prefix. Used where the answer
         follows a templated marker line, so an earlier newline is part of the preamble rather than
         the end of the answer: oolong's questions template three different markers
         (:data:`OOLONG_ANSWER_MARKERS`), and outlier's instruction mandates a sentence *before* the
@@ -231,14 +233,13 @@ def should_stop(text: str, cond: StopCondition) -> Optional[int]:
     # enough: the first newline in an oolong generation is in the preamble, so searching from
     # position 0 would end the answer before it began.
     #
-    # The anchor is the LAST occurrence of any marker, not the earliest. oolong's own parser
-    # (ctc.tasks.oolong.spec.parse) reads the answer after the last marker it finds, precisely so
-    # that a model which reasons aloud and revises itself is graded on its final answer. Anchoring
-    # stopping on the earliest occurrence instead pointed the two at different spans: a preamble
-    # that names the marker word ("Counting each user: there are several.") anchored the search
-    # there, the newline closing that sentence fired the stop, and the real answer on the next line
-    # was truncated away before the parser ever saw it. What gets truncated must be what gets
-    # parsed, so both ends of the pipeline read the last marker.
+    # The anchor is the LAST marker in the text so far. This function sees a growing prefix, so
+    # "last" means "most recent": a model that names the marker word along the way ("Counting each
+    # user: ...", "the most common label: ...") re-anchors on each one, and the parser
+    # (ctc.tasks.oolong.spec.parse) likewise reads what follows the last marker, so the two agree on
+    # every prefix. They agree on a FINISHED string only if it is cut where the loop would have cut
+    # it -- which is what apply() guarantees by replaying prefixes instead of calling this once on
+    # the whole text, where "last" would mean "whatever the model echoed after answering".
     search_from = 0
     if cond.require_before:
         hits = []
@@ -296,5 +297,47 @@ def apply(text: str, cond: StopCondition) -> str:
     """
     if cond.strip_think:
         text = strip_think(text)
-    at = should_stop(text, cond)
+    at = _first_firing_stop(text, cond)
     return text if at is None else text[:at]
+
+
+def _first_firing_stop(text: str, cond: StopCondition) -> Optional[int]:
+    """
+    Replay the decode loop over a finished string: the first prefix at which :func:`should_stop`
+    fires decides where the text ends.
+
+    Calling :func:`should_stop` once on the whole string is not the same thing. ``require_before``
+    anchors on the last marker, which is right for a growing prefix -- the newest marker is the one
+    the model just emitted -- but wrong for a finished string in which the model kept going after
+    its answer. Every oolong corpus line carries ``User:``, so a no-cot checkpoint that answers and
+    then echoes a corpus line moves the anchor onto the echo, and the echo is what gets graded. The
+    decode loop never sees that echo: it stopped at the newline after the answer. Neither may this.
+
+    Checking every prefix is quadratic, so only the prefixes at which the verdict can flip from
+    "keep going" to "stop" are checked. Growing the prefix by one character changes what
+    :func:`should_stop` sees in three ways: a stop substring is completed (a stop can begin to
+    fire); a ``</think>`` is completed (suppression lifts from every stop before it -- the one
+    condition here that is not local to the prefix up to a stop); or a marker, a ``<think>``, a
+    bracket or a fence is completed, which can only prevent a stop from firing. The first two are
+    therefore the only prefix ends worth checking, in order, and overlapping occurrences count:
+    ``]]]`` completes a ``]]`` at two positions. The randomized test against a character-by-
+    character replay is what holds this argument to account.
+
+    :param text: The finished generation, already think-stripped if the condition asks for it.
+    :param cond: The task's stop condition.
+
+    :returns: Where to truncate, or ``None`` if no stop ever fires.
+    """
+    events = tuple(cond.text_stops) + (THINK_CLOSE,)
+    ends = sorted(
+        {
+            m.start() + len(event)
+            for event in events
+            for m in re.finditer(f"(?={re.escape(event)})", text)
+        }
+    )
+    for end in ends:
+        at = should_stop(text[:end], cond)
+        if at is not None:
+            return at
+    return None

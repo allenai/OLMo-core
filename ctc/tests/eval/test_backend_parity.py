@@ -145,7 +145,7 @@ def test_a_condition_with_no_premature_risk_pushes_its_stops_down():
     """The rule is about premature firing, not a blanket refusal -- otherwise it is arbitrary."""
     from ctc.eval.stopping import StopCondition
 
-    safe = StopCondition(text_stops=("]]",), require_content=False, require_before=None)
+    safe = StopCondition(text_stops=("]]",), require_content=False, require_before=())
     assert _vllm_backend().sampling_kwargs(safe)["stop"] == ["]]"]
 
 
