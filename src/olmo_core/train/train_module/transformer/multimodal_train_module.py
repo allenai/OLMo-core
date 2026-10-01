@@ -34,12 +34,16 @@ import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dist_cp
 import torch.distributed.checkpoint.state_dict as dist_cp_sd
+from torch.distributed.checkpoint.metadata import Metadata
 from torch.optim import Optimizer
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.utils import split_batch
-from olmo_core.distributed.checkpoint import RemoteFileSystemWriter
+from olmo_core.distributed.checkpoint import (
+    RemoteFileSystemReader,
+    RemoteFileSystemWriter,
+)
 from olmo_core.distributed.parallel import (
     DataParallelType,
     build_world_mesh,
@@ -748,6 +752,12 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
       entries without the ``lm.`` prefix), leaving freshly initialized components untouched;
     * held-out response-loss evaluation for multimodal batches, with the ordinary full-logits
       path kept for text-only downstream evaluators.
+
+    Limitations of this layer: frozen expert weights under expert parallelism cannot be
+    checkpointed (saving raises ``NotImplementedError``; the alignment recipe runs the experts
+    trainable or with ``ep_config=None``), and the router token mask is not carried, so router
+    statistics include padding tokens (see
+    :class:`~olmo_core.nn.vision.MultimodalOLMoDDPModel`).
     """
 
     _FROZEN_MODEL_PARAM_KEY_PREFIX: ClassVar[str] = "frozen_model."
@@ -832,6 +842,8 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self._load_deferred: Dict[str, Any] = {}
         self._load_in_place_keys: Set[str] = set()
         self._load_resync_names: Set[str] = set()
+        self._load_expansions: Dict[str, torch.Tensor] = {}
+        self._load_metadata: Optional[Metadata] = None
         super().__init__(model, *args, **kwargs)
 
         # OLMoDDP materializes meta-device weights inside ``super().__init__`` with ``to_empty``,
@@ -1531,6 +1543,26 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         optim.load_state_dict(state_dict, reset_optimizer_moments_on_load=False)
         torch.cuda.empty_cache()
 
+    def load_state_dict_direct(self, dir: PathOrStr, **kwargs):
+        """
+        Load a checkpoint; see :meth:`OLMoDDPTrainModule.load_state_dict_direct`. The checkpoint
+        metadata is kept for the duration of the load so that the key adapters can expand shared
+        Q/K norm gains stored under native text keys.
+        """
+        from olmo_core.io import normalize_path
+
+        reader = RemoteFileSystemReader(
+            normalize_path(dir),
+            thread_count=kwargs.get("thread_count"),
+            pre_download=kwargs.get("pre_download", False),
+            work_dir=kwargs.get("work_dir"),
+        )
+        self._load_metadata = reader.read_metadata()
+        try:
+            super().load_state_dict_direct(dir, **kwargs)
+        finally:
+            self._load_metadata = None
+
     @staticmethod
     def _strip_lm_prefix(name: str) -> Optional[str]:
         """``lm.blocks.0.w`` -> ``blocks.0.w`` (the name in a native text checkpoint)."""
@@ -1629,12 +1661,17 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self._load_deferred = {}
         self._load_in_place_keys = set()
         self._load_resync_names = set()
+        self._load_expansions = {}
 
         frozen_in_checkpoint = {
             key[len(self._FROZEN_MODEL_PARAM_KEY_PREFIX) :]
             for key in checkpoint_keys
             if key.startswith(self._FROZEN_MODEL_PARAM_KEY_PREFIX)
         }
+        # Only a masters-only load (a model-only phase handoff or a reset of the optimizer
+        # moments) may leave freshly initialized components without checkpoint state. A full
+        # resume loads every optimizer moment, so a missing connector/vision entry is an error.
+        partial_load = all(key.endswith(".main") for key in state_dict if not key.startswith("__"))
         out: Dict[str, Any] = {}
         for key, value in state_dict.items():
             checkpoint_key = self._resolve_optimizer_checkpoint_key(key, checkpoint_keys)
@@ -1655,10 +1692,16 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 self._load_deferred[key] = value
                 self._load_resync_names.add(key.rsplit(".", 1)[0])
                 continue
-            if self._allow_missing_optimizer_checkpoint_key(key):
+            if partial_load and self._allow_missing_optimizer_checkpoint_key(key):
                 self._load_deferred[key] = value
                 continue
             out[key] = value  # a genuinely missing key fails in the loader, as for text models
+
+        if self.expand_shared_qk_norm_on_load and self._load_key_map:
+            # The shared load path prepared Q/K gain expansions by the *current* keys, which a
+            # native text checkpoint does not contain; prepare the aliased entries here (by
+            # checkpoint key) and finish them in :meth:`_optimizer_state_dict_after_load`.
+            self._load_expansions = self._prepare_aliased_qk_expansions(out)
 
         for key, tensor in self._frozen_checkpoint_param_state_dict_for_load(
             checkpoint_keys
@@ -1679,7 +1722,36 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
                 self._load_in_place_keys.add(alias)
         return out
 
+    def _prepare_aliased_qk_expansions(self, state: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        from olmo_core.distributed.checkpoint.utils import prepare_qk_expansion
+
+        if self._load_metadata is None:
+            raise RuntimeError(
+                "Q/K norm expansion needs the checkpoint metadata; load through "
+                "load_state_dict_direct"
+            )
+        optim = self._require_optimizer()
+        gain_shapes: Dict[str, Tuple[int, ...]] = {}
+        for group in optim.param_groups:
+            for name, param in group["named_params"].items():
+                if not name.endswith((".q_norm.weight", ".k_norm.weight")) or param.ndim != 2:
+                    continue
+                checkpoint_key = self._load_key_map_inverse().get(f"{name}.main")
+                if checkpoint_key is not None:
+                    gain_shapes[checkpoint_key.rpartition(".")[0]] = tuple(param.shape)
+        aliased = {key: state[key] for key in self._load_key_map}
+        expansions = prepare_qk_expansion(aliased, self._load_metadata, gain_shapes)
+        state.update(aliased)
+        return expansions
+
+    def _load_key_map_inverse(self) -> Dict[str, str]:
+        return {current: checkpoint for checkpoint, current in self._load_key_map.items()}
+
     def _optimizer_state_dict_after_load(self, state_dict: Dict[str, Any]) -> Dict[str, Any]:
+        if self._load_expansions:
+            from olmo_core.distributed.checkpoint.utils import finish_qk_expansion
+
+            finish_qk_expansion(state_dict, self._load_expansions)
         out: Dict[str, Any] = {}
         for key, value in state_dict.items():
             if key in self._load_in_place_keys:
@@ -1695,6 +1767,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self._load_deferred = {}
         self._load_in_place_keys = set()
         self._load_resync_names = set()
+        self._load_expansions = {}
         return out
 
 
