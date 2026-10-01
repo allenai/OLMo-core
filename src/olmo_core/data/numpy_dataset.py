@@ -7,10 +7,11 @@ import math
 import os
 import random
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
+from functools import cached_property, partial
 from pathlib import Path
 from typing import (
     Any,
@@ -43,6 +44,7 @@ from ..io import (
     get_file_size,
     is_url,
     normalize_path,
+    resource_path,
 )
 from .mixes import DataMix, DataMixBase
 from .source_mixture import SourceMixtureDatasetConfig
@@ -94,6 +96,88 @@ log = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
+
+
+def _get_data_prep_max_workers() -> Optional[int]:
+    raw_value = os.environ.get("OLMO_DATA_PREP_WORKERS")
+    if not raw_value:
+        return None
+
+    try:
+        max_workers = int(raw_value)
+    except ValueError as e:
+        raise OLMoEnvironmentError("'OLMO_DATA_PREP_WORKERS' must be a positive integer") from e
+
+    if max_workers <= 0:
+        raise OLMoEnvironmentError("'OLMO_DATA_PREP_WORKERS' must be a positive integer")
+    return max_workers
+
+
+def _get_data_prep_progress_interval() -> float:
+    raw_value = os.environ.get("OLMO_DATA_PREP_PROGRESS_INTERVAL")
+    if not raw_value:
+        return 30.0
+
+    try:
+        interval = float(raw_value)
+    except ValueError as e:
+        raise OLMoEnvironmentError(
+            "'OLMO_DATA_PREP_PROGRESS_INTERVAL' must be a non-negative number"
+        ) from e
+
+    if interval < 0:
+        raise OLMoEnvironmentError(
+            "'OLMO_DATA_PREP_PROGRESS_INTERVAL' must be a non-negative number"
+        )
+    return interval
+
+
+def _get_data_prep_use_array_if_local() -> Optional[bool]:
+    raw_value = os.environ.get("OLMO_DATA_PREP_USE_ARRAY_IF_LOCAL")
+    if not raw_value or raw_value == "auto":
+        return None
+
+    value = raw_value.lower()
+    if value in ("1", "true", "yes", "y", "array", "arrays"):
+        return True
+    if value in ("0", "false", "no", "n", "metadata", "csv"):
+        return False
+
+    raise OLMoEnvironmentError("'OLMO_DATA_PREP_USE_ARRAY_IF_LOCAL' must be one of true/false/auto")
+
+
+def _format_elapsed(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{seconds:02d}s"
+    if minutes:
+        return f"{minutes:d}m{seconds:02d}s"
+    return f"{seconds:d}s"
+
+
+def _log_data_prep_progress(
+    label: str,
+    *,
+    completed: int,
+    total: int,
+    started_at: float,
+    latest_path: Optional[PathOrStr] = None,
+    unit: str = "files",
+):
+    elapsed = max(time.monotonic() - started_at, 1e-6)
+    rate = completed / elapsed
+    remaining = total - completed
+    eta = remaining / rate if rate > 0 else math.inf
+    message = (
+        f"{label}: {completed:,d}/{total:,d} complete "
+        f"({completed / total:.1%}, {rate:.2f} {unit}/s, "
+        f"elapsed {_format_elapsed(elapsed)}, eta {_format_elapsed(eta) if math.isfinite(eta) else 'unknown'})"
+    )
+    if latest_path is not None:
+        message += f"; latest '{latest_path}'"
+    log.info(message)
 
 
 @dataclass
@@ -759,24 +843,43 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
         )
 
     def _write_document_indices(self):
-        paths_needed: List[Tuple[PathOrStr, int]] = []
+        # A path can appear multiple times in a mixture (e.g. upsampling / repetition). Every
+        # occurrence shares the same path-derived indices file but keeps its own token allocation
+        # in ``_path_offset_index`` (Hamilton rounding can give occurrences different counts), so
+        # size the shared file for the largest allocation across occurrences; otherwise a later,
+        # larger occurrence would read past the generated tail.
+        max_instances_by_path: Dict[str, int] = {}
+        ordered_paths: List[PathOrStr] = []
         for idx, path in enumerate(self.paths):
+            key = str(path)
+            instances = self._path_offset_index[(key, idx)] // self.sequence_length
+            if key in max_instances_by_path:
+                max_instances_by_path[key] = max(max_instances_by_path[key], instances)
+            else:
+                max_instances_by_path[key] = instances
+                ordered_paths.append(path)
+
+        paths_needed: List[PathOrStr] = []
+        num_reused = 0
+        for path in ordered_paths:
             indices_path = self._get_instance_indices_path(path)
             if indices_path.is_file():
-                log.info(f"Reusing document indices for '{path}' at:\n'{indices_path}'")
-            elif path not in paths_needed:
-                paths_needed.append((path, idx))
+                num_reused += 1
+                log.info(f"Reusing mixture instance indices for '{path}' at:\n'{indices_path}'")
+            else:
+                paths_needed.append(path)
 
+        num_zero_instance = 0
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                futures = []
-                for path, idx in paths_needed:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
+                future_to_path: Dict[concurrent.futures.Future, PathOrStr] = {}
+                for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
                     log.info(f"Gathering instance indices for '{path}'...")
                     # NOTE: We limit the number of instances by total target token count // sequence length
-                    max_instances = (
-                        self._path_offset_index[(str(path), idx)] // self.sequence_length
-                    )
+                    max_instances = max_instances_by_path[str(path)]
 
                     # Sampling from small npy files can result in 0 instance indices.
                     # We skip processing these to avoid writing empty mmapped files.
@@ -791,18 +894,70 @@ class NumpyFSLDatasetMixture(NumpyFSLDataset):
                             dtype=self.dtype,
                             indices_dtype=self.indices_dtype,
                             sample=(max_instances, self._seed),
+                            use_array_if_local=_get_data_prep_use_array_if_local(),
                         )
-                        futures.append(future)
+                        future_to_path[future] = path
+                    else:
+                        num_zero_instance += 1
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                total_futures = len(future_to_path)
+                log.info(
+                    "Mixture instance index prep summary: "
+                    f"{num_reused:,d} reusable, {total_futures:,d} to create, "
+                    f"{num_zero_instance:,d} skipped with zero requested instances "
+                    f"out of {len(self.paths):,d} selected paths"
+                )
 
-                # Log results.
-                for path, future in zip([item[0] for item in paths_needed], futures):
-                    _, total_instances = future.result()
-                    log.info(
-                        f"Created {total_instances:,d} instances of sequence length up to "
-                        f"{self.sequence_length} from '{path}'"
-                    )
+                if total_futures:
+                    pending = set(future_to_path)
+                    completed = 0
+                    started_at = time.monotonic()
+                    last_log_at = started_at
+                    progress_interval = _get_data_prep_progress_interval()
+
+                    while pending:
+                        timeout = progress_interval if progress_interval > 0 else None
+                        done, pending = concurrent.futures.wait(
+                            pending,
+                            timeout=timeout,
+                            return_when=concurrent.futures.FIRST_COMPLETED,
+                        )
+
+                        if not done:
+                            _log_data_prep_progress(
+                                "Mixture instance index prep",
+                                completed=completed,
+                                total=total_futures,
+                                started_at=started_at,
+                            )
+                            last_log_at = time.monotonic()
+                            continue
+
+                        latest_path: Optional[PathOrStr] = None
+                        for future in done:
+                            path = future_to_path[future]
+                            latest_path = path
+                            _, total_instances = future.result()
+                            completed += 1
+                            log.info(
+                                f"Created {total_instances:,d} instances of sequence length up to "
+                                f"{self.sequence_length} from '{path}'"
+                            )
+
+                        now = time.monotonic()
+                        if (
+                            completed == total_futures
+                            or progress_interval == 0
+                            or now - last_log_at >= progress_interval
+                        ):
+                            _log_data_prep_progress(
+                                "Mixture instance index prep",
+                                completed=completed,
+                                total=total_futures,
+                                started_at=started_at,
+                                latest_path=latest_path,
+                            )
+                            last_log_at = now
 
     # def _read_chunk_from_array(self, path: PathOrStr, index: int) -> torch.Tensor:
     #     indices_path = self._get_instance_indices_path(path)
@@ -951,7 +1106,9 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                 paths_needed.append(path)
 
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for path in paths_needed:
                     indices_path = self._get_instance_indices_path(path)
@@ -965,6 +1122,7 @@ class NumpyPaddedFSLDataset(NumpyFSLDataset):
                         eos_token_id=self.eos_token_id,
                         dtype=self.dtype,
                         indices_dtype=self.indices_dtype,
+                        use_array_if_local=_get_data_prep_use_array_if_local(),
                     )
                     futures.append(future)
 
@@ -1014,6 +1172,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         label_mask_paths: Optional[List[PathOrStr]] = None,
         long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
         source_group_size: int = 1,
+        use_array_if_local: Optional[bool] = None,
     ):
         super().__init__(
             *paths,
@@ -1034,6 +1193,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
 
         self._long_doc_strategy = long_doc_strategy
         self._source_group_size = source_group_size
+        self._use_array_if_local = use_array_if_local
 
         self._source_path_groups = list(chunked(self.paths, self.source_group_size))
         self._label_mask_path_groups: Optional[List[List[PathOrStr]]] = None
@@ -1063,6 +1223,13 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
         # For backwards compat, only add this when it's not the default.
         if self._source_group_size > 1:
             fields = fields + ("source_group_size",)
+        # Likewise: this changes which document boundaries are used, and therefore the resulting
+        # instances, so it has to participate in the fingerprint or a cached index built with the
+        # other boundary source would be reused.
+        if self._use_array_if_local is not None:
+            fields = fields + ("use_array_if_local",)
+        if self._packed_from_metadata_boundaries(self.paths):
+            fields = fields + ("_metadata_fingerprint",)
         return fields
 
     @property
@@ -1072,6 +1239,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     @property
     def source_group_size(self) -> int:
         return self._source_group_size
+
+    @property
+    def use_array_if_local(self) -> Optional[bool]:
+        return self._use_array_if_local
 
     @property
     def indices_dtype(
@@ -1234,30 +1405,107 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             metadata = self._metadata_groups[source_group_index]
             out["metadata"] = deepcopy(metadata)
         if self._generate_doc_lengths:
-            out["doc_lens"] = get_document_lengths(
-                input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
-            )
+            if self._packed_from_metadata_boundaries(source_paths):
+                # Rescanning would merge a document that lacks a terminator into the one after it
+                # -- exactly the documents this setting exists to support. `doc_lens` drives the
+                # block-diagonal attention mask, so that would let tokens attend across a real
+                # document boundary. The loaded documents give the lengths exactly.
+                doc_lens = [document.numel() for document in document_token_ids]
+                if (padding := input_ids.numel() - sum(doc_lens)) > 0:
+                    # Keep the scanner's padding segmentation, including one segment per EOS
+                    # padding token. With BOS, include the final real token to detect a boundary
+                    # between the last document and padding (e.g. when padding is BOS).
+                    if self.bos_token_id is None:
+                        doc_lens.extend(
+                            get_document_lengths(input_ids[-padding:], self.eos_token_id).tolist()
+                        )
+                    else:
+                        tail_lens = get_document_lengths(
+                            input_ids[-padding - 1 :], self.eos_token_id, self.bos_token_id
+                        ).tolist()
+                        doc_lens[-1] += tail_lens[0] - 1
+                        doc_lens.extend(tail_lens[1:])
+                out["doc_lens"] = torch.tensor(doc_lens, dtype=torch.int32)
+            else:
+                out["doc_lens"] = get_document_lengths(
+                    input_ids, self.eos_token_id, bos_token_id=self.bos_token_id
+                )
         return out
+
+    def _packed_from_metadata_boundaries(self, source_paths: Sequence[PathOrStr]) -> bool:
+        """Whether packing took its document boundaries from the metadata file.
+
+        `iter_document_indices` reads the metadata for any URL source whatever
+        `use_array_if_local` says, so the effective boundary source -- not the raw option --
+        decides whether re-deriving boundaries by scanning for EOS would disagree with how the
+        instance was packed.
+        """
+        return self._use_array_if_local is False or any(is_url(path) for path in source_paths)
+
+    def _get_metadata_hash(self, source_path: PathOrStr, _: int) -> Optional[str]:
+        if not self._packed_from_metadata_boundaries([source_path]):
+            return None
+        metadata_path = resource_path(
+            os.path.dirname(source_path), os.path.basename(source_path).replace(".npy", ".csv.gz")
+        )
+        digest = hashlib.sha256()
+        with metadata_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @cached_property
+    def _metadata_hashes(self) -> Dict[PathOrStr, str]:
+        # Snapshot once per dataset, like file_sizes: no metadata I/O in __getitem__.
+        # Hash contents so same-size corrections also invalidate cached packing results.
+        return {
+            path: digest
+            for path, digest in zip(self.paths, self.map(self._get_metadata_hash))
+            if digest is not None
+        }
+
+    @property
+    def _metadata_fingerprint(self) -> Tuple[Tuple[str, str], ...]:
+        return tuple(
+            (os.path.basename(path), digest) for path, digest in self._metadata_hashes.items()
+        )
+
+    def _packing_cache_extra_ids(self, source_paths: Sequence[PathOrStr]) -> Tuple[str, ...]:
+        # These key the on-disk packing caches, which are looked up by path and never compared
+        # against `fingerprint`. Anything that changes the packing result therefore has to appear
+        # here as well, or a stale cache from a previous run would be reused.
+        extra_ids: Tuple[str, ...] = (self._long_doc_strategy, self.indices_dtype.__name__)
+        # For backwards compat, only add this when it's not the default, so existing caches
+        # built before the option existed are still found.
+        if self._use_array_if_local is not None:
+            extra_ids = extra_ids + (f"use_array_if_local={self._use_array_if_local}",)
+        if self._packed_from_metadata_boundaries(source_paths):
+            extra_ids += tuple(
+                f"metadata={path},sha256={self._metadata_hashes[path]}"
+                for path in source_paths
+                if path in self._metadata_hashes
+            )
+        return extra_ids
 
     def _get_document_indices_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "document-indices",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _get_instance_offsets_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "instance-offsets",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _get_docs_by_instance_path(self, *source_paths: PathOrStr) -> Path:
         return self._get_indices_path(
             "documents-by-instance",
             *source_paths,
-            extra_ids=(self._long_doc_strategy, self.indices_dtype.__name__),
+            extra_ids=self._packing_cache_extra_ids(source_paths),
         )
 
     def _pack_documents_from_source_into_instances(
@@ -1275,6 +1523,7 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
             dtype=self.dtype,
             indices_dtype=self.indices_dtype,
             long_doc_strategy=self._long_doc_strategy,
+            use_array_if_local=self._use_array_if_local,
         )
         document_indices = document_indices.reshape(-1)
 
@@ -1315,8 +1564,10 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 sources_needed.append(source_paths)
 
         if sources_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
-                futures = []
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
+                future_to_paths: Dict[concurrent.futures.Future, List[PathOrStr]] = {}
                 for source_paths in sources_needed:
                     log.info(f"Packing documents from {source_paths} into instances...")
                     future = executor.submit(
@@ -1324,20 +1575,72 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                         self._pack_documents_from_source_into_instances,
                         *source_paths,
                     )
-                    futures.append(future)
+                    future_to_paths[future] = source_paths
 
-                concurrent.futures.wait(futures, return_when="FIRST_EXCEPTION")
+                total_futures = len(future_to_paths)
+                log.info(
+                    "Packed FSL data prep summary: %d source group(s) to pack "
+                    "out of %d group(s), source_group_size=%d, sequence_length=%d",
+                    total_futures,
+                    len(self._source_path_groups),
+                    self.source_group_size,
+                    self.sequence_length,
+                )
 
-                # Log results.
-                for source_paths, future in zip(sources_needed, futures):
-                    total_instances, total_tokens = future.result()
-                    total_padding = self.sequence_length * total_instances - total_tokens
-                    avg_padding = total_padding / total_instances
-                    log.info(
-                        f"Packed {total_tokens:,} tokens from {source_paths} into {total_instances:,d} instances "
-                        f"of sequence length {self.sequence_length:,d} using an average of "
-                        f"{avg_padding:.1f} padding tokens per instance."
+                pending = set(future_to_paths)
+                completed = 0
+                started_at = time.monotonic()
+                last_log_at = started_at
+                progress_interval = _get_data_prep_progress_interval()
+
+                while pending:
+                    timeout = progress_interval if progress_interval > 0 else None
+                    done, pending = concurrent.futures.wait(
+                        pending,
+                        timeout=timeout,
+                        return_when=concurrent.futures.FIRST_COMPLETED,
                     )
+
+                    if not done:
+                        _log_data_prep_progress(
+                            "Packed FSL data prep",
+                            completed=completed,
+                            total=total_futures,
+                            started_at=started_at,
+                            unit="groups",
+                        )
+                        last_log_at = time.monotonic()
+                        continue
+
+                    latest_path: Optional[PathOrStr] = None
+                    for future in done:
+                        source_paths = future_to_paths[future]
+                        latest_path = source_paths[0] if source_paths else None
+                        total_instances, total_tokens = future.result()
+                        completed += 1
+                        total_padding = self.sequence_length * total_instances - total_tokens
+                        avg_padding = total_padding / total_instances if total_instances else 0.0
+                        log.info(
+                            f"Packed {total_tokens:,} tokens from {source_paths} into {total_instances:,d} instances "
+                            f"of sequence length {self.sequence_length:,d} using an average of "
+                            f"{avg_padding:.1f} padding tokens per instance."
+                        )
+
+                    now = time.monotonic()
+                    if (
+                        completed == total_futures
+                        or progress_interval == 0
+                        or now - last_log_at >= progress_interval
+                    ):
+                        _log_data_prep_progress(
+                            "Packed FSL data prep",
+                            completed=completed,
+                            total=total_futures,
+                            started_at=started_at,
+                            latest_path=latest_path,
+                            unit="groups",
+                        )
+                        last_log_at = now
 
 
 class NumpyInterleavedFSLDataset(NumpyPaddedFSLDataset):
@@ -2110,7 +2413,9 @@ class NumpyVSLDataset(NumpyDatasetBase, Dataset[Dict[str, Any]]):
                 paths_needed.append(path)
 
         if paths_needed:
-            with concurrent.futures.ProcessPoolExecutor() as executor:
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=_get_data_prep_max_workers()
+            ) as executor:
                 futures = []
                 for path in paths_needed:
                     indices_path = self._get_document_indices_path(path)
@@ -2580,6 +2885,10 @@ class NumpyFSLDatasetConfig(NumpyDatasetConfig):
             mixture = self.source_mixture_config.build(
                 npdtype=self.get_dtype(), sequence_length=self.sequence_length
             )
+            # Drop paths that were sampled to zero tokens so the mixture's path index stays tight:
+            # they produce no instances downstream, and the prep loop would otherwise carry them as
+            # no-ops. to_paths()/to_index() filter together, so their idx ordering stays aligned.
+            mixture.filter_zero_token_paths = True
             dataset = NumpyFSLDatasetMixture(
                 *mixture.to_paths(),
                 seed=self.source_mixture_config.seed,
@@ -2679,6 +2988,14 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
     """
     The number of source npy files to process together when packing.
     """
+    use_array_if_local: Optional[bool] = None
+    """
+    Where to get document boundaries from. Leave as ``None`` to infer them by scanning the token
+    array for the EOS token (the historical default). Set to ``False`` to read them from the source
+    metadata file instead, which is authoritative and required for correctness when the producer may
+    emit documents that are not EOS-terminated -- see the warning on
+    :func:`~olmo_core.data.utils.iter_document_indices`.
+    """
 
     def validate(self):
         if self.sequence_length <= 0:
@@ -2708,6 +3025,7 @@ class NumpyPackedFSLDatasetConfig(NumpyDatasetConfig):
             long_doc_strategy=self.long_doc_strategy,
             label_mask_paths=label_masks,
             source_group_size=self.source_group_size,
+            use_array_if_local=self.use_array_if_local,
         )
         return self._finalize(dataset)
 

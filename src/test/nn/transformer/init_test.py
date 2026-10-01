@@ -13,7 +13,7 @@ from olmo_core.nn.attention.recurrent import GatedDeltaNetConfig
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
 from olmo_core.nn.lm_head import LMHeadConfig
-from olmo_core.nn.moe import MoEConfig
+from olmo_core.nn.moe import LatentMoEConfig, MoEConfig
 from olmo_core.nn.transformer import (
     TransformerBlockConfig,
     TransformerBlockType,
@@ -137,6 +137,54 @@ def test_fan_in_init_moe(d_model, init_device, device):
         assert (
             abs(actual - expected) < tolerance
         ), f"MoE {name} std: expected ~{expected:.5f}, got {actual:.5f}"
+
+
+def test_fan_in_init_latent_moe():
+    d_model = 256
+    latent_dim = 64
+    config = TransformerConfig(
+        name=TransformerType.moe,
+        d_model=d_model,
+        n_layers=1,
+        vocab_size=1000,
+        init_method=InitMethod.fan_in,
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.moe,
+            sequence_mixer=AttentionConfig(n_heads=4),
+            feed_forward_moe=MoEConfig(
+                num_experts=4,
+                hidden_size=128,
+                latent_moe=LatentMoEConfig(latent_dim=latent_dim),
+            ),
+            layer_norm=LayerNormConfig(name=LayerNormType.rms, bias=False),
+        ),
+        lm_head=LMHeadConfig(bias=False),
+    )
+
+    model = config.build(init_device="cpu")
+    model.init_weights(device=torch.device("cpu"))
+    moe = model.blocks["0"].feed_forward_moe
+
+    assert moe.latent_down_proj is not None
+    assert moe.latent_up_proj is not None
+    torch.testing.assert_close(
+        moe.router.weight.std(),
+        torch.tensor(d_model**-0.5),
+        rtol=0.3,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        moe.latent_down_proj.weight.std(),
+        torch.tensor(d_model**-0.5),
+        rtol=0.3,
+        atol=0.0,
+    )
+    torch.testing.assert_close(
+        moe.latent_up_proj.weight.std(),
+        torch.tensor(latent_dim**-0.5),
+        rtol=0.3,
+        atol=0.0,
+    )
 
 
 @pytest.mark.parametrize("d_model", [256, 512])

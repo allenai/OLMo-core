@@ -36,17 +36,17 @@ def test_beaker_environment_detection(monkeypatch, env, in_beaker, in_batch_job)
 
 def test_parse_git_remote_url():
     # HTTPS format.
-    assert parse_git_remote_url("https://github.com/allenai/OLMo-core.git") == (
+    assert parse_git_remote_url("https://github.com/allenai/Olmo-core.git") == (
         "allenai",
-        "OLMo-core",
+        "Olmo-core",
     )
     # SSH format.
-    assert parse_git_remote_url("git@github.com:allenai/OLMo-core.git") == (
+    assert parse_git_remote_url("git@github.com:allenai/Olmo-core.git") == (
         "allenai",
-        "OLMo-core",
+        "Olmo-core",
     )
     # Username+password format.
-    assert parse_git_remote_url("https://USERNAME:PASSWORD@github.com/allenai/OLMo-core.git") == (
+    assert parse_git_remote_url("https://USERNAME:PASSWORD@github.com/allenai/Olmo-core.git") == (
         "allenai",
-        "OLMo-core",
+        "Olmo-core",
     )

@@ -7,18 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-### Changed
-
-- Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.
-
 ### Fixed
 
 - `BeakerCallback` no longer imports the optional Beaker and Gantry dependencies when auto-detecting whether it is running in a Beaker batch job.
 
-## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
+## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
 
 ### Added
 
+- Added `use_array_if_local` to `pack_documents_into_instances`, `segment_documents_into_instances`, `NumpyPackedFSLDataset` and `NumpyPackedFSLDatasetConfig`, forwarded to `iter_document_indices`. Set it to `False` to take document boundaries from the source metadata file instead of inferring them by scanning the token array for the EOS token. Inferring is only correct when every document is EOS-terminated: a producer that truncates documents and drops the terminator with the tail causes the affected document to merge with the one after it, and `LongDocStrategy.truncate` then keeps only the head of the merged span, so the following document never reaches training. Measured on an SFT cache, 97.98% of tokens reached instances via the inferred path versus 100.00% via the metadata file, with an identical maximum document length. Whenever the metadata boundaries are the effective source -- set explicitly, or because the source is a URL, for which `iter_document_indices` always reads the metadata -- `doc_lens` is derived from them rather than by rescanning the packed tokens for EOS, so the block-diagonal attention mask cannot merge an unterminated document into the one after it. The hazard is now documented on `iter_document_indices`. Default behavior is unchanged.
+- Added opt-in paired SwiGLU backward and BF16-rounded weight-gradient accumulation for OLMoDDP experts, including Torch 2.13 support, checkpoint/recomputation coverage, and explicit backend and bucket-ownership guards.
+- Added independent per-head Q/K norm gains and scalable softmax, EMO document-pool routing/global load balancing, and opt-in FP32 gradient-accumulation/reduce-scatter fast paths with explicit hardware/version guards.
+- Extended hybrid MoE HF export for KDA, optional EMO and latent experts, per-head normalization gains, and scalable softmax, with exact tensor round-trip validation and legacy configuration migration.
+- Added an optional, dependency-free checkpoint-ready notification callback for independent upload services. It does not upload or delete checkpoints.
+
+### Removed
+
+- Removed the `src/scripts/train/private-olmo.py` training script.
+
+- Removed the `olmo_core.model_ladder` API, its internal CLI wrapper, all eleven ladder training scripts (including the standalone Gemma-like ladder), two Slurm launchers, and the API documentation. Existing ladder orchestration configs and commands require an earlier revision; this does not change the model or optimizer checkpoint formats. The internal experiment framework remains available.
+
+### Fixed
+
+- Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/Olmo-core/pull/843).
+- Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
+- Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
+- Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
+- Preserve the resolved tokenizer BOS ID in exported model and generation configs, including when the training config leaves BOS unspecified.
+- Reject hybrid KDA HF exports with sliding-window attention and EMO exports with restricted evaluation pools in any routed layer. Disable scalable-softmax HF generation caching and reject explicit cache use.
+- Require the CUDA 13 CuTe compiler for experimental KDA, report incompatible installs before training, and exercise the kernels in a dedicated Blackwell CI job.
+- Keep legacy fused attention configs compatible when the new attention options are disabled. Reject unsupported scalable-softmax context parallelism and KV caching at setup.
+- Assign EOS tokens to their preceding document for EMO routing, matching attention document boundaries.
+- Preserve serialized tokenizer behavior during HF export, including source BOS settings when the training config leaves BOS unspecified.
+- Preserve FP32 router probabilities and accumulation when combining BF16 experts in the HF reference model.
+- Avoid graph breaks from no-op profiling decorators, including compiled router load-balancing collectives.
+- `dispatch_flash_attn_4` passed `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q` and `max_seqlen_k` positionally. flash-attn 4 inserted a `qv` parameter at position 3 (present from ~`4.0.0b19` onward), which shifts every following argument by one, so `max_seqlen_q` — an `int` — lands where `cu_seqlens_k` is expected and the call fails with `AttributeError: 'int' object has no attribute 'shape'`. These are now passed by keyword; the parameter names are unchanged across flash-attn 4 releases, so this is correct against both old and new versions. Only reachable on Blackwell, where `has_flash_attn_4()` returns True.
+
+### Changed
+
+- `OLMoDDPModel.apply_ddp()` now raises `NotImplementedError` directing callers to `apply_dp()`, including under `python -O`. Removed its unreachable legacy DDP implementation.
+
+- `OLMoDDPTrainModuleConfig.max_grad_norm` now overrides the optimizer clipping threshold when set, matching the train-module configuration API used by `TransformerTrainModuleConfig`. When unset, the optimizer threshold is retained. Previously this field was ignored, so old configs with differing values now use the train-module value. The supplied optimizer config is not mutated. Removed the unused `OLMoDDPTrainModule.max_grad_norm` constructor argument and attribute; clipping remains inside the DDP optimizer.
+
+- Removed the unused, commented-out Beaker execution-unit helper and its commented call from the internal experiment setup.
+
+- Migrated repository attention callers to explicit backend selection. Transformer factories now resolve legacy `use_flash` arguments into `backend` configs, and the nGPT factory accepts `attn_backend`. Deprecated inputs remain supported for old configs and callers, including explicit-backend precedence and sliding-window automatic selection.
+
+- Replaced `FusedAttention` with `FusedAttentionV2` and migrated its applicable tests to V2. Legacy `AttentionConfig(name="fused")` configs still load through V2 with the same packed QKV parameter names and shapes, preserving model and optimizer checkpoint compatibility. Legacy fused RoPE is mapped to regular RoPE: floating-point results (especially low-precision RoPE gradients) differ, so resumed training is not numerically identical. `TransformerConfig.llama_like(fused_ops=True)` now selects V2 with regular RoPE when it previously selected fused attention.
+
+- Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.
+
+## [v2.6.0](https://github.com/allenai/Olmo-core/releases/tag/v2.6.0) - 2026-08-11
+
+### Added
+
+- Added `KimiDeltaAttentionConfig.use_experimental_kernels` (**experimental**), which routes both the KDA chunk kernel and the layer's short convolutions to the CuTe/Triton kernels in the `kernel-fun` package, installed with the new `kernel-fun` extra. Both are drop-ins that fall back to FLA off their supported hardware (Blackwell for KDA, Hopper and up for the conv) and shapes.
+- Added `KimiDeltaAttentionConfig` / `KimiDeltaAttention`, a Kimi Delta Attention sequence mixer built on Moonshot's released Triton kernel (via the `fla` extra). KDA uses a vector-valued decay per key channel plus a scalar delta gate per value head, and plugs into the existing sequence-mixer interfaces (packed-document short convolutions, initialization, context parallelism).
+- Added the OLMoDDP fused Mixture-of-Experts training stack: the fused MoE transformer model and block (`OLMoDDPModel` / `OLMoDDPTransformerBlock` in `olmo_core.nn.ddp`, selected via `TransformerType.moe_fused_v2`), the `OLMoDDPTrainModule` train module with its fused distributed MoE optimizer (`OLMoDDPOptimizerConfig`) and `MultiGroupDistributedDataParallel` wrapper, and DP/EP/TP/CP/PP parallelism — including expert-parallel all-to-all over symmetric-memory / NCCL-RMA transports and a custom pipeline-parallel schedule (`CustomSchedule1F1BV` / `CustomScheduleInterleaved1F1B`) that reuses point-to-point buffers across micro-batches.
+- Added the supporting kernels for the OLMoDDP stack under `olmo_core.kernels` (beta): grouped matmul (`grouped_mm` / `scaled_grouped_mm`), MXFP8 rowwise quantization (`OlmoMXFP8Tensor`), MoE token permute/unpermute, symmetric-memory / NCCL-RMA point-to-point communication, and a JIT loader for CUDA/C++ extensions; plus `FP8WeightStore` for fp32-main / FP8-model training and an experimental CPU activation-offload context.
+- Added HuggingFace interop for the OLMoDDP model (beta): the standalone `olmo3moe` HF model (`Olmo3MoeConfig` + `modeling_olmo3moe`, since transformers has no OLMoE-MoE architecture) and olmo-core ↔ HF checkpoint conversion in `olmo_core.nn.hf` (`convert_olmo3moe_state_{from,to}_hf`), with per-layer-type RoPE and a `torch grouped_mm` routed-expert path.
+- `TransformerTrainModule` now supports `eval_only=True` (build without an optimizer), so dense models work with eval-only workflows such as `Trainer.eval_checkpoints()` — previously only the pipeline and OLMoDDP train modules supported it.
+- Added `Trainer.eval_checkpoints()` (and the `checkpoints_to_eval` config/trainer field): evaluate a list of checkpoint paths/globs with the configured `EvaluatorCallback`s without training. `TrainerConfig.build()` gained an `eval_only` pass-through for a uniform calling convention with the train-module config's `build()`.
 - Added `max_checkpoints` parameter to `CheckpointerCallback` (default: 3) to limit the number of permanent checkpoints retained. Oldest checkpoints are removed automatically when the limit is exceeded. Set to `None` to keep all (previous behavior).
 - Added `OutputDiscardCheckpoint`, an activation-recompute primitive for cases where the output of a checkpointed region dominates memory rather than its intermediates (e.g. precision casts, FFN up-projections). Forward runs under `no_grad`, the output's storage can be freed after downstream consumption, and a backward hook recomputes and rebinds the freed storage in place via a C++ `share_storage` extension (with a Python fallback for environments without a C++ toolchain).
 - Added Qwen3.5 dense model configs (0.8B, 4B, 9B, 27B) with hybrid Gated DeltaNet + full-attention architecture.
@@ -30,13 +79,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `PowerLR`, a power-law learning rate scheduler with linear warmup, power-decay phase (`lr = initial_lr * (current / warmup) ** b` for negative `b`, making the LR independent of the training horizon), and an optional linear decay tail. Registered as `"power_lr"`.
 - Added `ComposableScheduler`, a piecewise LR scheduler built from `ComposableSchedulerStage` segments (linear/cosine interpolation between endpoint LRs) on an absolute time axis. Registered as `"composable"`. Note: `ComposableScheduler` ignores the `t_max` passed to `get_lr` and emits a once-per-instance `UserWarning` to that effect.
 - Added `OverrideDecay`, a late-stage decay override usable on both `ComposableScheduler` and `SequentialScheduler` via an `override_decay` field. When `current >= override_decay.start`, the main schedule is interrupted mid-flight and the LR decays from the value the main schedule would have produced at `start` to a target LR over `duration` (linear or cosine). `SequentialScheduler` additionally warns that `t_max` is ignored once the override becomes active.
+- Added `NvidiaProfilerCallback` (wraps a window of training steps in `cudaProfilerStart/Stop` + NVTX ranges for Nsight Systems) and `TorchMemoryHistoryCallback` (records CUDA memory history and dumps a snapshot pickle for https://pytorch.org/memory_viz).
+- `SpeedMonitorCallback` now logs a `throughput/device/TFLOPs_per_GPU` metric and recognizes the RTX PRO 6000 device for peak-FLOPs / MFU estimation.
 - `OLMO_RICH_LOGGING` can now explicitly enable *or* disable rich console logging (`0`/`false`/`no`/`off` disables it); previously setting it to any value only force-enabled rich logging.
 - `init_distributed()` now bootstraps a minimal single-process environment (`RANK=0`, `WORLD_SIZE=1`, `MASTER_ADDR`/`MASTER_PORT`) when launch env vars are absent, so scripts can be run directly (without `torchrun`) for single-process debugging.
 - Added a configurable `determinism_check` option to activation checkpointing (default `"default"`); set it to `"none"` to skip torch's recompute metadata check for opaque linear-attention kernels under `torch.compile`.
+- Added an opt-in slow-batch-load warning to `SpeedMonitorCallback`: set `OLMO_BATCH_LOAD_WARN_SECONDS` to a positive number to log a warning whenever a step's batch-load time meets or exceeds it (an invalid value is ignored with a warning).
+- Added `patch_torch_stream_custom_ops()` (called from `prepare_cli_environment()`), which registers a missing fake for PyTorch 2.11's `streams::sync_dealloc` op and installs a stable stream/event lookup fallback so `torch.compile` (notably compiled pipeline-parallel backward graphs) traces correctly. It no-ops on torch builds without `torch._dynamo.variables.streams`.
 
 
 ### Fixed
 
+- `WandBCallback` and `CometCallback` now initialize before the checkpointer (via a higher callback `priority`) so that pre-train checkpoint saves no longer drop already-recorded metrics.
+- `EvaluatorCallback` and `BatchSizeSchedulerCallback` now recognize `OLMoDDPTrainModule` (previously they only accepted `TransformerTrainModule`/`TransformerPipelineTrainModule`, so in-loop eval and batch-size scheduling aborted with an OLMoDDP run). `BatchSizeSchedulerCallback` also accepts the `OLMoDDPOptimizer` for its learning-rate adjustment.
 - The CPU `Test` CI job now caches `HF_HOME` across runs so the HuggingFace roundtrip tests (Qwen3-0.6B, Gemma-3-270m) don't re-download their checkpoints every run.
 - Excluded `mark_dynamic` from `torch.compile` tracing (`@torch.compiler.disable`).
 - Clearer error messages (now include the offending values) when a rank batch size isn't divisible by the sequence length, or `max_target_sequence_length` isn't a multiple of `sequence_length`.
@@ -49,13 +104,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed `Transformer.init_weights` so that under interleaved pipeline parallelism (e.g. `Interleaved1F1B`, `InterleavedZeroBubble`) the multiple model chunks owned by a single rank no longer initialize to identical parameters. Adds a `model_part_idx` kwarg incorporated into the seed as `model_part_idx * pp_size`.
 - Disabled `torch.compile` tracing through `TEAttentionBackend.forward`, whose Python/pybind setup is not Dynamo-safe.
 - Fixed `TransformerPipelineTrainModule.num_flops_per_token` returning `None` under pipeline parallelism. Each PP rank only holds its stage's layers, so summing FLOPs from `model_parts` undercounts the model. Capture `model.num_flops_per_token` as a bound method before `split_model` deepcopies and drops layers, then call it at metric time. On meta device (the standard PP init path) this has no memory cost.
+- Fixed `GatedDeltaNet.num_flops_per_token()` to report training FLOPs (a factor of 3 for forward + dgrad + wgrad), matching the other sequence mixers; it previously reported forward-only work, undercounting GDN MFU/TFLOPs.
+- Fixed attention FLOP accounting (`Attention` / `FusedAttention` `num_flops_per_token`) to count the exact causal (and sliding-window) attended `(query, key)` pairs. It previously ignored causal masking, overcounting full-attention layers by ~2x; reported model TFLOPs/MFU on the attention-compute term therefore drop relative to older logs.
 
 ### Changed
 
 - Set transformers version to >= 5.4.0 for Qwen 3.5 and in sync with open-instruct
 - Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
 
-## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
+## [v2.5.0](https://github.com/allenai/Olmo-core/releases/tag/v2.5.0) - 2026-04-01
 
 **This version was never published to PyPI.** The upload was rejected because the package
 metadata contained a direct URL requirement (the `dion` extra), which PyPI does not accept.
@@ -147,7 +204,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Upgraded to beaker-py v2.
 - Now, we check `dist.is_initialized()` before calling `dist.init_process_group()` in `init_distributed()`.
 
-## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+## [v2.4.0](https://github.com/allenai/Olmo-core/releases/tag/v2.4.0) - 2025-11-20
 
 ### Added
 
@@ -177,7 +234,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 
 - Removed unused field in `YaRNRoPEScalingConfig`.
 
-## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
+## [v2.3.0](https://github.com/allenai/Olmo-core/releases/tag/v2.3.0) - 2025-10-17
 
 ### Fixed
 
@@ -247,7 +304,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Added the `WSDS` (Warmup-Stable-Decay-Simplified) learning rate scheduler.
 - Added a script that can pull out a single training batch from a training job
 
-## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
+## [v2.2.0](https://github.com/allenai/Olmo-core/releases/tag/v2.2.0) - 2025-08-26
 
 ### Added
 
@@ -281,7 +338,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
 - Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
 - Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
-- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
+- Added `GenerationModule` for Olmo-core native autoregressive generation with support for kv caching.
 - Added optional hostname constraints for beaker experiments on Google clusters.
 
 ### Changed
@@ -323,7 +380,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Fixed Attention block sharding when TP and head-wise QK norm are both applied.
 - Added RoPE scaling configs to `rope` module's exports.
 
-## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
+## [v2.1.0](https://github.com/allenai/Olmo-core/releases/tag/v2.1.0) - 2025-04-14
 
 ### Added
 
@@ -354,12 +411,12 @@ Also added lower-level methods for converting state between the formats.
 
 - Fixed calculation of total steps based on epochs at the end of a training job.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
-- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, Olmo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
 - Having `t_max` overrides in the default model configs is confusing and error prone, so we removed them.
 - Beaker launcher will only clone a single branch at runtime when possible, which can be much faster.
 
-## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
+## [v2.0.1](https://github.com/allenai/Olmo-core/releases/tag/v2.0.1) - 2025-03-18
 
 ### Added
 
@@ -378,9 +435,9 @@ Also added lower-level methods for converting state between the formats.
 
 - Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
 
-## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
+## [v2.0.0](https://github.com/allenai/Olmo-core/releases/tag/v2.0.0) - 2025-03-12
 
-This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
+This major release introduces a few breaking changes. We've provided more information here: [Olmo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
 
 ### Added
 
@@ -408,7 +465,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed the model ladder code when training on mps or cpu device
 
-## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
+## [v1.9.0](https://github.com/allenai/Olmo-core/releases/tag/v1.9.0) - 2025-03-10
 
 ### Fixed
 
@@ -426,7 +483,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
 - Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
 
-## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
+## [v1.8.0](https://github.com/allenai/Olmo-core/releases/tag/v1.8.0) - 2025-01-29
 
 ### Added
 
@@ -457,7 +514,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed bug where source mixture datasets were truncating source files instead of randomly sampling.
 - Fixed bug in source mixture datsets where sampling from small npy files raised an mmap exception due to 0 instances in the sampled index.
 
-## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
+## [v1.7.0](https://github.com/allenai/Olmo-core/releases/tag/v1.7.0) - 2024-11-27
 
 ### Added
 
@@ -465,7 +522,7 @@ This major release introduces a few breaking changes. We've provided more inform
   for loading checkpoints with different key names.
 - Added `load_key_mapping` field to the trainer, same idea as the new `key_mapping` argument above.
 - Added an implementation of nGPT called `NormalizedTransformer`.
-- Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for OLMo-core.
+- Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for Olmo-core.
 - Added an API for scaling RoPE embeddings.
 - Added a `ModelLadder` API.
 
@@ -479,7 +536,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Made HTTPS and GCS IO functions more robust.
 - Fixed a bug where we were always getting dolma2 tokenized validation data when generating config with DataMix.v3_small_ppl_validation.
 
-## [v1.6.3](https://github.com/allenai/OLMo-core/releases/tag/v1.6.3) - 2024-11-15
+## [v1.6.3](https://github.com/allenai/Olmo-core/releases/tag/v1.6.3) - 2024-11-15
 
 ### Added
 
@@ -493,7 +550,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed single-node training on Google Augusta cluster.
 - `numpy.random.dirichlet()` does not always sum to 1.0, so allow for a small tolerance in validating domain weights.
 
-## [v1.6.2](https://github.com/allenai/OLMo-core/releases/tag/v1.6.2) - 2024-11-08
+## [v1.6.2](https://github.com/allenai/Olmo-core/releases/tag/v1.6.2) - 2024-11-08
 
 ### Added
 
@@ -504,7 +561,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed a bug where some default callbacks could be added twice if given a different name by the user.
 - Fixed a bug where some `Trainer` bookkeeping tasks may not complete before `.fit()` returns.
 
-## [v1.6.1](https://github.com/allenai/OLMo-core/releases/tag/v1.6.1) - 2024-11-06
+## [v1.6.1](https://github.com/allenai/Olmo-core/releases/tag/v1.6.1) - 2024-11-06
 
 ### Added
 
@@ -518,7 +575,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Removed some unnecessary host-device syncs in `olmo_core.distributed.utils`.
 - Added `Trainer(Config).async_bookkeeping` field to toggle async bookkeeping.
 
-## [v1.6.0](https://github.com/allenai/OLMo-core/releases/tag/v1.6.0) - 2024-11-01
+## [v1.6.0](https://github.com/allenai/Olmo-core/releases/tag/v1.6.0) - 2024-11-01
 
 ### Added
 
@@ -536,7 +593,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Made GCS client more robust by automatically retrying timeout errors for most operations.
 
-## [v1.5.0](https://github.com/allenai/OLMo-core/releases/tag/v1.5.0) - 2024-10-23
+## [v1.5.0](https://github.com/allenai/Olmo-core/releases/tag/v1.5.0) - 2024-10-23
 
 ### Added
 
@@ -559,7 +616,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - `prepare_cli_environment()` now calls `add_cached_path_clients()`.
 - Removed an unnecessary host-device sync.
 
-## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
+## [v1.4.0](https://github.com/allenai/Olmo-core/releases/tag/v1.4.0) - 2024-10-02
 
 ### Changed
 
@@ -568,7 +625,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Renamed `VSLDataLoader` to `NumpyVSLDataLoader`.
 - The trainer now takes a `data_loader: DataLoaderBase` instead of a `dataset: NumpyDatasetBase`.
 
-## [v1.3.2](https://github.com/allenai/OLMo-core/releases/tag/v1.3.2) - 2024-09-27
+## [v1.3.2](https://github.com/allenai/Olmo-core/releases/tag/v1.3.2) - 2024-09-27
 
 ### Added
 
@@ -582,13 +639,13 @@ This major release introduces a few breaking changes. We've provided more inform
 - Removed redundant warning messages about CUDA alloc retries.
 - Fixed non-deterministic deadlock bug with async checkpointing.
 
-## [v1.3.1](https://github.com/allenai/OLMo-core/releases/tag/v1.3.1) - 2024-09-26
+## [v1.3.1](https://github.com/allenai/Olmo-core/releases/tag/v1.3.1) - 2024-09-26
 
 ### Fixed
 
 - Fixed the name given to evaluator metrics logged.
 
-## [v1.3.0](https://github.com/allenai/OLMo-core/releases/tag/v1.3.0) - 2024-09-26
+## [v1.3.0](https://github.com/allenai/Olmo-core/releases/tag/v1.3.0) - 2024-09-26
 
 ### Added
 
@@ -596,7 +653,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added support for `torchao` `float8` training via the `Float8HandlerCallback`.
 - Added `Callback.post_attach()` method.
 
-## [v1.2.0](https://github.com/allenai/OLMo-core/releases/tag/v1.2.0) - 2024-09-25
+## [v1.2.0](https://github.com/allenai/Olmo-core/releases/tag/v1.2.0) - 2024-09-25
 
 ### Added
 
@@ -609,7 +666,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed bug with data loader when using threading.
 
-## [v1.1.0](https://github.com/allenai/OLMo-core/releases/tag/v1.1.0) - 2024-09-18
+## [v1.1.0](https://github.com/allenai/Olmo-core/releases/tag/v1.1.0) - 2024-09-18
 
 ### Added
 
@@ -624,7 +681,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Renamed `MemMapDataset` to `NumpyFSLDataset`.
 - Batch size is now specified in tokens, not instances.
 
-## [v1.0.6](https://github.com/allenai/OLMo-core/releases/tag/v1.0.6) - 2024-09-05
+## [v1.0.6](https://github.com/allenai/Olmo-core/releases/tag/v1.0.6) - 2024-09-05
 
 ### Added
 
@@ -640,14 +697,14 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Made reducing metrics more numerically stable with large world sizes.
 
-## [v1.0.5](https://github.com/allenai/OLMo-core/releases/tag/v1.0.5) - 2024-09-03
+## [v1.0.5](https://github.com/allenai/Olmo-core/releases/tag/v1.0.5) - 2024-09-03
 
 ### Fixed
 
 - Fixed bug with checkpointer callback searching for existing ephemeral checkpoints when the checkpoint folder doesn't exist.
 - Checkpointer callback won't collect existing ephemeral checkpoints that were saved after the checkpoint that was loaded from.
 
-## [v1.0.4](https://github.com/allenai/OLMo-core/releases/tag/v1.0.4) - 2024-09-01
+## [v1.0.4](https://github.com/allenai/Olmo-core/releases/tag/v1.0.4) - 2024-09-01
 
 ### Added
 
@@ -665,7 +722,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed setting the right env vars for single node training on Jupiter.
 
-## [v1.0.3](https://github.com/allenai/OLMo-core/releases/tag/v1.0.3) - 2024-08-30
+## [v1.0.3](https://github.com/allenai/Olmo-core/releases/tag/v1.0.3) - 2024-08-30
 
 ### Added
 
@@ -679,7 +736,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed bug with how command arguments were expanded by `BeakerLaunchConfig`.
 
-## [v1.0.2](https://github.com/allenai/OLMo-core/releases/tag/v1.0.2) - 2024-08-29
+## [v1.0.2](https://github.com/allenai/Olmo-core/releases/tag/v1.0.2) - 2024-08-29
 
 ### Added
 
@@ -697,19 +754,19 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Callbacks now have to have a name assigned.
 
-## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
+## [v1.0.1](https://github.com/allenai/Olmo-core/releases/tag/v1.0.1) - 2024-08-26
 
 ### Fixed
 
 - Fixed a bug with resetting the initial LR in optimizers after a loading a checkpoint.
 
-## [v1.0.0](https://github.com/allenai/OLMo-core/releases/tag/v1.0.0) - 2024-08-26
+## [v1.0.0](https://github.com/allenai/Olmo-core/releases/tag/v1.0.0) - 2024-08-26
 
 ### Added
 
 - Ported, refactored, and optimized the modeling and training from the OLMo repo while fixing several bugs. Introduces a new highly efficient yet customizable trainer and a standard API for launching jobs directly to Beaker from a Python script.
 
-## [v0.1.0](https://github.com/allenai/OLMo-core/releases/tag/v0.1.0) - 2024-06-11
+## [v0.1.0](https://github.com/allenai/Olmo-core/releases/tag/v0.1.0) - 2024-06-11
 
 ### Added
 

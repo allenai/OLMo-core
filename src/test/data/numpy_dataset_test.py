@@ -1,3 +1,4 @@
+import gzip
 import math
 from pathlib import Path
 from typing import List
@@ -10,18 +11,28 @@ from olmo_core.data import (
     NumpyFSLDataset,
     NumpyFSLDatasetConfig,
     NumpyPackedFSLDataset,
+    NumpyPackedFSLDatasetConfig,
     NumpyPaddedFSLDataset,
     NumpyVSLDataset,
     TokenizerConfig,
+    numpy_dataset,
 )
-from olmo_core.data.numpy_dataset import NumpyInterleavedFSLDataset
+from olmo_core.data.numpy_dataset import (
+    NumpyFSLDatasetMixture,
+    NumpyInterleavedFSLDataset,
+)
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDatasetConfig,
     SourceMixtureList,
 )
 from olmo_core.data.types import NumpyDatasetDType
-from olmo_core.data.utils import get_document_indices, write_document_indices
+from olmo_core.data.utils import (
+    get_document_indices,
+    get_document_lengths,
+    write_document_indices,
+)
+from olmo_core.io import get_file_size
 
 from .utils import mk_mmaps
 
@@ -944,3 +955,268 @@ def test_guess_dtype():
         paths=[], sequence_length=1024, tokenizer=TokenizerConfig.dolma2()
     )
     assert config.get_dtype() == np.uint32
+
+
+def test_numpy_packed_fsl_dataset_use_array_if_local_not_served_from_stale_cache(tmp_path: Path):
+    """Preparing with the inferred boundaries and then again with the metadata boundaries, in the
+    same work_dir, must not serve the second run from the first run's packing caches."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 0].
+    data = [1, 2, 3, 4, 5, 6, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,7\n")
+
+    work_dir = tmp_path / "work"
+
+    def prepare(use_array_if_local):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=4,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = work_dir
+        ds.prepare()
+        return sum(int((ds[i]["label_mask"]).sum()) for i in range(len(ds)))
+
+    # Inferred boundaries merge the two documents and truncate to 4, dropping the second.
+    assert prepare(None) == 4
+    # Same work_dir, so the caches from the run above are present. The metadata boundaries must
+    # still be honored rather than the stale packing cache being reused.
+    assert prepare(False) == len(data)
+
+
+def test_numpy_packed_fsl_dataset_doc_lens_follow_metadata_boundaries(tmp_path: Path):
+    """`doc_lens` drives the block-diagonal attention mask, so with the metadata boundaries it
+    must not be re-derived by scanning for EOS: the document that lost its terminator would merge
+    with the next one and attention would cross a real boundary."""
+    # [1, 2, 3, 4] lost its EOS to truncation by its producer; then [5, 6, 7, 0].
+    data = [1, 2, 3, 4, 5, 6, 7, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,8\n")
+
+    def doc_lens(use_array_if_local, sequence_length):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=sequence_length,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            generate_doc_lengths=True,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = tmp_path / f"work-{use_array_if_local}-{sequence_length}"
+        ds.prepare()
+        return [ds[i]["doc_lens"].tolist() for i in range(len(ds))]
+
+    # Both documents fill one instance exactly. The metadata boundaries keep them apart; the EOS
+    # scan sees one 8-token span, so attention would cross the boundary.
+    assert doc_lens(False, 8) == [[4, 4]]
+    assert doc_lens(None, 8) == [[8]]
+    # Trailing padding stays a final segment, matching `get_document_lengths`.
+    assert doc_lens(False, 16) == [[4, 4, 8]]
+
+    # A remote source reads the metadata boundaries whatever `use_array_if_local` says, so the
+    # strategy has to follow the effective boundary source rather than the raw option.
+    def packed_from_metadata(use_array_if_local, paths):
+        ds = NumpyPackedFSLDataset(
+            data_path,
+            sequence_length=8,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            use_array_if_local=use_array_if_local,
+        )
+        return ds._packed_from_metadata_boundaries(paths)
+
+    assert packed_from_metadata(True, ["s3://bucket/mmap1.npy"]) is True
+    assert packed_from_metadata(None, ["s3://bucket/mmap1.npy"]) is True
+    assert packed_from_metadata(True, [data_path, "s3://bucket/other.npy"]) is True
+    assert packed_from_metadata(True, [data_path]) is False
+    assert packed_from_metadata(None, [data_path]) is False
+    assert packed_from_metadata(False, [data_path]) is True
+
+
+@pytest.mark.parametrize("pad_token_id", [-1, 0, 9])
+@pytest.mark.parametrize("bos_token_id", [None, 0, 9])
+def test_numpy_packed_fsl_dataset_doc_lens_padding_matches_get_document_lengths(
+    tmp_path: Path, pad_token_id, bos_token_id
+):
+    """Preserve scanner padding segments, including EOS padding and BOS transitions."""
+    bos = bos_token_id if bos_token_id is not None else 9
+    data = [bos, 1, 2, 0, bos, 3, 4, 0]
+    data_path = tmp_path / "mmap1.npy"
+    mmap = np.memmap(data_path, mode="w+", dtype=np.uint16, shape=(len(data),))
+    mmap[:] = data
+    mmap.flush()
+    with gzip.open(data_path.with_suffix(".csv.gz"), mode="wt") as f:
+        f.write("0,4\n4,8\n")
+
+    ds = NumpyPackedFSLDataset(
+        data_path,
+        sequence_length=16,
+        pad_token_id=pad_token_id,
+        eos_token_id=0,
+        bos_token_id=bos_token_id,
+        vocab_size=32_000,
+        generate_doc_lengths=True,
+        use_array_if_local=False,
+    )
+    ds.work_dir = tmp_path / "work"
+    ds.prepare()
+    item = ds[0]
+    assert (
+        item["doc_lens"].tolist()
+        == get_document_lengths(
+            item["input_ids"], eos_token_id=0, bos_token_id=bos_token_id
+        ).tolist()
+    )
+
+
+@pytest.mark.parametrize("source_group_size", [1, 2])
+def test_numpy_packed_fsl_dataset_metadata_correction_invalidates_cache(
+    tmp_path, source_group_size
+):
+    paths = [tmp_path / f"mmap{i}.npy" for i in range(2)]
+    for path in paths:
+        np.array([1, 2, 3, 4, 5, 6, 7, 0], dtype=np.uint16).tofile(path)
+        path.with_suffix(".csv.gz").write_bytes(
+            gzip.compress(b"0,4\n4,8\n", compresslevel=0, mtime=0)
+        )
+    metadata_path = paths[0].with_suffix(".csv.gz")
+    metadata_path.write_bytes(gzip.compress(b"0,3\n3,8\n", compresslevel=0, mtime=0))
+    old_size = metadata_path.stat().st_size
+
+    def prepare():
+        ds = NumpyPackedFSLDatasetConfig(
+            paths=[str(tmp_path / "mmap*.npy")],
+            expand_glob=True,
+            tokenizer=TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1),
+            sequence_length=4,
+            source_group_size=source_group_size,
+            use_array_if_local=False,
+            work_dir=str(tmp_path / "work"),
+        ).build()
+        assert isinstance(ds, NumpyPackedFSLDataset)
+        ds.prepare()
+        return ds
+
+    before = prepare()
+    fingerprint = before.fingerprint
+    cache_paths = [
+        before._get_document_indices_path(*before.paths[:source_group_size]),
+        before._get_instance_offsets_path(*before.paths[:source_group_size]),
+        before._get_docs_by_instance_path(*before.paths[:source_group_size]),
+    ]
+    assert sum(int(item["label_mask"].sum()) for item in before) == 15
+
+    # Correct only the sidecar, keeping both its size and the token array unchanged.
+    metadata_path.write_bytes(gzip.compress(b"0,4\n4,8\n", compresslevel=0, mtime=0))
+    assert metadata_path.stat().st_size == old_size
+    after = prepare()
+    assert sum(int(item["label_mask"].sum()) for item in after) == 16
+    assert after.fingerprint != fingerprint
+    assert all(
+        old != new
+        for old, new in zip(
+            cache_paths,
+            [
+                after._get_document_indices_path(*after.paths[:source_group_size]),
+                after._get_instance_offsets_path(*after.paths[:source_group_size]),
+                after._get_docs_by_instance_path(*after.paths[:source_group_size]),
+            ],
+        )
+    )
+    assert prepare().fingerprint == after.fingerprint
+
+
+@pytest.mark.parametrize("use_array_if_local", [None, True, False])
+def test_numpy_packed_fsl_dataset_metadata_cache_remote_and_mixed(
+    tmp_path, monkeypatch, use_array_if_local
+):
+    local = tmp_path / "local.npy"
+    remote = "https://example.com/remote.npy"
+    sidecar = tmp_path / "remote.csv.gz"
+    sidecar.write_bytes(gzip.compress(b"0,4\n4,8\n", mtime=0))
+    reads = []
+
+    def resource_path(folder, fname):
+        reads.append((folder, fname))
+        return sidecar
+
+    monkeypatch.setattr(numpy_dataset, "resource_path", resource_path)
+    monkeypatch.setattr(numpy_dataset, "get_file_size", lambda path: 16)
+
+    def dataset():
+        ds = NumpyPackedFSLDataset(
+            local,
+            remote,
+            sequence_length=4,
+            pad_token_id=-1,
+            eos_token_id=0,
+            vocab_size=32_000,
+            source_group_size=2,
+            use_array_if_local=use_array_if_local,
+        )
+        ds.work_dir = tmp_path / "work"
+        return ds
+
+    before = dataset()
+    fingerprint = before.fingerprint
+    cache = before._get_document_indices_path(local, remote)
+    assert ("https://example.com", "remote.csv.gz") in reads
+    assert ((str(tmp_path), "local.csv.gz") in reads) is (use_array_if_local is False)
+    reads.clear()
+    before._get_instance_offsets_path(local, remote)
+    before._get_docs_by_instance_path(local, remote)
+    assert not reads  # Hashes are reused; indexing must not fetch the sidecars again.
+    sidecar.write_bytes(gzip.compress(b"0,3\n3,8\n", mtime=0))
+    after = dataset()
+    assert after.fingerprint != fingerprint
+    assert after._get_document_indices_path(local, remote) != cache
+
+
+def test_numpy_fsl_mixture_sizes_shared_index_for_largest_duplicate(tmp_path: Path):
+    # A path duplicated in a mixture shares one indices file, but each occurrence keeps its own
+    # token allocation in `path_offset_index`. If a later occurrence has a larger allocation than
+    # the first, the shared file must be sized for the larger one, or reads for that occurrence's
+    # tail run past the end of the generated file.
+    npdtype = np.uint16
+    seq_len = 4
+    ((path, _),) = mk_mmaps(tmp_path, "dup", 1, 20 * 1000, npdtype, eos=0, seq_length=seq_len)
+
+    small_tokens = 10 * seq_len  # occurrence idx=0
+    large_tokens = 40 * seq_len  # occurrence idx=1 (the larger, later duplicate)
+
+    ds = NumpyFSLDatasetMixture(
+        path,
+        path,
+        path_offset_index={(str(path), 0): small_tokens, (str(path), 1): large_tokens},
+        seed=42,
+        sequence_length=seq_len,
+        pad_token_id=-1,
+        eos_token_id=0,
+        vocab_size=32_000,
+        dtype=npdtype,
+    )
+    ds.work_dir = tmp_path
+    ds.prepare()
+
+    # The shared index file holds enough instances for the larger occurrence.
+    item_size = ds.indices_dtype(0).itemsize
+    file_instances = get_file_size(ds._get_instance_indices_path(path)) // (item_size * 2)
+    assert file_instances >= large_tokens // seq_len
+
+    # The last global instance falls in the larger occurrence and must be readable (out of bounds
+    # before the fix, which sized the file from the first occurrence's smaller allocation).
+    assert len(ds) == small_tokens // seq_len + large_tokens // seq_len
+    assert len(ds[len(ds) - 1]["input_ids"]) == seq_len

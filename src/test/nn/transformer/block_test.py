@@ -9,7 +9,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.distributed.utils import get_rank, get_world_size
-from olmo_core.nn.attention import AttentionConfig, AttentionType
+from olmo_core.nn.attention import AttentionBackendName, AttentionConfig, AttentionType
 from olmo_core.nn.feed_forward import FeedForwardConfig
 from olmo_core.nn.layer_norm import LayerNormConfig
 from olmo_core.nn.transformer.block import (
@@ -93,7 +93,11 @@ def test_tensor_parallel_transformer_block(
 
     seed_all(0)
     d_model = 128
-    attn_kwargs = {**attn_kwargs, "name": AttentionType.default, "use_flash": False}
+    attn_kwargs = {
+        **attn_kwargs,
+        "name": AttentionType.default,
+        "backend": AttentionBackendName.torch,
+    }
 
     block = _build_block(
         block_cls, d_model=d_model, init_device=device.type, attn_kwargs=attn_kwargs

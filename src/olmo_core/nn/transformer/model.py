@@ -25,6 +25,7 @@ from torch.distributed.tensor.parallel import (
     parallelize_module,
 )
 
+import olmo_core.ops.moe as moe_ops
 from olmo_core.data.utils import get_cumulative_document_lengths
 from olmo_core.distributed.parallel import get_pp_mesh
 from olmo_core.distributed.utils import hide_from_torch, unhide_from_torch
@@ -37,12 +38,7 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import (
-    Attention,
-    FusedAttention,
-    RingAttentionLoadBalancer,
-    SequenceMixer,
-)
+from ..attention import Attention, RingAttentionLoadBalancer, SequenceMixer
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -254,12 +250,60 @@ class Transformer(nn.Module):
             device = self.device
         rope_buffers = {}
         for key, block in self.blocks.items():
-            if isinstance(block.attention, (Attention, FusedAttention)):
+            if isinstance(block.attention, Attention):
                 rope = cast(Optional[RotaryEmbeddingBase], block.attention.rope)
                 rope_buffers[int(key)] = None if rope is None else rope.get_buffers(seq_len, device)
             else:
                 rope_buffers[int(key)] = None
         return rope_buffers
+
+    def prepare_cp_sequence_inputs(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        *,
+        ignore_index: int = -100,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], int]:
+        """
+        Shard sequence inputs for context parallelism before entering a pipeline schedule.
+
+        Pipeline-parallel stages exchange hidden activations with already-local CP sequence
+        lengths. The model still needs the original full sequence length later so each stage can
+        build and shard its own RoPE buffers consistently.
+
+        :returns: The CP-sharded ``input_ids``, the CP-sharded ``labels`` (or ``None``), and the
+            original (pre-shard) sequence length.
+        """
+        cp_load_balancer = self._cp_load_balancer
+        if cp_load_balancer is None:
+            raise OLMoConfigurationError(
+                "prepare_cp_sequence_inputs() requires context parallelism to be applied first"
+            )
+        if input_ids.dim() < 2:
+            raise ValueError("'input_ids' must have a batch and sequence dimension")
+        if labels is not None and labels.shape[:2] != input_ids.shape[:2]:
+            raise ValueError(
+                f"'labels' shape {tuple(labels.shape)} does not match input batch/sequence "
+                f"shape {tuple(input_ids.shape[:2])}"
+            )
+
+        original_seq_len = input_ids.shape[1]
+        inputs = [input_ids]
+        seq_dims = [1]
+        pad_values: List[Union[int, float]] = [0]
+
+        if labels is not None:
+            inputs.append(labels)
+            seq_dims.append(1)
+            pad_values.append(ignore_index)
+
+        sharded_inputs = cp_load_balancer.batch_shard(
+            inputs=inputs,
+            seq_dims=seq_dims,
+            pad_values=pad_values,
+        )
+        sharded_labels = sharded_inputs[1] if labels is not None else None
+        return sharded_inputs[0], sharded_labels, original_seq_len
 
     @torch.no_grad()
     def init_weights(
@@ -354,7 +398,20 @@ class Transformer(nn.Module):
                     generator=generator,
                 )
 
-            if isinstance(att, (Attention, FusedAttention)):
+            # Fused MoE-v2 weights.
+            from ..ddp.block import OLMoDDPTransformerBlock
+
+            if isinstance(block, OLMoDDPTransformerBlock):
+                self.init_method.init_moe_v2(
+                    block,
+                    d_model=self.d_model,
+                    block_idx=block.block_idx,
+                    num_blocks=self.n_layers,
+                    std=self.init_std,
+                    generator=generator,
+                )
+
+            if isinstance(att, Attention):
                 # Warm up attention backend cache.
                 if max_seq_len is not None and att.backend is not None:
                     att.backend.warmup_cache(max_seq_len, device)
@@ -396,6 +453,26 @@ class Transformer(nn.Module):
         # so we have to be careful here.
         B, S = input_ids.shape[:2]
 
+        # Context-parallel inputs may already be sequence-sharded by the caller (e.g. the pipeline
+        # train module shards the batch before the pipeline schedule). In that case we must not
+        # shard input_ids/labels again, but we still shard the RoPE buffers, which are built from the
+        # original (pre-shard) sequence length carried in 'cp_original_seq_len'.
+        cp_already_sharded = kwargs.pop("cp_already_sharded", False)
+        cp_original_seq_len = kwargs.pop("cp_original_seq_len", None)
+        if cp_original_seq_len is not None:
+            cp_original_seq_len = int(cp_original_seq_len)
+            if cp_original_seq_len <= 0:
+                raise ValueError("'cp_original_seq_len' must be positive")
+            if not cp_already_sharded:
+                raise OLMoConfigurationError(
+                    "'cp_original_seq_len' is only valid when 'cp_already_sharded=True'"
+                )
+        if cp_already_sharded and cp_original_seq_len is None:
+            raise OLMoConfigurationError(
+                "'cp_already_sharded=True' requires 'cp_original_seq_len' so RoPE buffers can "
+                "be sharded from the full sequence length"
+            )
+
         all_block_kwargs: Dict[str, Any] = {}
         per_block_kwargs: Dict[int, Dict[str, Any]] = defaultdict(dict)
         lm_head_kwargs: Dict[str, Any] = dict(
@@ -425,13 +502,32 @@ class Transformer(nn.Module):
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
-            inputs = [input_ids]
-            seq_dims = [1]
-            pad_values: List[Union[int, float]] = [0]
-            keys = ["input_ids"]
+            inputs: List[torch.Tensor] = []
+            seq_dims: List[int] = []
+            pad_values: List[Union[int, float]] = []
+            keys: List[str] = []
+
+            if cp_already_sharded:
+                input_ids = move_to_device(input_ids, self.device)
+                labels = move_to_device(labels, self.device)
+                if cu_doc_lens is not None or max_doc_len is not None:
+                    raise OLMoConfigurationError(
+                        "context parallel inputs that are already sharded cannot also pass "
+                        "'doc_lens'/'max_doc_lens'; pre-sharded intra-document masking metadata "
+                        "is not implemented yet"
+                    )
+            else:
+                inputs.append(input_ids)
+                seq_dims.append(1)
+                pad_values.append(0)
+                keys.append("input_ids")
+
+            rope_seq_len = cp_original_seq_len if cp_already_sharded else S
 
             # NOTE: initialize buffer(s) on CPU to avoid possible host-device sync when sharding.
-            for block_idx, rope_buffers in self.get_rope_buffers(S, torch.device("cpu")).items():
+            for block_idx, rope_buffers in self.get_rope_buffers(
+                rope_seq_len, torch.device("cpu")
+            ).items():
                 if rope_buffers is not None:
                     # Also shard RoPE buffers based on the context parallelism load balancer.
                     if rope_buffers.pos_sin is not None:
@@ -450,7 +546,7 @@ class Transformer(nn.Module):
                         pad_values.append(0.0)
                         keys.append(f"block_{block_idx}.freqs_cis")
 
-            if labels is not None:
+            if labels is not None and not cp_already_sharded:
                 inputs.append(labels)
                 seq_dims.append(1)
                 pad_values.append(ignore_index)
@@ -481,11 +577,12 @@ class Transformer(nn.Module):
                     all_block_kwargs[key] = move_to_device(value, self.device)
 
             else:
-                inputs = cp_load_balancer.batch_shard(
-                    inputs=inputs,
-                    seq_dims=seq_dims,
-                    pad_values=pad_values,
-                )
+                if inputs:
+                    inputs = cp_load_balancer.batch_shard(
+                        inputs=inputs,
+                        seq_dims=seq_dims,
+                        pad_values=pad_values,
+                    )
 
             for key, value in zip(keys, inputs):
                 if key.startswith("block_"):
@@ -495,9 +592,14 @@ class Transformer(nn.Module):
                 else:
                     all_block_kwargs[key] = move_to_device(value, self.device)
 
-            input_ids = all_block_kwargs.pop("input_ids")
-            labels = all_block_kwargs.pop("labels", None)
+            if not cp_already_sharded:
+                input_ids = all_block_kwargs.pop("input_ids")
+                labels = all_block_kwargs.pop("labels", None)
         else:
+            if cp_already_sharded:
+                raise OLMoConfigurationError(
+                    "'cp_already_sharded=True' requires context parallelism to be applied first"
+                )
             input_ids = move_to_device(input_ids, self.device)
             labels = move_to_device(labels, self.device)
 
@@ -508,6 +610,33 @@ class Transformer(nn.Module):
                 all_block_kwargs["cu_doc_lens"] = move_to_device(cu_doc_lens, self.device)
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
+
+        emo_blocks = []
+        emo_eos_token_ids = set()
+        for block_idx, block in self.blocks.items():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                emo_blocks.append(int(block_idx))
+                emo_eos_token_ids.add(router.eos_token_id)
+        if emo_blocks:
+            if self._pp_enabled:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
+            if self._tp_enabled:
+                raise OLMoConfigurationError("EMO routing does not support tensor parallelism")
+            if self._cp_load_balancer is not None:
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support context parallelism"
+                )
+            if len(emo_eos_token_ids) != 1:
+                raise OLMoConfigurationError(
+                    "All EMO routers in a model must use the same eos_token_id"
+                )
+            segment_ids = moe_ops.segment_ids_from_eos(input_ids, emo_eos_token_ids.pop())
+            for block_idx in emo_blocks:
+                per_block_kwargs[block_idx]["segment_ids"] = segment_ids
 
         if "cu_doc_lens" in all_block_kwargs:
             mark_dynamic(all_block_kwargs["cu_doc_lens"], 0, strict=False)  # type: ignore[arg-type]
@@ -639,6 +768,13 @@ class Transformer(nn.Module):
         Prepare the model for pipeline parallelism after it's been split into stages.
         """
         for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support pipeline parallelism because "
+                    "token-derived segment IDs are not carried between pipeline stages"
+                )
+        for block in self.blocks.values():
             block = cast(TransformerBlockBase, block)
             block.apply_pp(pp_mesh)
         self._pp_enabled = True
@@ -651,6 +787,14 @@ class Transformer(nn.Module):
         :param loss_parallel: Set to ``True`` if parallelizing the loss function as well.
         :param float8_enabled: Set this to ``True`` if training with float8 linear layers.
         """
+        for block in self.blocks.values():
+            router = getattr(block, "routed_experts_router", None)
+            if router is not None and getattr(router, "requires_segment_ids", False):
+                raise OLMoConfigurationError(
+                    "EMO routing does not currently support tensor parallelism because "
+                    "document pools require the complete token sequence"
+                )
+
         if self.tie_word_embeddings and (
             self.lm_head is None
             or self.lm_head.loss_implementation == LMLossImplementation.fused_linear
@@ -768,8 +912,17 @@ class Transformer(nn.Module):
         if mode == TransformerActivationCheckpointingMode.selected_modules and modules is None:
             raise ValueError("'modules' is required for 'selected_modules' mode")
 
-        # TODO: only preserve RNG state if dropout is active
-        preserve_rng_state = False
+        # EMO samples a routed-expert pool size for each document. Recompute must replay those
+        # samples so it routes through the same experts as the original checkpointed forward.
+        # TODO: also preserve RNG state if dropout is active.
+        preserve_rng_state = any(
+            getattr(
+                getattr(block, "routed_experts_router", None),
+                "requires_segment_ids",
+                False,
+            )
+            for block in self.blocks.values()
+        )
 
         if mode == TransformerActivationCheckpointingMode.selected_modules:
             from fnmatch import fnmatch
