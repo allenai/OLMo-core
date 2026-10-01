@@ -214,9 +214,11 @@ def test_document_mode_accepts_packer_subsegment_ids_without_branches():
             input_ids,
             subsegment_ids=torch.tensor([[0, 0, 0, 1, 1, 1]]),
             example_ids=torch.tensor([[0, 0, 0, 1, 1, 1]]),
+            position_ids=torch.tensor([[0, 1, 2, 0, 1, 2]]),  # the packer always sends these
         )
     kwargs = lm_forward.call_args.kwargs
     assert kwargs["doc_lens"].tolist() == [[3, 3]] and kwargs["and_mask"] is None
+    assert kwargs["position_ids"] is None
 
 
 def test_document_mode_rejects_sibling_branch_packing():
