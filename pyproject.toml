@@ -101,6 +101,7 @@ environments = [
 
 [tool.setuptools]
 include-package-data = true
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [tool.setuptools.package-data]
 olmo_core = [
