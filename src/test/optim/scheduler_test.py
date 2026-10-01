@@ -1,8 +1,10 @@
 import math
+import warnings
 from typing import List, Tuple, Type
 
 import pytest
 
+import olmo_core.optim.scheduler as scheduler_module
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.optim import (
     WSDS,
@@ -325,11 +327,29 @@ def test_sequential_scheduler_override_decay_t_max_warning():
         scheduler.get_lr(10.0, 600, 10_000)
 
     # No further warnings on subsequent calls.
-    import warnings as _warnings
-
-    with _warnings.catch_warnings():
-        _warnings.simplefilter("error", UserWarning)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
         scheduler.get_lr(10.0, 700, 10_000)
+
+
+def test_composable_scheduler_t_max_warning_rank0_only(monkeypatch):
+    monkeypatch.setattr(scheduler_module, "get_rank", lambda: 1)
+    scheduler = ComposableScheduler(
+        stages=[
+            ComposableSchedulerStage(
+                duration=100,
+                shape=ComposableSchedulerStageType.linear,
+                end_lr=0.0,
+            )
+        ],
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", UserWarning)
+        assert scheduler.get_lr(1.0, 50, 1_000) == pytest.approx(0.5)
+
+    assert not [warning for warning in caught if "ignores 't_max'" in str(warning.message)]
+    assert scheduler._warned_t_max_ignored
 
 
 def test_composable_scheduler_override_decay_linear():

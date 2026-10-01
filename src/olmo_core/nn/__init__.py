@@ -2,6 +2,7 @@
 Common :class:`torch.nn.Module` implementations.
 """
 
+from .output_discard_checkpoint import OutputDiscardCheckpoint
 from .vision import (
     ImagePoolingType,
     ImageProjectorType,
@@ -15,6 +16,7 @@ from .vision import (
 )
 
 __all__ = [
+    "OutputDiscardCheckpoint",
     "VisionEncoderType",
     "VisionEncoderConfig",
     "VisionTransformer",

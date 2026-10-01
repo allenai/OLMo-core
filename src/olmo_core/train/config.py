@@ -52,6 +52,11 @@ class TrainerConfig(Config):
     no_checkpoints: bool = False
     no_evals: bool = False
     steps_to_skip: Optional[List[StepSkipRange]] = None
+    checkpoints_to_eval: Optional[List[str]] = None
+    """
+    Checkpoint paths (or globs) to evaluate with :meth:`Trainer.eval_checkpoints`. No effect during
+    training.
+    """
 
     def add_callback(self, name: str, callback: Callback):
         """
@@ -144,6 +149,7 @@ class TrainerConfig(Config):
         train_module: TrainModule,
         data_loader: DataLoaderBase,
         *,
+        eval_only: bool = False,
         dp_process_group: Optional[dist.ProcessGroup] = None,
         checkpointer_pg: Optional[dist.ProcessGroup] = None,
     ) -> Trainer:
@@ -152,9 +158,14 @@ class TrainerConfig(Config):
 
         :param train_module: The train module to fit.
         :param data_loader: The data loader to train on.
+        :param eval_only: Accepted for a uniform calling convention with the train-module config's
+            ``build()`` (which uses it to skip building the optimizer). The trainer itself needs no
+            special eval-only state, so it's ignored here.
         :param dp_process_group: The data parallel process group. Defaults to
             :data:`olmo_core.train.train_module.TrainModule.dp_process_group`.
         """
+        del eval_only
+
         kwargs = self.as_dict(exclude_none=True, recurse=False)
 
         if dp_process_group is None:

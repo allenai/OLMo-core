@@ -60,6 +60,7 @@ from .config import (
     TransformerPipelineParallelConfig,
     TransformerTensorParallelConfig,
 )
+from .train_module import _assert_no_unowned_fp8_weight_stores
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ class TransformerPipelineTrainModule(TrainModule):
         state_dict_load_opts: Optional[dist_cp_sd.StateDictOptions] = None,
         load_key_mapping: Optional[Dict[str, str]] = None,
         label_ignore_index: int = -100,
+        eval_only: bool = False,
     ):
         super().__init__()
 
@@ -156,6 +158,7 @@ class TransformerPipelineTrainModule(TrainModule):
         self.pp_prev_rank = (self.pp_group_rank - 1) % self.pp_group_size
         self.pp_next_rank = (self.pp_group_rank + 1) % self.pp_group_size
         self.pp_final_stage_rank = self._pp_config.final_stage_rank()
+        pp_p2p_group = pp_config.build_p2p_process_group(self.world_mesh)
 
         # Capture num_flops_per_token from the full unsplit model before split_model deepcopies
         # and drops layers. Under PP each rank only holds its pipeline stage's layers, so querying
@@ -164,7 +167,13 @@ class TransformerPipelineTrainModule(TrainModule):
         self._full_model_num_flops_per_token = model.num_flops_per_token
 
         # Split model into pipeline stages.
-        stages, model_parts = pp_config.split_model(model, pp_mesh=self.pp_mesh, device=self.device)
+        stages, model_parts = pp_config.split_model(
+            model,
+            pp_mesh=self.pp_mesh,
+            device=self.device,
+            use_ddp=(self.dp_world_size > 1 and dp_config is not None and dp_config.name == "ddp"),
+            p2p_group=pp_p2p_group,
+        )
         self._pp_stages = stages
         log.info(
             f"Applied pipeline parallelism to the model with {get_device_mesh_info(self.pp_mesh)}"
@@ -205,12 +214,57 @@ class TransformerPipelineTrainModule(TrainModule):
             flatten_optimizer_state_dict=True, strict=False
         )
         self.load_key_mapping = load_key_mapping
+        self.eval_only = eval_only
 
-        # Build optimizer(s).
-        log.info("Building optimizer(s)...")
-        self.optimizers: List[Optimizer] = [
-            optim.build(model, strict=False) for model in self.model_parts
-        ]
+        # Build optimizer(s) — skipped in ``eval_only`` mode (no backward, no step).
+        # NOTE: parallelize_model() above still runs because PP/FSDP/HSDP wrapping is required for
+        # param sharding even at eval time. Only the optimizer construction is skipped here.
+        self.optimizers: List[Optimizer] = []
+        if not self.eval_only:
+            log.info("Building optimizer(s)...")
+            for model in self.model_parts:
+                _assert_no_unowned_fp8_weight_stores(model)
+            self.optimizers = [optim.build(model, strict=False) for model in self.model_parts]
+        else:
+            log.info("Skipping optimizer build because eval_only=True")
+
+    def _require_optimizers(self) -> List[Optimizer]:
+        if not self.optimizers:
+            raise RuntimeError(
+                f"{type(self).__name__} was built with eval_only=True and has no optimizers"
+            )
+        return self.optimizers
+
+    @property
+    def model(self) -> Transformer:
+        """
+        Convenience accessor for the single model part when pipeline parallelism is not in use.
+
+        Provided so callers that expect a single ``model`` attribute (e.g.
+        :class:`~olmo_core.train.callbacks.speed_monitor.SpeedMonitorCallback`,
+        :class:`~olmo_core.train.callbacks.hf_converter.HFConverterCallback`,
+        :class:`~olmo_core.train.callbacks.model_merger.ModelMergerCallback`,
+        :class:`~olmo_core.train.callbacks.gap_monitor.GAPMonitorCallback`,
+        and ``Checkpointer.load_model_module``) work without branching on train-module type.
+
+        Use :data:`model_parts` directly when iterating over all parts.
+
+        :raises RuntimeError: If pipeline parallelism is in use (``len(model_parts) > 1``).
+            ``model_parts[0]`` would only expose stage 0's weights/modules, which is silently
+            wrong for callers that read state-dicts, named parameters, or do full-model export.
+
+        .. note::
+            TODO: update the callers above to iterate ``model_parts`` (or otherwise stitch stages
+            together) so this property can return a coherent view when ``len(model_parts) > 1``.
+            Until then, the explicit error here is preferable to silently returning a partial model.
+        """
+        if len(self.model_parts) > 1:
+            raise RuntimeError(
+                f"{type(self).__name__}.model is only valid when pipeline parallelism is "
+                f"disabled (len(model_parts) == 1); got len(model_parts) == "
+                f"{len(self.model_parts)}. Iterate `train_module.model_parts` instead."
+            )
+        return self.model_parts[0]
 
     @property
     def dp_process_group(self) -> Optional[dist.ProcessGroup]:
@@ -237,6 +291,10 @@ class TransformerPipelineTrainModule(TrainModule):
     @property
     def cp_enabled(self) -> bool:
         return self._cp_config is not None
+
+    @property
+    def dp_config(self) -> Optional[TransformerDataParallelConfig]:
+        return self._dp_config
 
     @property
     def train_pp_schedule(self) -> PipelineSchedule:
@@ -277,13 +335,15 @@ class TransformerPipelineTrainModule(TrainModule):
             stages=self._pp_stages,
             pp_mesh=pp_mesh,
             schedule_name=self._pp_config.schedule,
-            loss_fn=self.loss_fn,
             num_microbatches=num_microbatches,
+            forward_pull_ahead_extra_activations=self._pp_config.forward_pull_ahead_extra_activations,
+            save_plot=self._pp_config.save_schedule_plot,
+            plot_dir=self._pp_config.schedule_plot_dir,
         )
 
     def state_dict(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = bool(self.optimizers)
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def state_dict_to_load(
@@ -296,7 +356,10 @@ class TransformerPipelineTrainModule(TrainModule):
                 break
 
         if optim is None:
-            if not has_optim_state:
+            if not self.optimizers:
+                # eval_only: never load optim state, even if the checkpoint has it
+                optim = False
+            elif not has_optim_state:
                 log.warning("No optimizer state found in checkpoint")
                 optim = False
             else:
@@ -342,7 +405,7 @@ class TransformerPipelineTrainModule(TrainModule):
 
     def state_dict_to_save(self, *, optim: Optional[bool] = None) -> Dict[str, Any]:
         if optim is None:
-            optim = True
+            optim = bool(self.optimizers)
         return self._get_state_dict(self.state_dict_save_opts, optim=optim)
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
@@ -363,7 +426,12 @@ class TransformerPipelineTrainModule(TrainModule):
             full_state_dict = self._get_state_dict(load_opts, optim=load_optim)
             merge_state_dicts(state_dict, full_state_dict)
 
-        for model, optim in zip(self.model_parts, self.optimizers):
+        # In eval_only mode ``self.optimizers`` is empty, so we iterate model_parts directly to
+        # ensure model state still gets loaded; ``load_optim`` is False in that case.
+        optimizers_or_none: List[Optional[Optimizer]] = (
+            list(self.optimizers) if self.optimizers else [None] * len(self.model_parts)
+        )
+        for model, optim in zip(self.model_parts, optimizers_or_none):
             dist_cp_sd.set_model_state_dict(
                 model,
                 state_dict["model"],
@@ -371,6 +439,7 @@ class TransformerPipelineTrainModule(TrainModule):
             )
             gc_cuda()
             if load_optim:
+                assert optim is not None
                 dist_cp_sd.set_optimizer_state_dict(
                     model,
                     optim,
@@ -429,6 +498,7 @@ class TransformerPipelineTrainModule(TrainModule):
             self.record_ce_loss(ce_batch_loss)
         elif ce_batch_loss is not None:
             self.record_ce_loss(ce_batch_loss, ReduceType.mean)
+
         if z_batch_loss is not None:
             assert self.z_loss_multiplier
             self.record_metric(
@@ -508,6 +578,7 @@ class TransformerPipelineTrainModule(TrainModule):
         raise RuntimeError(f"{self.__class__.__name__} does not support inference")
 
     def optim_step(self):
+        self._require_optimizers()
         # Maybe clip gradients.
         if self.max_grad_norm is not None:
             grad_norm = self._clip_grad_norm(self.max_grad_norm)
@@ -546,7 +617,7 @@ class TransformerPipelineTrainModule(TrainModule):
             model.post_optim_step()
 
     def zero_grads(self):
-        for optim in self.optimizers:
+        for optim in self._require_optimizers():
             optim.zero_grad(set_to_none=True)
 
     def run_pipeline(
@@ -648,7 +719,7 @@ class TransformerPipelineTrainModule(TrainModule):
                 for sd in map(
                     partial(dist_cp_sd.get_optimizer_state_dict, options=sd_options),
                     self.model_parts,
-                    self.optimizers,
+                    self._require_optimizers(),
                 )
                 for k, v in sd.items()
             }

@@ -44,7 +44,7 @@ from olmo_core.train.callbacks import (
     ProfilerCallback,
     SlackNotifierCallback,
 )
-from olmo_core.train.train_module import TrainModuleConfig, TransformerTrainModuleConfig
+from olmo_core.train.train_module import TrainModuleConfig
 from olmo_core.utils import prepare_cli_environment, seed_all
 
 from .common import build_launch_config, get_beaker_username, get_root_dir, get_work_dir
@@ -112,6 +112,7 @@ class SubCmd(StrEnum):
     prep = "prep"
     launch_prep = "launch_prep"
     dry_run = "dry_run"
+    eval_checkpoints = "eval_checkpoints"
 
     def post_launch_subcmd(self) -> "SubCmd":
         if self in (SubCmd.launch_prep, SubCmd.prep):
@@ -126,6 +127,8 @@ class SubCmd(StrEnum):
             prepare_training_environment(backend=config.backend)
         elif self == SubCmd.train_single:
             prepare_training_environment(backend=None)
+        elif self == SubCmd.eval_checkpoints:
+            prepare_training_environment(backend=config.backend)
         else:
             raise NotImplementedError(self)
 
@@ -164,6 +167,9 @@ class SubCmd(StrEnum):
             prep(config)
         elif self == SubCmd.launch_prep:
             launch_prep(config)
+        elif self == SubCmd.eval_checkpoints:
+            eval_checkpoints(config)
+            teardown_training_environment()
         else:
             raise NotImplementedError(self)
 
@@ -290,45 +296,13 @@ def _build_default_eval_callbacks(common: CommonComponents) -> Dict[str, Callbac
     }
 
 
-# NOTE: unused, but here's the logic in case we need it again.
-#
-#  def _set_beaker_execution_units(config: ExperimentConfig):
-#      # When running on Augusta with hostname constraints enabled, setting more beaker
-#      # execution units than model replicas may result in the replicas being split across
-#      # Augusta hardware blocks.
-#      if (
-#          config.launch
-#          and config.launch.use_hostname_constraints
-#          and any("augusta" in cluster for cluster in config.launch.clusters)
-#          and (dp_config := getattr(config.train_module, "dp_config", None)) is not None
-#      ):
-#          if dp_config.num_replicas is not None:
-#              num_model_replicas = dp_config.num_replicas
-#          elif dp_config.shard_degree is not None:
-#              nodes_per_replica = max(1, dp_config.shard_degree // config.launch.num_gpus)
-#              num_model_replicas = config.launch.num_nodes // nodes_per_replica
-#          else:
-#              return
-
-#          if config.launch.num_execution_units is None:
-#              log.info(f"Setting number of execution units to {num_model_replicas}.")
-#              config.launch.num_execution_units = num_model_replicas
-#          elif config.launch.num_execution_units > num_model_replicas:
-#              log.warning(
-#                  f"Number of execution units {config.launch.num_execution_units} exceeds number of model replicas {num_model_replicas}. "
-#                  "On Augusta, this may result in suboptimal performance due to model replicas being split "
-#                  "across hardware blocks. To resolve, decrease num_execution_units in beaker launch config, "
-#                  "increase number of model replicas or disable use_hostname_constraints in beaker launch config."
-#              )
-
-
 def build_config(
     cli_context: CliContext,
     *,
     common_config_builder: Callable[..., CommonComponents] = build_common_components,
     data_config_builder: Callable[..., DataComponents] = build_default_data_components,
     model_config_builder: Callable[[CommonComponents], TransformerConfig],
-    train_module_config_builder: Callable[[CommonComponents], TransformerTrainModuleConfig],
+    train_module_config_builder: Callable[[CommonComponents], TrainModuleConfig],
     trainer_config_builder: Callable[[CommonComponents], TrainerConfig],
     finalize_config: Optional[Callable[[ExperimentConfig], None]] = None,
     tokenizer: TokenizerConfig = TokenizerConfig.dolma2(),
@@ -355,7 +329,7 @@ def build_config(
     :param model_config_builder: Function to build the transformer model configuration. This should accept a
         ``CommonComponents`` instance and return a ``TransformerConfig`` instance.
     :param train_module_config_builder: Function to build the training module configuration. This should accept a
-        ``CommonComponents`` instance and return a ``TransformerTrainModuleConfig`` instance.
+        ``CommonComponents`` instance and return a ``TrainModuleConfig`` instance.
     :param trainer_config_builder: Function to build the trainer configuration. This should accept a
         ``CommonComponents`` instance and return a ``TrainerConfig`` instance.
     :param finalize_config: Optional function to finalize the configuration. This should accept an
@@ -413,7 +387,6 @@ def build_config(
     )
 
     config = config.merge(cli_context.overrides)
-    #  _set_beaker_execution_units(config)
     if finalize_config is not None:
         finalize_config(config)
 
@@ -473,6 +446,24 @@ def train(config: ExperimentConfig):
 
     # Train (also handles checkpoint loading)
     trainer.fit()
+
+
+def eval_checkpoints(config: ExperimentConfig):
+    # Set RNG states on all devices.
+    seed_all(config.init_seed)
+
+    # Build components in eval-only mode (no optimizer, no DP wrapping).
+    model = config.model.build(init_device="meta")
+    train_module = config.train_module.build(model, eval_only=True)
+    data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
+    trainer = config.trainer.build(train_module, data_loader, eval_only=True)
+
+    # Record the config to W&B/Comet and each checkpoint dir.
+    config_dict = config.as_config_dict()
+    cast(ConfigSaverCallback, trainer.callbacks["config_saver"]).config = config_dict
+
+    # Eval (also handles checkpoint loading)
+    trainer.eval_checkpoints()
 
 
 def main(*, config_builder: ConfigBuilder) -> None:

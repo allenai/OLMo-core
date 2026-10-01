@@ -1,0 +1,4 @@
+proofpile-2-stack,preprocessed/proof-pile-2/v0_decontaminated/algebraic-stack/train/{TOKENIZER}/part-00-00000.npy
+starcoder,preprocessed/starcoder/v1-decon-100_to_20k-2star-top_token_030/{TOKENIZER}/part-099-00000.npy
+dclm,preprocessed/dclm/text_openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train/{TOKENIZER}/part-000-00000.npy
+wikipedia,preprocessed/olmo-mix/danyh-compiled-v1_7/documents/wiki/{TOKENIZER}/part-1-00000.npy

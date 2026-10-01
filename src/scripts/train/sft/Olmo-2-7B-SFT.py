@@ -33,6 +33,7 @@ from olmo_core.internal.common import (
 )
 from olmo_core.io import copy_dir, dir_is_empty, get_parent, join_path, list_directory
 from olmo_core.launch.beaker import BeakerLaunchConfig
+from olmo_core.nn.attention import AttentionBackendName
 from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.optim import LinearWithWarmup, SkipStepAdamWConfig
 from olmo_core.train import (
@@ -226,7 +227,7 @@ class SFTConfig(Config):
     """
     Custom config class for the sft run.
 
-    Making config classes isn't strictly necessary for OLMo-core, but it gives us a nice way to
+    Making config classes isn't strictly necessary for Olmo-core, but it gives us a nice way to
     capture all of the hyperparameters for a run and an easy way to override those options from
     the command line without configuring a complicated command line parser.
     """
@@ -310,7 +311,7 @@ class SFTConfig(Config):
 
         model = TransformerConfig.olmo2_7B(
             vocab_size=tokenizer_config.padded_vocab_size(),
-            use_flash=True,
+            attn_backend=AttentionBackendName.flash_2,
             rope_theta=8 * 10**6,
         )
 

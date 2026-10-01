@@ -174,7 +174,6 @@ class AOFloat8LinearConfig(Config, _AOTypePlaceholder["Float8LinearConfig"]):
     def recommended(**kwargs: Any) -> "AOFloat8LinearConfig":
         return AOFloat8LinearConfig(
             enable_fsdp_float8_all_gather=True,
-            force_recompute_fp8_weight_in_bwd=True,
             round_scales_to_power_of_2=True,
             **kwargs,
         )

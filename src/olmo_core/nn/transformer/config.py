@@ -19,6 +19,7 @@ from ..attention import (
     GateConfig,
     GateGranularity,
     SlidingWindowAttentionConfig,
+    _resolve_attention_backend,
 )
 from ..attention.recurrent import GatedDeltaNetConfig
 from ..buffer_cache import BufferCache
@@ -96,6 +97,11 @@ class TransformerType(StrEnum):
     ➡️ :class:`MoETransformer`
     """
 
+    moe_fused_v2 = "moe_fused_v2"
+    """
+    ➡️ :class:`OLMoDDPModel`
+    """
+
 
 class TransformerBlockType(StrEnum):
     """
@@ -145,6 +151,11 @@ class TransformerBlockType(StrEnum):
     moe_hybrid_reordered_norm = "moe_hybrid_reordered_norm"
     """
     ➡️ :class:`MoEHybridReorderedNormTransformerBlock`
+    """
+
+    moe_fused_v2 = "moe_fused_v2"
+    """
+    ➡️ :class:`OLMoDDPTransformerBlock`
     """
 
 
@@ -257,6 +268,10 @@ class TransformerBlockConfig(ModuleConfig):
                 return MoEHybridTransformerBlock(**kwargs)
             elif self.name == TransformerBlockType.moe_hybrid_reordered_norm:
                 return MoEHybridReorderedNormTransformerBlock(**kwargs)
+            elif self.name == TransformerBlockType.moe_fused_v2:
+                from olmo_core.nn.ddp.block import OLMoDDPTransformerBlock
+
+                return OLMoDDPTransformerBlock(**kwargs)
             else:
                 raise NotImplementedError(self.name)
         except TypeError as e:
@@ -424,6 +439,8 @@ class TransformerConfig(ModelConfig):
                 block_pattern=self.block_pattern,
                 tie_word_embeddings=self.tie_word_embeddings,
             )
+        elif self.name == TransformerType.moe_fused_v2:
+            raise RuntimeError("Use OLMoDDPModelConfig")
         else:
             raise NotImplementedError(self.name)
 
@@ -1554,7 +1571,7 @@ class TransformerConfig(ModelConfig):
         partial_rotary_factor: float = 0.25,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
@@ -1607,8 +1624,7 @@ class TransformerConfig(ModelConfig):
                 gate=GateConfig(granularity=GateGranularity.elementwise),
                 qk_norm=layer_norm,
                 use_head_qk_norm=True,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(hidden_size=intermediate_size, bias=False, dtype=dtype),
@@ -1649,7 +1665,7 @@ class TransformerConfig(ModelConfig):
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         sliding_window: Optional[SlidingWindowAttentionConfig] = None,
         block_name: TransformerBlockType = TransformerBlockType.default,
@@ -1694,9 +1710,11 @@ class TransformerConfig(ModelConfig):
         att_type = AttentionType.default
         if rope_type is None:
             rope_type = RoPEType.default
-            if fused_ops and n_kv_heads is None:  # fused attention not compatible with MQA/GQA.
-                att_type = AttentionType.fused
-                rope_type = RoPEType.fused
+            if fused_ops and n_kv_heads is None:
+                att_type = AttentionType.fused_v2
+                use_flash = None  # The original fused implementation ignored this flag.
+                if attn_backend is None:
+                    attn_backend = AttentionBackendName.flash_2
 
         # Feed-forward.
         if feed_forward is None and feed_forward_moe is None:
@@ -1721,8 +1739,7 @@ class TransformerConfig(ModelConfig):
                 gate=gate,
                 qk_norm=layer_norm if qk_norm else None,
                 use_head_qk_norm=use_head_qk_norm if qk_norm else None,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 sliding_window=sliding_window,
                 dtype=dtype,
             ),
@@ -1817,7 +1834,8 @@ class TransformerConfig(ModelConfig):
         rope_theta: int = 500_000,
         hidden_size_multiple_of: int = 256,
         hidden_size_multiplier: Optional[float] = None,
-        use_flash: bool = False,
+        use_flash: bool = False,  # Deprecated; use attn_backend instead.
+        attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
     ) -> "TransformerConfig":
@@ -1839,7 +1857,7 @@ class TransformerConfig(ModelConfig):
                 n_kv_heads=n_kv_heads,
                 qk_norm=None if not qk_norm else LayerNormConfig(name=LayerNormType.l2_norm),
                 rope=RoPEConfig(name=RoPEType.default, theta=rope_theta),
-                use_flash=use_flash,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 dtype=dtype,
             ),
             feed_forward=FeedForwardConfig(
@@ -1878,7 +1896,7 @@ class TransformerConfig(ModelConfig):
         global_layer_interval: int = 6,
         layer_norm_eps: float = 1e-6,
         fused_ops: bool = False,
-        use_flash: Optional[bool] = None,
+        use_flash: Optional[bool] = None,  # Deprecated; use attn_backend instead.
         attn_backend: Optional[AttentionBackendName] = None,
         dtype: DType = DType.float32,
         **kwargs,
@@ -1916,8 +1934,7 @@ class TransformerConfig(ModelConfig):
                 gate=gate,
                 qk_norm=layer_norm,
                 use_head_qk_norm=True,
-                use_flash=use_flash,
-                backend=attn_backend,
+                backend=_resolve_attention_backend(attn_backend, use_flash),
                 sliding_window=SlidingWindowAttentionConfig(
                     pattern=[local_window_size],  # Always apply SWA on local_block
                     force_full_attention_on_first_layer=False,
@@ -2000,6 +2017,98 @@ class TransformerConfig(ModelConfig):
 
         new_config.block_overrides = overrides or None
         return new_config
+
+
+@dataclass
+class OLMoDDPModelConfig(TransformerConfig):
+    """
+    A :class:`TransformerConfig` for the fused MoE-v2 model
+    (:class:`~olmo_core.nn.ddp.model.OLMoDDPModel`).
+    """
+
+    two_batch_overlap: bool = False
+    """
+    Overlap compute with the all-to-all communication when expert parallelism is enabled by
+    splitting each micro-batch into two halves. The micro-batch size must be a multiple of 2.
+    """
+
+    recompute_all_blocks_by_chunk: bool = False
+    """
+    Recompute all blocks as a single chunk rather than per-layer. Reduces the activation memory
+    held in early pipeline-parallel stages; should not be used without pipeline parallelism as it
+    adds recomputation overhead for no benefit.
+    """
+
+    recompute_each_block: bool = False
+    """
+    Recompute each block individually. Keeps only one block's activations live at a time at the
+    cost of extra recomputation. Works with or without pipeline parallelism, but is incompatible
+    with :data:`two_batch_overlap`.
+    """
+
+    recompute_block_keys: Optional[List[str]] = None
+    """
+    Restrict block-level recomputation to the named submodules of each block.
+    """
+
+    def build(
+        self,
+        *,
+        init_device: str = "cpu",
+    ) -> "Transformer":
+        """
+        Build the model corresponding to this config.
+
+        :param init_device: The device to put the parameters on during initialization. In a
+            distributed setting it usually makes sense to set this to "meta".
+        """
+        from .model import Transformer
+
+        log.info(
+            f"Building transformer with {self.num_params:,d} total params, "
+            f"{self.num_non_embedding_params:,d} non-embedding params"
+        )
+        model: Transformer
+        if self.name == TransformerType.moe_fused_v2:
+            from olmo_core.nn.ddp.model import OLMoDDPModel
+
+            model = OLMoDDPModel(
+                d_model=self.d_model,
+                vocab_size=self.vocab_size,
+                n_layers=self.n_layers,
+                block=self.block,
+                lm_head=self.lm_head,
+                dtype=self.dtype.as_pt(),
+                init_method=self.init_method,
+                init_device=init_device,
+                init_seed=self.init_seed,
+                init_std=self.init_std,
+                block_overrides=self.block_overrides,
+                two_batch_overlap=self.two_batch_overlap,
+                recompute_all_blocks_by_chunk=self.recompute_all_blocks_by_chunk,
+                recompute_each_block=self.recompute_each_block,
+                recompute_block_keys=self.recompute_block_keys,
+                embedding_norm=self.embedding_norm,
+                embedding_init_std=self.embedding_init_std,
+                embed_scale=self.embed_scale,
+                block_pattern=self.block_pattern,
+                tie_word_embeddings=self.tie_word_embeddings,
+            )
+        else:
+            raise NotImplementedError(self.name)
+
+        if self.freeze_params:
+            for name, param in model.named_parameters():
+                for pattern in self.freeze_params:
+                    if fnmatch(name, pattern):
+                        param.requires_grad = False
+                        log.info(f"Param '{name}' will be frozen")
+                        break
+                else:
+                    log.info(f"Param '{name}' will be trainable")
+
+        log.info("%s", model)
+        return model
 
 
 def validate_block_resolution_config(
