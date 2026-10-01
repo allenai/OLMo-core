@@ -824,7 +824,8 @@ def test_launch_uses_standard_experiment_command_and_preset(monkeypatch, phase):
     assert launch is not None
     assert launch.cmd == [cli.script, "train", cli.run_name, cli.cluster, *cli.overrides]
     assert launch.num_nodes == 2 and launch.num_gpus == 8
-    assert launch.workspace == "ai2/molmofication"
+    assert launch.workspace == "ai2/oe-olmo3p5-mt"
+    assert build_launch.call_args.kwargs["budget"] == "ai2/oe-other"
     assert not launch.allow_dirty
     preset = get_preset("olmo-ddp")
     assert launch.beaker_image == preset.beaker_image
@@ -839,10 +840,11 @@ def test_launch_uses_standard_experiment_command_and_preset(monkeypatch, phase):
     assert launch.priority == "urgent"
     assert launch.min_runtime == "8h"
     assert launch.shared_memory == "32GiB"
+    assert launch.follow is False
     secrets = {entry.name: entry.secret for entry in launch.env_secrets}
     assert len(secrets) == len(launch.env_secrets)
-    assert secrets["BEAKER_TOKEN"] == "JASONR_BEAKER_TOKEN"
-    assert secrets["WANDB_API_KEY"] == "RUSTINS_WANDB_API_KEY"
+    assert secrets["BEAKER_TOKEN"] == "jasonr_BEAKER_TOKEN"
+    assert secrets["WANDB_API_KEY"] == "jasonr_WANDB_API_KEY"
     assert launch.aws_config_secret is launch.aws_credentials_secret is None
     assert build_launch.call_args.kwargs["step_timeout"] is None
     assert build_launch.call_args.kwargs["step_soft_timeout"] is None

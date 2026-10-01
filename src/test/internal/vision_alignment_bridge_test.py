@@ -8,8 +8,6 @@ from olmo_core.internal.vision_alignment_data import (
     DEFAULT_ALIGNMENT_ARTIFACT_ROOT,
     build_visual_sources,
 )
-from olmo_core.nn.attention.backend import AttentionBackendName
-from olmo_core.nn.moe.v2.ep_config import ExpertParallelPath
 from olmo_core.train import Duration
 
 BRIDGE_MEANS = {
@@ -76,15 +74,11 @@ def test_bridge_visual_source_definitions(split):
 def test_bridge_model_preserves_parent_architecture(alignment_recipe):
     original = alignment_recipe.set_router_coefficients(0.02)
     config = alignment_recipe.build()
+    # Execution settings (attention backend, expert dispatch, recomputation) are the
+    # checkpoint's own; only the router LB policy changes and two-batch overlap is off.
     expected = original.copy()
-    expected.recompute_each_block = True
-    expected.recompute_all_blocks_by_chunk = False
     expected.two_batch_overlap = False
     for block in [expected.block, *expected.block_overrides.values()]:
-        block.sequence_mixer.backend = AttentionBackendName.flex
-        block.ep.path = ExpertParallelPath.rowwise_nvshmem
-        block.ep.capacity_factor = 8
-        block.ep.share_dispatch_out = True
         block.routed_experts_router.lb_loss_weight = 0.0
     assert config.model.lm == expected
     assert config.model.image_patch_token_id == alignment_recipe.token_ids.im_patch_id
@@ -104,7 +98,7 @@ def test_bridge_explicit_lb_override(alignment_recipe, weight):
             block.routed_experts_router.z_loss_weight == parent.routed_experts_router.z_loss_weight
         )
         assert block.routed_experts_router.top_k == parent.routed_experts_router.top_k
-        assert block.ep.capacity_factor == 8 and block.ep.share_dispatch_out
+        assert block.ep == parent.ep
 
 
 def test_bridge_optimizer_and_freezing(alignment_recipe):

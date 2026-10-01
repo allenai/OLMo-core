@@ -108,7 +108,7 @@ def test_joint_restores_original_per_layer_lb_without_architecture_repair(
             == pretrained.routed_experts_router.lb_loss_weight
         )
         assert block.routed_experts_router.z_loss_weight == 0.003
-        assert block.ep.capacity_factor == 8 and block.ep.share_dispatch_out
+        assert block.ep == pretrained.ep
     assert config.recipe.restore_pretraining_router_lb
 
 

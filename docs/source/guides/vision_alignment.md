@@ -40,15 +40,48 @@ Joint allocates 16 text and 112 visual sequences per update. Its CE objective is
 0.35/0.65 weighted sum of the global text/vision mean losses, not a per-token or
 gradient-norm split.
 
-Bridge uses EP8 dispatch with capacity factor 8 and shared output buffers. Bridge and
-perception disable router load-balancing (LB) loss while the LM is frozen. Joint restores
-the original pretrained per-layer LB coefficients. Router z-loss and architecture are
-preserved; no router-input RMS repair is applied.
+Bridge and perception disable router load-balancing (LB) loss while the LM is frozen. Joint
+restores the original pretrained per-layer LB coefficients. Router z-loss and architecture are
+preserved; no router-input RMS repair is applied. Execution settings of the LM (attention
+backend, expert dispatch, recomputation) are not changed by the recipe: they come from the
+text configuration described next.
 
 The LM architecture and tokenizer, including its revision, come from the pretrained
 checkpoint. Bootstrap supports OLMoDDP LMs, Molmo2-compatible tokenizers, reserved image-token
 rows and untied input/output embeddings. Dense bootstrap and composable text replay are
 not supported.
+
+### Inheriting the text team's settings
+
+Set `--recipe.text_config=/path/to/config.json` to the resolved configuration of the text
+mid-training run the checkpoint belongs to (the `config.json` a trainer saves, or a `dry_run`
+dump of the text workload). The LM configuration and every text-side training setting are then
+inherited from it: the optimizer (`eps`, `sigma_factor`, `compile`, weight decay, betas,
+gradient clipping), the train module (z-loss, `compile_model`, data and expert parallelism,
+optimizer-state reset on load), the trainer's checkpointer and bookkeeping settings and its
+monitoring callbacks, the loader worker count, and the launch image, install step, resources
+and environment. The alignment phase changes only what
+`olmo_core.internal.vision_alignment.MULTIMODAL_OVERRIDES` lists (phase learning rates and
+schedules, per-group clipping, the multimodal batch and microbatch, checkpoint cadence, the
+vision components and their bootstrap, the multimodal data and evaluator); a unit test keeps
+that table exact. The LM in the text configuration must match the pretraining checkpoint,
+whose weights are loaded.
+
+Without `text_config`, the LM configuration is read from the checkpoint's own `config.json`
+(legacy keys normalized, EMO routing cleared as text mid-training does) and the recipe's
+legacy defaults apply (EP8, `eps=1e-6`, `sigma_factor=12`, z-loss `1e-4`).
+
+### Document mode for recurrent language models
+
+OLMo 3.5 language models mix Kimi Delta Attention (KDA) layers with a few attention layers.
+KDA cannot apply an attention mask; it resets its state at document boundaries instead. When
+the LM has such layers, the multimodal model isolates packed examples through document
+boundaries derived from the loader's `example_ids` (one document per packed example, padding
+in its own document), sends no attention masks or positions, and treats image tokens as
+causal like text. Sibling-branch packing (`subsegment_ids`) needs a mask and is rejected. The
+recipe turns the experimental `kernel-fun` KDA kernels off for such models: they do not take
+packed documents (`cu_seqlens`) and their support check crashes on them, so the FLA kernels
+are used until that is fixed upstream.
 
 ## Configure and launch
 
@@ -70,12 +103,16 @@ python src/scripts/train/Vision-Align.py launch align ai2/holmes \
   --recipe.pretraining_checkpoint=/path/to/pretraining/stepN
 ```
 
-Defaults are two eight-GPU nodes, EP8, urgent priority, minimum runtime 8h, 32 GiB shared
-memory and workspace `ai2/molmofication`. Change these with `--launch.*` overrides.
-Common overrides apply to every phase; use an explicit phase for phase-specific tuning.
-Inspect `launch.env_secrets` and configure the Beaker and W&B secrets for the submitting
-account and target workspace. AWS credentials are not mounted by default. Checkpoint-derived
-S3 text replay requires suitable credentials or an explicit accessible storage mirror.
+With `--recipe.text_config`, the image, install step, node and GPU counts, shared memory,
+priority, Weka mounts and environment come from the text run's launch configuration. The
+legacy defaults are two eight-GPU nodes, EP8, urgent priority and 32 GiB shared memory. Both
+use workspace `ai2/oe-olmo3p5-mt` with its default budget (`ai2/oe-other`), minimum runtime
+8h, no log following, and the `jasonr_BEAKER_TOKEN` / `jasonr_WANDB_API_KEY` secrets. Change
+these with `--launch.*` overrides. Common overrides apply to every phase; use an explicit
+phase for phase-specific tuning. Inspect `launch.env_secrets` and configure the Beaker and
+W&B secrets for the submitting account and target workspace. AWS credentials are not mounted
+by default. Checkpoint-derived S3 text replay requires suitable credentials or an explicit
+accessible storage mirror.
 
 The launcher clones a remote git commit. `allow_dirty` does not upload local edits or
 untracked files; unpublished changes require an explicitly frozen source deployment.
