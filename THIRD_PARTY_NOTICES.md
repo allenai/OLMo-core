@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-OLMo-core Copyright © 2026 The Allen Institute for Artificial Intelligence
+Olmo-core Copyright © 2026 The Allen Institute for Artificial Intelligence
 
 This software includes code adapted from the projects listed below. These notices
 cover third-party source included in this repository. Each entry identifies the
@@ -73,6 +73,16 @@ SOFTWARE.
 
 ## Apache License 2.0
 
+### Hugging Face Transformers
+
+Source: <https://github.com/huggingface/transformers/blob/main/src/transformers/models/olmo3/modeling_olmo3.py>
+
+Included adaptations:
+
+- [src/olmo_core/nn/moe/v2/hf/modeling_olmo3moe.py](src/olmo_core/nn/moe/v2/hf/modeling_olmo3moe.py): Olmo 3 modeling code adapted for the MoE architecture, including `rotate_half`, rotary embeddings, and the pretrained-model structure.
+
+Copyright 2025 the HuggingFace Team. All rights reserved.
+
 ### MegaBlocks
 
 Source: <https://github.com/databricks/megablocks>
@@ -96,9 +106,9 @@ Included adaptations:
 
 Copyright (c) 2022-2025, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
-The Apache License 2.0 applies to the MegaBlocks and TransformerEngine
+The Apache License 2.0 applies to the Transformers, MegaBlocks, and TransformerEngine
 adaptations above. Its full text is provided in [LICENSE](LICENSE). No separate
-upstream root NOTICE file was found for either project during the source review.
+upstream root NOTICE file was found for these projects during the source review.
 
 ```text
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -344,4 +354,3 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
 OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ```
-
