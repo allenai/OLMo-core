@@ -46,6 +46,7 @@ from olmo_core.train.callbacks import (
 )
 from olmo_core.train.callbacks.multimodal import (
     InitializeMultimodalModelCallback,
+    MultimodalBeakerCallback,
     MultimodalCheckpointerCallback,
     MultimodalEvaluatorCallbackConfig,
     MultimodalMetricSaverCallback,
@@ -861,7 +862,7 @@ def _build_trainer(
             ),
         )
         .with_callback("restore_metrics", RestoreMetricsCallback(metrics_callback="metrics"))
-        .with_callback("beaker", BeakerCallback())
+        .with_callback("beaker", MultimodalBeakerCallback())
         .with_callback(
             "wandb",
             MultimodalWandBCallback(
