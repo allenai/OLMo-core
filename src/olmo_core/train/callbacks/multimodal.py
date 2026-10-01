@@ -32,6 +32,7 @@ from olmo_core.exceptions import OLMoConfigurationError, OLMoEnvironmentError
 from olmo_core.io import file_exists, is_url, normalize_path, resource_path, upload
 from olmo_core.train.common import Duration
 
+from .beaker import BeakerCallback
 from .callback import Callback, CallbackConfig
 from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .evaluator_callback import EvaluatorCallback
@@ -258,6 +259,47 @@ class MultimodalWandBCallback(WandBCallback):
         )
         self.run_id = self.run.id
         self._run_path = self.run.path  # type: ignore
+
+
+@dataclass
+class MultimodalBeakerCallback(BeakerCallback):
+    """
+    A :class:`~olmo_core.train.callbacks.BeakerCallback` for resumed alignment runs.
+
+    :class:`MultimodalWandBCallback` resumes the same W&B run after a restart, whose config still
+    holds the previous Beaker experiment's URL and id; the base callback's plain
+    ``config.update`` then raises on the changed values. The keys are written first with
+    ``allow_val_change`` so the base update is a no-op.
+    """
+
+    def _experiment_url(self) -> str:
+        from olmo_core.launch.beaker import get_beaker_client, get_beaker_experiment_id
+
+        if self.experiment_id is None:
+            self.experiment_id = get_beaker_experiment_id()
+        assert self.experiment_id is not None
+        with get_beaker_client() as beaker:
+            return beaker.workload.url(beaker.workload.get(self.experiment_id))
+
+    def _preset_wandb_config(self) -> None:
+        url: Optional[str] = None
+        for callback in self.trainer.callbacks.values():
+            if (
+                isinstance(callback, WandBCallback)
+                and callback.enabled
+                and callback.run is not None
+            ):
+                if url is None:
+                    url = self._experiment_url()
+                callback.run.config.update(
+                    {"beaker_experiment_url": url, "beaker_experiment_id": self.experiment_id},
+                    allow_val_change=True,
+                )
+
+    def pre_train(self):
+        if self.enabled and get_rank() == 0:
+            self._preset_wandb_config()
+        super().pre_train()
 
 
 @dataclass

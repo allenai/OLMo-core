@@ -15,6 +15,7 @@ import pytest
 from olmo_core.train.callbacks.checkpointer import CheckpointRemovalStrategy
 from olmo_core.train.callbacks.evaluator_callback import EvaluatorCallback
 from olmo_core.train.callbacks.multimodal import (
+    MultimodalBeakerCallback,
     MultimodalCheckpointerCallback,
     MultimodalEvaluatorCallback,
     MultimodalMetricSaverCallback,
@@ -319,3 +320,42 @@ def test_resumed_checkpointer_never_removes_with_remove_never(tmp_path, monkeypa
     )
     callback.pre_train()
     assert callback._checkpoints == [] and callback.removed == []
+
+
+class _ConfigStub:
+    """Behaves like a resumed W&B config: a changed value raises unless allow_val_change."""
+
+    def __init__(self, **items):
+        self.items = dict(items)
+        self.calls = []
+
+    def update(self, values, allow_val_change=None):
+        self.calls.append((dict(values), allow_val_change))
+        for key, value in values.items():
+            if key in self.items and self.items[key] != value and not allow_val_change:
+                raise ValueError(f"Attempted to change value of key {key!r}")
+            self.items[key] = value
+
+
+def test_beaker_callback_presets_wandb_config_on_resumed_runs(monkeypatch):
+    config = _ConfigStub(
+        beaker_experiment_url="https://beaker.org/ex/OLD", beaker_experiment_id="OLD"
+    )
+    wandb_callback = MultimodalWandBCallback(
+        name="bridge", project="vision-alignment", enabled=True
+    )
+    wandb_callback._wandb = SimpleNamespace(run=SimpleNamespace(config=config))
+    callback = MultimodalBeakerCallback(enabled=True, experiment_id="NEW")
+    callback.trainer = SimpleNamespace(callbacks={"wandb": wandb_callback})
+    monkeypatch.setattr(callback, "_experiment_url", lambda: "https://beaker.org/ex/NEW")
+    callback._preset_wandb_config()
+    assert config.calls == [
+        (
+            {"beaker_experiment_url": "https://beaker.org/ex/NEW", "beaker_experiment_id": "NEW"},
+            True,
+        )
+    ]
+    # The base callback's plain update (no allow_val_change) is now a no-op instead of an error.
+    config.update(
+        {"beaker_experiment_url": "https://beaker.org/ex/NEW", "beaker_experiment_id": "NEW"}
+    )
