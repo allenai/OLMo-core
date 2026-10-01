@@ -38,7 +38,6 @@ from olmo_core.optim import CosWithWarmup, OptimGroupOverride, PerGroupScheduler
 from olmo_core.optim.multimodal_optimizer import MultimodalOLMoDDPOptimizerConfig
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
-    BeakerCallback,
     CheckpointerCallback,
     ConfigSaverCallback,
     GarbageCollectorCallback,
