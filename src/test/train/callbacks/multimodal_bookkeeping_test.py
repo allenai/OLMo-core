@@ -12,7 +12,11 @@ from unittest.mock import Mock
 
 import pytest
 
+from olmo_core.train.callbacks.checkpointer import CheckpointRemovalStrategy
+from olmo_core.train.callbacks.evaluator_callback import EvaluatorCallback
 from olmo_core.train.callbacks.multimodal import (
+    MultimodalCheckpointerCallback,
+    MultimodalEvaluatorCallback,
     MultimodalMetricSaverCallback,
     MultimodalWandBCallback,
     RestoreMetricsCallback,
@@ -220,3 +224,98 @@ def test_wandb_without_auto_resume_starts_a_fresh_run(tmp_path, monkeypatch):
     callback.load_state_dict({"run_id": "old-run", "step": 20})
     callback.pre_train()
     assert "id" not in wandb.init_calls[0] and "resume" not in wandb.init_calls[0]
+
+
+def _evaluator(monkeypatch, *, step: int, **kwargs) -> MultimodalEvaluatorCallback:
+    callback = MultimodalEvaluatorCallback(evaluators=[], **kwargs)
+    callback.trainer = SimpleNamespace(global_step=step)
+    evaluated = []
+    monkeypatch.setattr(
+        EvaluatorCallback, "perform_eval", lambda self, prefix="eval": evaluated.append(prefix)
+    )
+    callback.evaluated = evaluated  # type: ignore[attr-defined]
+    return callback
+
+
+def test_eval_on_finish_skips_a_step_that_was_just_evaluated(monkeypatch):
+    callback = _evaluator(monkeypatch, step=500, eval_interval=500, eval_on_finish=True)
+    callback.post_step()  # interval evaluation at step 500
+    callback.post_train()
+    assert callback.evaluated == ["eval"]
+
+
+def test_eval_on_finish_still_runs_for_an_unevaluated_step(monkeypatch):
+    callback = _evaluator(monkeypatch, step=499, eval_interval=500, eval_on_finish=True)
+    callback.post_step()
+    callback.post_train()
+    assert callback.evaluated == ["eval"]
+    # A non-"eval" prefix does not count as the step's evaluation.
+    callback = _evaluator(monkeypatch, step=500, eval_on_finish=True)
+    callback.perform_eval(prefix="eval/merged")
+    callback.post_train()
+    assert callback.evaluated == ["eval/merged", "eval"]
+
+
+def test_eval_memory_resets_on_train_start_and_checkpoint_load(monkeypatch):
+    callback = _evaluator(monkeypatch, step=500, eval_on_startup=True, eval_on_finish=True)
+    callback.perform_eval()
+    assert callback._last_eval_step == 500
+    callback.pre_train()  # startup evaluation runs and records the step again
+    assert callback.evaluated == ["eval", "eval"] and callback._last_eval_step == 500
+    callback.post_checkpoint_loaded("/ckpt/step500")
+    assert callback._last_eval_step is None
+    callback.post_train()
+    assert callback.evaluated == ["eval", "eval", "eval"]
+
+
+def _checkpointer(tmp_path, monkeypatch, *, step: int, existing, **kwargs):
+    callback = MultimodalCheckpointerCallback(
+        save_async=False, pre_train_checkpoint=False, **kwargs
+    )
+    checkpointer = SimpleNamespace(
+        process_group=None,
+        find_checkpoints=lambda folder, ephemeral=None: iter(
+            [(s, f"{folder}/step{s}") for s in existing] if ephemeral is False else []
+        ),
+    )
+    callback.trainer = SimpleNamespace(
+        global_step=step, checkpoint_loaded=True, checkpointer=checkpointer, save_folder=tmp_path
+    )
+    removed = []
+    monkeypatch.setattr(callback, "_schedule_for_removal", lambda path: removed.append(path))
+    monkeypatch.setattr("olmo_core.train.callbacks.checkpointer.is_distributed", lambda: False)
+    monkeypatch.setattr("olmo_core.train.callbacks.multimodal.get_rank", lambda *a, **k: 0)
+    monkeypatch.setattr("olmo_core.train.callbacks.multimodal.broadcast_object", lambda x, **k: x)
+    callback.removed = removed  # type: ignore[attr-defined]
+    return callback
+
+
+def test_resumed_checkpointer_takes_over_permanent_checkpoints_and_trims(tmp_path, monkeypatch):
+    callback = _checkpointer(
+        tmp_path, monkeypatch, step=1500, existing=[500, 1000, 1500, 2000], max_checkpoints=2
+    )
+    callback.pre_train()
+    # Steps beyond the current one belong to a longer earlier run and are left alone; of the
+    # rest only the newest ``max_checkpoints`` survive.
+    assert callback._checkpoints == [f"{tmp_path}/step1000", f"{tmp_path}/step1500"]
+    assert callback.removed == [f"{tmp_path}/step500"]
+
+
+def test_resumed_checkpointer_keeps_a_fresh_pretrain_checkpoint_once(tmp_path, monkeypatch):
+    callback = _checkpointer(tmp_path, monkeypatch, step=0, existing=[0], max_checkpoints=3)
+    callback._checkpoints = [f"{tmp_path}/step0"]  # saved by the shared pre_train
+    callback.pre_train()
+    assert callback._checkpoints == [f"{tmp_path}/step0"] and callback.removed == []
+
+
+def test_resumed_checkpointer_never_removes_with_remove_never(tmp_path, monkeypatch):
+    callback = _checkpointer(
+        tmp_path,
+        monkeypatch,
+        step=1500,
+        existing=[500, 1000, 1500],
+        max_checkpoints=1,
+        remove=CheckpointRemovalStrategy.never,
+    )
+    callback.pre_train()
+    assert callback._checkpoints == [] and callback.removed == []

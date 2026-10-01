@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from olmo_core.config import Config, DType, StrEnum
 from olmo_core.data import TokenizerConfig
@@ -32,13 +32,13 @@ from olmo_core.optim.multimodal_optimizer import MultimodalOLMoDDPOptimizerConfi
 from olmo_core.train import Duration, LoadStrategy, TrainerConfig
 from olmo_core.train.callbacks import (
     BeakerCallback,
-    CheckpointerCallback,
     ConfigSaverCallback,
     GarbageCollectorCallback,
     GPUMemoryMonitorCallback,
 )
 from olmo_core.train.callbacks.multimodal import (
     InitializeMultimodalModelCallback,
+    MultimodalCheckpointerCallback,
     MultimodalEvaluatorCallbackConfig,
     MultimodalMetricSaverCallback,
     MultimodalWandBCallback,
@@ -129,21 +129,22 @@ class VisionAlignmentRecipeConfig(Config):
 class VisionAlignmentExperimentConfig(ExperimentConfig):
     """An alignment experiment with portable pretraining-checkpoint ancestry."""
 
-    model: MultimodalLMConfig
-    dataset: MultimodalMixtureConfig
+    model: MultimodalLMConfig  # type: ignore[assignment]
+    dataset: MultimodalMixtureConfig  # type: ignore[assignment]
     data_loader: MixtureDataLoaderConfig
     train_module: MultimodalOLMoDDPTrainModuleConfig
     recipe: VisionAlignmentRecipeConfig = field(default_factory=VisionAlignmentRecipeConfig)
     pretraining_checkpoint: str = ""
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], **kwargs: Any) -> "VisionAlignmentExperimentConfig":
+    def from_dict(
+        cls, data: Dict[str, Any], overrides: Optional[List[str]] = None
+    ) -> "VisionAlignmentExperimentConfig":
         """
         Build the config from a saved dictionary. A local run has no launch config, and
         ``as_config_dict()`` omits ``None`` fields, so ``launch`` is restored as ``None``.
         """
-        data = {"launch": None, **data}
-        return super().from_dict(data, **kwargs)
+        return super().from_dict({"launch": None, **data}, overrides=overrides)
 
 
 @dataclass(frozen=True)
@@ -616,7 +617,7 @@ def _build_trainer(
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
             "checkpointer",
-            CheckpointerCallback(
+            MultimodalCheckpointerCallback(
                 save_interval=500,
                 ephemeral_save_interval=50,
                 save_async=False,

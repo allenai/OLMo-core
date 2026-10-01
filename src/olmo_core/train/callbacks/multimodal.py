@@ -9,7 +9,7 @@ import os
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Tuple
 
 import torch.distributed as dist
 from torch.utils.data import Subset
@@ -33,6 +33,7 @@ from olmo_core.io import file_exists, is_url, normalize_path, resource_path, upl
 from olmo_core.train.common import Duration
 
 from .callback import Callback, CallbackConfig
+from .checkpointer import CheckpointerCallback, CheckpointRemovalStrategy
 from .evaluator_callback import EvaluatorCallback
 from .metric_saver import MetricSaverCallback
 from .wandb import WANDB_API_KEY_ENV_VAR, WandBCallback
@@ -113,6 +114,74 @@ class RestoreMetricsCallback(Callback):
         if file_exists(f"{self.trainer.save_folder}/{filename}"):
             path = resource_path(self.trainer.save_folder, filename)
             callback.log_metrics(self.step, json.loads(path.read_text()))
+
+
+@dataclass
+class MultimodalEvaluatorCallback(EvaluatorCallback):
+    """
+    An :class:`~olmo_core.train.callbacks.EvaluatorCallback` that remembers the last step it
+    evaluated under the ``eval`` prefix, so ``eval_on_finish`` does not evaluate a step that the
+    interval (or startup) evaluation just covered. The memory is cleared when training starts and
+    when a checkpoint is loaded.
+    """
+
+    _last_eval_step: Optional[int] = field(default=None, init=False, repr=False, compare=False)
+
+    def pre_train(self):
+        self._last_eval_step = None
+        super().pre_train()
+
+    def post_checkpoint_loaded(self, path: PathOrStr):
+        """Invalidate the evaluation memory after loading model weights."""
+        del path
+        self._last_eval_step = None
+
+    def post_train(self):
+        if self.eval_on_finish and self._last_eval_step != self.step:
+            self.perform_eval()
+
+    def perform_eval(self, prefix: str = "eval"):
+        super().perform_eval(prefix=prefix)
+        if prefix == "eval":
+            self._last_eval_step = self.step
+
+
+@dataclass
+class MultimodalCheckpointerCallback(CheckpointerCallback):
+    """
+    A :class:`~olmo_core.train.callbacks.CheckpointerCallback` that, on start, also takes over
+    the permanent checkpoints an earlier run of the same job left behind (steps up to the current
+    one) and trims them to ``max_checkpoints``, so a resumed alignment phase keeps the same
+    bounded set of checkpoints as an uninterrupted one. With ``remove=never`` nothing is removed.
+    """
+
+    def pre_train(self):
+        super().pre_train()
+        if not self.enabled or self.remove == CheckpointRemovalStrategy.never:
+            return
+
+        permanent_checkpoints: List[Tuple[int, str]] = []
+        # Only search from rank 0 to avoid hammering remote file stores with requests.
+        if get_rank() == 0:
+            try:
+                for step_num, path in self.checkpointer.find_checkpoints(
+                    self.save_folder, ephemeral=False
+                ):
+                    if step_num <= self.step:
+                        permanent_checkpoints.append((step_num, path))
+            except FileNotFoundError:
+                pass
+        permanent_checkpoints = broadcast_object(permanent_checkpoints)
+
+        # Keep a checkpoint saved above (e.g. the pre-train one) even if discovery has not seen it
+        # yet, without duplicating one it did see.
+        steps_by_path = {path: step for step, path in permanent_checkpoints}
+        for path in self._checkpoints:
+            steps_by_path.setdefault(path, self.step)
+        self._checkpoints = [
+            path for _, path in sorted((step, path) for path, step in steps_by_path.items())
+        ]
+        self._trim_checkpoints()
 
 
 @dataclass
@@ -295,7 +364,7 @@ class MultimodalEvaluatorCallbackConfig(CallbackConfig):
 
     seed: int = 0
 
-    def build(self, trainer: "Trainer") -> EvaluatorCallback:
+    def build(self, trainer: "Trainer") -> MultimodalEvaluatorCallback:
         """Build source evaluators and bounded paired image-content diagnostics."""
         if self.sequence_length <= 0 or self.rank_batch_size <= 0:
             raise OLMoConfigurationError("Evaluation sequence and batch sizes must be positive")
@@ -447,7 +516,7 @@ class MultimodalEvaluatorCallbackConfig(CallbackConfig):
             self.examples_per_source,
             self.matched_image_examples if self.matched_image_sources else 0,
         )
-        return EvaluatorCallback(
+        return MultimodalEvaluatorCallback(
             evaluators=evaluators,
             eval_interval=self.eval_interval,
             eval_duration=Duration.steps(max_examples // global_instances),
