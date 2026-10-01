@@ -308,6 +308,28 @@ class MultimodalLM(nn.Module):
         self._collect_input_diagnostics = False
         self._input_diagnostic_sums: Dict[str, torch.Tensor] = {}
         self._input_diagnostic_counts: Dict[str, int] = {}
+        # Resolved lazily from the LM's sequence mixers; tests may set it directly.
+        self._document_mode: Optional[bool] = None
+
+    def uses_document_boundaries(self) -> bool:
+        """
+        Whether packed examples are isolated through document boundaries (``doc_lens``) instead
+        of attention masks.
+
+        Recurrent sequence mixers such as :class:`~olmo_core.nn.attention.kda.KimiDeltaAttention`
+        cannot apply an attention mask; they reset their state at document boundaries instead
+        (``cu_doc_lens``), and the attention layers of such language models take the same
+        boundaries through their variable-length kernels. When any LM block uses such a mixer,
+        :meth:`forward` derives one document per packed example from ``example_ids`` and sends no
+        masks or positions. Image tokens are then causal like text.
+        """
+        if self._document_mode is None:
+            from olmo_core.nn.attention.kda import KimiDeltaAttention
+
+            self._document_mode = any(
+                isinstance(module, KimiDeltaAttention) for module in self.lm.modules()
+            )
+        return self._document_mode
 
     # -- input-scale diagnostics ------------------------------------------------------------
 
@@ -625,7 +647,24 @@ class MultimodalLM(nn.Module):
         if labels is not None:
             labels = labels.to(device)
 
-        use_flex_attn = os.environ.get("OLMO2_FLEX_ATTN") == "1"
+        document_mode = self.uses_document_boundaries()
+        if document_mode:
+            if subsegment_ids is not None:
+                raise ValueError(
+                    "Sibling-branch packing (`subsegment_ids`) needs an attention mask, which "
+                    "the LM's recurrent sequence mixers cannot apply; pack one document per "
+                    "example instead."
+                )
+            # Recurrent mixers carry no positions and the attention layers of such LMs use no
+            # RoPE, so explicit positions have nothing to act on.
+            position_ids = None
+            doc_lens, max_doc_lens = document_lengths_from_example_ids(
+                example_ids if example_ids is not None else torch.zeros_like(input_ids)
+            )
+            kwargs["doc_lens"] = doc_lens
+            kwargs["max_doc_lens"] = max_doc_lens
+
+        use_flex_attn = os.environ.get("OLMO2_FLEX_ATTN") == "1" and not document_mode
         or_mask: Optional[torch.Tensor] = None
         and_mask: Optional[torch.Tensor] = None
         flex_attn_block_mask = None
@@ -726,7 +765,7 @@ class MultimodalLM(nn.Module):
                 **flex_mask_kwargs
             )
 
-        if not use_flex_attn:
+        if not use_flex_attn and not document_mode:
             # Dense (B, S, S) masks for the torch SDPA backend only.
             if token_type_ids is not None:
                 is_image = token_type_ids.to(device) != 0  # (B, S)
@@ -775,6 +814,50 @@ class MultimodalLM(nn.Module):
         ):
             out[..., output_vocab_size:] = torch.finfo(out.dtype).min
         return out
+
+
+def document_lengths_from_example_ids(example_ids: torch.Tensor) -> Tuple[torch.Tensor, List[int]]:
+    """
+    Turn per-token packed-example ids into per-row document lengths.
+
+    Every run of equal ids in a row is one document, including a trailing padding run
+    (``-1``), so the lengths of a row sum to the sequence length and each padded position is
+    isolated from every example. Ids are read on the CPU: the result feeds kernel launch
+    arguments (``max_doc_lens``) that must be Python integers.
+
+    :param example_ids: Integer tensor of shape ``(B, seq_len)``.
+
+    :returns: ``doc_lens`` of shape ``(B, max_docs)`` (``int32``, zero-padded) as consumed by
+        :func:`~olmo_core.data.utils.get_cumulative_document_lengths`, and the longest document
+        of each row.
+
+    :raises ValueError: If an id occurs in two separate runs of a row, which is how
+        sibling-branch packing interleaves examples; such batches need attention masks.
+    """
+    if example_ids.dim() != 2:
+        raise ValueError(f"example_ids must be (B, seq_len), got shape {tuple(example_ids.shape)}")
+    rows = example_ids.detach().cpu().to(torch.long)
+    lengths: List[List[int]] = []
+    for row in rows:
+        if row.numel() == 0:
+            lengths.append([])
+            continue
+        change = torch.ones(row.numel(), dtype=torch.bool)
+        change[1:] = row[1:] != row[:-1]
+        starts = torch.nonzero(change, as_tuple=False).flatten()
+        ends = torch.cat([starts[1:], torch.tensor([row.numel()])])
+        if len(starts) != len(torch.unique(row)):
+            raise ValueError(
+                "example_ids must be contiguous per example (one document each); interleaved "
+                "ids indicate sibling-branch packing, which needs attention masks"
+            )
+        lengths.append((ends - starts).tolist())
+    max_docs = max((len(row) for row in lengths), default=0)
+    doc_lens = torch.zeros(len(lengths), max_docs, dtype=torch.int32)
+    for index, row in enumerate(lengths):
+        if row:
+            doc_lens[index, : len(row)] = torch.tensor(row, dtype=torch.int32)
+    return doc_lens, [max(row) if row else 0 for row in lengths]
 
 
 class MultimodalOLMoDDPModel(MultimodalLM):
