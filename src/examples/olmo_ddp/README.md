@@ -1,9 +1,9 @@
-# OLMo DDP MoE examples
+# Olmo-core DDP MoE examples
 
-This directory holds the training entry points used for the OLMo-core MoE tech
-report, *Supercharging OLMo-core for Efficient and Scalable MoE Training*. Every
+This directory holds the training entry points used for the Olmo-core MoE tech
+report, *Supercharging Olmo-core for Efficient and Scalable MoE Training*. Every
 script here builds against the `OLMoDDPModel` stack in this revision of
-OLMo-core. Scripts that were written against the pre-merge `moe-v2-core` API
+Olmo-core. Scripts that were written against the pre-merge `moe-v2-core` API
 have been ported to the current API without changing their experiment settings
 (see [Porting notes](#porting-notes)).
 
@@ -22,7 +22,7 @@ Requirements shared by all scripts:
 
 - the `beaker` extra (`olmo_core.internal` imports it), plus `flash-attn-4` for
   the FlashAttention 4 backend;
-- a writable `/workspace` (checkpoints, work dir) and read access to the OLMo
+- a writable `/workspace` (checkpoints, work dir) and read access to the Olmo
   data mix at `s3://ai2-llm` (`DataMix.OLMo_mix_0925`);
 - for scripts on the DeepEP v2 path, a DeepEP checkout at `OLMO_DEEPEP_PATH`
   (default `/workspace/DeepEP`).
@@ -88,9 +88,9 @@ measurement was taken on the pre-merge branch and cannot be reproduced from here
 
 This is the closest supported comparison, not a one-line parallelism toggle.
 `OLMoDDPModel` rejects FSDP wrapping and the generic Transformer stack rejects the
-OLMo DDP train module, so:
+Olmo-core DDP train module, so:
 
-- the DDP run uses the fused block, v2 router, OLMo multi-group reducer, OLMo
+- the DDP run uses the fused block, v2 router, Olmo multi-group reducer, Olmo
   optimizer, and rowwise NVSHMEM EP;
 - the FSDP/HSDP run uses the generic hybrid-MoE block, v1 router, generic
   optimizer, and FSDP2 wrapping.
