@@ -406,7 +406,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
             )
         shared_expert_intermediate_size = moe_block.shared_experts.hidden_size
 
-    # Sliding window: OLMo-core stores a per-layer window on the attention backend; a value of
+    # Sliding window: Olmo-core stores a per-layer window on the attention backend; a value of
     # (-1, -1) means full attention. HF expects a value one larger than the flash-attention window
     # (which excludes the current position); see the OLMo 3 handling in `get_hf_config`.
     layer_types: List[str] = []
@@ -954,7 +954,7 @@ def get_hybrid_hf_config(
     Returns a plain dict (not :class:`PretrainedConfig`) to avoid a hard dependency
     on a specific ``transformers`` version.
 
-    :param model: The OLMo-core hybrid transformer model.
+    :param model: The Olmo-core hybrid transformer model.
     :param layer_types: Per-layer type list from :func:`get_hybrid_layer_types`.
     :param max_seq_len: Maximum sequence length for ``max_position_embeddings``.
     """

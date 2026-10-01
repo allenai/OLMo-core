@@ -1,4 +1,4 @@
-"""Native OLMo-core integration for Kimi Delta Attention (KDA)."""
+"""Native Olmo-core integration for Kimi Delta Attention (KDA)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class KimiDeltaAttention(SequenceMixer):
 
     This follows the parameterization of the released Kimi-Linear checkpoint:
     KDA uses a vector-valued decay for every key channel and a scalar delta
-    gate for every value head. The surrounding OLMo-core adapter retains packed
+    gate for every value head. The surrounding Olmo-core adapter retains packed
     document convolutions, initialization, and sequence-mixer interfaces.
 
     .. warning::
@@ -175,7 +175,7 @@ class KimiDeltaAttention(SequenceMixer):
         if cu_doc_lens is not None and batch_size > 1:
             # FLA's variable-length KDA and causal-convolution kernels represent packed
             # sequences as a single flattened batch, with document boundaries supplied by
-            # ``cu_seqlens``. OLMo-core's mask builder likewise flattens boundaries across the
+            # ``cu_seqlens``. Olmo-core's mask builder likewise flattens boundaries across the
             # entire batch, so flatten the payload here and restore its shape after KDA.
             x = x.reshape(1, batch_size * seq_len, self.d_model)
             batch_size, seq_len = 1, batch_size * seq_len

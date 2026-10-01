@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
+
 ### Added
 
 - Added `use_array_if_local` to `pack_documents_into_instances`, `segment_documents_into_instances`, `NumpyPackedFSLDataset` and `NumpyPackedFSLDatasetConfig`, forwarded to `iter_document_indices`. Set it to `False` to take document boundaries from the source metadata file instead of inferring them by scanning the token array for the EOS token. Inferring is only correct when every document is EOS-terminated: a producer that truncates documents and drops the terminator with the tail causes the affected document to merge with the one after it, and `LongDocStrategy.truncate` then keeps only the head of the merged span, so the following document never reaches training. Measured on an SFT cache, 97.98% of tokens reached instances via the inferred path versus 100.00% via the metadata file, with an identical maximum document length. Whenever the metadata boundaries are the effective source -- set explicitly, or because the source is a URL, for which `iter_document_indices` always reads the metadata -- `doc_lens` is derived from them rather than by rescanning the packed tokens for EOS, so the block-diagonal attention mask cannot merge an unterminated document into the one after it. The hazard is now documented on `iter_document_indices`. Default behavior is unchanged.
@@ -23,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/OLMo-core/pull/843).
+- Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/Olmo-core/pull/843).
 - Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
 - Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
 - Reject MoE HF exports with incompatible Q/K normalization or inconsistent KDA output-norm epsilons instead of silently changing normalization behavior.
@@ -51,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.
 
-## [v2.6.0](https://github.com/allenai/OLMo-core/releases/tag/v2.6.0) - 2026-08-11
+## [v2.6.0](https://github.com/allenai/Olmo-core/releases/tag/v2.6.0) - 2026-08-11
 
 ### Added
 
@@ -107,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Set transformers version to >= 5.4.0 for Qwen 3.5 and in sync with open-instruct
 - Added a documented `deterministic` option to `LMEvaluator` and `LMEvaluatorCallbackConfig` so callers can opt out of fixed eval ordering when desired.
 
-## [v2.5.0](https://github.com/allenai/OLMo-core/releases/tag/v2.5.0) - 2026-04-01
+## [v2.5.0](https://github.com/allenai/Olmo-core/releases/tag/v2.5.0) - 2026-04-01
 
 **This version was never published to PyPI.** The upload was rejected because the package
 metadata contained a direct URL requirement (the `dion` extra), which PyPI does not accept.
@@ -199,7 +201,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Upgraded to beaker-py v2.
 - Now, we check `dist.is_initialized()` before calling `dist.init_process_group()` in `init_distributed()`.
 
-## [v2.4.0](https://github.com/allenai/OLMo-core/releases/tag/v2.4.0) - 2025-11-20
+## [v2.4.0](https://github.com/allenai/Olmo-core/releases/tag/v2.4.0) - 2025-11-20
 
 ### Added
 
@@ -229,7 +231,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 
 - Removed unused field in `YaRNRoPEScalingConfig`.
 
-## [v2.3.0](https://github.com/allenai/OLMo-core/releases/tag/v2.3.0) - 2025-10-17
+## [v2.3.0](https://github.com/allenai/Olmo-core/releases/tag/v2.3.0) - 2025-10-17
 
 ### Fixed
 
@@ -299,7 +301,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Added the `WSDS` (Warmup-Stable-Decay-Simplified) learning rate scheduler.
 - Added a script that can pull out a single training batch from a training job
 
-## [v2.2.0](https://github.com/allenai/OLMo-core/releases/tag/v2.2.0) - 2025-08-26
+## [v2.2.0](https://github.com/allenai/Olmo-core/releases/tag/v2.2.0) - 2025-08-26
 
 ### Added
 
@@ -333,7 +335,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Added the option to configure `head_stride` for context parallelism with ring-flash-attn.
 - Added the option to group multiple npy source files together for packing with the packed FSL dataset by setting `source_group_size` to an integer greater than 1.
 - Added `load_optim_state: Optional[bool]` option to `Trainer.load_checkpoint()`.
-- Added `GenerationModule` for OLMo-core native autoregressive generation with support for kv caching.
+- Added `GenerationModule` for Olmo-core native autoregressive generation with support for kv caching.
 - Added optional hostname constraints for beaker experiments on Google clusters.
 
 ### Changed
@@ -375,7 +377,7 @@ from the tag directly, or use v2.6.0 or later. Fixed in v2.6.0.
 - Fixed Attention block sharding when TP and head-wise QK norm are both applied.
 - Added RoPE scaling configs to `rope` module's exports.
 
-## [v2.1.0](https://github.com/allenai/OLMo-core/releases/tag/v2.1.0) - 2025-04-14
+## [v2.1.0](https://github.com/allenai/Olmo-core/releases/tag/v2.1.0) - 2025-04-14
 
 ### Added
 
@@ -406,12 +408,12 @@ Also added lower-level methods for converting state between the formats.
 
 - Fixed calculation of total steps based on epochs at the end of a training job.
 - Fixed a bug where the trainer might try to save a duplicate final checkpoint if the run that already completed was restarted.
-- When submitting a Beaker job from a branch that's tracking a GitHub fork, OLMo-core now instructs Beaker to pull from the fork instead of from the main repo.
+- When submitting a Beaker job from a branch that's tracking a GitHub fork, Olmo-core now instructs Beaker to pull from the fork instead of from the main repo.
 - Made Beaker image resolution more robust.
 - Having `t_max` overrides in the default model configs is confusing and error prone, so we removed them.
 - Beaker launcher will only clone a single branch at runtime when possible, which can be much faster.
 
-## [v2.0.1](https://github.com/allenai/OLMo-core/releases/tag/v2.0.1) - 2025-03-18
+## [v2.0.1](https://github.com/allenai/Olmo-core/releases/tag/v2.0.1) - 2025-03-18
 
 ### Added
 
@@ -430,9 +432,9 @@ Also added lower-level methods for converting state between the formats.
 
 - Removed the "fused" cross-entropy loss variant. It had a bug and consistently under-performed the native PyTorch version when compiled. See [Post Incident Report: bug with fused CE loss](https://docs.google.com/document/d/1IK6q2gX6mH7eQO_IItCZAYYlm4g4htL4mNWbTQuPKf4/edit?usp=sharing) for more information.
 
-## [v2.0.0](https://github.com/allenai/OLMo-core/releases/tag/v2.0.0) - 2025-03-12
+## [v2.0.0](https://github.com/allenai/Olmo-core/releases/tag/v2.0.0) - 2025-03-12
 
-This major release introduces a few breaking changes. We've provided more information here: [OLMo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
+This major release introduces a few breaking changes. We've provided more information here: [Olmo-core v2 design and upgrade guide](https://docs.google.com/document/d/1LvANhNzA-MdtiD2pLniLTqB9wxSSuqY435WuJIADeFM/edit?usp=sharing).
 
 ### Added
 
@@ -460,7 +462,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed the model ladder code when training on mps or cpu device
 
-## [v1.9.0](https://github.com/allenai/OLMo-core/releases/tag/v1.9.0) - 2025-03-10
+## [v1.9.0](https://github.com/allenai/Olmo-core/releases/tag/v1.9.0) - 2025-03-10
 
 ### Fixed
 
@@ -478,7 +480,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Ensure certain optimizer param group fields are not overridden by the values in a checkpoint.
 - Fixed issue where non-zero ranks would report partially-reduced values for training metrics.
 
-## [v1.8.0](https://github.com/allenai/OLMo-core/releases/tag/v1.8.0) - 2025-01-29
+## [v1.8.0](https://github.com/allenai/Olmo-core/releases/tag/v1.8.0) - 2025-01-29
 
 ### Added
 
@@ -509,7 +511,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed bug where source mixture datasets were truncating source files instead of randomly sampling.
 - Fixed bug in source mixture datsets where sampling from small npy files raised an mmap exception due to 0 instances in the sampled index.
 
-## [v1.7.0](https://github.com/allenai/OLMo-core/releases/tag/v1.7.0) - 2024-11-27
+## [v1.7.0](https://github.com/allenai/Olmo-core/releases/tag/v1.7.0) - 2024-11-27
 
 ### Added
 
@@ -517,7 +519,7 @@ This major release introduces a few breaking changes. We've provided more inform
   for loading checkpoints with different key names.
 - Added `load_key_mapping` field to the trainer, same idea as the new `key_mapping` argument above.
 - Added an implementation of nGPT called `NormalizedTransformer`.
-- Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for OLMo-core.
+- Added an example showing how to convert a HuggingFace Llama 3.2 checkpoint into the right format for Olmo-core.
 - Added an API for scaling RoPE embeddings.
 - Added a `ModelLadder` API.
 
@@ -531,7 +533,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Made HTTPS and GCS IO functions more robust.
 - Fixed a bug where we were always getting dolma2 tokenized validation data when generating config with DataMix.v3_small_ppl_validation.
 
-## [v1.6.3](https://github.com/allenai/OLMo-core/releases/tag/v1.6.3) - 2024-11-15
+## [v1.6.3](https://github.com/allenai/Olmo-core/releases/tag/v1.6.3) - 2024-11-15
 
 ### Added
 
@@ -545,7 +547,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed single-node training on Google Augusta cluster.
 - `numpy.random.dirichlet()` does not always sum to 1.0, so allow for a small tolerance in validating domain weights.
 
-## [v1.6.2](https://github.com/allenai/OLMo-core/releases/tag/v1.6.2) - 2024-11-08
+## [v1.6.2](https://github.com/allenai/Olmo-core/releases/tag/v1.6.2) - 2024-11-08
 
 ### Added
 
@@ -556,7 +558,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Fixed a bug where some default callbacks could be added twice if given a different name by the user.
 - Fixed a bug where some `Trainer` bookkeeping tasks may not complete before `.fit()` returns.
 
-## [v1.6.1](https://github.com/allenai/OLMo-core/releases/tag/v1.6.1) - 2024-11-06
+## [v1.6.1](https://github.com/allenai/Olmo-core/releases/tag/v1.6.1) - 2024-11-06
 
 ### Added
 
@@ -570,7 +572,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Removed some unnecessary host-device syncs in `olmo_core.distributed.utils`.
 - Added `Trainer(Config).async_bookkeeping` field to toggle async bookkeeping.
 
-## [v1.6.0](https://github.com/allenai/OLMo-core/releases/tag/v1.6.0) - 2024-11-01
+## [v1.6.0](https://github.com/allenai/Olmo-core/releases/tag/v1.6.0) - 2024-11-01
 
 ### Added
 
@@ -588,7 +590,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Made GCS client more robust by automatically retrying timeout errors for most operations.
 
-## [v1.5.0](https://github.com/allenai/OLMo-core/releases/tag/v1.5.0) - 2024-10-23
+## [v1.5.0](https://github.com/allenai/Olmo-core/releases/tag/v1.5.0) - 2024-10-23
 
 ### Added
 
@@ -611,7 +613,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - `prepare_cli_environment()` now calls `add_cached_path_clients()`.
 - Removed an unnecessary host-device sync.
 
-## [v1.4.0](https://github.com/allenai/OLMo-core/releases/tag/v1.4.0) - 2024-10-02
+## [v1.4.0](https://github.com/allenai/Olmo-core/releases/tag/v1.4.0) - 2024-10-02
 
 ### Changed
 
@@ -620,7 +622,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Renamed `VSLDataLoader` to `NumpyVSLDataLoader`.
 - The trainer now takes a `data_loader: DataLoaderBase` instead of a `dataset: NumpyDatasetBase`.
 
-## [v1.3.2](https://github.com/allenai/OLMo-core/releases/tag/v1.3.2) - 2024-09-27
+## [v1.3.2](https://github.com/allenai/Olmo-core/releases/tag/v1.3.2) - 2024-09-27
 
 ### Added
 
@@ -634,13 +636,13 @@ This major release introduces a few breaking changes. We've provided more inform
 - Removed redundant warning messages about CUDA alloc retries.
 - Fixed non-deterministic deadlock bug with async checkpointing.
 
-## [v1.3.1](https://github.com/allenai/OLMo-core/releases/tag/v1.3.1) - 2024-09-26
+## [v1.3.1](https://github.com/allenai/Olmo-core/releases/tag/v1.3.1) - 2024-09-26
 
 ### Fixed
 
 - Fixed the name given to evaluator metrics logged.
 
-## [v1.3.0](https://github.com/allenai/OLMo-core/releases/tag/v1.3.0) - 2024-09-26
+## [v1.3.0](https://github.com/allenai/Olmo-core/releases/tag/v1.3.0) - 2024-09-26
 
 ### Added
 
@@ -648,7 +650,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Added support for `torchao` `float8` training via the `Float8HandlerCallback`.
 - Added `Callback.post_attach()` method.
 
-## [v1.2.0](https://github.com/allenai/OLMo-core/releases/tag/v1.2.0) - 2024-09-25
+## [v1.2.0](https://github.com/allenai/Olmo-core/releases/tag/v1.2.0) - 2024-09-25
 
 ### Added
 
@@ -661,7 +663,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed bug with data loader when using threading.
 
-## [v1.1.0](https://github.com/allenai/OLMo-core/releases/tag/v1.1.0) - 2024-09-18
+## [v1.1.0](https://github.com/allenai/Olmo-core/releases/tag/v1.1.0) - 2024-09-18
 
 ### Added
 
@@ -676,7 +678,7 @@ This major release introduces a few breaking changes. We've provided more inform
 - Renamed `MemMapDataset` to `NumpyFSLDataset`.
 - Batch size is now specified in tokens, not instances.
 
-## [v1.0.6](https://github.com/allenai/OLMo-core/releases/tag/v1.0.6) - 2024-09-05
+## [v1.0.6](https://github.com/allenai/Olmo-core/releases/tag/v1.0.6) - 2024-09-05
 
 ### Added
 
@@ -692,14 +694,14 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Made reducing metrics more numerically stable with large world sizes.
 
-## [v1.0.5](https://github.com/allenai/OLMo-core/releases/tag/v1.0.5) - 2024-09-03
+## [v1.0.5](https://github.com/allenai/Olmo-core/releases/tag/v1.0.5) - 2024-09-03
 
 ### Fixed
 
 - Fixed bug with checkpointer callback searching for existing ephemeral checkpoints when the checkpoint folder doesn't exist.
 - Checkpointer callback won't collect existing ephemeral checkpoints that were saved after the checkpoint that was loaded from.
 
-## [v1.0.4](https://github.com/allenai/OLMo-core/releases/tag/v1.0.4) - 2024-09-01
+## [v1.0.4](https://github.com/allenai/Olmo-core/releases/tag/v1.0.4) - 2024-09-01
 
 ### Added
 
@@ -717,7 +719,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed setting the right env vars for single node training on Jupiter.
 
-## [v1.0.3](https://github.com/allenai/OLMo-core/releases/tag/v1.0.3) - 2024-08-30
+## [v1.0.3](https://github.com/allenai/Olmo-core/releases/tag/v1.0.3) - 2024-08-30
 
 ### Added
 
@@ -731,7 +733,7 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Fixed bug with how command arguments were expanded by `BeakerLaunchConfig`.
 
-## [v1.0.2](https://github.com/allenai/OLMo-core/releases/tag/v1.0.2) - 2024-08-29
+## [v1.0.2](https://github.com/allenai/Olmo-core/releases/tag/v1.0.2) - 2024-08-29
 
 ### Added
 
@@ -749,19 +751,19 @@ This major release introduces a few breaking changes. We've provided more inform
 
 - Callbacks now have to have a name assigned.
 
-## [v1.0.1](https://github.com/allenai/OLMo-core/releases/tag/v1.0.1) - 2024-08-26
+## [v1.0.1](https://github.com/allenai/Olmo-core/releases/tag/v1.0.1) - 2024-08-26
 
 ### Fixed
 
 - Fixed a bug with resetting the initial LR in optimizers after a loading a checkpoint.
 
-## [v1.0.0](https://github.com/allenai/OLMo-core/releases/tag/v1.0.0) - 2024-08-26
+## [v1.0.0](https://github.com/allenai/Olmo-core/releases/tag/v1.0.0) - 2024-08-26
 
 ### Added
 
 - Ported, refactored, and optimized the modeling and training from the OLMo repo while fixing several bugs. Introduces a new highly efficient yet customizable trainer and a standard API for launching jobs directly to Beaker from a Python script.
 
-## [v0.1.0](https://github.com/allenai/OLMo-core/releases/tag/v0.1.0) - 2024-06-11
+## [v0.1.0](https://github.com/allenai/Olmo-core/releases/tag/v0.1.0) - 2024-06-11
 
 ### Added
 

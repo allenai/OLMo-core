@@ -165,7 +165,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.attention_gate_full_precision = attention_gate_full_precision
 
         # Kimi Delta Attention (KDA) fields. They are model-wide because the
-        # OLMo-core ladder uses one KDA shape for every linear-attention layer.
+        # Olmo-core ladder uses one KDA shape for every linear-attention layer.
         self.linear_num_key_heads = linear_num_key_heads
         self.linear_num_value_heads = (
             linear_num_value_heads if linear_num_value_heads is not None else linear_num_key_heads
