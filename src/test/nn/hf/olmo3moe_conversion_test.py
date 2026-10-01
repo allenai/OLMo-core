@@ -1,8 +1,8 @@
 """
-Roundtrip tests for the ``olmo3moe`` <-> OLMo-core MoE-v2 state-dict conversion.
+Roundtrip tests for the ``olmo3moe`` <-> Olmo-core MoE-v2 state-dict conversion.
 
 These exercise the conversion functions directly on synthetic tensor dicts with a stub config, so
-they don't require ``transformers`` or a built model — they verify the HF<->OLMo-core mapping is a
+they don't require ``transformers`` or a built model — they verify the HF<->Olmo-core mapping is a
 faithful bijection (including the fused ``w_up_gate`` split and the mixed dense/MoE layer layout).
 """
 
