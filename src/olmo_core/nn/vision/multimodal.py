@@ -815,6 +815,21 @@ class MultimodalOLMoDDPModel(MultimodalLM):
                 f"got {type(self.lm).__name__}"
             )
 
+    def encode_images(
+        self,
+        images: torch.Tensor,
+        pooled_patches_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Encode images with the pixels cast to the vision tower's parameter dtype.
+
+        The OLMoDDP train module casts the whole wrapped model (vision encoder, connector and
+        LM) to its training dtype, while the collator delivers float32 pixels, so the cast is
+        required here; it is a no-op when the tower already runs in the pixels' dtype.
+        """
+        vision_dtype = next(self.vision.parameters()).dtype
+        return super().encode_images(images.to(dtype=vision_dtype), pooled_patches_idx)
+
     @property
     def _olmo_lm(self):
         from olmo_core.nn.ddp import OLMoDDPModel

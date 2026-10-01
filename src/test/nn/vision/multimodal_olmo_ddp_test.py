@@ -259,6 +259,19 @@ def test_encoded_image_features_reproduce_the_direct_forward():
         model(input_ids, images=images, pooled_patches_idx=pooled, encoded_image_features=features)
 
 
+def test_encode_images_casts_pixels_to_the_vision_tower_dtype():
+    # The OLMoDDP train module casts the whole wrapped model to bf16 while the collator
+    # delivers float32 pixels (the first bridge smoke failed on exactly this matmul).
+    model = _model().to(torch.bfloat16)
+    input_ids, images, pooled = _image_batch()
+    assert images.dtype == torch.float32
+    with torch.no_grad():
+        features = model.encode_images(images, pooled)
+        logits = model(input_ids, images=images, pooled_patches_idx=pooled)
+    assert features.dtype == torch.bfloat16 and features.shape == (2, _D_MODEL)
+    assert logits.shape[0] == 2 and torch.isfinite(logits.float()).all()
+
+
 def test_frozen_vision_tower_stays_in_eval_mode_during_training():
     model = _model()
     for param in model.vision.parameters():
