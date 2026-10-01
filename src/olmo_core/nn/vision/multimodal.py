@@ -649,12 +649,16 @@ class MultimodalLM(nn.Module):
 
         document_mode = self.uses_document_boundaries()
         if document_mode:
-            if subsegment_ids is not None:
+            # The packer always emits ``subsegment_ids`` (a constant id for examples without
+            # branches), so only real sibling branches, which need an attention mask, are
+            # rejected; otherwise the ids carry nothing beyond the example boundaries.
+            if subsegment_ids is not None and has_sibling_branches(subsegment_ids, example_ids):
                 raise ValueError(
-                    "Sibling-branch packing (`subsegment_ids`) needs an attention mask, which "
-                    "the LM's recurrent sequence mixers cannot apply; pack one document per "
-                    "example instead."
+                    "Sibling-branch packing (`subsegment_ids` with several branches in one "
+                    "example) needs an attention mask, which the LM's recurrent sequence mixers "
+                    "cannot apply; pack one document per example instead."
                 )
+            subsegment_ids = None
             # Recurrent mixers carry no positions and the attention layers of such LMs use no
             # RoPE, so explicit positions have nothing to act on.
             position_ids = None
@@ -814,6 +818,31 @@ class MultimodalLM(nn.Module):
         ):
             out[..., output_vocab_size:] = torch.finfo(out.dtype).min
         return out
+
+
+def has_sibling_branches(
+    subsegment_ids: torch.Tensor, example_ids: Optional[torch.Tensor] = None
+) -> bool:
+    """
+    Whether any packed example carries more than one branch.
+
+    :param subsegment_ids: ``(B, S)`` per-token subsegment ids; the shared prefix of a branched
+        example uses ``ATTEND_ALL_SUBSEGMENT_ID`` and does not count as a branch.
+    :param example_ids: ``(B, S)`` per-token example ids (``-1`` = padding); ``None`` treats
+        each row as one example.
+    """
+    from olmo_core.data.multimodal.sequence_builder import ATTEND_ALL_SUBSEGMENT_ID
+
+    subsegment_ids = subsegment_ids.cpu()
+    rows = example_ids.cpu() if example_ids is not None else torch.zeros_like(subsegment_ids)
+    for row_subseg, row_examples in zip(subsegment_ids, rows):
+        for example in torch.unique(row_examples):
+            if int(example) < 0:
+                continue
+            ids = torch.unique(row_subseg[row_examples == example])
+            if int((ids != ATTEND_ALL_SUBSEGMENT_ID).sum()) > 1:
+                return True
+    return False
 
 
 def document_lengths_from_example_ids(example_ids: torch.Tensor) -> Tuple[torch.Tensor, List[int]]:

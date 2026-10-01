@@ -29,7 +29,10 @@ from olmo_core.nn.vision import (
     VisionEncoderConfig,
     VisionEncoderType,
 )
-from olmo_core.nn.vision.multimodal import document_lengths_from_example_ids
+from olmo_core.nn.vision.multimodal import (
+    document_lengths_from_example_ids,
+    has_sibling_branches,
+)
 
 _D_MODEL = 16
 _VOCAB = 64
@@ -187,6 +190,33 @@ def test_document_mode_isolates_packed_examples_through_kda():
         leaked = model(packed)[:, 40:]  # one document: state carries over from example A
     torch.testing.assert_close(packed_logits, alone, rtol=1e-3, atol=1e-3)
     assert not torch.allclose(leaked, alone, rtol=1e-3, atol=1e-3)
+
+
+def test_document_mode_accepts_packer_subsegment_ids_without_branches():
+    # The packer always emits ``subsegment_ids``: a constant id per branch-free example (and the
+    # ATTEND_ALL prefix id plus one branch id for a single-annotation example), which carries
+    # nothing beyond the example boundaries; the first bridge smoke tripped on exactly this.
+    assert not has_sibling_branches(
+        torch.tensor([[0, 0, 0, 1, 1, 1]]), torch.tensor([[0, 0, 0, 1, 1, 1]])
+    )
+    assert not has_sibling_branches(torch.tensor([[10000, 10000, 5, 5, 5, 5]]))
+    assert has_sibling_branches(torch.tensor([[10000, 10000, 1, 1, 2, 2]]))
+    assert has_sibling_branches(
+        torch.tensor([[0, 0, 1, 1, 7, 7]]), torch.tensor([[0, 0, 0, 0, 1, 1]])
+    )
+    model = _attention_model()
+    model._document_mode = True
+    lm_forward = Mock(return_value=torch.zeros(1, 6, _VOCAB))
+    model.lm.forward = lm_forward  # type: ignore[method-assign]
+    input_ids = torch.randint(2, _VOCAB, (1, 6))
+    with torch.no_grad():
+        model(
+            input_ids,
+            subsegment_ids=torch.tensor([[0, 0, 0, 1, 1, 1]]),
+            example_ids=torch.tensor([[0, 0, 0, 1, 1, 1]]),
+        )
+    kwargs = lm_forward.call_args.kwargs
+    assert kwargs["doc_lens"].tolist() == [[3, 3]] and kwargs["and_mask"] is None
 
 
 def test_document_mode_rejects_sibling_branch_packing():
