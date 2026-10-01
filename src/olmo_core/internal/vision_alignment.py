@@ -125,6 +125,7 @@ MULTIMODAL_OVERRIDES: dict[str, str] = {
     "trainer.load_trainer_state": "phase handoff policy",
     "trainer.max_duration": "phase step budget",
     "trainer.callbacks.checkpointer._CLASS_": "alignment checkpointer subclass (phase retention)",
+    "trainer.callbacks.beaker._CLASS_": "alignment Beaker subclass (W&B config on resumed runs)",
     "trainer.callbacks.checkpointer.save_interval": "short phases: 500",
     "trainer.callbacks.checkpointer.ephemeral_save_interval": "short phases: 50",
     "trainer.callbacks.checkpointer.max_checkpoints": "phase retention",
