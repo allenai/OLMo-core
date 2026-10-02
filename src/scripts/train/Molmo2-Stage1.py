@@ -20,8 +20,11 @@ useful for parity tests and continuation experiments, but not a stage-1 reproduc
 ``--recipe`` selects the data mixture (see :data:`RECIPES`): ``v1`` (the default) is the released
 Molmo2-4B-Pretrain mixture -- caption 0.6, pointing and counting 0.3 on the v1 sources, Tulu
 text 0.1, no OCR. ``v2`` is caption 0.5, pointing and counting 0.25 on the v2 sources, OCR 0.25
-and no text-only data. A recipe only sets the defaults of ``pointing_rate`` / ``nlp_rate`` /
-``ocr_rate`` / ``pointing_data``; an explicit override of any of them still wins.
+and no text-only data. ``v3`` is v2 with an academic QA group, a clock-reading group and more OCR,
+for 50,000 steps rather than 32,000: caption 0.33, pointing and counting 0.16, OCR 0.34, academic
+QA 0.14, clocks 0.03. A recipe only sets the defaults of ``pointing_rate`` / ``nlp_rate`` /
+``ocr_rate`` / ``academic_rate`` / ``clock_rate`` / ``pointing_data`` and the step count; an
+explicit override of any of them still wins.
 
 ``--pointing_data`` selects the pointing/counting group: ``v1`` (the released Molmo2 pretrain's
 sources, the default) or ``v2`` (mm_olmo's molmo3 stage-1 sources: the audited, image-grouped
@@ -39,6 +42,17 @@ sources (see :mod:`olmo_core.data.multimodal.mixtures.ocr`); the ``olmocr`` / ``
 ``text_rich`` config fields are the three source templates, e.g. ``--olmocr.languages=null``,
 ``nvidia_synth`` / ``receipts`` configure the synthetic sets, and ``--ocr_data_root`` relocates
 the tar tree.
+
+``--academic_rate`` (default 0; 0.14 in ``v3``) adds stage 2's large synthetic QA sets, also paid
+for by the caption group: CoSyn's seven single-image categories, DVQA, FigureQA and PlotQA, each
+question behind its source's style tag (``dv_qa: <question>``). The training set of a benchmark
+the stage-2 checkpoints are evaluated on is never a stage-1 source, nor is TallyQA, whose images
+overlap the VQAv2 eval's. ``--academic_sources=[...]`` picks the sources (see
+:mod:`olmo_core.data.multimodal.mixtures.stage1_academic`).
+
+``--clock_rate`` (default 0; 0.03 in ``v3``) adds PixMo-Clocks as a group of its own, also paid
+for by the caption group: synthetic clock faces, with ``clocks: What time is being shown?`` as the
+user turn and the time as the answer.
 
 Run without arguments for usage. Quick local smoke test on synthetic data::
 
@@ -85,6 +99,15 @@ from olmo_core.data.multimodal.mixtures.ocr import (
     ocr_task,
     ocr_task_shares,
     ocr_weighting_sizes,
+)
+from olmo_core.data.multimodal.mixtures.stage1_academic import (
+    CLOCKS_SOURCE,
+    DEFAULT_ACADEMIC_SOURCES,
+    STAGE1_ACADEMIC_SOURCE_NAMES,
+    STAGE2_EVAL_TRAIN_SETS,
+    academic_weighting_sizes,
+    build_stage1_academic_source,
+    build_stage1_clocks_source,
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
@@ -296,7 +319,8 @@ POINTING_DATASET_KWARGS = {
     "loss_token_weighting": "none",
 }
 
-# remainder (1 - POINTING_RATE - NLP_RATE - OCR_RATE). Set all three to 0.0 for a caption-only run.
+# remainder (1 - POINTING_RATE - NLP_RATE - OCR_RATE - ACADEMIC_RATE - CLOCK_RATE). Set them all to
+# 0.0 for a caption-only run.
 POINTING_RATE = 0.30
 NLP_RATE = 0.10
 # The OCR group (`olmo_core.data.multimodal.mixtures.ocr`): general OCR data only, i.e. an image
@@ -316,6 +340,24 @@ NLP_RATE = 0.10
 # which needs `pypdfium2` (installed by the launch `post_setup` below).
 OCR_RATE = 0.0
 OCR_SOURCES = DEFAULT_OCR_SOURCES
+# The academic QA group (`olmo_core.data.multimodal.mixtures.stage1_academic`): stage 2's large
+# synthetic QA sets, trained in stage 1 as well so a stage 1 mixed into text midtraining has more
+# distinct images than PixMo-Cap's. CoSyn's seven single-image categories (357k images), DVQA
+# (200k), PlotQA (157k) and FigureQA (100k), weighted at stage 2's row caps so the group's
+# sqrt(size) split gives the three templated chart sets 19% of it. Each question is the bare
+# question behind its source's style tag. Never a source: the training set of a benchmark the
+# stage-2 checkpoints are evaluated on (VQAv2, TextVQA, ChartQA, DocVQA, InfographicVQA, AI2D,
+# A-OKVQA), or TallyQA, whose images overlap the VQAv2 eval's. Paid for out of the caption group;
+# off unless given, and 0.14 in the v3 recipe.
+ACADEMIC_RATE = 0.0
+ACADEMIC_SOURCES = DEFAULT_ACADEMIC_SOURCES
+# The clock-reading group (`mixtures.stage1_academic.build_stage1_clocks_source`): PixMo-Clocks'
+# 800k synthetic clock faces, a group of its own rather than an academic source because it is one
+# narrow skill with one fixed question. Its own rate caps how much of it a run sees whatever the
+# QA group's size. Its user turn keeps the question, `clocks: What time is being shown?`: stage 1
+# may become the only place the model learns to read clocks, so the question text is trained too.
+# Paid for out of the caption group; off unless given, and 0.03 in the v3 recipe.
+CLOCK_RATE = 0.0
 
 # Which sources `POINTING_RATE` buys.
 #   "v1": the released Molmo2 pretrain's group (mm_olmo train_captioner.py `--pointing`):
@@ -349,20 +391,57 @@ POINTING_V2_P_PAIRED_NEGATIVES = 0.25
 # object name, as `pointing:` is. Its agent masks feed segmentation, which is not trained here.
 POINTING_V2_COSYN_AUDIT_STYLE = "aux_cosyn_point"
 
-# Data recipes: the four group rates and the pointing sources, selected with `--recipe`. The
-# caption group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate. A recipe only sets
-# defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption at 0.55).
+# Data recipes: the group rates and the pointing sources, selected with `--recipe`. The caption
+# group gets the remainder, 1 - pointing_rate - nlp_rate - ocr_rate - academic_rate - clock_rate. A
+# recipe only sets defaults: `--recipe=v2 --ocr_rate=0.2` is v2 with a 0.2 OCR group (and caption
+# at 0.55).
 #   "v1": the released Molmo2-4B-Pretrain mixture: caption 0.6, pointing and counting 0.3 (v1
 #         sources), Tulu text 0.1, no OCR.
 #   "v2": caption 0.5, pointing and counting 0.25 (v2 sources: audited PixMo-Points / PixMo-Count
 #         + CoSyn), OCR 0.25 (the default OCR sources, see `OCR_RATE`), no text-only data.
+#   "v3": v2 plus the academic QA group (`ACADEMIC_RATE`) and the clock group (`CLOCK_RATE`), with
+#         more OCR, for 50,000 steps (`RECIPE_MAX_STEPS`): caption 0.33, pointing and counting
+#         0.16, OCR 0.34, academic QA 0.14, clocks 0.03. The OCR rate is what one pass over the
+#         OCR group takes in 50k steps: from 80 sampled examples per source, packed by this
+#         script's 2D-knapsack packer at 2,560 tokens, a run is 1.41 examples per sequence, 9.0M
+#         examples, 3.07M of them OCR for its 3.09M rows. Within the group the split is still by
+#         task, then sqrt(size) with the synthetic sets capped (`_ocr_fractions`), so that pass
+#         is uneven: the figure captions ~1 pass, olmOCR documents 2.1, the small olmOCR subsets,
+#         TextOCR and the receipts 7-10, NVIDIA's 1.46M synthetic images 0.32. Caption and
+#         pointing keep about v2's passes (4.2 over PixMo-Cap, v2 4.0; 4.4 over the pointing
+#         sources, v2 4.4); the academic group gets 1.55 passes and the clock group 271k examples
+#         (0.34 passes). The expected weighted loss splits caption / pointing / OCR / academic as
+#         39.2% / 12.8% / 38.9% / 9.1% (v2: 55.1% / 18.5% / 26.5% / 0), clocks 0.08%.
 RECIPES = {
     "v1": dict(
-        pointing_rate=POINTING_RATE, nlp_rate=NLP_RATE, ocr_rate=OCR_RATE, pointing_data="v1"
+        pointing_rate=POINTING_RATE,
+        nlp_rate=NLP_RATE,
+        ocr_rate=OCR_RATE,
+        academic_rate=ACADEMIC_RATE,
+        clock_rate=CLOCK_RATE,
+        pointing_data="v1",
     ),
-    "v2": dict(pointing_rate=0.25, nlp_rate=0.0, ocr_rate=0.25, pointing_data="v2"),
+    "v2": dict(
+        pointing_rate=0.25,
+        nlp_rate=0.0,
+        ocr_rate=0.25,
+        academic_rate=0.0,
+        clock_rate=0.0,
+        pointing_data="v2",
+    ),
+    "v3": dict(
+        pointing_rate=0.16,
+        nlp_rate=0.0,
+        ocr_rate=0.34,
+        academic_rate=0.14,
+        clock_rate=0.03,
+        pointing_data="v2",
+    ),
 }
 RECIPE = "v1"
+# Training steps a recipe runs for, where it differs from `MAX_STEPS`: v3's OCR rate is set to cover
+# the OCR group once in 50k steps. An explicit `--trainer.max_duration.value` still wins.
+RECIPE_MAX_STEPS = {"v3": 50_000}
 
 # Beaker.
 BEAKER_CLUSTER = "ai2/jupiter"
@@ -437,6 +516,13 @@ class ExperimentConfig(Config):
     ocr_data_root: str = OE_ENCODER_DATA
     """Root of the oe-encoder tar tree; each caption-tars source appends its own subdirectory
     (:data:`olmo_core.data.multimodal.mixtures.ocr.OCR_TAR_SOURCES`)."""
+    academic_rate: float = ACADEMIC_RATE
+    """Fraction of mixture samples from the academic QA group; see :data:`ACADEMIC_RATE`."""
+    academic_sources: Tuple[str, ...] = ACADEMIC_SOURCES
+    """Academic QA sources in the group (names from
+    :data:`olmo_core.data.multimodal.mixtures.stage1_academic.STAGE1_ACADEMIC_SOURCE_NAMES`)."""
+    clock_rate: float = CLOCK_RATE
+    """Fraction of mixture samples from the PixMo-Clocks group; see :data:`CLOCK_RATE`."""
     train_vit: bool = TRAIN_VIT
     caption_message_weight: float = CAPTION_MESSAGE_WEIGHT
     """Multiplier on the caption source's loss tokens; 1.0 reproduces the released
@@ -531,8 +617,8 @@ def resolve_recipe(overrides: List[str]) -> Tuple[str, dict]:
     """The ``--recipe`` named in the raw overrides and the field defaults it sets.
 
     Read before :meth:`Config.merge`, so the recipe's rates become the config's starting values
-    and an explicit ``--pointing_rate`` / ``--nlp_rate`` / ``--ocr_rate`` / ``--pointing_data``
-    still overrides them.
+    and an explicit ``--pointing_rate`` / ``--nlp_rate`` / ``--ocr_rate`` / ``--academic_rate`` /
+    ``--clock_rate`` / ``--pointing_data`` still overrides them.
 
     :raises OLMoConfigurationError: If the recipe is not one of :data:`RECIPES`.
     """
@@ -559,11 +645,12 @@ def validate_data_config(config) -> None:
     """Check the data-mixture fields of a merged config.
 
     Separate from :func:`build_config`, which also resolves the Beaker launch and so cannot run
-    without cluster access: this only reads ``recipe``, ``pointing_data``, the three rates,
-    ``ocr_sources``, ``olmocr`` and ``ocr_tars``.
+    without cluster access: this only reads ``recipe``, ``pointing_data``, the five rates,
+    ``ocr_sources``, ``olmocr``, ``ocr_tars``, ``text_rich`` and ``academic_sources``.
 
     :raises OLMoConfigurationError: If a field is invalid, or an override would be silently
-        ignored, or a source would read anything but its train split.
+        ignored, or a source would read anything but its train split, or an academic source is the
+        training set of a stage-2 eval benchmark.
     """
     if config.recipe not in RECIPES:
         raise OLMoConfigurationError(f"recipe={config.recipe!r} is not one of {tuple(RECIPES)}")
@@ -627,9 +714,42 @@ def validate_data_config(config) -> None:
                 tar_name,
                 mix_name,
             )
-    if config.pointing_rate + config.nlp_rate + config.ocr_rate > 1.0:
+    if config.academic_rate > 0 and not config.academic_sources:
         raise OLMoConfigurationError(
-            "pointing_rate + nlp_rate + ocr_rate exceeds 1: nothing is left for the caption source"
+            "academic_rate > 0 needs at least one entry in academic_sources"
+        )
+    # Checked whatever the rate, so a refused set cannot sit in a saved config waiting for a rate.
+    held_out = [n for n in config.academic_sources if n in STAGE2_EVAL_TRAIN_SETS]
+    if held_out:
+        raise OLMoConfigurationError(
+            f"academic_sources {held_out} are training sets of stage-2 eval benchmarks "
+            f"({sorted({STAGE2_EVAL_TRAIN_SETS[n] for n in held_out})}); they stay stage-2 data"
+        )
+    if CLOCKS_SOURCE in config.academic_sources:
+        raise OLMoConfigurationError(
+            f"{CLOCKS_SOURCE} is not an academic source: it is its own group, set with --clock_rate"
+        )
+    unknown = [n for n in config.academic_sources if n not in STAGE1_ACADEMIC_SOURCE_NAMES]
+    if unknown:
+        raise OLMoConfigurationError(
+            f"Unknown academic_sources {unknown}; expected names from "
+            f"{STAGE1_ACADEMIC_SOURCE_NAMES}"
+        )
+    if len(set(config.academic_sources)) != len(config.academic_sources):
+        raise OLMoConfigurationError(f"academic_sources has duplicates: {config.academic_sources}")
+    rates = (
+        config.pointing_rate,
+        config.nlp_rate,
+        config.ocr_rate,
+        config.academic_rate,
+        config.clock_rate,
+    )
+    if any(r < 0 for r in rates):
+        raise OLMoConfigurationError(f"group rates must be >= 0, got {rates}")
+    if sum(rates) > 1.0:
+        raise OLMoConfigurationError(
+            "pointing_rate + nlp_rate + ocr_rate + academic_rate + clock_rate exceeds 1: nothing "
+            "is left for the caption source"
         )
 
 
@@ -803,7 +923,7 @@ def build_config(script: str, run_name: str, overrides: List[str]) -> Experiment
             save_overwrite=True,
             metrics_collect_interval=5,
             cancel_check_interval=5,
-            max_duration=Duration.steps(MAX_STEPS),
+            max_duration=Duration.steps(RECIPE_MAX_STEPS.get(recipe, MAX_STEPS)),
         )
         .with_callback("gpu_monitor", GPUMemoryMonitorCallback())
         .with_callback(
@@ -1115,14 +1235,24 @@ def _pointing_group_fractions(
     )
 
 
+def _academic_fractions(names: Sequence[str], sizes: Sequence[int]):
+    """How the academic group's rate is split among its sources: by sqrt(size), with the templated
+    chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``).
+    """
+    return _size_fractions(academic_weighting_sizes(names, sizes), "sqrt", names)
+
+
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
-    """Build the caption + pointing + NLP + OCR sources, their sampling weights (mm_olmo
-    SubMixture) and their names: caption gets ``1 - pointing_rate - nlp_rate - ocr_rate``; the
-    pointing group shares ``pointing_rate`` (split per :func:`_pointing_group_fractions`); NLP
-    gets ``nlp_rate``; the OCR sources share ``ocr_rate`` split by sqrt(size)."""
-    p, n, o = config.pointing_rate, config.nlp_rate, config.ocr_rate
+    """Build the caption + pointing + NLP + OCR + academic + clock sources, their sampling weights
+    (mm_olmo SubMixture) and their names: caption gets ``1 - pointing_rate - nlp_rate - ocr_rate -
+    academic_rate - clock_rate``; the pointing group shares ``pointing_rate`` (split per
+    :func:`_pointing_group_fractions`); NLP gets ``nlp_rate``; the OCR sources share ``ocr_rate``
+    (:func:`_ocr_fractions`); the academic sources share ``academic_rate``
+    (:func:`_academic_fractions`); PixMo-Clocks gets ``clock_rate``."""
+    p, n, o, a = config.pointing_rate, config.nlp_rate, config.ocr_rate, config.academic_rate
+    c = config.clock_rate
     datasets: List = [config.dataset.build(tokenizer)]  # caption
-    weights: List[float] = [max(1.0 - p - n - o, 0.0)]
+    weights: List[float] = [max(1.0 - p - n - o - a - c, 0.0)]
     names: List[str] = ["pixmo_cap"]
 
     if p > 0:
@@ -1196,6 +1326,25 @@ def _build_mixture_sources(tokenizer, config: ExperimentConfig):
         weights += [o * float(f) for f in frac]
         names += list(config.ocr_sources)
 
+    if a > 0:
+        academic = [
+            build_stage1_academic_source(
+                name, tokenizer, max_crops=MAX_CROPS, seed=config.data_seed
+            )
+            for name in config.academic_sources
+        ]
+        frac = _academic_fractions(list(config.academic_sources), [len(d) for d in academic])
+        datasets += academic
+        weights += [a * float(f) for f in frac]
+        names += list(config.academic_sources)
+
+    if c > 0:
+        datasets.append(
+            build_stage1_clocks_source(tokenizer, max_crops=MAX_CROPS, seed=config.data_seed)
+        )
+        weights.append(c)
+        names.append(CLOCKS_SOURCE)
+
     log.info(
         "Mixture sources / sizes / weights: %s",
         [(name, len(d), round(w, 4)) for name, d, w in zip(names, datasets, weights)],
@@ -1227,7 +1376,13 @@ def train(config: ExperimentConfig):
     dp_pg = train_module.dp_process_group
     dp_world_size, dp_rank = get_world_size(dp_pg), get_rank(dp_pg)
 
-    if config.pointing_rate > 0 or config.nlp_rate > 0 or config.ocr_rate > 0:
+    if (
+        config.pointing_rate > 0
+        or config.nlp_rate > 0
+        or config.ocr_rate > 0
+        or config.academic_rate > 0
+        or config.clock_rate > 0
+    ):
         datasets, weights, names = _build_mixture_sources(tokenizer, config)
         data_loader = MixtureDataLoader(
             datasets,
@@ -1299,6 +1454,9 @@ OCR group at 15% (olmOCR-mix + TextOCR transcription, and three-level figure cap
 Only the olmOCR-mix page transcription sources:
 › python {sys.argv[0]} launch molmo2-stage1-olmocr --ocr_rate=0.075 \
       --ocr_sources=[olmocr_documents,olmocr_books,olmocr_loc_transcripts,olmocr_national_archives]
+
+The v3 recipe (50k steps; caption 0.33, pointing 0.16, OCR 0.34, academic QA 0.14, clocks 0.03):
+› python {sys.argv[0]} launch molmo2-stage1-v3 --recipe=v3
 
 Local synthetic smoke test:
 › torchrun --nproc-per-node=1 {sys.argv[0]} train smoke \\

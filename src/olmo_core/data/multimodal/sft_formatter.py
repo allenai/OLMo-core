@@ -2,8 +2,8 @@
 
 Defaults to the stage-2 family (``uber_model_v2`` templates + ``demo_or_style_v2`` system
 prompt). Stage 1 uses a different family -- ``prompt_templates="none"`` with
-``system_prompt="style_and_length_v2"`` -- which asks for a point with the bare lowercased
-label behind a ``"<style>:"`` prefix rather than a natural-language template. Both are
+``system_prompt="style_and_length_v2"`` -- which puts the bare question (for pointing, the bare
+lowercased label) behind a ``"<style>:"`` tag rather than a natural-language template. Both are
 selectable, because the form has to follow the checkpoint: a model trained on one and
 evaluated on the other is out of distribution.
 """
@@ -165,38 +165,25 @@ class SftFormatter:
     """``"uber_model_v2"`` samples a natural-language template; ``"none"`` uses the bare
     lowercased label (mm_olmo ``data_formatter.py:1759-1779``)."""
     system_prompt: str = "demo_or_style_v2"
-    """``"demo_or_style_v2"`` adds no style prefix; ``"style_and_length"``/``"_v2"`` prefix the
-    pointing/counting styles with ``"<style>:"``."""
+    """``"demo_or_style_v2"`` prefixes the non-demo styles with ``"<style>:"``;
+    ``"style_and_length"``/``"_v2"`` prefix every style with ``"<style>:"``."""
     p_multi_point_all_image: float = 0.5
     """Probability that a multi-image pointing question targets "all images" instead of
     a random image subset (mm_olmo stage-2 sets 0.5)."""
 
-    #: mm_olmo styles taking a ``"<style>:"`` prefix under the ``style_and_length`` families
-    #: (``data_formatter.py:1649-1653``). They are also in :data:`DEMO_STYLES`, which is what
-    #: suppresses the prefix under ``demo_or_style_v*``.
-    STYLE_PREFIX_STYLES = frozenset(
-        {
-            "pointing",
-            "point_count",
-            "point_then_count",
-            "cosyn_point",
-            "text_sft",
-            "aux_pointing",
-            "aux_point_count",
-            "v3det_points",
-            # This repo's marker for audit-failed CoSyn questions (mm_olmo reuses `aux_pointing`),
-            # so `aux_pointing:` stays followed by an object name.
-            "aux_cosyn_point",
-        }
-    )
     #: System-prompt families that prefix the style name.
     STYLE_AND_LENGTH_FAMILIES = frozenset({"style_and_length", "style_and_length_v2"})
 
     def style_prefix(self, style: str) -> str:
         if self.system_prompt in self.STYLE_AND_LENGTH_FAMILIES:
-            # Pointing/counting styles are prefixed under this family even though they are
-            # demo styles; captions get their own "<style> <bucket>:" prefix upstream.
-            return f"{style}:" if style in self.STYLE_PREFIX_STYLES else ""
+            # mm_olmo tags every style under this family (data_formatter.py:1773-1820), demo
+            # styles included: pointing and counting as "<style>:", everything else as
+            # "<style> <n>:" with n the answer's length // 15 (plus noise) 90% of the time. The
+            # number is dropped here, as it is from the caption tag (`pixmo_cap.style_tag_prompt`),
+            # so a tag is the same string at training and at test time. That is exactly mm_olmo's
+            # molmo3 stage-1 family (`style_and_length_v3`, data_formatter.py:1779-1794), which
+            # tags every non-caption style with the bare "<style>:".
+            return f"{style}:" if style else ""
         if not style or style in DEMO_STYLES or style in IMAGE_MC_STYLES:
             return ""
         return f"{style}:"
@@ -498,13 +485,25 @@ class SftFormatter:
             else:
                 output = self.format_points(example)
         elif "question" in example and ("options" in example or "unlabelled_options" in example):
+            if self.prompt_templates == "none":
+                # mm_olmo lays the options out with `format_options` under this family
+                # (data_formatter.py:1927-1928), not with the sampled templates below, and that
+                # layout is not ported: refuse rather than train a stage-2 prompt in stage 1.
+                raise NotImplementedError(
+                    "multiple-choice questions have no prompt_templates='none' port "
+                    f"(style {style!r})"
+                )
             prompt, output, _ = self.template_options(example, is_training, rng)
         elif "question" in example:
             prompt = example["question"]
         else:
             prompt = ""
 
-        if "_exp" in style and prompt:
+        # The chain-of-thought instruction is one of mm_olmo's templates
+        # (`GENERAL_PROMPTS_V1["chain_of_thought"]`, data_formatter.py:1979-1980), so it is only
+        # applied by the templated families. Under "none" the question is sent bare
+        # (data_formatter.py:1933-1934): the `*_exp` style tag is what asks for the explanation.
+        if "_exp" in style and prompt and self.prompt_templates != "none":
             prompt = _apply_chain_of_thought_prompt(prompt)
 
         if output is None and is_training:

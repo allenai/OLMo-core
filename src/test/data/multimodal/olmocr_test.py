@@ -326,6 +326,9 @@ def test_stage1_refuses_the_olmocr_eval_split():
         TextRichCaptionDatasetConfig,
     )
     from olmo_core.data.multimodal.mixtures.ocr import DEFAULT_OCR_SOURCES
+    from olmo_core.data.multimodal.mixtures.stage1_academic import (
+        DEFAULT_ACADEMIC_SOURCES,
+    )
 
     mod = _load_stage1_module()
 
@@ -340,6 +343,9 @@ def test_stage1_refuses_the_olmocr_eval_split():
             olmocr=OlmOcrMixDatasetConfig(split=split),
             ocr_tars=OcrCaptionTarsDatasetConfig(),
             text_rich=TextRichCaptionDatasetConfig(),
+            academic_rate=0.0,
+            academic_sources=DEFAULT_ACADEMIC_SOURCES,
+            clock_rate=0.0,
         )
 
     for split in ("eval", "validation"):

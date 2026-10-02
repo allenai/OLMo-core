@@ -15,7 +15,12 @@ Unlike the text-only :mod:`olmo_core.data.composable` pipeline (a token-stream
 packer), this carries variable-shape image tensors alongside the token sequence.
 """
 
-from .academic_dataset import AcademicDataset, AcademicDatasetConfig
+from .academic_dataset import (
+    AcademicDataset,
+    AcademicDatasetConfig,
+    Stage1AcademicDataset,
+    Stage1AcademicDatasetConfig,
+)
 from .collator import MultimodalCollator, MultimodalCollatorConfig
 from .data_loader import MultimodalDataLoader
 from .finevision import (
@@ -118,6 +123,8 @@ __all__ = [
     "Tulu4DatasetConfig",
     "AcademicDataset",
     "AcademicDatasetConfig",
+    "Stage1AcademicDataset",
+    "Stage1AcademicDatasetConfig",
     "PixMoAmaDataset",
     "PixMoAmaDatasetConfig",
     "PixMoCapQaDataset",
