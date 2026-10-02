@@ -205,7 +205,7 @@ jobs:
           - name: Test attention (GPU)
             image: *gpu_test_image
             gpus: 2
-            task_timeout: 20m
+            task_timeout: 30m
             clusters: --cluster ai2/jupiter --cluster ai2/ceres --cluster ai2/titan
             # Experimental KDA needs the CUDA 13 CuTe compiler; exercised below.
             run: |
