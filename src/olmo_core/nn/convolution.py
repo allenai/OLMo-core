@@ -83,6 +83,29 @@ class CausalConv1d(nn.Conv1d):
         )
         return output[0]
 
+    def forward_soft_keep(self, x: torch.Tensor, keep: torch.Tensor, chunk: int = 128) -> torch.Tensor:
+        """
+        The causal conv under DIFFERENTIABLE token removal (``GatedDeltaNet(soft_keep=...)``).
+
+        Removing token ``s`` from the row changes every later token's window: it holds the previous
+        ``kernel_size - 1`` *kept* tokens. That window is written with registers
+        ``R_r(t) = p_t * R_{r-1}(t-1) + (1 - p_t) * R_r(t-1)`` (``R_0(t) = x_t``), i.e. ``R_r(t)`` is the
+        r-th most recent kept input at or before ``t``, and the output is
+        ``act(w[K-1] x_t + sum_r w[K-1-r] R_r(t-1) + bias)``. For ``p in {0, 1}`` this is EXACTLY the
+        conv of the compacted row at the kept positions; in between it interpolates smoothly and is
+        differentiable in ``p``. Each register is a first-order scalar-gated scan, computed in
+        ``chunk``-sized blocks with non-positive exponents only (stable); activation-checkpointed so
+        the (T, C) float32 intermediates are not kept for backward. No CP / ``cu_seqlens`` support.
+
+        :param x: ``(B, T, C)`` conv input.
+        :param keep: ``(B, T)`` keep probability in ``[0, 1]``.
+        :returns: ``(B, T, C)`` in ``x.dtype``.
+        """
+        from torch.utils.checkpoint import checkpoint
+
+        weight, bias = self._local_weight_bias()
+        return checkpoint(_soft_keep_conv, x, keep, weight.squeeze(1), bias, self.activation, chunk, use_reentrant=False)
+
     @property
     def state_width(self) -> int:
         """The width of the cached conv state needed for single-step decoding: ``kernel_size - 1``."""
@@ -154,3 +177,49 @@ class CausalConv1d(nn.Conv1d):
         start = cp_mesh.get_local_rank() * local_channels
         self._cp_channel_slice = slice(start, start + local_channels)
         self.cp_enabled = True
+
+
+def _gated_scan(a_log: torch.Tensor, b: torch.Tensor, x: torch.Tensor, chunk: int) -> torch.Tensor:
+    """``h_t = exp(a_log_t) * h_{t-1} + b_t * x_t`` (``h_{-1} = 0``) over ``(B, T, C)`` float32, blockwise:
+    intra-block decay matrices ``exp(cum_t - cum_s)`` (s <= t) plus a block-level carry matmul."""
+    B, T, C = x.shape
+    pad = (-T) % chunk
+    if pad:
+        a_log = F.pad(a_log, (0, pad))
+        b = F.pad(b, (0, pad))
+        x = F.pad(x, (0, 0, 0, pad))
+    n = (T + pad) // chunk
+    cum = a_log.view(B, n, chunk).cumsum(-1)  # (B, n, L), non-increasing
+    tri = torch.ones(chunk, chunk, dtype=torch.bool, device=x.device).tril()
+    D = torch.exp((cum[..., :, None] - cum[..., None, :]).masked_fill(~tri, float("-inf")))  # (B, n, L, L)
+    intra = D @ (b[..., None] * x).view(B, n, chunk, C)  # (B, n, L, C)
+    g_end = cum[..., -1].cumsum(-1)  # (B, n) total log-decay through the end of each block
+    trib = torch.ones(n, n, dtype=torch.bool, device=x.device).tril()
+    E = torch.exp((g_end[..., :, None] - g_end[..., None, :]).masked_fill(~trib, float("-inf")))  # (B, n, n)
+    carry = E @ intra[:, :, -1]  # (B, n, C) state at the end of each block
+    h_prev = F.pad(carry, (0, 0, 1, 0))[:, :-1]  # state entering each block
+    out = intra + torch.exp(cum)[..., None] * h_prev[:, :, None, :]
+    return out.reshape(B, n * chunk, C)[:, :T]
+
+
+def _soft_keep_conv(x, keep, w, bias, activation, chunk):
+    K = w.shape[-1]
+    dt = torch.float64 if x.dtype == torch.float64 else torch.float32
+    p = keep.to(dt)
+    a_log = torch.log(torch.clamp(1.0 - p, min=1e-6))  # kept (p=1) -> ~no carry-over; dropped (p=0) -> 0
+    src = x.to(dt)
+    wf = w.to(dt)
+    y = src * wf[:, K - 1]
+    for r in range(1, K):
+        reg = _gated_scan(a_log, p, src, chunk)  # r-th most recent kept input at or before t
+        reg_prev = F.pad(reg, (0, 0, 1, 0))[:, :-1]  # ... before t
+        y = y + reg_prev * wf[:, K - 1 - r]
+        src = reg_prev
+    if bias is not None:
+        y = y + bias.to(dt)
+    if activation in ("silu", "swish"):
+        y = F.silu(y)
+    elif activation is not None:
+        raise ValueError(activation)
+    return y.to(x.dtype)
+

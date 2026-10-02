@@ -1,0 +1,568 @@
+{
+ "contradiction": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.3908592829732803,
+   "dce": 0.00046115362215459754
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.3",
+    "target": null,
+    "comp": 0.29392363508222996,
+    "dce": 0.015957795563508625,
+    "dce_median": 0.00016307815894833766,
+    "paired": 0.015496641941354028,
+    "paired_se": 0.01596253835080217
+   }
+  ],
+  "at_bar": null,
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.3",
+   "target": null,
+   "comp": 0.29392363508222996,
+   "dce": 0.015957795563508625,
+   "dce_median": 0.00016307815894833766,
+   "paired": 0.015496641941354028,
+   "paired_se": 0.01596253835080217
+  },
+  "verdict": "beats"
+ },
+ "fiqa": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.2860466213766189,
+   "dce": -0.10028641052900866
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.32",
+    "target": null,
+    "comp": 0.2102150976561798,
+    "dce": -0.02376830307127875,
+    "dce_median": 2.2437202460423578e-05,
+    "paired": 0.07651810745772991,
+    "paired_se": 0.08821120648779202
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.32_c0.324",
+    "target": 0.324,
+    "comp": 0.18842046713134447,
+    "dce": -0.09857902772046145,
+    "dce_median": -0.005921672222029883,
+    "paired": 0.0017073828085472087,
+    "paired_se": 0.0517271805181766
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.32_c0.324",
+   "target": 0.324,
+   "comp": 0.18842046713134447,
+   "dce": -0.09857902772046145,
+   "dce_median": -0.005921672222029883,
+   "paired": 0.0017073828085472087,
+   "paired_se": 0.0517271805181766
+  },
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.32_c0.324",
+   "target": 0.324,
+   "comp": 0.18842046713134447,
+   "dce": -0.09857902772046145,
+   "dce_median": -0.005921672222029883,
+   "paired": 0.0017073828085472087,
+   "paired_se": 0.0517271805181766
+  },
+  "verdict": "beats"
+ },
+ "msmarco": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.28853610232765453,
+   "dce": -0.0023891998007457005
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.23",
+    "target": null,
+    "comp": 0.23150590200789511,
+    "dce": 0.059164840102312155,
+    "dce_median": 0.0015125856007216498,
+    "paired": 0.061554039903057856,
+    "paired_se": 0.04093999892407704
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.23_c0.232",
+    "target": 0.232,
+    "comp": 0.19311358205307613,
+    "dce": 0.0432212223586248,
+    "dce_median": 0.0033218301832675934,
+    "paired": 0.0456104221593705,
+    "paired_se": 0.029718808768653317
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.23_c0.232",
+   "target": 0.232,
+   "comp": 0.19311358205307613,
+   "dce": 0.0432212223586248,
+   "dce_median": 0.0033218301832675934,
+   "paired": 0.0456104221593705,
+   "paired_se": 0.029718808768653317
+  },
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "niah": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.5105146858689915,
+   "dce": -1.5601324321323773e-07
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.41",
+    "target": null,
+    "comp": 0.45423792488377124,
+    "dce": 0.07464518365907225,
+    "dce_median": 2.2384621615856304e-05,
+    "paired": 0.07464533967231546,
+    "paired_se": 0.07428973329843098
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.41_c0.587",
+    "target": 0.587,
+    "comp": 0.5423055297731608,
+    "dce": 0.0005969805555992025,
+    "dce_median": 2.404024598945398e-06,
+    "paired": 0.0005971365688424157,
+    "paired_se": 0.0005875418331861193
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.41_c0.587",
+   "target": 0.587,
+   "comp": 0.5423055297731608,
+   "dce": 0.0005969805555992025,
+   "dce_median": 2.404024598945398e-06,
+   "paired": 0.0005971365688424157,
+   "paired_se": 0.0005875418331861193
+  },
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.41_c0.587",
+   "target": 0.587,
+   "comp": 0.5423055297731608,
+   "dce": 0.0005969805555992025,
+   "dce_median": 2.404024598945398e-06,
+   "paired": 0.0005971365688424157,
+   "paired_se": 0.0005875418331861193
+  },
+  "verdict": "loses"
+ },
+ "nq": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.2647576098987579,
+   "dce": -0.03556615836805577
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal2_rho0.1",
+    "target": null,
+    "comp": 0.06646591283767292,
+    "dce": -0.017656110554526094,
+    "dce_median": 0.006799844850320369,
+    "paired": 0.017910047813529673,
+    "paired_se": 0.005236625365722109
+   },
+   {
+    "scheme": "router_e2ecal2_rho0.1_c0.186",
+    "target": 0.186,
+    "comp": 0.10314716112926813,
+    "dce": -0.017974281309761864,
+    "dce_median": 0.003890067106112838,
+    "paired": 0.017591877058293903,
+    "paired_se": 0.005015306568220033
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal2_rho0.1_c0.186",
+   "target": 0.186,
+   "comp": 0.10314716112926813,
+   "dce": -0.017974281309761864,
+   "dce_median": 0.003890067106112838,
+   "paired": 0.017591877058293903,
+   "paired_se": 0.005015306568220033
+  },
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "obliq": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.35166530887548647,
+   "dce": 0.031960804015398026
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.36",
+    "target": null,
+    "comp": 0.3701420487404026,
+    "dce": 0.02356097102165222,
+    "dce_median": 0.01833254098892212,
+    "paired": -0.008399832993745804,
+    "paired_se": 0.005290747916345786
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.36_c0.206",
+    "target": 0.206,
+    "comp": 0.11661314687288878,
+    "dce": 0.03442077338695526,
+    "dce_median": 0.031158089637756348,
+    "paired": 0.0024599693715572357,
+    "paired_se": 0.006352492583228436
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.36_c0.206",
+   "target": 0.206,
+   "comp": 0.11661314687288878,
+   "dce": 0.03442077338695526,
+   "dce_median": 0.031158089637756348,
+   "paired": 0.0024599693715572357,
+   "paired_se": 0.006352492583228436
+  },
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.36_c0.206",
+   "target": 0.206,
+   "comp": 0.11661314687288878,
+   "dce": 0.03442077338695526,
+   "dce_median": 0.031158089637756348,
+   "paired": 0.0024599693715572357,
+   "paired_se": 0.006352492583228436
+  },
+  "verdict": "beats"
+ },
+ "oolong": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.33790408586155796,
+   "dce": 0.02730921615147963
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.28",
+    "target": null,
+    "comp": 0.3042416565913149,
+    "dce": 0.04915559489745647,
+    "dce_median": -0.0009907661005854607,
+    "paired": 0.021846378745976835,
+    "paired_se": 0.022299000489605664
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.28_c0.159",
+    "target": 0.159,
+    "comp": 0.07374629371362207,
+    "dce": 0.03870488464599475,
+    "dce_median": -0.0018299487419426441,
+    "paired": 0.011395668494515121,
+    "paired_se": 0.01562593761693642
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.28_c0.159",
+   "target": 0.159,
+   "comp": 0.07374629371362207,
+   "dce": 0.03870488464599475,
+   "dce_median": -0.0018299487419426441,
+   "paired": 0.011395668494515121,
+   "paired_se": 0.01562593761693642
+  },
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.28_c0.159",
+   "target": 0.159,
+   "comp": 0.07374629371362207,
+   "dce": 0.03870488464599475,
+   "dce_median": -0.0018299487419426441,
+   "paired": 0.011395668494515121,
+   "paired_se": 0.01562593761693642
+  },
+  "verdict": "beats"
+ },
+ "outlier": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.29756037596023033,
+   "dce": -0.036281667313147636
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal4ncp_rho0.35",
+    "target": null,
+    "comp": 0.26734068002145617,
+    "dce": -0.03843534431635476,
+    "dce_median": 1.6072341509243415e-05,
+    "paired": -0.0021536770032071217,
+    "paired_se": 0.02390488625541554
+   },
+   {
+    "scheme": "router_e2ecal4ncp_rho0.35_c0.315",
+    "target": 0.315,
+    "comp": 0.16922098901784582,
+    "dce": -0.02290443245058782,
+    "dce_median": 7.42323599070005e-05,
+    "paired": 0.013377234862559817,
+    "paired_se": 0.028764927708805652
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal4ncp_rho0.35_c0.315",
+   "target": 0.315,
+   "comp": 0.16922098901784582,
+   "dce": -0.02290443245058782,
+   "dce_median": 7.42323599070005e-05,
+   "paired": 0.013377234862559817,
+   "paired_se": 0.028764927708805652
+  },
+  "smallest": {
+   "scheme": "router_e2ecal4ncp_rho0.35_c0.315",
+   "target": 0.315,
+   "comp": 0.16922098901784582,
+   "dce": -0.02290443245058782,
+   "dce_median": 7.42323599070005e-05,
+   "paired": 0.013377234862559817,
+   "paired_se": 0.028764927708805652
+  },
+  "verdict": "beats"
+ },
+ "outlier_amzn": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.3066400132798183,
+   "dce": 0.1896589075963675
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.31",
+    "target": null,
+    "comp": 0.26434272637944545,
+    "dce": 0.12173728870902778,
+    "dce_median": 0.08958926028572023,
+    "paired": -0.06792161888733972,
+    "paired_se": 0.059913938918858045
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.31_c0.31",
+    "target": 0.31,
+    "comp": 0.2060629499521182,
+    "dce": 0.129503591995217,
+    "dce_median": 0.0782441736664623,
+    "paired": -0.060155315601150505,
+    "paired_se": 0.045685485815588255
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.31_c0.31",
+   "target": 0.31,
+   "comp": 0.2060629499521182,
+   "dce": 0.129503591995217,
+   "dce_median": 0.0782441736664623,
+   "paired": -0.060155315601150505,
+   "paired_se": 0.045685485815588255
+  },
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.31_c0.31",
+   "target": 0.31,
+   "comp": 0.2060629499521182,
+   "dce": 0.129503591995217,
+   "dce_median": 0.0782441736664623,
+   "paired": -0.060155315601150505,
+   "paired_se": 0.045685485815588255
+  },
+  "verdict": "beats"
+ },
+ "qdmatch_hpqa": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.4157303436989605,
+   "dce": -0.009329997104714494
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.54",
+    "target": null,
+    "comp": 0.1896573971814911,
+    "dce": 0.05673967907182487,
+    "dce_median": 0.016353895440261113,
+    "paired": 0.06606967617653936,
+    "paired_se": 0.0265949143868779
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.54_c0.772",
+    "target": 0.772,
+    "comp": 0.44512952892504765,
+    "dce": -0.0033669215374629857,
+    "dce_median": 0.0033030212835001294,
+    "paired": 0.005963075567251508,
+    "paired_se": 0.0014826923753236384
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.54_c0.772",
+   "target": 0.772,
+   "comp": 0.44512952892504765,
+   "dce": -0.0033669215374629857,
+   "dce_median": 0.0033030212835001294,
+   "paired": 0.005963075567251508,
+   "paired_se": 0.0014826923753236384
+  },
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "reorder": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.2739729434298549,
+   "dce": 0.685177230508998
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.22",
+    "target": null,
+    "comp": 0.24983223136788787,
+    "dce": 0.7020806123036891,
+    "dce_median": 0.71080232411623,
+    "paired": 0.016903381794691086,
+    "paired_se": 0.024925485673207817
+   }
+  ],
+  "at_bar": null,
+  "smallest": {
+   "scheme": "router_e2ecal3ncp_rho0.22",
+   "target": null,
+   "comp": 0.24983223136788787,
+   "dce": 0.7020806123036891,
+   "dce_median": 0.71080232411623,
+   "paired": 0.016903381794691086,
+   "paired_se": 0.024925485673207817
+  },
+  "verdict": "beats"
+ },
+ "rerank": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.3315699679965014,
+   "dce": -0.0658089928328991
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal4ncp_rho0.3",
+    "target": null,
+    "comp": 0.3264700747928088,
+    "dce": 0.13528652489185333,
+    "dce_median": 0.0928676426410675,
+    "paired": 0.20109551772475243,
+    "paired_se": 0.02437045271977659
+   },
+   {
+    "scheme": "router_e2ecal4ncp_rho0.3_c0.407",
+    "target": 0.407,
+    "comp": 0.36013081184112994,
+    "dce": 0.12875860184431076,
+    "dce_median": 0.10325011610984802,
+    "paired": 0.19456759467720985,
+    "paired_se": 0.021842368745590764
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal4ncp_rho0.3_c0.407",
+   "target": 0.407,
+   "comp": 0.36013081184112994,
+   "dce": 0.12875860184431076,
+   "dce_median": 0.10325011610984802,
+   "paired": 0.19456759467720985,
+   "paired_se": 0.021842368745590764
+  },
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "scifact": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.27174874990411335,
+   "dce": -0.0009005971214719466
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.2",
+    "target": null,
+    "comp": 0.1582422036333999,
+    "dce": 0.010999717457707447,
+    "dce_median": 5.816310294903815e-05,
+    "paired": 0.011900314579179394,
+    "paired_se": 0.010996544918384588
+   }
+  ],
+  "at_bar": null,
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "strmatch": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.4844126788205782,
+   "dce": 1.9725049810404016e-05
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.25",
+    "target": null,
+    "comp": 0.2548729612106331,
+    "dce": 0.059962562896544114,
+    "dce_median": 0.014351003590491018,
+    "paired": 0.05994283784673371,
+    "paired_se": 0.020072170921639428
+   }
+  ],
+  "at_bar": null,
+  "smallest": null,
+  "verdict": "loses"
+ },
+ "textgroups": {
+  "eval_size": 16,
+  "bar": {
+   "comp": 0.29766598335513195,
+   "dce": 0.09873347915709019
+  },
+  "points": [
+   {
+    "scheme": "router_e2ecal3ncp_rho0.42",
+    "target": null,
+    "comp": 0.21330614319500207,
+    "dce": 1.0881293341517448,
+    "dce_median": 1.0880446210503578,
+    "paired": 0.9893958549946547,
+    "paired_se": 0.07347465170777075
+   },
+   {
+    "scheme": "router_e2ecal3ncp_rho0.42_c0.607",
+    "target": 0.607,
+    "comp": 0.3023228979307059,
+    "dce": 0.44815036561340094,
+    "dce_median": 0.2931027263402939,
+    "paired": 0.34941688645631075,
+    "paired_se": 0.10905183130810191
+   }
+  ],
+  "at_bar": {
+   "scheme": "router_e2ecal3ncp_rho0.42_c0.607",
+   "target": 0.607,
+   "comp": 0.3023228979307059,
+   "dce": 0.44815036561340094,
+   "dce_median": 0.2931027263402939,
+   "paired": 0.34941688645631075,
+   "paired_se": 0.10905183130810191
+  },
+  "smallest": null,
+  "verdict": "loses"
+ }
+}

@@ -1,0 +1,1809 @@
+{
+ "nq": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "templated_queries": 64,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.3352272727272727
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.3638234664885495
+   }
+  }
+ },
+ "outlier": {
+  "spec": "outlier",
+  "test_rows_hashed": 192,
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   }
+  }
+ },
+ "contradiction": {
+  "spec": "contradiction",
+  "test_rows_hashed": 192,
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.031529017857142856
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.034759358288770054
+   }
+  }
+ },
+ "oolong": {
+  "spec": "oolong",
+  "test_rows_hashed": 192,
+  "templated_queries": 9,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 18,
+     "gold": 0,
+     "qa": 7
+    },
+    "kept": 39,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     68,
+     69,
+     71,
+     77,
+     78,
+     79,
+     81,
+     82,
+     84,
+     85,
+     86,
+     88,
+     89
+    ],
+    "val_src_index": [
+     90,
+     93,
+     95,
+     98,
+     100,
+     101,
+     102,
+     104
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 9,
+     "gold": 0,
+     "qa": 10
+    },
+    "kept": 45,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     66,
+     68,
+     70,
+     71,
+     74,
+     76,
+     77,
+     79,
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "val_src_index": [
+     88,
+     89,
+     90,
+     91,
+     92,
+     93,
+     95,
+     97
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   }
+  }
+ },
+ "fiqa": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 64,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.19921875
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.21953125
+   }
+  }
+ },
+ "qdmatch_hpqa": {
+  "spec": "qdmatch",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 25,
+     "qa": 0
+    },
+    "kept": 39,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     68,
+     69,
+     72,
+     74,
+     75,
+     81,
+     82,
+     84,
+     85,
+     86,
+     87,
+     92,
+     93,
+     94
+    ],
+    "val_src_index": [
+     95,
+     96,
+     98,
+     99,
+     102,
+     103,
+     106,
+     107
+    ],
+    "distractor_doc_overlap_mean": 0.8319088319088319
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 19,
+     "qa": 0
+    },
+    "kept": 45,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     67,
+     68,
+     69,
+     72,
+     74,
+     76,
+     77,
+     78,
+     79,
+     81,
+     82,
+     83,
+     86,
+     87
+    ],
+    "val_src_index": [
+     89,
+     90,
+     91,
+     93,
+     94,
+     95,
+     96,
+     97
+    ],
+    "distractor_doc_overlap_mean": 0.9402116402116403
+   }
+  }
+ },
+ "outlier_amzn": {
+  "spec": "outlier",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 2,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 4,
+     "qa": 0
+    },
+    "kept": 60,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     80,
+     81
+    ],
+    "val_src_index": [
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88,
+     89
+    ],
+    "distractor_doc_overlap_mean": 0.34750000000000003
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 1,
+     "qa": 0
+    },
+    "kept": 63,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     77,
+     78,
+     79,
+     80
+    ],
+    "val_src_index": [
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88
+    ],
+    "distractor_doc_overlap_mean": 0.3611889692585895
+   }
+  }
+ },
+ "grouping": {
+  "spec": "grouping",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 20,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 12,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 52,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     81
+    ],
+    "val_src_index": [
+     82,
+     83,
+     85,
+     86,
+     87,
+     88,
+     90,
+     93
+    ],
+    "distractor_doc_overlap_mean": 1.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 32,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 32,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     70,
+     73,
+     77,
+     78,
+     80,
+     82,
+     83,
+     85,
+     86,
+     87,
+     92
+    ],
+    "val_src_index": [
+     93,
+     94,
+     96,
+     99,
+     104,
+     106,
+     109,
+     110
+    ],
+    "distractor_doc_overlap_mean": 1.0
+   }
+  }
+ },
+ "absence": {
+  "spec": "absence",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_16384.jsonl",
+   "rung_2048.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 0,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.03125
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.08936631944444444
+   }
+  }
+ },
+ "xabsence": {
+  "spec": "xabsence",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 44,
+     "qa": 0
+    },
+    "kept": 20,
+    "train": 16,
+    "val": 4,
+    "train_src_index": [
+     65,
+     68,
+     70,
+     73,
+     80,
+     81,
+     85,
+     86,
+     87,
+     89,
+     91,
+     94,
+     96,
+     106,
+     112,
+     117
+    ],
+    "val_src_index": [
+     119,
+     121,
+     124,
+     125
+    ],
+    "distractor_doc_overlap_mean": 1.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 45,
+     "qa": 0
+    },
+    "kept": 19,
+    "train": 16,
+    "val": 3,
+    "train_src_index": [
+     64,
+     69,
+     71,
+     75,
+     76,
+     77,
+     78,
+     82,
+     87,
+     90,
+     93,
+     94,
+     95,
+     99,
+     100,
+     107
+    ],
+    "val_src_index": [
+     109,
+     119,
+     122
+    ],
+    "distractor_doc_overlap_mean": 1.0
+   }
+  }
+ },
+ "rerank": {
+  "spec": "rerank",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 64,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.875
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.909160968910706
+   }
+  }
+ },
+ "msmarco": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 64,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.8743206521739131
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.9084870996961196
+   }
+  }
+ },
+ "reorder": {
+  "spec": "reorder",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_16384.jsonl",
+   "rung_2048.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0625
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.015625
+   }
+  }
+ },
+ "obliq": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 62,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 123,
+    "candidates": 59,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 59,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.5775949160203072
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 126,
+    "candidates": 62,
+    "dropped": {
+     "query": 2,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 60,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     80,
+     81
+    ],
+    "val_src_index": [
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88,
+     89
+    ],
+    "distractor_doc_overlap_mean": 0.646615538130117
+   }
+  }
+ },
+ "niah": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 2,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 8.680555555555556e-05
+   }
+  }
+ },
+ "strmatch": {
+  "spec": "strmatch",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 1,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.06661184210526315
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.026746323529411763
+   }
+  }
+ },
+ "textgroups": {
+  "spec": "textgroups",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 9,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 500,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 0,
+     "qa": 0
+    },
+    "kept": 64,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     69,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79
+    ],
+    "val_src_index": [
+     80,
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87
+    ],
+    "distractor_doc_overlap_mean": 0.0
+   }
+  }
+ },
+ "scifact": {
+  "spec": "retrieval",
+  "test_rows_hashed": 192,
+  "test_files": [
+   "rung_2048.jsonl",
+   "rung_32768.jsonl",
+   "rung_8192.jsonl"
+  ],
+  "templated_queries": 64,
+  "rungs": {
+   "2k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 300,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 1,
+     "qa": 0
+    },
+    "kept": 63,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     80
+    ],
+    "val_src_index": [
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88
+    ],
+    "distractor_doc_overlap_mean": 0.6444444444444445
+   },
+   "8k": {
+    "hf_rows": [
+     64,
+     128
+    ],
+    "hf_total": 300,
+    "candidates": 64,
+    "dropped": {
+     "query": 0,
+     "gold": 1,
+     "qa": 0
+    },
+    "kept": 63,
+    "train": 16,
+    "val": 8,
+    "train_src_index": [
+     64,
+     65,
+     66,
+     67,
+     68,
+     70,
+     71,
+     72,
+     73,
+     74,
+     75,
+     76,
+     77,
+     78,
+     79,
+     80
+    ],
+    "val_src_index": [
+     81,
+     82,
+     83,
+     84,
+     85,
+     86,
+     87,
+     88
+    ],
+    "distractor_doc_overlap_mean": 0.6810279667422524
+   }
+  }
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "nq": {
+  "floor_markers_kept": 0.05594636261980621,
+  "floor_markers_routed": 0.04358333395597057
+ },
+ "outlier": {
+  "floor_markers_kept": 0.07605248546037337,
+  "floor_markers_routed": 0.06295539758294463
+ },
+ "contradiction": {
+  "floor_markers_kept": 0.1281298120622505,
+  "floor_markers_routed": 0.08519727245976369
+ },
+ "strmatch": {
+  "floor_markers_kept": 0.26591791787598285,
+  "floor_markers_routed": 0.2063789291880048
+ },
+ "scifact": {
+  "floor_markers_kept": 0.059278005409631435,
+  "floor_markers_routed": 0.05348566379201347
+ },
+ "rerank": {
+  "floor_markers_kept": 0.10082673712992045,
+  "floor_markers_routed": 0.07954972602108731
+ }
+}

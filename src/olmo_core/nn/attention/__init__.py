@@ -1357,6 +1357,7 @@ class Attention(SequenceMixer):
         block_keep: Optional[torch.Tensor] = None,
         kv_route_p: Optional[torch.Tensor] = None,
         kv_route_keep: Optional[torch.Tensor] = None,
+        soft_keep: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Apply attention to the input.
@@ -1376,6 +1377,11 @@ class Attention(SequenceMixer):
             through those columns).
         :param block_keep: Optional ``(B, T)`` bool from :mod:`olmo_core.nn.block_skip`: ``False``
             tokens skip this block and must not be keys here (ANDed into the KV router's keep).
+        :param soft_keep: Optional ``(B, T)`` float keep probability in ``[0, 1]`` (differentiable
+            token removal): every key ``j`` gets the additive logit bias ``log(p_j + 1e-8)`` on top
+            of the causal mask, for all queries, through the masked-SDPA path -- exact removal of
+            key ``j`` at ``p_j = 0`` (up to the 1e-8 floor) and a no-op at ``p_j = 1``; gradients
+            flow to ``p``. ``None`` (default) leaves the layer untouched.
         :param soft_kv_override: Optional dict replacing this layer's K/V at pooled soft-token
             columns with precomputed oracle slots (see :mod:`olmo_core.nn.oracle_slot`). Keys:
             ``rows``/``cols`` ``(S,)`` batch/column indices, ``pos`` ``(S,)`` absolute doc-center
@@ -1464,6 +1470,13 @@ class Attention(SequenceMixer):
                     v[aux_capture["rows_sh"], aux_capture["cols_sh"]],
                 )
             )
+
+        if soft_keep is not None:
+            sk_dtype = torch.float64 if q.dtype == torch.float64 else torch.float32
+            sk = torch.log(soft_keep.to(device=q.device, dtype=sk_dtype) + 1e-8)  # (B, T)
+            causal = torch.full((T, T), float("-inf"), device=q.device, dtype=sk_dtype).triu(1)
+            sk_bias = causal[None, None] + sk[:, None, None, :]  # (B, 1, T, T)
+            attn_bias = sk_bias if attn_bias is None else attn_bias + sk_bias
 
         kv_route = getattr(self, "_kv_route", None)
         if (

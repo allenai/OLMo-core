@@ -255,6 +255,7 @@ class GatedDeltaNet(SequenceMixer):
         cache_leftpad: Optional[torch.Tensor] = None,
         block_keep: Optional[torch.Tensor] = None,
         kv_grad_mask: Optional[torch.Tensor] = None,
+        soft_keep: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -292,6 +293,13 @@ class GatedDeltaNet(SequenceMixer):
             contribution to the recurrent state (soft-token slots must play no role in training:
             records/pooled-doc-kv-attention.md, 2026-09-08). Honoured only while
             ``self.detach_masked_writes`` is True (the default).
+        :param soft_keep: Optional ``(batch_size, seq_len)`` float keep probability ``p`` in
+            ``[0, 1]`` (differentiable token removal, the soft twin of ``block_keep``): ``beta`` and
+            ``g`` (log decay) are scaled by ``p`` (``p = 0`` -> identity state step), and the short
+            conv runs :meth:`~olmo_core.nn.convolution.CausalConv1d.forward_soft_keep`, whose
+            windows hold the previous KEPT tokens -- so for ``p in {0, 1}`` the mixer computes
+            exactly what it computes on the compacted row. ``p = 1`` everywhere matches the plain
+            path up to kernel numerics. Plain forwards only (no packing / cache / CP).
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
@@ -321,6 +329,13 @@ class GatedDeltaNet(SequenceMixer):
         if self.allow_neg_eigval:
             beta = beta * 2.0
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
+
+        if soft_keep is not None and not use_precomputed:
+            if cu_doc_lens is not None or cache is not None or (self.cp_enabled and self.uly is not None):
+                raise NotImplementedError("soft_keep supports plain (no packing / cache / CP) forwards only")
+            pk = soft_keep.to(device=x.device, dtype=torch.float32).unsqueeze(-1)  # (B, T_og, 1)
+            beta = beta * pk.to(beta.dtype)
+            g = g * pk.to(g.dtype)
 
         pad_mask: Optional[torch.Tensor] = None  # (B, T_og) bool, True = left-padded position
         if cache_leftpad is not None and not use_precomputed and bool(cache_leftpad.any()):
@@ -420,7 +435,19 @@ class GatedDeltaNet(SequenceMixer):
                     cache.conv_state_q.copy_(self.q_conv1d.prefill_state(q))
                     cache.conv_state_k.copy_(self.k_conv1d.prefill_state(k))
                     cache.conv_state_v.copy_(self.v_conv1d.prefill_state(v))
-            if self.fuse_qkv:
+            if soft_keep is not None:
+                # removal-aware conv: each window holds the previous KEPT tokens (exact at p in {0,1})
+                sk = soft_keep.to(device=x.device)
+                if self.fuse_qkv:
+                    if qkv is None:
+                        qkv = torch.cat([q, k, v], dim=-1)
+                    qkv = self.qkv_conv1d.forward_soft_keep(qkv, sk)
+                    q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                else:
+                    q = self.q_conv1d.forward_soft_keep(q, sk)
+                    k = self.k_conv1d.forward_soft_keep(k, sk)
+                    v = self.v_conv1d.forward_soft_keep(v, sk)
+            elif self.fuse_qkv:
                 # One depthwise conv over q|k|v, straight from the fused projection -- no copy.
                 # Only CP (above) ever breaks the tensor apart, so the cat is the rare path.
                 if qkv is None:

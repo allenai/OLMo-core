@@ -1,0 +1,640 @@
+{
+ "rho": 0.1,
+ "steps": [],
+ "epochs": [
+  {
+   "epoch": 0,
+   "val": {
+    "dce": 4.729372449219227e-10,
+    "dce_median": 0.0,
+    "dce_max": 3.725290298461914e-09,
+    "comp": 0.9999999701976776,
+    "keep": 1.0
+   }
+  }
+ ],
+ "final_val": {
+  "dce": 4.729372449219227e-10,
+  "dce_median": 0.0,
+  "dce_max": 3.725290298461914e-09,
+  "comp": 0.9999999701976776,
+  "keep": 1.0
+ },
+ "train_sec": 0.0002982616424560547,
+ "task": "nq",
+ "config": "verify_rho0.1",
+ "variant": "full",
+ "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-nq-full",
+ "argv": [
+  "debug/learned_router/train_e2e_router.py",
+  "--task",
+  "nq",
+  "--ckpt",
+  "/data/prasann/devloss_grid/ckpts/ctc-4b-nq-full",
+  "--ckpt-format",
+  "hf",
+  "--train-root",
+  "/data/prasann/devloss_grid/data/router_train_e2e",
+  "--val-root",
+  "/data/prasann/devloss_grid/data/router_val_e2e",
+  "--tokenizer",
+  "/data/prasann/hf_cache/hub/models--Qwen--Qwen3.5-0.8B-Base/snapshots/dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
+  "--rungs",
+  "2k,8k",
+  "--n-train",
+  "8",
+  "--n-val",
+  "4",
+  "--rhos",
+  "0.1",
+  "--epochs",
+  "0",
+  "--name",
+  "verify_rho{rho}",
+  "--wandb-group",
+  "router-e2e",
+  "--verify-hard-drop",
+  "2"
+ ],
+ "git_commit": "74469a1144dc05b0d8c450ca227b36f9f22c98ec",
+ "train_size": 16,
+ "val_size": 8,
+ "ce_full_train_mean": 0.04801299917380675,
+ "ce_full_val_mean": 0.010716448319726624,
+ "weights": {
+  "b": 2.944438934326172,
+  "w_gold": 0.0,
+  "w_pos": {
+   "start0": 0.0,
+   "start1": 0.0,
+   "start2": 0.0,
+   "start3": 0.0,
+   "start4": 0.0,
+   "start5": 0.0,
+   "start6": 0.0,
+   "start7": 0.0,
+   "start8": 0.0,
+   "start9": 0.0,
+   "start10": 0.0,
+   "start11": 0.0,
+   "start12": 0.0,
+   "start13": 0.0,
+   "start14": 0.0,
+   "start15": 0.0,
+   "start<2^5": 0.0,
+   "start<2^6": 0.0,
+   "start<2^7": 0.0,
+   "start<2^8": 0.0,
+   "start<2^9": 0.0,
+   "start<2^10": 0.0,
+   "start<2^11": 0.0,
+   "start<2^12": 0.0,
+   "start<2^13": 0.0,
+   "start<2^14": 0.0,
+   "start<2^15": 0.0,
+   "start<2^16": 0.0,
+   "end0": 0.0,
+   "end1": 0.0,
+   "end2": 0.0,
+   "end3": 0.0,
+   "end4": 0.0,
+   "end5": 0.0,
+   "end6": 0.0,
+   "end7": 0.0,
+   "end8": 0.0,
+   "end9": 0.0,
+   "end10": 0.0,
+   "end11": 0.0,
+   "end12": 0.0,
+   "end13": 0.0,
+   "end14": 0.0,
+   "end15": 0.0,
+   "end<2^5": 0.0,
+   "end<2^6": 0.0,
+   "end<2^7": 0.0,
+   "end<2^8": 0.0,
+   "end<2^9": 0.0,
+   "end<2^10": 0.0,
+   "end<2^11": 0.0,
+   "end<2^12": 0.0,
+   "end<2^13": 0.0,
+   "end<2^14": 0.0,
+   "end<2^15": 0.0,
+   "end<2^16": 0.0,
+   "rel_in_doc": 0.0,
+   "doc_rel_idx": 0.0
+  },
+  "w_emb_norm": 0.0
+ },
+ "vocab_scores": {
+  "n_types": 10974,
+  "n_types_count_ge3": 3923,
+  "s_std": 0.0,
+  "s_std_count_ge3": 0.0,
+  "top_count_ge3": [
+   {
+    "s": 0.0,
+    "id": 243499,
+    "piece": "onar",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 243332,
+    "piece": " Exposition",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 242343,
+    "piece": "ovil",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 240911,
+    "piece": " Carton",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 239843,
+    "piece": " Timo",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 227442,
+    "piece": " Coelho",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 222967,
+    "piece": " Yen",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 222220,
+    "piece": " incendi",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 221992,
+    "piece": " Mahl",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 219689,
+    "piece": " nub",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 219342,
+    "piece": " Oste",
+    "count": 12
+   },
+   {
+    "s": 0.0,
+    "id": 218746,
+    "piece": "macher",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 217401,
+    "piece": " Habib",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 214494,
+    "piece": " ESS",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 208380,
+    "piece": " Vr",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 207295,
+    "piece": "ijden",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 206198,
+    "piece": "uton",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 205939,
+    "piece": " Offen",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 204418,
+    "piece": "ubu",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 199209,
+    "piece": " Granada",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 197315,
+    "piece": " cerebr",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 196532,
+    "piece": "insen",
+    "count": 12
+   },
+   {
+    "s": 0.0,
+    "id": 195051,
+    "piece": " H\u00e1n",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 194080,
+    "piece": " Schle",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 193397,
+    "piece": " Banca",
+    "count": 11
+   },
+   {
+    "s": 0.0,
+    "id": 192881,
+    "piece": "bouw",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 192406,
+    "piece": "udan",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 189796,
+    "piece": "iru",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 189541,
+    "piece": " Ferreira",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 184026,
+    "piece": " codice",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 183538,
+    "piece": "alainen",
+    "count": 10
+   },
+   {
+    "s": 0.0,
+    "id": 182287,
+    "piece": " Salle",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 181220,
+    "piece": "r\u00e9s",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 178787,
+    "piece": " familias",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 175065,
+    "piece": " physi",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 173618,
+    "piece": "evi",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 171855,
+    "piece": "ielt",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 167479,
+    "piece": " Kud",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 164213,
+    "piece": "famil",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 160891,
+    "piece": "utat",
+    "count": 6
+   }
+  ],
+  "bottom_count_ge3": [
+   {
+    "s": 0.0,
+    "id": 0,
+    "piece": "!",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 1,
+    "piece": "\"",
+    "count": 408
+   },
+   {
+    "s": 0.0,
+    "id": 4,
+    "piece": "%",
+    "count": 26
+   },
+   {
+    "s": 0.0,
+    "id": 6,
+    "piece": "'",
+    "count": 45
+   },
+   {
+    "s": 0.0,
+    "id": 7,
+    "piece": "(",
+    "count": 6
+   },
+   {
+    "s": 0.0,
+    "id": 8,
+    "piece": ")",
+    "count": 201
+   },
+   {
+    "s": 0.0,
+    "id": 10,
+    "piece": "+",
+    "count": 4
+   },
+   {
+    "s": 0.0,
+    "id": 11,
+    "piece": ",",
+    "count": 2562
+   },
+   {
+    "s": 0.0,
+    "id": 12,
+    "piece": "-",
+    "count": 90
+   },
+   {
+    "s": 0.0,
+    "id": 13,
+    "piece": ".",
+    "count": 2033
+   },
+   {
+    "s": 0.0,
+    "id": 14,
+    "piece": "/",
+    "count": 10
+   },
+   {
+    "s": 0.0,
+    "id": 15,
+    "piece": "0",
+    "count": 886
+   },
+   {
+    "s": 0.0,
+    "id": 16,
+    "piece": "1",
+    "count": 1324
+   },
+   {
+    "s": 0.0,
+    "id": 17,
+    "piece": "2",
+    "count": 804
+   },
+   {
+    "s": 0.0,
+    "id": 18,
+    "piece": "3",
+    "count": 392
+   },
+   {
+    "s": 0.0,
+    "id": 19,
+    "piece": "4",
+    "count": 381
+   },
+   {
+    "s": 0.0,
+    "id": 20,
+    "piece": "5",
+    "count": 370
+   },
+   {
+    "s": 0.0,
+    "id": 21,
+    "piece": "6",
+    "count": 365
+   },
+   {
+    "s": 0.0,
+    "id": 22,
+    "piece": "7",
+    "count": 372
+   },
+   {
+    "s": 0.0,
+    "id": 23,
+    "piece": "8",
+    "count": 385
+   },
+   {
+    "s": 0.0,
+    "id": 24,
+    "piece": "9",
+    "count": 703
+   },
+   {
+    "s": 0.0,
+    "id": 25,
+    "piece": ":",
+    "count": 87
+   },
+   {
+    "s": 0.0,
+    "id": 26,
+    "piece": ";",
+    "count": 79
+   },
+   {
+    "s": 0.0,
+    "id": 28,
+    "piece": "=",
+    "count": 3
+   },
+   {
+    "s": 0.0,
+    "id": 30,
+    "piece": "?",
+    "count": 5
+   },
+   {
+    "s": 0.0,
+    "id": 32,
+    "piece": "A",
+    "count": 18
+   },
+   {
+    "s": 0.0,
+    "id": 33,
+    "piece": "B",
+    "count": 25
+   },
+   {
+    "s": 0.0,
+    "id": 34,
+    "piece": "C",
+    "count": 15
+   },
+   {
+    "s": 0.0,
+    "id": 35,
+    "piece": "D",
+    "count": 9
+   },
+   {
+    "s": 0.0,
+    "id": 36,
+    "piece": "E",
+    "count": 16
+   },
+   {
+    "s": 0.0,
+    "id": 37,
+    "piece": "F",
+    "count": 13
+   },
+   {
+    "s": 0.0,
+    "id": 38,
+    "piece": "G",
+    "count": 15
+   },
+   {
+    "s": 0.0,
+    "id": 39,
+    "piece": "H",
+    "count": 30
+   },
+   {
+    "s": 0.0,
+    "id": 40,
+    "piece": "I",
+    "count": 14
+   },
+   {
+    "s": 0.0,
+    "id": 41,
+    "piece": "J",
+    "count": 12
+   },
+   {
+    "s": 0.0,
+    "id": 42,
+    "piece": "K",
+    "count": 8
+   },
+   {
+    "s": 0.0,
+    "id": 43,
+    "piece": "L",
+    "count": 8
+   },
+   {
+    "s": 0.0,
+    "id": 44,
+    "piece": "M",
+    "count": 27
+   },
+   {
+    "s": 0.0,
+    "id": 45,
+    "piece": "N",
+    "count": 14
+   },
+   {
+    "s": 0.0,
+    "id": 46,
+    "piece": "O",
+    "count": 9
+   }
+  ],
+  "digit_mean": 0.0,
+  "nondigit_mean": 0.0
+ },
+ "weights_path": "debug/learned_router/weights/nq/verify_rho0.1.pt",
+ "hparams": {
+  "epochs": 0,
+  "rows_per_step": 4,
+  "lr": 0.05,
+  "emb_lr": 0.01,
+  "adam_beta2": 0.8,
+  "init_p": 0.95,
+  "beta0": 0.6666666666666666,
+  "beta1": 0.1,
+  "warm_frac": 0.5,
+  "anneal_frac": 0.7,
+  "st_frac": 0.85,
+  "lam_lr": 1.0,
+  "w_kl": 1.0,
+  "seed": 0,
+  "rungs": "2k,8k",
+  "hard_drop_zero": false
+ }
+}

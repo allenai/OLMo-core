@@ -1,0 +1,2786 @@
+{
+ "meta": {
+  "regions": "token-level keep fractions pooled over ALL grid test rows (16 at 2k, 8 at 32k); j = body offset within the doc; deciles = floor(10 j / n_body) over j >= 8",
+  "eval_size_note": "16 (2k) / 8 (32k) rows"
+ },
+ "entries": {
+  "nq@2k": {
+   "router_file": "debug/learned_router/weights/nq/v5_s0_rhobar.pt",
+   "target_T2T": 0.338,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 16
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 2362
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 32
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 320
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 1280
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2025,
+     "n_tokens": 23295
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 1251
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.4328,
+     "n_tokens": 2454
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0,
+     "n_tokens": 2457
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 2460
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 2426
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 2485
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 2466
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2451
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0081,
+     "n_tokens": 2460
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 2385
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.4375,
+     "n_tokens": 16
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/gold_body": {
+     "frac": 0.9941,
+     "n_tokens": 2362
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 32
+    },
+    "router/markers_nongold": {
+     "frac": 1.0,
+     "n_tokens": 320
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.8586,
+     "n_tokens": 1280
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.1977,
+     "n_tokens": 23295
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.9648,
+     "n_tokens": 1251
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.4931,
+     "n_tokens": 2454
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.2544,
+     "n_tokens": 2457
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.6354,
+     "n_tokens": 2460
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 2426
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 2485
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 2466
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2451
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0,
+     "n_tokens": 2460
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.0,
+     "n_tokens": 2385
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -23.089,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "is_marker",
+      31.267
+     ],
+     [
+      "gold",
+      20.986
+     ],
+     [
+      "start1",
+      8.266
+     ],
+     [
+      "start9",
+      8.155
+     ],
+     [
+      "re9",
+      7.84
+     ],
+     [
+      "rs0",
+      7.705
+     ],
+     [
+      "start0",
+      7.216
+     ],
+     [
+      "end<2^8",
+      6.948
+     ],
+     [
+      "nl7",
+      6.792
+     ],
+     [
+      "start13",
+      5.813
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end15",
+      -7.442
+     ],
+     [
+      "start2",
+      -7.259
+     ],
+     [
+      "end9",
+      -6.945
+     ],
+     [
+      "end14",
+      -6.228
+     ],
+     [
+      "end2",
+      -3.529
+     ],
+     [
+      "re3",
+      -3.091
+     ],
+     [
+      "start11",
+      -2.278
+     ],
+     [
+      "end1",
+      -2.014
+     ],
+     [
+      "start8",
+      -1.759
+     ],
+     [
+      "rs6",
+      -1.74
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "niah@2k": {
+   "router_file": "debug/learned_router/weights/niah/v4kd_s0_rhobar.pt",
+   "target_T2T": 0.587,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 16
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 715
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 32
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1248
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 4992
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.232,
+     "n_tokens": 7715
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 12
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.9057,
+     "n_tokens": 159
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.3917,
+     "n_tokens": 337
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.2821,
+     "n_tokens": 514
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.1895,
+     "n_tokens": 765
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.1559,
+     "n_tokens": 1129
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 1281
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 1238
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0349,
+     "n_tokens": 1289
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 991
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.0625,
+     "n_tokens": 16
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 16
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 624
+    },
+    "router/gold_body": {
+     "frac": 0.6615,
+     "n_tokens": 715
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 32
+    },
+    "router/markers_nongold": {
+     "frac": 0.0721,
+     "n_tokens": 1248
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.9075,
+     "n_tokens": 4992
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.315,
+     "n_tokens": 7715
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 12
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.8239,
+     "n_tokens": 159
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.1929,
+     "n_tokens": 337
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.4455,
+     "n_tokens": 514
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.5673,
+     "n_tokens": 765
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.4004,
+     "n_tokens": 1129
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 1281
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.2989,
+     "n_tokens": 1238
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.4461,
+     "n_tokens": 1289
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.1635,
+     "n_tokens": 991
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -1.198,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "start3",
+      12.073
+     ],
+     [
+      "gold",
+      9.494
+     ],
+     [
+      "start0",
+      7.762
+     ],
+     [
+      "end<2^7",
+      7.364
+     ],
+     [
+      "start4",
+      7.319
+     ],
+     [
+      "nl4",
+      6.835
+     ],
+     [
+      "re9",
+      5.928
+     ],
+     [
+      "rs0",
+      5.562
+     ],
+     [
+      "start7",
+      5.425
+     ],
+     [
+      "start6",
+      5.148
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end5",
+      -8.714
+     ],
+     [
+      "end1",
+      -7.474
+     ],
+     [
+      "end7",
+      -5.368
+     ],
+     [
+      "re2",
+      -4.783
+     ],
+     [
+      "start<2^8",
+      -4.618
+     ],
+     [
+      "start<2^6",
+      -4.104
+     ],
+     [
+      "re3",
+      -4.038
+     ],
+     [
+      "nl5",
+      -3.749
+     ],
+     [
+      "end13",
+      -3.427
+     ],
+     [
+      "start<2^5",
+      -3.3
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "textgroups@2k": {
+   "router_file": "debug/learned_router/weights/textgroups/v5_s0_rhobar.pt",
+   "target_T2T": 0.607,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 80
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 80
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 80
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 10780
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 640
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.202,
+     "n_tokens": 15286
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 1009
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.3193,
+     "n_tokens": 1569
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0075,
+     "n_tokens": 1594
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 1592
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 1579
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 1601
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 1601
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 1586
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0044,
+     "n_tokens": 1596
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 1559
+    },
+    "f0/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "f0/docs_body_dropped_entirely_nongold": {
+     "frac": 0.425,
+     "n_tokens": 80
+    },
+    "f0/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "f0/docs_body_kept_whole_nongold": {
+     "frac": 0.1875,
+     "n_tokens": 80
+    },
+    "f0/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "f0/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.3375,
+     "n_tokens": 80
+    },
+    "f0/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 10780
+    },
+    "f0/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "f0/markers_nongold": {
+     "frac": 0.375,
+     "n_tokens": 160
+    },
+    "f0/nongold_id_region_j<8": {
+     "frac": 0.325,
+     "n_tokens": 640
+    },
+    "f0/nongold_rest_j>=8_all": {
+     "frac": 0.2359,
+     "n_tokens": 15286
+    },
+    "f0/nongold_rest_j>=8_decile0": {
+     "frac": 0.1992,
+     "n_tokens": 1009
+    },
+    "f0/nongold_rest_j>=8_decile1": {
+     "frac": 0.2562,
+     "n_tokens": 1569
+    },
+    "f0/nongold_rest_j>=8_decile2": {
+     "frac": 0.1876,
+     "n_tokens": 1594
+    },
+    "f0/nongold_rest_j>=8_decile3": {
+     "frac": 0.2029,
+     "n_tokens": 1592
+    },
+    "f0/nongold_rest_j>=8_decile4": {
+     "frac": 0.2084,
+     "n_tokens": 1579
+    },
+    "f0/nongold_rest_j>=8_decile5": {
+     "frac": 0.2492,
+     "n_tokens": 1601
+    },
+    "f0/nongold_rest_j>=8_decile6": {
+     "frac": 0.2592,
+     "n_tokens": 1601
+    },
+    "f0/nongold_rest_j>=8_decile7": {
+     "frac": 0.2724,
+     "n_tokens": 1586
+    },
+    "f0/nongold_rest_j>=8_decile8": {
+     "frac": 0.2669,
+     "n_tokens": 1596
+    },
+    "f0/nongold_rest_j>=8_decile9": {
+     "frac": 0.2437,
+     "n_tokens": 1559
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.075,
+     "n_tokens": 80
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.3646,
+     "n_tokens": 96
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0375,
+     "n_tokens": 80
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.075,
+     "n_tokens": 80
+    },
+    "router/gold_body": {
+     "frac": 0.9857,
+     "n_tokens": 10780
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "router/markers_nongold": {
+     "frac": 0.4375,
+     "n_tokens": 160
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.5875,
+     "n_tokens": 640
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.2337,
+     "n_tokens": 15286
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.5322,
+     "n_tokens": 1009
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.5596,
+     "n_tokens": 1569
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.4097,
+     "n_tokens": 1594
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.1947,
+     "n_tokens": 1592
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.1222,
+     "n_tokens": 1579
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.1611,
+     "n_tokens": 1601
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0712,
+     "n_tokens": 1601
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.123,
+     "n_tokens": 1586
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.1109,
+     "n_tokens": 1596
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.1648,
+     "n_tokens": 1559
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -2.979,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "start2",
+      12.097
+     ],
+     [
+      "gold",
+      11.545
+     ],
+     [
+      "start0",
+      8.027
+     ],
+     [
+      "start14",
+      7.468
+     ],
+     [
+      "nl4",
+      6.956
+     ],
+     [
+      "end14",
+      5.975
+     ],
+     [
+      "start8",
+      4.954
+     ],
+     [
+      "re9",
+      3.981
+     ],
+     [
+      "end12",
+      3.948
+     ],
+     [
+      "start9",
+      3.82
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end10",
+      -14.278
+     ],
+     [
+      "nl8",
+      -13.111
+     ],
+     [
+      "end11",
+      -12.489
+     ],
+     [
+      "start4",
+      -11.858
+     ],
+     [
+      "start<2^9",
+      -9.337
+     ],
+     [
+      "start5",
+      -8.624
+     ],
+     [
+      "end0",
+      -7.663
+     ],
+     [
+      "start6",
+      -6.56
+     ],
+     [
+      "end<2^9",
+      -5.906
+     ],
+     [
+      "start10",
+      -4.988
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   },
+   "f0_router_file": "debug/learned_router/weights/textgroups/v6F0_s0_rhobar.pt",
+   "f0_weights": {
+    "variant": "doc_only",
+    "route_markers": true,
+    "bias_b": -6.109,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "nl4",
+      10.685
+     ],
+     [
+      "nl5",
+      6.82
+     ],
+     [
+      "nl7",
+      6.109
+     ],
+     [
+      "nl6",
+      5.592
+     ],
+     [
+      "is_marker",
+      4.138
+     ],
+     [
+      "gold",
+      2.834
+     ],
+     [
+      "nl13",
+      0.0
+     ],
+     [
+      "nl12",
+      0.0
+     ],
+     [
+      "nl11",
+      0.0
+     ],
+     [
+      "nl10",
+      0.0
+     ]
+    ],
+    "top10_negative": [
+     [
+      "nl8",
+      -2.158
+     ],
+     [
+      "nl0",
+      0.0
+     ],
+     [
+      "nl1",
+      0.0
+     ],
+     [
+      "nl2",
+      0.0
+     ],
+     [
+      "nl3",
+      0.0
+     ],
+     [
+      "nl9",
+      0.0
+     ],
+     [
+      "nl10",
+      0.0
+     ],
+     [
+      "nl11",
+      0.0
+     ],
+     [
+      "nl12",
+      0.0
+     ],
+     [
+      "nl13",
+      0.0
+     ]
+    ],
+    "n_features": 16,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   },
+   "f0_max_abs_T2T_mismatch_vs_grid": 0.001
+  },
+  "rerank@2k": {
+   "router_file": "debug/learned_router/weights/rerank/v5_s0_rhobar.pt",
+   "target_T2T": 0.407,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 38
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 38
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 38
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 3570
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 76
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 660
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 2640
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2049,
+     "n_tokens": 25075
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 498
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.7352,
+     "n_tokens": 2545
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0407,
+     "n_tokens": 2778
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 2757
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 2717
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 2831
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 2778
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2759
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0111,
+     "n_tokens": 2788
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 2624
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 38
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.6842,
+     "n_tokens": 38
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 38
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 330
+    },
+    "router/gold_body": {
+     "frac": 0.9961,
+     "n_tokens": 3570
+    },
+    "router/markers_gold": {
+     "frac": 0.6842,
+     "n_tokens": 76
+    },
+    "router/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 660
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.7231,
+     "n_tokens": 2640
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.2367,
+     "n_tokens": 25075
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.5984,
+     "n_tokens": 498
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.0,
+     "n_tokens": 2545
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.0011,
+     "n_tokens": 2778
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.9064,
+     "n_tokens": 2757
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.0074,
+     "n_tokens": 2717
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.1236,
+     "n_tokens": 2831
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.3823,
+     "n_tokens": 2778
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2759
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0068,
+     "n_tokens": 2788
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.6414,
+     "n_tokens": 2624
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -23.35,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "gold",
+      21.148
+     ],
+     [
+      "nl5",
+      8.935
+     ],
+     [
+      "re9",
+      8.338
+     ],
+     [
+      "rs0",
+      8.138
+     ],
+     [
+      "nl6",
+      7.498
+     ],
+     [
+      "re0",
+      7.232
+     ],
+     [
+      "re6",
+      6.908
+     ],
+     [
+      "rs3",
+      6.869
+     ],
+     [
+      "rs9",
+      6.757
+     ],
+     [
+      "end0",
+      6.682
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end15",
+      -10.174
+     ],
+     [
+      "end9",
+      -9.617
+     ],
+     [
+      "start10",
+      -9.325
+     ],
+     [
+      "start11",
+      -8.571
+     ],
+     [
+      "start2",
+      -7.755
+     ],
+     [
+      "is_marker",
+      -3.285
+     ],
+     [
+      "start6",
+      -1.633
+     ],
+     [
+      "start<2^9",
+      -1.574
+     ],
+     [
+      "end<2^9",
+      -1.564
+     ],
+     [
+      "start7",
+      -1.446
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "scifact@2k": {
+   "router_file": "debug/learned_router/weights/scifact/v5_s0_rhobar.pt",
+   "target_T2T": 0.436,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 18
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 18
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 18
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 6477
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 36
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 124
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 496
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2011,
+     "n_tokens": 19877
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 1574
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.2016,
+     "n_tokens": 2034
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0,
+     "n_tokens": 2040
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 2031
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 2030
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 2047
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 2038
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2033
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0024,
+     "n_tokens": 2041
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 2009
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 18
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.0,
+     "n_tokens": 18
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 18
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 62
+    },
+    "router/gold_body": {
+     "frac": 0.562,
+     "n_tokens": 6477
+    },
+    "router/markers_gold": {
+     "frac": 0.0556,
+     "n_tokens": 36
+    },
+    "router/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 124
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.8024,
+     "n_tokens": 496
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.3469,
+     "n_tokens": 19877
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.5934,
+     "n_tokens": 1574
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.9213,
+     "n_tokens": 2034
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.6059,
+     "n_tokens": 2040
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.4023,
+     "n_tokens": 2031
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.7631,
+     "n_tokens": 2030
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 2047
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 2038
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 2033
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0005,
+     "n_tokens": 2041
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.2414,
+     "n_tokens": 2009
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -11.036,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "end0",
+      33.901
+     ],
+     [
+      "end14",
+      30.913
+     ],
+     [
+      "end1",
+      27.843
+     ],
+     [
+      "end10",
+      27.421
+     ],
+     [
+      "start9",
+      26.451
+     ],
+     [
+      "end2",
+      26.193
+     ],
+     [
+      "start3",
+      23.719
+     ],
+     [
+      "end8",
+      23.245
+     ],
+     [
+      "end3",
+      19.892
+     ],
+     [
+      "start4",
+      16.436
+     ]
+    ],
+    "top10_negative": [
+     [
+      "start8",
+      -25.055
+     ],
+     [
+      "start15",
+      -24.524
+     ],
+     [
+      "start12",
+      -17.556
+     ],
+     [
+      "start<2^9",
+      -15.849
+     ],
+     [
+      "end7",
+      -14.369
+     ],
+     [
+      "rs7",
+      -11.253
+     ],
+     [
+      "end<2^7",
+      -9.558
+     ],
+     [
+      "re0",
+      -7.111
+     ],
+     [
+      "re3",
+      -6.679
+     ],
+     [
+      "rs8",
+      -5.22
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "strmatch@2k": {
+   "router_file": "debug/learned_router/weights/strmatch/v5_s0_rhobar.pt",
+   "target_T2T": 0.627,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 512
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 512
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 512
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 2390
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1024
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 4096
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2239,
+     "n_tokens": 8510
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 1.0,
+     "n_tokens": 123
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.6686,
+     "n_tokens": 1038
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0248,
+     "n_tokens": 1168
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 1342
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 1314
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 1209
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.021,
+     "n_tokens": 1284
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 1032
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0059,
+     "n_tokens": 512
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 512
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 512
+    },
+    "router/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 2390
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "router/markers_nongold": {
+     "frac": 1.0,
+     "n_tokens": 1024
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.3398,
+     "n_tokens": 4096
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.4223,
+     "n_tokens": 8510
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.0,
+     "n_tokens": 123
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.7177,
+     "n_tokens": 1038
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.9786,
+     "n_tokens": 1168
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.383,
+     "n_tokens": 1342
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.2983,
+     "n_tokens": 1314
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.6551,
+     "n_tokens": 1209
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0,
+     "n_tokens": 1284
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.0078,
+     "n_tokens": 1032
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -9.228,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "gold",
+      25.69
+     ],
+     [
+      "is_marker",
+      14.746
+     ],
+     [
+      "rs4",
+      5.261
+     ],
+     [
+      "rs1",
+      4.838
+     ],
+     [
+      "re2",
+      4.698
+     ],
+     [
+      "start7",
+      3.994
+     ],
+     [
+      "nl4",
+      3.459
+     ],
+     [
+      "re5",
+      3.219
+     ],
+     [
+      "re6",
+      2.472
+     ],
+     [
+      "start13",
+      2.416
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end9",
+      -11.01
+     ],
+     [
+      "re9",
+      -5.984
+     ],
+     [
+      "start0",
+      -4.669
+     ],
+     [
+      "rs0",
+      -4.478
+     ],
+     [
+      "start2",
+      -4.149
+     ],
+     [
+      "start5",
+      -2.123
+     ],
+     [
+      "re3",
+      -1.206
+     ],
+     [
+      "nl5",
+      -1.074
+     ],
+     [
+      "start15",
+      -0.811
+     ],
+     [
+      "rs2",
+      -0.605
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "grouping@2k": {
+   "router_file": "debug/learned_router/weights/grouping/v5_s10_rhobar.pt",
+   "target_T2T": 0.29,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 320
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 1280
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2023,
+     "n_tokens": 28846
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 1808
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.3547,
+     "n_tokens": 3000
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0007,
+     "n_tokens": 3022
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 2999
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 2991
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 3047
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 3014
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 3007
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0066,
+     "n_tokens": 3017
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 2941
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 160
+    },
+    "router/markers_nongold": {
+     "frac": 1.0,
+     "n_tokens": 320
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.8391,
+     "n_tokens": 1280
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.1987,
+     "n_tokens": 28846
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.7135,
+     "n_tokens": 1808
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.017,
+     "n_tokens": 3000
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.0,
+     "n_tokens": 3022
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.7869,
+     "n_tokens": 2999
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.1745,
+     "n_tokens": 2991
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 3047
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 3014
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 3007
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0,
+     "n_tokens": 3017
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.5134,
+     "n_tokens": 2941
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -25.193,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "is_marker",
+      47.367
+     ],
+     [
+      "start5",
+      13.95
+     ],
+     [
+      "start4",
+      13.044
+     ],
+     [
+      "start1",
+      12.644
+     ],
+     [
+      "start15",
+      11.661
+     ],
+     [
+      "end11",
+      10.798
+     ],
+     [
+      "end1",
+      10.491
+     ],
+     [
+      "nl7",
+      10.33
+     ],
+     [
+      "start6",
+      8.471
+     ],
+     [
+      "start10",
+      8.413
+     ]
+    ],
+    "top10_negative": [
+     [
+      "start12",
+      -10.203
+     ],
+     [
+      "start9",
+      -10.157
+     ],
+     [
+      "end9",
+      -9.305
+     ],
+     [
+      "start13",
+      -8.537
+     ],
+     [
+      "start7",
+      -6.671
+     ],
+     [
+      "rs8",
+      -5.341
+     ],
+     [
+      "end6",
+      -3.832
+     ],
+     [
+      "rs5",
+      -3.645
+     ],
+     [
+      "nl5",
+      -3.182
+     ],
+     [
+      "re4",
+      -0.847
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "contradiction@2k": {
+   "router_file": "debug/learned_router/weights/contradiction/v5_s0_rhobar.pt",
+   "target_T2T": 0.48,
+   "eval_size": 16,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 800
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0013,
+     "n_tokens": 800
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 800
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 4468
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0013,
+     "n_tokens": 1600
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 6400
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2123,
+     "n_tokens": 25655
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 117
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.8603,
+     "n_tokens": 1181
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.4115,
+     "n_tokens": 2503
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0997,
+     "n_tokens": 3009
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0151,
+     "n_tokens": 3041
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0049,
+     "n_tokens": 3298
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 3263
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 3152
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.0255,
+     "n_tokens": 3253
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 2838
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 800
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.9479,
+     "n_tokens": 96
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 800
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 96
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 800
+    },
+    "router/gold_body": {
+     "frac": 0.9989,
+     "n_tokens": 4468
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 192
+    },
+    "router/markers_nongold": {
+     "frac": 1.0,
+     "n_tokens": 1600
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.5864,
+     "n_tokens": 6400
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.2547,
+     "n_tokens": 25655
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.0,
+     "n_tokens": 117
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.2786,
+     "n_tokens": 1181
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.5226,
+     "n_tokens": 2503
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.5507,
+     "n_tokens": 3009
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.6475,
+     "n_tokens": 3041
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.0403,
+     "n_tokens": 3298
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0496,
+     "n_tokens": 3263
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0638,
+     "n_tokens": 3152
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.0209,
+     "n_tokens": 3253
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.2495,
+     "n_tokens": 2838
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -9.124,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "gold",
+      15.905
+     ],
+     [
+      "start4",
+      10.023
+     ],
+     [
+      "is_marker",
+      9.848
+     ],
+     [
+      "start3",
+      5.486
+     ],
+     [
+      "start0",
+      4.624
+     ],
+     [
+      "end0",
+      4.567
+     ],
+     [
+      "end<2^6",
+      4.093
+     ],
+     [
+      "end10",
+      3.937
+     ],
+     [
+      "start5",
+      3.731
+     ],
+     [
+      "start<2^6",
+      3.699
+     ]
+    ],
+    "top10_negative": [
+     [
+      "start8",
+      -11.344
+     ],
+     [
+      "start1",
+      -2.389
+     ],
+     [
+      "start2",
+      -1.951
+     ],
+     [
+      "end5",
+      -1.713
+     ],
+     [
+      "end9",
+      -1.668
+     ],
+     [
+      "end3",
+      -1.659
+     ],
+     [
+      "nl2",
+      -1.65
+     ],
+     [
+      "end6",
+      -1.368
+     ],
+     [
+      "start7",
+      -1.216
+     ],
+     [
+      "end1",
+      -1.212
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   }
+  },
+  "textgroups@32k": {
+   "router_file": "debug/learned_router/weights/textgroups/v5_s0_rhobar.pt",
+   "target_T2T": 0.245,
+   "eval_size": 8,
+   "max_abs_T2T_mismatch_vs_grid": 0.0,
+   "regions": {
+    "bar/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "bar/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1632
+    },
+    "bar/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 48
+    },
+    "bar/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1632
+    },
+    "bar/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "bar/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1632
+    },
+    "bar/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 5017
+    },
+    "bar/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "bar/markers_nongold": {
+     "frac": 0.0,
+     "n_tokens": 3264
+    },
+    "bar/nongold_id_region_j<8": {
+     "frac": 1.0,
+     "n_tokens": 13056
+    },
+    "bar/nongold_rest_j>=8_all": {
+     "frac": 0.2018,
+     "n_tokens": 344445
+    },
+    "bar/nongold_rest_j>=8_decile0": {
+     "frac": 1.0,
+     "n_tokens": 23538
+    },
+    "bar/nongold_rest_j>=8_decile1": {
+     "frac": 0.3027,
+     "n_tokens": 35568
+    },
+    "bar/nongold_rest_j>=8_decile2": {
+     "frac": 0.0013,
+     "n_tokens": 35831
+    },
+    "bar/nongold_rest_j>=8_decile3": {
+     "frac": 0.0,
+     "n_tokens": 35660
+    },
+    "bar/nongold_rest_j>=8_decile4": {
+     "frac": 0.0,
+     "n_tokens": 35494
+    },
+    "bar/nongold_rest_j>=8_decile5": {
+     "frac": 0.0,
+     "n_tokens": 36010
+    },
+    "bar/nongold_rest_j>=8_decile6": {
+     "frac": 0.0,
+     "n_tokens": 35814
+    },
+    "bar/nongold_rest_j>=8_decile7": {
+     "frac": 0.0,
+     "n_tokens": 35677
+    },
+    "bar/nongold_rest_j>=8_decile8": {
+     "frac": 0.004,
+     "n_tokens": 35826
+    },
+    "bar/nongold_rest_j>=8_decile9": {
+     "frac": 1.0,
+     "n_tokens": 35027
+    },
+    "f0/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "f0/docs_body_dropped_entirely_nongold": {
+     "frac": 0.7065,
+     "n_tokens": 1632
+    },
+    "f0/docs_body_kept_whole_gold": {
+     "frac": 1.0,
+     "n_tokens": 48
+    },
+    "f0/docs_body_kept_whole_nongold": {
+     "frac": 0.2549,
+     "n_tokens": 1632
+    },
+    "f0/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "f0/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.625,
+     "n_tokens": 1632
+    },
+    "f0/gold_body": {
+     "frac": 1.0,
+     "n_tokens": 5017
+    },
+    "f0/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "f0/markers_nongold": {
+     "frac": 0.3395,
+     "n_tokens": 3264
+    },
+    "f0/nongold_id_region_j<8": {
+     "frac": 0.2737,
+     "n_tokens": 13056
+    },
+    "f0/nongold_rest_j>=8_all": {
+     "frac": 0.2293,
+     "n_tokens": 344445
+    },
+    "f0/nongold_rest_j>=8_decile0": {
+     "frac": 0.2078,
+     "n_tokens": 23538
+    },
+    "f0/nongold_rest_j>=8_decile1": {
+     "frac": 0.2275,
+     "n_tokens": 35568
+    },
+    "f0/nongold_rest_j>=8_decile2": {
+     "frac": 0.2309,
+     "n_tokens": 35831
+    },
+    "f0/nongold_rest_j>=8_decile3": {
+     "frac": 0.2304,
+     "n_tokens": 35660
+    },
+    "f0/nongold_rest_j>=8_decile4": {
+     "frac": 0.2302,
+     "n_tokens": 35494
+    },
+    "f0/nongold_rest_j>=8_decile5": {
+     "frac": 0.2305,
+     "n_tokens": 36010
+    },
+    "f0/nongold_rest_j>=8_decile6": {
+     "frac": 0.232,
+     "n_tokens": 35814
+    },
+    "f0/nongold_rest_j>=8_decile7": {
+     "frac": 0.233,
+     "n_tokens": 35677
+    },
+    "f0/nongold_rest_j>=8_decile8": {
+     "frac": 0.2333,
+     "n_tokens": 35826
+    },
+    "f0/nongold_rest_j>=8_decile9": {
+     "frac": 0.2305,
+     "n_tokens": 35027
+    },
+    "router/docs_body_dropped_entirely_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "router/docs_body_dropped_entirely_nongold": {
+     "frac": 0.0478,
+     "n_tokens": 1632
+    },
+    "router/docs_body_kept_whole_gold": {
+     "frac": 0.2708,
+     "n_tokens": 48
+    },
+    "router/docs_body_kept_whole_nongold": {
+     "frac": 0.0,
+     "n_tokens": 1632
+    },
+    "router/docs_fully_dropped_incl_markers_gold": {
+     "frac": 0.0,
+     "n_tokens": 48
+    },
+    "router/docs_fully_dropped_incl_markers_nongold": {
+     "frac": 0.0478,
+     "n_tokens": 1632
+    },
+    "router/gold_body": {
+     "frac": 0.9868,
+     "n_tokens": 5017
+    },
+    "router/markers_gold": {
+     "frac": 1.0,
+     "n_tokens": 96
+    },
+    "router/markers_nongold": {
+     "frac": 0.5,
+     "n_tokens": 3264
+    },
+    "router/nongold_id_region_j<8": {
+     "frac": 0.543,
+     "n_tokens": 13056
+    },
+    "router/nongold_rest_j>=8_all": {
+     "frac": 0.2158,
+     "n_tokens": 344445
+    },
+    "router/nongold_rest_j>=8_decile0": {
+     "frac": 0.4709,
+     "n_tokens": 23538
+    },
+    "router/nongold_rest_j>=8_decile1": {
+     "frac": 0.5395,
+     "n_tokens": 35568
+    },
+    "router/nongold_rest_j>=8_decile2": {
+     "frac": 0.4401,
+     "n_tokens": 35831
+    },
+    "router/nongold_rest_j>=8_decile3": {
+     "frac": 0.2181,
+     "n_tokens": 35660
+    },
+    "router/nongold_rest_j>=8_decile4": {
+     "frac": 0.0921,
+     "n_tokens": 35494
+    },
+    "router/nongold_rest_j>=8_decile5": {
+     "frac": 0.1248,
+     "n_tokens": 36010
+    },
+    "router/nongold_rest_j>=8_decile6": {
+     "frac": 0.0147,
+     "n_tokens": 35814
+    },
+    "router/nongold_rest_j>=8_decile7": {
+     "frac": 0.0801,
+     "n_tokens": 35677
+    },
+    "router/nongold_rest_j>=8_decile8": {
+     "frac": 0.074,
+     "n_tokens": 35826
+    },
+    "router/nongold_rest_j>=8_decile9": {
+     "frac": 0.1914,
+     "n_tokens": 35027
+    }
+   },
+   "router_weights": {
+    "variant": "relpos_noemb",
+    "route_markers": true,
+    "bias_b": -2.979,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "start2",
+      12.097
+     ],
+     [
+      "gold",
+      11.545
+     ],
+     [
+      "start0",
+      8.027
+     ],
+     [
+      "start14",
+      7.468
+     ],
+     [
+      "nl4",
+      6.956
+     ],
+     [
+      "end14",
+      5.975
+     ],
+     [
+      "start8",
+      4.954
+     ],
+     [
+      "re9",
+      3.981
+     ],
+     [
+      "end12",
+      3.948
+     ],
+     [
+      "start9",
+      3.82
+     ]
+    ],
+    "top10_negative": [
+     [
+      "end10",
+      -14.278
+     ],
+     [
+      "nl8",
+      -13.111
+     ],
+     [
+      "end11",
+      -12.489
+     ],
+     [
+      "start4",
+      -11.858
+     ],
+     [
+      "start<2^9",
+      -9.337
+     ],
+     [
+      "start5",
+      -8.624
+     ],
+     [
+      "end0",
+      -7.663
+     ],
+     [
+      "start6",
+      -6.56
+     ],
+     [
+      "end<2^9",
+      -5.906
+     ],
+     [
+      "start10",
+      -4.988
+     ]
+    ],
+    "n_features": 92,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   },
+   "f0_router_file": "debug/learned_router/weights/textgroups/v6F0_s0_rhobar.pt",
+   "f0_weights": {
+    "variant": "doc_only",
+    "route_markers": true,
+    "bias_b": -6.109,
+    "bias_note": "b cancels under per-row top-k (@exact); every body token sums one start-offset, one end-offset, one rs, one re and one nl weight (+ gold); a routed marker's logit is b + is_marker (+ gold)",
+    "top10_positive": [
+     [
+      "nl4",
+      10.685
+     ],
+     [
+      "nl5",
+      6.82
+     ],
+     [
+      "nl7",
+      6.109
+     ],
+     [
+      "nl6",
+      5.592
+     ],
+     [
+      "is_marker",
+      4.138
+     ],
+     [
+      "gold",
+      2.834
+     ],
+     [
+      "nl13",
+      0.0
+     ],
+     [
+      "nl12",
+      0.0
+     ],
+     [
+      "nl11",
+      0.0
+     ],
+     [
+      "nl10",
+      0.0
+     ]
+    ],
+    "top10_negative": [
+     [
+      "nl8",
+      -2.158
+     ],
+     [
+      "nl0",
+      0.0
+     ],
+     [
+      "nl1",
+      0.0
+     ],
+     [
+      "nl2",
+      0.0
+     ],
+     [
+      "nl3",
+      0.0
+     ],
+     [
+      "nl9",
+      0.0
+     ],
+     [
+      "nl10",
+      0.0
+     ],
+     [
+      "nl11",
+      0.0
+     ],
+     [
+      "nl12",
+      0.0
+     ],
+     [
+      "nl13",
+      0.0
+     ]
+    ],
+    "n_features": 16,
+    "polish": {
+     "gold": 0.0,
+     "marker": 0.0,
+     "pos": 1.0,
+     "rel": 1.0,
+     "emb": 1.0
+    }
+   },
+   "f0_max_abs_T2T_mismatch_vs_grid": 0.0004
+  }
+ }
+}

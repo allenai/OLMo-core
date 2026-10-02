@@ -556,6 +556,7 @@ def mark_positions_free(
     doc_start_id: int,
     doc_end_id: int,
     n_docs: Optional[int] = None,
+    free_markers: "bool | str" = False,
 ) -> torch.Tensor:
     """
     Keep an arbitrary, caller-chosen set of BODY tokens real (re-label them ``FREE``).
@@ -566,6 +567,14 @@ def mark_positions_free(
     tokens (inside a document, not a marker) are honoured. A document whose ENTIRE body is kept has
     its markers freed too, exactly as the top-k rule does, so it is not "present" for
     ``compact_pooled_rows``.
+
+    :param free_markers: Also keep EVERY document's ``doc_start``/``doc_end`` markers real, whatever
+        its body keeps (a document whose body is dropped entirely leaves an empty marker pair). The
+        default ``False`` frees markers only for fully kept bodies (the historical behaviour), so
+        with ``drop_slots`` a partially kept document's fragments appear without markers.
+        ``"mask"``: a marker is kept exactly when ``keep_mask`` is True at its position (routed
+        markers), plus the fully-kept-body rule. ``"doc"``: a document's markers are kept exactly
+        when at least one of its body tokens is kept (markers follow their document).
 
     :returns: A new ``(B, S)`` chunk-id tensor.
     """
@@ -586,6 +595,12 @@ def mark_positions_free(
     free = body & keep_mask.to(cid.device)
     out = chunk_ids.clone()
     out[free] = FREE_CHUNK_ID
+    if free_markers == "mask":
+        out[markers & (cid >= 0) & keep_mask.to(cid.device)] = FREE_CHUNK_ID
+    elif free_markers == "doc":
+        pass  # applied below, once the per-document kept counts exist
+    elif free_markers:
+        out[markers & (cid >= 0)] = FREE_CHUNK_ID
     B = cid.shape[0]
     n_eff = int(n_docs) if n_docs is not None else int(cid.max().item()) + 1
     if n_eff <= 0:
@@ -594,6 +609,9 @@ def mark_positions_free(
     body_cnt = torch.bincount(gid[body], minlength=B * n_eff)
     kept_cnt = torch.bincount(gid[free], minlength=B * n_eff)
     whole = (body_cnt > 0) & (kept_cnt == body_cnt)
+    if free_markers == "doc":
+        anyk = kept_cnt > 0
+        out = torch.where(markers & (cid >= 0) & anyk[gid], torch.full_like(out, FREE_CHUNK_ID), out)
     if bool(whole.any()):
         out = torch.where(markers & (cid >= 0) & whole[gid], torch.full_like(out, FREE_CHUNK_ID), out)
     return out

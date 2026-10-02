@@ -1,0 +1,726 @@
+{
+ "data_root": "/data/prasann/devloss_grid/data",
+ "data_root_login": "/scratch/users/prasann/devloss_grid_data",
+ "data_layout": "<subset>/rung_<tokens>.jsonl, first 64 rows of the HF split in the dataset's own schema (olmo-eval CTC_SUITE_DATA_ROOT layout)",
+ "hf_dataset": "PrasannSinghal/ctc-suite-eval",
+ "rung_splits": {
+  "2k": "r2k (rung_2048; contradiction_iid -> rung_2560)",
+  "8k": "r8k (rung_8192)",
+  "32k": "r32k (rung_32768; absence_gutenberg/reorder top out at r16k -> rung_16384)"
+ },
+ "tasks": {
+  "fiqa": {
+   "hf_config": "fiqa",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/fiqa/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/fiqa/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/fiqa/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-fiqa-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-fiqa-full",
+   "dropped": false
+  },
+  "nq": {
+   "hf_config": "nq",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/nq/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/nq/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/nq/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-nq-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-nq-full",
+   "dropped": false
+  },
+  "hpqa": {
+   "hf_config": "hotpotqa",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/hotpotqa/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/hotpotqa/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/hotpotqa/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "DROPPED this pass (Prasann 2026-09-21); a distcp exists on mooney ctc_suite/ckpts/ctc-4b-hotpotqa-full if revived",
+   "ckpt": null,
+   "ckpt_format": null,
+   "ckpt_src": null,
+   "dropped": true
+  },
+  "qdmatch_fiqa": {
+   "hf_config": "qdmatch_fiqa",
+   "spec": "qdmatch",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_fiqa/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_fiqa/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_fiqa/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "DROPPED this pass; no local 4B dense checkpoint",
+   "ckpt": null,
+   "ckpt_format": null,
+   "ckpt_src": null,
+   "dropped": true
+  },
+  "qdmatch_nq": {
+   "hf_config": "qdmatch_nq",
+   "spec": "qdmatch",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_nq/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_nq/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_nq/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "DROPPED this pass; mooney has ctcms-qdmatch_nq-full-4b (model-scale run) if revived",
+   "ckpt": null,
+   "ckpt_format": null,
+   "ckpt_src": null,
+   "dropped": true
+  },
+  "qdmatch_hpqa": {
+   "hf_config": "qdmatch_hpqa",
+   "spec": "qdmatch",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_hpqa/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_hpqa/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/qdmatch_hpqa/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-qdmatch_hpqa-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-qdmatch_hpqa-full",
+   "dropped": false
+  },
+  "outlier_amzn": {
+   "hf_config": "outlier_amzn",
+   "spec": "outlier",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_amzn/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_amzn/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_amzn/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-outlier_amzn-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-outlier_amzn-full",
+   "dropped": false
+  },
+  "outlier": {
+   "hf_config": "outlier",
+   "spec": "outlier",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/outlier/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/outlier/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/outlier/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "olmo-core distcp (no conversion); serving twin also exists on cubbins; distcp dir: <ckpt>/model_and_optim",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-outlier-full",
+   "ckpt_format": "distcp",
+   "ckpt_src": "/net/horton/data/prasann/ctc_suite/ckpts_4b/ctc-4b-outlier-full/model_and_optim",
+   "dropped": false
+  },
+  "outlier_fixedm": {
+   "hf_config": "outlier_fixedM",
+   "spec": "outlier",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_fixedM/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_fixedM/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/outlier_fixedM/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "DROPPED this pass; no 4B dense checkpoint located locally",
+   "ckpt": null,
+   "ckpt_format": null,
+   "ckpt_src": null,
+   "dropped": true
+  },
+  "oolong": {
+   "hf_config": "oolong",
+   "spec": "oolong",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/oolong/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/oolong/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/oolong/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "the rebuilt-shard retrain (records/ctc-final-suite.md: pre-fix oolong cells VOID); final top-level model_and_optim, not step720. Already on sneetches; distcp dir: <ckpt>/model_and_optim",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-oolong-full-4b-fixed",
+   "ckpt_format": "distcp",
+   "ckpt_src": "/net/sneetches/data/prasann/ctc_suite/ckpts/ctc-oolong-full-4b-fixed/model_and_optim",
+   "dropped": false
+  },
+  "grouping": {
+   "hf_config": "grouping",
+   "spec": "grouping",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/grouping/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/grouping/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/grouping/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-grouping-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-grouping-full",
+   "dropped": false
+  },
+  "absence": {
+   "hf_config": "absence_gutenberg",
+   "spec": "absence",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/absence_gutenberg/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/absence_gutenberg/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/absence_gutenberg/rung_16384.jsonl",
+     "split": "r16k",
+     "rows": 64,
+     "total": 148,
+     "note": "ladder top; stands in for 32k"
+    }
+   },
+   "ckpt_note": "ladder tops out at r16k: rung_16384 stands in for 32k",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-absence_gutenberg-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-absence_gutenberg-full",
+   "dropped": false
+  },
+  "xabsence": {
+   "hf_config": "xabsence",
+   "spec": "xabsence",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/xabsence/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/xabsence/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/xabsence/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "latest step (step1500 of 750/1000/1250/1500; no top-level final dir, no config.json -- build TransformerConfig.qwen3_5_4B). Already on sneetches; distcp dir: <ckpt>/model_and_optim | VOID: ctc-xabsence-full-4b is the PARAPHRASE-era run scored on EXACT rows (model ignores context, k0\u2248full); needs the EXACT checkpoint from weka",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-xabsence-full-4b",
+   "ckpt_format": "distcp",
+   "ckpt_src": "/net/sneetches/data/prasann/ctc_suite/ckpts/ctc-xabsence-full-4b/step1500/model_and_optim",
+   "dropped": false
+  },
+  "rerank": {
+   "hf_config": "rerank",
+   "spec": "rerank",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/rerank/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/rerank/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/rerank/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-rerank-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-rerank-full",
+   "dropped": false
+  },
+  "msmarco": {
+   "hf_config": "msmarco",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/msmarco/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/msmarco/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/msmarco/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-msmarco-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-msmarco-full",
+   "dropped": false
+  },
+  "reorder": {
+   "hf_config": "reorder",
+   "spec": "reorder",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/reorder/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/reorder/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/reorder/rung_16384.jsonl",
+     "split": "r16k",
+     "rows": 64,
+     "total": 500,
+     "note": "ladder top; stands in for 32k"
+    }
+   },
+   "ckpt_note": "ladder tops out at r16k: rung_16384 stands in for 32k",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-reorder-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-reorder-full",
+   "dropped": false
+  },
+  "obliq": {
+   "hf_config": "obliq_twitter",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/obliq_twitter/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 123
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/obliq_twitter/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 126
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/obliq_twitter/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 126
+    }
+   },
+   "ckpt_note": "trained on obliq_retrieval, scored on the obliq_twitter row (Prasann 2026-09-21); eval_size 123-126/rung in the dataset",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-obliq_retrieval-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-obliq_retrieval-full",
+   "dropped": false
+  },
+  "niah": {
+   "hf_config": "niah",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/niah/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/niah/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/niah/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-niah-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-niah-full",
+   "dropped": false
+  },
+  "contradiction": {
+   "hf_config": "contradiction_iid",
+   "spec": "contradiction",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/contradiction_iid/rung_2560.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/contradiction_iid/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/contradiction_iid/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "cubbins' ctc-4b-contradiction_iid-full is a symlink to ctc-4b-contradiction-full (the checkpoint the IID ladder was scored with); r2k file is rung_2560 (roster rung_alias)",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-contradiction-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-contradiction-full",
+   "dropped": false
+  },
+  "strmatch": {
+   "hf_config": "strmatch",
+   "spec": "strmatch",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/strmatch/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/strmatch/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/strmatch/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-strmatch-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-strmatch-full",
+   "dropped": false
+  },
+  "textgroups": {
+   "hf_config": "textgroups",
+   "spec": "textgroups",
+   "ctc_class": "high",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/textgroups/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 500
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/textgroups/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 500
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/textgroups/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 500
+    }
+   },
+   "ckpt_note": "",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-textgroups-full",
+   "ckpt_format": "hf_serving",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/vllm_serving_4b/ctc-4b-textgroups-full",
+   "dropped": false
+  },
+  "scifact": {
+   "hf_config": "scifact",
+   "spec": "retrieval",
+   "ctc_class": "low",
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/scifact/rung_2048.jsonl",
+     "split": "r2k",
+     "rows": 64,
+     "total": 300
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/scifact/rung_8192.jsonl",
+     "split": "r8k",
+     "rows": 64,
+     "total": 300
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/scifact/rung_32768.jsonl",
+     "split": "r32k",
+     "rows": 64,
+     "total": 300
+    }
+   },
+   "ckpt_note": "the post-retrain checkpoint (serving copy ctc-4b-scifact-full on cubbins is its twin; the *-preretrain-orig-* one is retired); eval_size 300/rung; distcp dir: <ckpt>/model_and_optim",
+   "ckpt": "/data/prasann/devloss_grid/ckpts/ctc-4b-scifact-full-retrain-s1",
+   "ckpt_format": "distcp",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/ckpts/ctc-4b-scifact-full-retrain-s1/step505/model_and_optim",
+   "dropped": false
+  },
+  "cpt80": {
+   "hf_config": null,
+   "spec": "cpt80",
+   "ctc_class": null,
+   "rungs": {
+    "2k": {
+     "path": "/data/prasann/devloss_grid/data/cpt80/long_docs.jsonl",
+     "note": "96 docs >=140k chars (32k rung) + 96 docs 40k-140k chars; driver truncates to the rung length"
+    },
+    "8k": {
+     "path": "/data/prasann/devloss_grid/data/cpt80/long_docs.jsonl",
+     "note": "96 docs >=140k chars (32k rung) + 96 docs 40k-140k chars; driver truncates to the rung length"
+    },
+    "32k": {
+     "path": "/data/prasann/devloss_grid/data/cpt80/long_docs.jsonl",
+     "note": "96 docs >=140k chars (32k rung) + 96 docs 40k-140k chars; driver truncates to the rung length"
+    }
+   },
+   "ckpt": "/data/prasann/devloss_grid/ckpts/q35-4b-base-modelonly",
+   "ckpt_format": "distcp",
+   "ckpt_src": "/net/cubbins/data/prasann/ctc_suite/bases/q35-4b-base-modelonly/model_and_optim",
+   "dropped": false,
+   "ckpt_note": "repaired Qwen3.5-4B base (marker_audit.json PASS: cos(box_start,box_end)=0.226, norm ratios 0.65/0.95, 2026-07-19 -> post norm-fix)"
+  }
+ },
+ "base_ckpt": {
+  "path": "/data/prasann/devloss_grid/ckpts/q35-4b-base-modelonly",
+  "src": "/net/cubbins/data/prasann/ctc_suite/bases/q35-4b-base-modelonly/model_and_optim",
+  "format": "distcp",
+  "marker_repair": "verified via marker_audit.json (PASS)"
+ },
+ "cpt_source": {
+  "path": "/data/prasann/devloss_grid/data/cpt80/long_docs.jsonl",
+  "format": "jsonl {text, n_chars, source}",
+  "origin": "HF geodesic-research/dolma3_longmino_mix_500k_sample (text sample of the dolma3 longmino mix amandab's CPT reads as tokenized npy on weka), shards 0-2",
+  "counts": {
+   "long_ge140k_chars": 96,
+   "mid_40k_140k_chars": 96
+  }
+ },
+ "gpu_node": "sneetches",
+ "gpu_state_2026-09-21": "all jsteinhardt/berkeleynlp H200 nodes 8/8 allocated except sneetches 7/8 (1 free) and lorax 7/7; use jsteinhardt preemptive_high on sneetches",
+ "ckpt_formats": {
+  "hf_serving": "vLLM serving copy (VL wrapper config, F32 single safetensors, keys model.language_model.* + visual.*); stage_to_node.sh converts it with make_text_export.py into a text-only bf16 HF export (model_type qwen3_5_text) loadable by olmo_core.nn.hf.checkpoint.load_hf_model",
+  "distcp": "olmo-core distributed checkpoint: <ckpt>/model_and_optim, load with load_model_and_optim_state into TransformerConfig.qwen3_5_4B"
+ },
+ "notes": [
+  "Dropped this pass (Prasann 2026-09-21): hpqa, qdmatch_fiqa, qdmatch_nq, outlier_fixedm -- data staged, no checkpoint.",
+  "Per-doc marker tokens: RESERVED_IDS['qwen3_5'] doc_start=248049 doc_end=248050 eos=248044 (xabsence provenance.json confirms the suite trained with them).",
+  "Serving copies hold ~17 GB F32 each; conversion streams over /net (~78 MB/s measured) and writes ~8 GB bf16 per checkpoint on the node; 16 conversions ~= 1 h.",
+  "Rungs fetched from HF on the login node (fetch_hf_rungs.py); data dir already rsynced to sneetches:/data/prasann/devloss_grid/data."
+ ]
+}
