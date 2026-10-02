@@ -473,7 +473,7 @@ class Olmo3MoeRouter(nn.Module):
 
 
 class Olmo3MoeCausalConv1d(nn.Conv1d):
-    """Depthwise causal convolution with the same FLA path as OLMo-core KDA."""
+    """Depthwise causal convolution with the same FLA path as Olmo-core KDA."""
 
     def __init__(self, hidden_size: int, kernel_size: int):
         super().__init__(

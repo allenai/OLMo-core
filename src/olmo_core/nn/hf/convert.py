@@ -626,7 +626,7 @@ def convert_qwen3_5_state_from_hf(
     hf_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Convert a Hugging Face Qwen3.5 text model state dict to OLMo-core format.
+    Convert a Hugging Face Qwen3.5 text model state dict to Olmo-core format.
 
     Handles the hybrid Gated DeltaNet + full-attention architecture, including fused
     projection and convolution weight layouts that differ from the standard converter.
@@ -693,7 +693,7 @@ def convert_qwen3_5_state_from_hf(
 # False): ``attention_norm`` -> ``post_attention_layernorm`` and
 # ``feed_forward_norm`` -> ``post_feedforward_layernorm``, uniformly across dense
 # and MoE layers. The peri-LN scheme is not supported here because it maps the
-# same OLMo-core norm key (``attention_norm``) to different HF keys depending on
+# same Olmo-core norm key (``attention_norm``) to different HF keys depending on
 # whether the layer is dense or MoE, which cannot be expressed uniformly.
 # ---------------------------------------------------------------------------
 
@@ -791,7 +791,7 @@ def convert_olmo3moe_state_from_hf(
     hf_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Convert a Hugging Face ``olmo3moe`` state dict to OLMo-core MoE-v2 format.
+    Convert a Hugging Face ``olmo3moe`` state dict to Olmo-core MoE-v2 format.
 
     Handles the fused ``w_up_gate`` routed-expert layout and the mixed dense / MoE
     layer structure that the template-based converter cannot express.
@@ -941,14 +941,14 @@ def convert_olmo3moe_state_to_hf(
     olmo_core_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
-    Convert an *unsharded* OLMo-core MoE-v2 state dict to HF ``olmo3moe`` format.
+    Convert an *unsharded* Olmo-core MoE-v2 state dict to HF ``olmo3moe`` format.
 
     Inverse of :func:`convert_olmo3moe_state_from_hf`. Splits the fused
     ``w_up_gate`` routed-expert weight into per-expert HF ``up_proj``/``gate_proj``
     and reshapes ``w_down`` into per-expert HF ``down_proj``.
 
     :param config: The Hugging Face ``Olmo3MoeConfig``.
-    :param olmo_core_state: An unsharded OLMo-core model state dict.
+    :param olmo_core_state: An unsharded Olmo-core model state dict.
     """
     n_layers: int = config.num_hidden_layers
     n_experts: int = config.n_routed_experts
@@ -1094,7 +1094,7 @@ def convert_olmo3moe_state_to_hf(
             ).reshape(shared_hidden, d_model)
             hf_state[f"{prefix}mlp.shared_expert.down_proj.weight"] = shared_down.T.contiguous()
 
-    _require_exact_state_keys(olmo_core_state, used, state_name="OLMo-core")
+    _require_exact_state_keys(olmo_core_state, used, state_name="Olmo-core")
     return hf_state
 
 
@@ -1181,7 +1181,7 @@ def get_converter_to_hf(model_type: str | None = None) -> StateConverter:
 def _apply_gemma3_norm_inverse_transform(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Inverse of :func:`_apply_gemma3_norm_transform`: subtracts 1 from norm weights
-    so that an OLMo-core checkpoint can be exported back into HF Gemma 3 format.
+    so that an Olmo-core checkpoint can be exported back into HF Gemma 3 format.
     """
     norm_patterns = [
         "input_layernorm.weight",
@@ -1230,11 +1230,11 @@ def convert_state_to_hf(
 # Hybrid (GDN + attention) per-layer key maps.
 #
 # These can't use the LAYER template because GDN and attention layers sharing
-# the same OLMo-core prefix (``blocks.{i}.attention.*``) need different HF
+# the same Olmo-core prefix (``blocks.{i}.attention.*``) need different HF
 # prefixes (``linear_attn.*`` vs ``self_attn.*``).
 # ---------------------------------------------------------------------------
 
-#: GDN layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
+#: GDN layers: Olmo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.linear_attn.*``.
 #: These layers use pre-norm in HF (input_layernorm before the sequence mixer).
 HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_q.weight": "linear_attn.q_proj.weight",
@@ -1257,7 +1257,7 @@ HYBRID_GDN_LAYER_KEY_MAP: Dict[str, str] = {
     "feed_forward.w3.weight": "mlp.up_proj.weight",
 }
 
-#: Attention layers: OLMo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``.
+#: Attention layers: Olmo-core ``blocks.{i}.attention.*`` -> HF ``model.layers.{i}.self_attn.*``.
 #: These layers use post-norm in HF (layernorm after the sequence mixer and after the MLP).
 HYBRID_ATTN_LAYER_KEY_MAP: Dict[str, str] = {
     "attention.w_q.weight": "self_attn.q_proj.weight",
@@ -1289,13 +1289,13 @@ def convert_hybrid_state_to_hf(
     layer_types: List[str],
 ) -> Dict[str, Any]:
     """
-    Convert an OLMo-core hybrid state dict to HF ``olmo_hybrid`` format.
+    Convert an Olmo-core hybrid state dict to HF ``olmo_hybrid`` format.
 
     Uses :data:`HYBRID_SHARED_KEY_MAP` for non-block keys, and per-layer
     :data:`HYBRID_GDN_LAYER_KEY_MAP` / :data:`HYBRID_ATTN_LAYER_KEY_MAP`
     based on *layer_types*.
 
-    :param state_dict: An unsharded OLMo-core model state dict.
+    :param state_dict: An unsharded Olmo-core model state dict.
     :param layer_types: Per-layer type list (``"linear_attention"`` or ``"full_attention"``).
     """
     hf_state: Dict[str, Any] = {}
