@@ -43,6 +43,12 @@ the base swapped to each CPT export, on contradiction / oolong / nq / outlier, d
 - FLOP meter charges dense FFN cost on the drop arm (CPT is amortized, so this is only a wall-clock note).
 
 ## Status
+- 2026-10-02 15:50: Beaker capacity outage (jupiter/ceres/titan heavily cordoned) held both jobs ~2.5 days.
+  **Base drop-robustness probe** (q35-4b-base-markerfix, cpt_dev, 32 held-out 64k rows ⚠ eval_size=32 rows,
+  ~2M tokens; paired deltas): CE r=0 1.320, r=0.25 1.898 (+0.58), r=0.5 4.046 (+2.73), r=0.75 8.187 (+6.87)
+  -- the untrained base is extremely fragile to null FFNs. **Drop-CPT** started 13:21 PDT; at step 870/1923
+  (~10 s/step) train CE under drop (realized mean frac 0.48 on rank 0, expected 0.45) fell 4.36 (steps 1-10)
+  -> 1.87 (50-100) -> 1.68 (800-870). ETA ~19:00 PDT.
 - 2026-09-30 01:00: login-node `cpt/ffndrop/pipeline.py` (log `debug/ffndrop_cpt/pipeline.log`) waits for the
   drop-CPT run, then submits its dev-loss eval + routed SFT (`ffnmoe-t10`) from the export on contradiction 28M
   and nq 32M (base-model t10: 0.808 vs dense 0.924; 0.853 @572 PF vs dense-16M 0.878 @379 PF), then scores
