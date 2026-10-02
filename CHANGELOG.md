@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Register the cached-path clients (e.g. `weka://`) before hashing metadata sidecars in the parent process, so preparing a metadata-backed packed dataset no longer fails when `prepare_cli_environment()` was not called first.
+
+
 ## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
 
 ### Added

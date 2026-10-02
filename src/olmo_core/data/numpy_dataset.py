@@ -40,6 +40,7 @@ from ..config import Config, StrEnum
 from ..distributed.utils import barrier, get_fs_local_rank
 from ..io import (
     _get_s3_client,
+    add_cached_path_clients,
     deterministic_glob_directory,
     get_file_size,
     is_url,
@@ -1445,6 +1446,9 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
     def _get_metadata_hash(self, source_path: PathOrStr, _: int) -> Optional[str]:
         if not self._packed_from_metadata_boundaries([source_path]):
             return None
+        # Runs in the parent process before any worker starts, so custom schemes (weka://) that
+        # `prepare_cli_environment()` would normally register may not be resolvable yet.
+        add_cached_path_clients()
         metadata_path = resource_path(
             os.path.dirname(source_path), os.path.basename(source_path).replace(".npy", ".csv.gz")
         )
