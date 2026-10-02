@@ -322,7 +322,7 @@ jobs:
             --show-logs \
             --yes \
             --workspace ai2/OLMo-core \
-            --description 'OLMo-core ${{ matrix.task.name }}' \
+            --description 'Olmo-core ${{ matrix.task.name }}' \
             --ref ${{ env.COMMIT_SHA }} \
             --branch ${{ env.BRANCH_NAME }} \
             --beaker-image ${{ matrix.task.image }} \
