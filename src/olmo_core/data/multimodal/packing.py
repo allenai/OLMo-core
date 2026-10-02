@@ -9,8 +9,10 @@ OLMo-core analogue of mm_olmo's dynamic packer.
 Cross-example isolation reuses the same machinery as intra-example branch isolation:
 
 * a per-token ``example_ids`` vector marks which packed example each token belongs to;
-  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]`` into
-  the attention keep-mask so a token never attends across an example boundary.
+  :class:`~olmo_core.nn.vision.MultimodalLM` ANDs ``example_ids[q] == example_ids[k]``
+  into the attention keep-mask so a token never attends across an example boundary.
+  Pad positions all carry ``-1``, so they are additionally restricted to themselves --
+  equality alone would make the whole pad tail one mutually-visible segment.
 * per-example ``position_ids`` are preserved (each example keeps its own 0-based RoPE
   positions / branch overlap), so packing is invisible to RoPE.
 * ``subsegment_ids`` are concatenated (examples without branches get a constant id, which
