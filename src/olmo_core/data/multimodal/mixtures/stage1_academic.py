@@ -22,15 +22,10 @@ CoSyn, 7 categories       357,202    81.2%, split by sqrt(size)
 ``figure_qa``             100,000    5.5%; weighted as 10,000 rows
 ========================  =========  ===================================================
 
-**Two constraints can shape the split**, on top of sqrt(size):
-
-* **Row caps** (:attr:`Stage1AcademicSource.weighting_size_cap`), stage 2's ``image_only_v9``
-  ``root_size_factor``: a source is weighted as if it had at most that many rows. DVQA, FigureQA
-  and PlotQA are templated charts with a handful of question forms; uncapped, their row counts
-  would give them 44% of the group rather than 19%.
-* **Share caps** (:attr:`Stage1AcademicSource.max_share`): a source takes at most that fraction of
-  the group's rate, and what it gives up goes to the uncapped sources in proportion to their
-  weights (:func:`academic_group_fractions`). No default source has one.
+**Row caps** (:attr:`Stage1AcademicSource.weighting_size_cap`), stage 2's ``image_only_v9``
+``root_size_factor``, shape the sqrt(size) split: a source is weighted as if it had at most that
+many rows. DVQA, FigureQA and PlotQA are templated charts with a handful of question forms;
+uncapped, their row counts would give them 44% of the group rather than 19%.
 
 **PixMo-Clocks is a group of its own** (:data:`CLOCKS_SOURCE`, :func:`build_stage1_clocks_source`),
 not an academic source: one narrow skill, reading a clock face, from 800k synthetic images that
@@ -47,8 +42,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
-
 from olmo_core.data.multimodal.academic.registry import STAGE2_EVAL_TRAIN_SETS
 from olmo_core.data.multimodal.academic_dataset import (
     Stage1AcademicDataset,
@@ -64,8 +57,6 @@ __all__ = [
     "CLOCKS_SOURCE",
     "STAGE2_EVAL_TRAIN_SETS",
     "academic_weighting_sizes",
-    "check_share_caps",
-    "academic_group_fractions",
     "build_stage1_academic_source",
     "build_stage1_clocks_source",
 ]
@@ -77,9 +68,6 @@ class Stage1AcademicSource:
 
     weighting_size_cap: Optional[int] = None
     """Row count the group weights the source by at most (stage 2's ``root_size_factor``)."""
-    max_share: Optional[float] = None
-    """Largest fraction of the group's rate the source may take; see
-    :func:`academic_group_fractions`."""
 
 
 STAGE1_ACADEMIC_SOURCES: Dict[str, Stage1AcademicSource] = {
@@ -137,55 +125,6 @@ def academic_weighting_sizes(names: Sequence[str], sizes: Sequence[int]) -> List
         cap = _source(name).weighting_size_cap
         out.append(int(size) if cap is None else min(int(size), cap))
     return out
-
-
-def check_share_caps(names: Sequence[str]) -> None:
-    """Check that the sources in ``names`` can share the whole group's rate under their
-    :attr:`Stage1AcademicSource.max_share` caps.
-
-    :raises OLMoConfigurationError: If every source is capped and the caps sum to less than 1 (e.g.
-        ``pixmo_clocks`` alone), since the rate would then have nowhere to go; or a name is not a
-        stage-1 academic source.
-    """
-    caps = [_source(n).max_share for n in names]
-    if names and all(c is not None for c in caps) and sum(caps) < 1.0:  # type: ignore[arg-type]
-        raise OLMoConfigurationError(
-            f"academic sources {list(names)} are all share-capped ({caps}), and the caps sum to "
-            "less than the whole group: add a source without a max_share"
-        )
-
-
-def academic_group_fractions(names: Sequence[str], weights: Sequence[float]) -> List[float]:
-    """Split the group's rate among ``names``, starting from ``weights`` (sqrt of the capped
-    sizes) and holding each source to its :attr:`Stage1AcademicSource.max_share`.
-
-    A source whose proportional share exceeds its cap is set to the cap; the rest of the rate is
-    re-divided among the other sources in proportion to their weights, and the check repeats
-    until no uncapped source is over its cap.
-
-    :param names: Stage-1 academic source names.
-    :param weights: Their unnormalized weights, parallel to ``names``, all > 0.
-
-    :returns: One fraction per name, summing to 1.
-
-    :raises OLMoConfigurationError: See :func:`check_share_caps`.
-    """
-    check_share_caps(names)
-    w = np.asarray(weights, dtype=np.float64)
-    share_caps = [_source(n).max_share for n in names]
-    caps = np.array([1.0 if c is None else c for c in share_caps], dtype=np.float64)
-    fixed = np.zeros(len(names), dtype=bool)
-    frac = w / w.sum()
-    for _ in range(len(names)):
-        over = ~fixed & (frac > caps + 1e-12)
-        if not over.any():
-            break
-        fixed |= over
-        frac[fixed] = caps[fixed]
-        free = ~fixed
-        if free.any():
-            frac[free] = w[free] / w[free].sum() * (1.0 - caps[fixed].sum())
-    return [float(f) for f in frac]
 
 
 def build_stage1_academic_source(

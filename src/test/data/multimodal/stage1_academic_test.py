@@ -326,41 +326,6 @@ def test_default_sources():
     from olmo_core.data.multimodal.academic_dataset import STAGE1_DEFAULT_MAX_QUESTIONS
 
     assert STAGE1_DEFAULT_MAX_QUESTIONS == {"plot_qa": 20}
-    assert all(src.max_share is None for src in acad_mix.STAGE1_ACADEMIC_SOURCES.values())
-
-
-@pytest.fixture
-def _capped_figure_qa(monkeypatch):
-    """No default source has a share cap; give FigureQA one of 5%."""
-    monkeypatch.setitem(
-        acad_mix.STAGE1_ACADEMIC_SOURCES,
-        "figure_qa",
-        acad_mix.Stage1AcademicSource(weighting_size_cap=10_000, max_share=0.05),
-    )
-
-
-def test_share_cap_holds_a_source_down_and_redistributes(_capped_figure_qa):
-    """A source over its ``max_share`` is set to it; the rest of the rate goes to the others in
-    proportion to their weights."""
-    names = ["cosyn_chart_exp", "dv_qa", "figure_qa"]
-    frac = acad_mix.academic_group_fractions(names, [1.0, 3.0, 16.0])
-    np.testing.assert_allclose(frac, [0.95 * 0.25, 0.95 * 0.75, 0.05])
-    # A cap that does not bind changes nothing.
-    np.testing.assert_allclose(
-        acad_mix.academic_group_fractions(names, [10.0, 9.0, 1.0]), [0.5, 0.45, 0.05]
-    )
-    np.testing.assert_allclose(
-        acad_mix.academic_group_fractions(names, [10.0, 9.5, 0.5]), [0.5, 0.475, 0.025]
-    )
-
-
-def test_share_caps_that_cannot_fill_the_group_are_refused(_capped_figure_qa):
-    """With only capped sources, the rest of the rate would have nowhere to go."""
-    with pytest.raises(OLMoConfigurationError, match="share-capped"):
-        acad_mix.check_share_caps(["figure_qa"])
-    with pytest.raises(OLMoConfigurationError, match="share-capped"):
-        acad_mix.academic_group_fractions(["figure_qa"], [1.0])
-    acad_mix.check_share_caps(["figure_qa", "dv_qa"])
 
 
 # ---------------------------------------------------------------------------

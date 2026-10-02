@@ -105,11 +105,9 @@ from olmo_core.data.multimodal.mixtures.stage1_academic import (
     DEFAULT_ACADEMIC_SOURCES,
     STAGE1_ACADEMIC_SOURCE_NAMES,
     STAGE2_EVAL_TRAIN_SETS,
-    academic_group_fractions,
     academic_weighting_sizes,
     build_stage1_academic_source,
     build_stage1_clocks_source,
-    check_share_caps,
 )
 from olmo_core.data.multimodal.olmocr import canonical_split
 from olmo_core.data.multimodal.paths import OE_ENCODER_DATA, PIXMO_DATASETS
@@ -739,8 +737,6 @@ def validate_data_config(config) -> None:
         )
     if len(set(config.academic_sources)) != len(config.academic_sources):
         raise OLMoConfigurationError(f"academic_sources has duplicates: {config.academic_sources}")
-    if config.academic_rate > 0:
-        check_share_caps(config.academic_sources)
     rates = (
         config.pointing_rate,
         config.nlp_rate,
@@ -1241,14 +1237,9 @@ def _pointing_group_fractions(
 
 def _academic_fractions(names: Sequence[str], sizes: Sequence[int]):
     """How the academic group's rate is split among its sources: by sqrt(size), with the templated
-    chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``), then each
-    source held to its share cap, if it has one
-    (``mixtures.stage1_academic.academic_group_fractions``).
+    chart sets' sizes capped (``mixtures.stage1_academic.academic_weighting_sizes``).
     """
-    import numpy as np
-
-    base = _size_fractions(academic_weighting_sizes(names, sizes), "sqrt", names)
-    return np.asarray(academic_group_fractions(names, base))
+    return _size_fractions(academic_weighting_sizes(names, sizes), "sqrt", names)
 
 
 def _build_mixture_sources(tokenizer, config: ExperimentConfig):
