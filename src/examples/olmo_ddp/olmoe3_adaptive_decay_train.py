@@ -1,4 +1,4 @@
-"""Historical PT recipe with explicit reference routing and audited 128-to64 restore."""
+"""Historical PT recipe with explicit reference routing and audited 128-to32 restore."""
 
 import hashlib
 import json
@@ -33,17 +33,19 @@ def fingerprint(tensor):
 
 
 def verify_initial_reshard(trainer, path):
-    """Verify both original optimizer halves and unchanged model/data/skip-step state."""
-    assert Path(path) == p.SOURCE and get_world_size() == 64
+    """Verify all original optimizer pieces and unchanged model/data/skip-step state."""
+    assert Path(path) == p.SOURCE and get_world_size() == p.GPUS
     tm = trainer.train_module
     assert not tm.ep_enabled and not tm.pp_enabled
     rank = get_rank()
+    assert p.SOURCE_GPUS % p.GPUS == 0
+    shard_factor = p.SOURCE_GPUS // p.GPUS
     references = {}
 
     def saved(old_rank):
         if old_rank not in references:
             row = json.loads((Path(path) / "resume_audit" / f"rank{old_rank}.json").read_text())
-            assert (row["gpus"], row["rank"], row["step"]) == (128, old_rank, p.START)
+            assert (row["gpus"], row["rank"], row["step"]) == (p.SOURCE_GPUS, old_rank, p.START)
             references[old_rank] = row
         return references[old_rank]
 
@@ -55,7 +57,7 @@ def verify_initial_reshard(trainer, path):
     tensors = dict(tm.optim.states)
     tensors.update(tm._persistent_model_buffer_state_dict())
     tensors.update((f"model_param/{name}", value) for name, value in tm.model.named_parameters())
-    halves = 0
+    pieces = 0
     for name, tensor in tensors.items():
         value = tensor.to_local() if hasattr(tensor, "to_local") else tensor
         value = value.detach().reshape(-1)
@@ -63,32 +65,33 @@ def verify_initial_reshard(trainer, path):
         if value.numel() == old[0]:
             assert actual["tensors"][name] == old, ("Unsharded restore mismatch", name)
             continue
-        assert name in tm.optim.states and value.numel() == 2 * old[0], (
+        assert name in tm.optim.states and value.numel() == shard_factor * old[0], (
             "Unexpected EP1 reshard geometry",
             name,
             value.numel(),
             old[0],
         )
-        for half in (0, 1):
-            expected = saved(2 * rank + half)["tensors"][name]
-            assert fingerprint(value.narrow(0, half * old[0], old[0])) == expected, (
+        for piece in range(shard_factor):
+            expected = saved(shard_factor * rank + piece)["tensors"][name]
+            assert fingerprint(value.narrow(0, piece * old[0], old[0])) == expected, (
                 "Optimizer reshard mismatch",
                 name,
                 rank,
-                half,
+                piece,
             )
-            halves += 1
-    assert halves > 0
+            pieces += 1
+    assert pieces > 0
     state = adapter.torch.load(
         Path(path) / "train" / f"rank{rank}.pt", map_location="cpu", weights_only=False
     )
     assert adapter.equal(state["data_loader"], trainer.data_loader.state_dict())
     assert trainer.data_loader.tokens_processed == actual["tokens"] == p.START * p.BATCH
     return dict(
-        source_gpus=128,
-        gpus=64,
+        source_gpus=p.SOURCE_GPUS,
+        gpus=p.GPUS,
         sampled_state_exact=True,
-        verified_old_shard_halves=halves,
+        verified_old_shard_pieces=pieces,
+        source_shards_per_current_rank=shard_factor,
         state_keys=len(tensors),
         rng_policy="Trainer reinitializes per-rank RNG at changed world size",
     )
@@ -197,7 +200,7 @@ def install_adapters(r):
         c = original_trainer(common)
         c.callbacks["qkgain_audit"] = DecayAudit(run_id=r.run_id)
         c.callbacks["wandb"].project = "adaptive-compute"
-        c.callbacks["wandb"].tags += [r.schedule, "reference-top16", "64g"]
+        c.callbacks["wandb"].tags += [r.schedule, "reference-top16", f"{r.gpus}g"]
         if int(os.environ["QKGAIN_STOP"]) <= p.START + 4:
             c.metrics_collect_interval = 1
             c.no_evals = True

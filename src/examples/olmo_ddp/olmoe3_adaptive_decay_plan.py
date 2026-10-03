@@ -1,18 +1,22 @@
-"""Two authorized 64-GPU, native-denominator expert-cooldown branches."""
+"""Two authorized 32-GPU, native-denominator expert-cooldown branches."""
 
 from dataclasses import dataclass
 from pathlib import Path
 
 import olmoe3_qkgain_plan as base
 
-CAMPAIGN = "adaptive-small-decay-20261003"
+CAMPAIGN = "adaptive-small-decay-20261003-32g"
 BRANCH = "jacobm/adaptive-compute-2026-10-03-expert-decay"
 SCRIPT = "src/examples/olmo_ddp/olmoe3_adaptive_decay.py"
-WORKSPACE = "ai2/OLMo-3-moe-experiments"
+WORKSPACE = "ai2/olmo3p5-training"
+SOURCE_GPUS = 128
+GPUS = 32
+GPUS_PER_NODE = 8
+NODES = GPUS // GPUS_PER_NODE
 ROOT = base.MOUNT / "adaptive-compute-redux" / CAMPAIGN
 EVAL = ROOT / "evals"
 AUTO = Path(
-    "/weka/oe-adapt-default/jacobm/adaptive-compute-redux/results/data/olmo_small_decay_2026-10-03"
+    "/weka/oe-adapt-default/jacobm/adaptive-compute-redux/results/data/olmo_small_decay_2026-10-03/training32g"
 )
 SOURCE = base.MOUNT / "uploader/automation/olmo35-dolci-hero-20260920/sources/hero/step108000"
 START = 108000
@@ -35,6 +39,14 @@ class Run(base.Run):
     """Immutable identities, checkpoint roots and matched global training recipe."""
 
     schedule: str = "fixed8"
+
+    @property
+    def gpus(self):
+        return GPUS
+
+    @property
+    def nodes(self):
+        return NODES
 
     @property
     def run_id(self):
@@ -80,9 +92,9 @@ class Run(base.Run):
             added_tokens=(END - START) * BATCH,
             reference_top_k=16,
             normalization="native-top16-denominator-times16",
-            initial_gpus=128,
-            accumulation=8,
-            world_size_change="Optimizer reshard; per-rank RNG reinitialized; microbatch LB group is64",
+            initial_gpus=SOURCE_GPUS,
+            accumulation=self.batch // (self.gpus * self.microbatch),
+            world_size_change="Optimizer reshard; per-rank RNG reinitialized; microbatch LB group is32",
         )
 
 
@@ -115,8 +127,8 @@ def install():
 def self_test():
     """Check schedule boundaries, data budget and physical GPU allocation."""
     for r in runs():
-        assert r.gpus == 64 and r.nodes == 8 and r.batch == BATCH
-        assert r.batch // (r.gpus * r.microbatch) == 8
+        assert r.gpus == 32 and r.nodes == 4 and r.batch == BATCH
+        assert r.batch // (r.gpus * r.microbatch) == 16
         assert r.lr == 1.1e-3 and r.sequence == 8192 and not r.emo and not r.split
         assert (r.end - r.start) * r.batch == 201326592000
         assert len(set(r.saves)) == len(r.saves) and END in r.saves

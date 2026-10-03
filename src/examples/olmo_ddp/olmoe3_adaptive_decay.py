@@ -41,8 +41,8 @@ def node(schedule):
     verify_runtime()
     r = p.run(schedule)
     rank = int(os.environ["BEAKER_REPLICA_RANK"])
-    assert int(os.environ["BEAKER_REPLICA_COUNT"]) == 8
-    assert int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]) == 8
+    assert int(os.environ["BEAKER_REPLICA_COUNT"]) == r.nodes
+    assert int(os.environ["BEAKER_ASSIGNED_GPU_COUNT"]) == p.GPUS_PER_NODE
     exp, job = os.environ["BEAKER_EXPERIMENT_ID"], os.environ["BEAKER_JOB_ID"]
     r.root.mkdir(parents=True, exist_ok=True)
     if rank == 0:
@@ -52,7 +52,9 @@ def node(schedule):
 
         atomic_json(p.AUTO / "gpu_checks" / f"{exp}.json", check("cuda"))
     topology = subprocess.check_output(["nvidia-smi", "topo", "-m"], text=True, timeout=30)
-    atomic_json(p.AUTO / "topology" / exp / f"{job}.json", validate_topology(topology, 8))
+    atomic_json(
+        p.AUTO / "topology" / exp / f"{job}.json", validate_topology(topology, p.GPUS_PER_NODE)
+    )
     ready = p.AUTO / "rendezvous" / exp
     atomic_json(ready / f"{job}.json", dict(job=job, rank=rank))
     with Beaker.from_env(check_for_upgrades=False) as b:
@@ -72,7 +74,7 @@ def node(schedule):
     )
     start = checkpoints[-1] if checkpoints else p.START
     source = r.root / f"step{start}" if checkpoints else p.SOURCE
-    p.base.validate_checkpoint(source, start, r.batch, 64 if checkpoints else 128)
+    p.base.validate_checkpoint(source, start, r.batch, r.gpus if checkpoints else p.SOURCE_GPUS)
     port = 28000 + int(hashlib.sha256(exp.encode()).hexdigest()[:8], 16) % 1000
     for i, stop in enumerate((p.START + 2, p.START + 4, p.END)):
         if start >= stop:
@@ -90,8 +92,8 @@ def node(schedule):
                 sys.executable,
                 "-m",
                 "torch.distributed.run",
-                "--nnodes=8",
-                "--nproc-per-node=8",
+                f"--nnodes={r.nodes}",
+                f"--nproc-per-node={p.GPUS_PER_NODE}",
                 f"--node-rank={rank}",
                 "--rdzv-backend=static",
                 f"--rdzv-endpoint={host}:{port+i}",
@@ -115,7 +117,7 @@ def node(schedule):
                 passed=True,
                 run=r.as_dict(),
                 step=p.END,
-                gpus=64,
+                gpus=r.gpus,
                 checkpoint=str(source),
                 experiment=exp,
                 checkpoint_metadata_sha256=hashlib.sha256(
