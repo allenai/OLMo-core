@@ -1026,6 +1026,16 @@ init, a candidate, a label source or a feature shape.
 | 56 | 16 tasks | **shared cross-task router on v6a** (xt3v6a: one router trained on nq + contradiction + scifact, 16 rows each; each task trains at ITS OWN matched budget ρ_task; task-block batches; restarts and polish scored with the paired budget, `--pair-eval`), evaluated on test64 `@pair` | held-in: nq +0.001, contradiction match, scifact match. Held-out: beats fiqa −0.051, oolong; matches msmarco, qdmatch, strmatch; **loses** absence +0.172, grouping, niah, outlier, outlier_amzn +0.096, reorder, rerank +0.087, textgroups. Total **2 beat / 6 match / 8 lose** (per-task v6a on the same rows: 5 / 9 / 2) | sharing from 3 tasks doesn't transfer to tasks needing id/position-specific rules → 17-task pooled run (xt17v6a, `--xtask-offload`, `--stg-tasks niah,absence,fiqa`) |
 | 57 | textgroups | F0 doc-only router at 8k / 32k (testlong) | **8k −0.055 ± 0.023 beats; 32k −0.097 ± 0.041 beats** (v6a routed: +0.346 at 32k). F0 is also at parity at 2k (−0.059) | textgroups transfers to 32k only with doc-level features; F0 loses at 2k on id tasks (iteration 55), so it is not the single recipe |
 | infra | — | xt17v6a with `--xtask-offload` took 9.3 h, 7.4 h of it model swaps (5688). The polish and restart selection interleave rows of all tasks, so each scored candidate swaps models | fix if pooled training is reused: task-ordered polish rows / per-task scoring loops |
+| 58 | 16 tasks | **one shared router trained on all 17 tasks** (xt17v6a: 16 rows each, per-task matched budget, v6a recipe, `--stg-tasks niah,absence,fiqa`), test64 `@pair` | **1 beat, 13 match, 2 lose**: fiqa −0.046 beats; absence +0.038 ± 0.039, contradiction, grouping −0.005, msmarco, nq, oolong +0.000, outlier_amzn +0.007, outlier +0.002, qdmatch, rerank +0.004, scifact, strmatch, textgroups −0.002 match; **niah +1.274 ± 0.136** (44 rows >0.1) and **reorder +0.126 ± 0.019** lose. Per-task v6a on the same rows: 5 / 9 / 2 | a single shared router reaches parity on 14 of 16 tasks; niah (needle cut) and reorder (whole-order task) need task-specific rules |
+| 59 | 16 tasks | **shared 17-task router (xt17v6a) vs per-task v6a at 8k / 32k**, both trained at 2k only; testlong `@pair` (8k: 48 rows, oolong 43, niah 38, fiqa none (all its staged 8k rows share examples with its `_stg` train rows); 32k: 56 rows, niah 52, fiqa 8; reorder/absence use their 16k rung) | **8k**: per-task 5 beat / 6 match / 4 lose; shared 0 / 8 / 7. **32k**: per-task 5 / 4 / 7; shared 4 / 6 / 6. Shared wins where per-task overfits (outlier_amzn 32k −0.009 vs +0.099, fiqa 32k +0.031 vs +0.805, grouping 32k +0.012 vs +0.052, rerank 8k) and loses where tasks need their own rule (reorder 8k +0.082 / 16k +0.275 vs per-task −0.40 / −0.42; niah +1.3 / +1.9; textgroups 8k +0.078 vs −0.062). contradiction and strmatch lose at length under both | the shared router transfers to 32k about as well as per-task routers (10 vs 9 at parity) |
+| 60 | 17 tasks | **pooled-training speed fix** (`train_e2e_router.py`): frozen models parked in PINNED host memory once and swapped by re-pointing `.data` (`park`/`swap_in`); LRU cache `--xt-resident K`; task-blocked polish (`score_many`: every candidate scored on one task's rows before the next model is swapped in); batched forwards within task-blocked batches (`--batch-max-T 2700` keeps absence's 3k rows per-row) | xt17f: **6011 s (1 h 40) vs 33,593 s (9.3 h)**; swaps 1200 × 0.19 s = 222 s (was 5688 × 4.7 s). Now compute-bound: 3 restarts × 680 batched steps + 740 s model loading. ≤ 9 tasks with `--xt-resident 9`: no swaps (xs3 19 min, xs6 39 min, xs9 58 min). **But test64 quality dropped**: xt17f 1 beat / 7 match / 8 lose vs xt17v6a 1 / 13 / 2. The task-blocked fine polish (one sweep; joint move or best single shift) accepted 1 shift vs 11 for the sequential search (train +0.111 vs +0.086); the polished restarts were also worse (+0.148 vs +0.104; training variance) | fine polish v2 (rounds of single-shift sweeps + best prefix of the improving shifts); rerun to verify reproduction |
+| 61 | 16 tasks | **training-task subsets**, shared router on v6a (per-task budgets, `--pair-eval`), test64 `@pair` | **xs3** (outlier = id answer, textgroups = counting, msmarco = retrieval): held-in 1 match / 2 lose (narrowly), held-out 7 match / 6 lose (reorder +0.50, rerank +0.25, niah +1.8, absence +0.34, grouping +0.09, contradiction +0.005). **xs6** (+ rerank, reorder, strmatch): held-in 5 match / 1 lose (rerank +0.010 ± 0.008); **held-out 8 match / 2 lose** (niah +1.68, absence +0.100 ± 0.048); 13 of 16 at parity overall. **xs9** (+ niah, oolong, contradiction): held-in 1 beat / 3 match / 5 lose, held-out 4 match / 3 lose: worse than xs6 (adding niah hurts strmatch, reorder, rerank, textgroups). xt17f: see 60 | **smallest subset that brings held-out tasks to parity: 6 tasks** (outlier, textgroups, msmarco, rerank, reorder, strmatch); single runs (variance applies) |
+| 62 | 17 tasks, xs6 | rerun with fine polish v2 (task-blocked rounds: single-shift sweep + best prefix of the improving shifts) | **xt17g: 6673 s end to end, test64 1 beat / 6 match / 9 lose: does NOT reproduce xt17v6a's 1 / 13 / 2**, although its train polish now matches the sequential search (+0.094 vs +0.086). Remaining code difference vs xt17v6a: batched (task-blocked) training forwards; per-row control (`--no-xt-batch`, xt17h) running; seed variance is the alternative explanation. **xs6g** (xs6 rerun): held-in 5 match / 1 lose (strmatch +0.087), held-out 1 beat / 7 match / 2 lose (niah +1.58, grouping +0.010 ± 0.005); xs6 is consistent at ~13/16 parity (different marginal losers). xs6 seed-10 replicate running | the 6-task shared router is the stable one; 17-task pooling is high-variance |
+| 63 | 16 tasks | **xs6 / xs6g (6-task shared routers, trained at 2k) at 8k / 32k**, testlong `@pair` (reorder/absence 16k; fiqa 32k only, 8 rows ⚠) | 8k: xs6 0 / 8 / 7, xs6g 1 / 8 / 6. 32k: xs6 3 / 6 / 6, xs6g 1 / 5 / 9. Consistent losers: niah (+1.5 to +2.4), strmatch (+0.14 to +0.40; held-in!), textgroups (+0.04 to +0.14), contradiction (+0.01 to +0.18), grouping (+0.005 to +0.01), reorder (+0.008 to +0.015). Per-task v6a on the same rows: 8k 5 / 6 / 4, 32k 5 / 4 / 7; xt17v6a: 8k 0 / 8 / 7, 32k 4 / 6 / 6 (iteration 59) | the 6-task router matches the 17-task router at length and is cheaper; strmatch/textgroups/contradiction degrade with length under any shared router |
+| 64 | xs6 | **seed replicate** of the 6-task shared router (seeds 10–12; same recipe and data) | held-in (msmarco, outlier, reorder, rerank, strmatch, textgroups): 3 match / 3 lose (reorder +0.250, rerank +0.073, strmatch +0.013); held-out: 5 match / 5 lose (fiqa +0.044, outlier_amzn +0.086, grouping +0.117, niah +1.52, absence +0.444). **8 of 16 at parity**, vs 13 / 13 for the two seed-0 runs | xs6 is NOT consistent across seeds: shared routers inherit the per-task run-to-run variance (iteration 46) and amplify it; any subset conclusion needs ≥ 3 seeds per subset |
+| 65 | xs6 | **seed-level weight average** of the three xs6 runs (xs6, xs6g, xs6 seeds 10–12): plain mean of the router weights, no re-polish; under `@pair` the offset is irrelevant (per-row top-k), test64 | held-in 5 match / 1 lose (reorder +0.038 ± 0.016); held-out 1 beat (fiqa −0.021) / 6 match / 3 lose (outlier_amzn +0.025 ± 0.013, niah +1.63, absence +0.155). **12 of 16 at parity** (single seeds 13 / 13 / 8) | seed averaging recovers most of the good seeds' quality from 3 runs and removes the bad-seed outcome → recommended shared router = xs6avg (`weights/xs6avg/xs6avg_s0_rhobar.pt`); niah and absence are lost by every shared router |
+| 66 | 17 tasks | control: xt17 with **per-row** training forwards (`--no-xt-batch`, as xt17v6a) + pinned swaps + polish v2 (xt17h) | 11,829 s (3.3 h; per-row training ~2700 s per restart); test64 0 / 9 / 7 (losses outlier_amzn, reorder, rerank, textgroups, grouping, niah, absence). Three 17-task runs since xt17v6a: 1/7/8, 1/6/9, 0/9/7, vs 1/13/2 | batched forwards are NOT the cause; **xt17v6a's 1/13/2 was a lucky seed**: 17-task pooled routers land at 6–9 of 16 at parity per run. Recommended shared router: the seed-averaged 6-task xs6avg (12/16, iteration 65) |
+| 67 | 16 tasks | **xs6avg at 8k / 32k** (testlong `@pair`) | 8k: 1 beat / 7 match / 7 lose; 32k: 1 / 5 / 9. Losers: niah (+1.6 / +2.2), textgroups (+0.10 / +0.26), strmatch (+0.05 / +0.10), contradiction (+0.01 / +0.13), reorder, grouping, rerank and qdmatch at 32k (+0.006 to +0.04), fiqa 32k (+0.22 ± 0.21, 8 rows), absence 8k | same as the single xs6 runs (8k 0–1 / 8 / 6–7, 32k 1–3 / 5–6 / 6–9); seed averaging stabilises 2k but does not fix length transfer |
 
 ## 10. Token router + layer-skip router: compute-vs-loss frontier (2026-10-01)
 
@@ -1161,4 +1171,133 @@ controls) are next to the code.
   * `collect_grid.py`: per-scheme `flops` override from the file; `results_layerskip` root added;
   * `render_grid.py`: registers the two scheme families.
 * wandb group `router-layerskip`.
-| 58 | 16 tasks | **one shared router trained on all 17 tasks** (xt17v6a: 16 rows each, per-task matched budget, v6a recipe, `--stg-tasks niah,absence,fiqa`), test64 `@pair` | **1 beat, 13 match, 2 lose**: fiqa −0.046 beats; absence +0.038 ± 0.039, contradiction, grouping −0.005, msmarco, nq, oolong +0.000, outlier_amzn +0.007, outlier +0.002, qdmatch, rerank +0.004, scifact, strmatch, textgroups −0.002 match; **niah +1.274 ± 0.136** (44 rows >0.1) and **reorder +0.126 ± 0.019** lose. Per-task v6a on the same rows: 5 / 9 / 2 | a single shared router reaches parity on 14 of 16 tasks; niah (needle cut) and reorder (whole-order task) need task-specific rules |
+
+### 10.6 Making layer skip fast (`fastskip.py`; nq, token router at 0.5 × bar + layer keep 0.5; H200, bf16)
+
+**Approach.** Per-layer capacity routing (MoD-style), all on device:
+* At each layer, keep the always-active columns plus the top-k_l eligible columns by router logit
+  (`topk` → sorted indices → `gather` / `scatter`).
+* No host sync, static shapes, so the whole compacted forward is captured in a **CUDA graph**.
+* For the timing, k_l is set per row to the threshold rule's count at that layer, so the decisions
+  equal the reference. Answer CE equals the exact-deletion gather path on every row, graphed or not.
+  The soft-path reference differs by ≤0.006 nats (bf16 kernels: SDPA with a bias vs flash on the
+  subset).
+* A deployment would use calibrated, bucketed capacities instead.
+
+Speed-up vs the full model (both CUDA-graphed):
+
+| regime | full | token-compacted | + layer skip (fixed-capacity, graph) | FLOPs tok / +ls (ideal speed-up) |
+|---|---|---|---|---|
+| 32k, batch 1 (4 rows, T ≈ 33k → T2 ≈ 4.1k) | 779 ms | 75.7 ms (**10.3×**) | 49.0 ms (**15.9×**) | ×0.099 / ×0.054 (10.1× / 18.6×) |
+| 2k, batch 16 (6 rows) | 518 ms | 102.5 ms (5.05×) | 71.5 ms (**7.25×**) | ×0.189 / ×0.116 (5.3× / 8.6×) |
+| 2k, batch 1 (4 rows) | 32.9 ms | 10.8 ms (3.0×) | 11.9 ms (2.8×) | ×0.188 / ×0.116 |
+
+* Before this, the old per-layer gather with a host sync was at or below token-only:
+  * 32k batch 1: 9.6×;
+  * 2k batch 1: 0.79×.
+* With the fixed-capacity gather plus CUDA graphs, layer skip now converts into wall-clock wherever
+  the compacted forward is compute-bound.
+* At 2k batch 1 (~340 tokens) every kernel is latency-bound. The ~5 extra small kernels per layer
+  (router, topk, sort, gather, scatter) cost about what they save. The next step there is a fused
+  router + topk + gather kernel.
+* Outputs: `runs/nq/fastskip_{32k_b1,2k_b16,2k_b1}.json`.
+
+### 10.7 Per-example overfit ceiling on compute (`oracle_ls.py`, `summarize_oracle.py`; 2026-10-02)
+
+**Setup.** Free per-example logits:
+* θ for every routed token (body + markers);
+* φ for every (body token, layer).
+
+Trained to minimise **differentiable expected FLOPs** (the same FLOP model, as a function of the gate
+probabilities: per-layer active count, attention quadratic, GDN) subject to ΔCE ≤ τ on that one
+example:
+* Lagrangian with dual ascent on an EMA of the relaxed ΔCE;
+* hard-concrete gates on the exact soft path;
+* 300 steps; the 4 configurations (token-only and token+layer, × τ 0.02 / 0.05) batched in one forward.
+
+Then a **hard check** with exact deletion and per-layer skip:
+* greedy add-back of the highest-logit dropped items until ≤ τ;
+* then greedy pruning of the lowest-logit items (tokens, then pairs) while ≤ τ, with ≤150 exact
+  evaluations.
+
+Scope and caveats:
+* 6 test64 rows per task at 2k, ⚠ eval_size 6.
+* **Non-deployable**: the oracle sees the answer. It is a lower bound on FLOPs, i.e. how much headroom
+  the learned routers leave.
+
+**The label leaks through selection.** All 8 tasks answer with document ids:
+* nq, scifact, niah: `[9]`;
+* outlier: `Outliers: [1], [10], [11]`;
+* contradiction, strmatch, textgroups: id pairs or groups;
+* rerank: a full ranking.
+
+The free oracle keeps only the answer documents' ids. Dumped kept tokens on nq include rows with
+exactly `Document9` plus a marker (×0.051 FLOPs), so the model copies the only id it sees. Its
+numbers (median ×0.04–0.07 on nq, scifact and outlier) are therefore **trivially attainable**, not
+compression.
+
+**Fair version** (`--force-id-prefix 8`): every document's markers and first 8 body tokens are always
+kept, at full depth, as the bar does. The oracle optimises only the rest. Median hard FLOPs vs full,
+6/6 rows meet τ:
+
+| task | forced floor | token-only τ .02 / .05 | token+layer τ .02 / .05 | frontier pick (§10.2), rows met | bar |
+|---|---|---|---|---|---|
+| nq | .100 | .103 / .103 | .102 / .101 | .096 (6/6) | .337 |
+| scifact | .091 | .091 / .091 | .091 / .091 | .118 (6/6) | .398 |
+| outlier | .123 | .129 / .128 | .126 / .127 | .164 (4/6) / .134 (5/6) | .444 |
+| rerank | .190 | .202 / .199 | .196 / .192 | .324 (3/6) / .255 (2/6) | .398 |
+| textgroups | .189 | .547 / .506 | **.344 / .277** | .618 (4/6) / (5/6) | .618 |
+| contradiction | .285 | .302 / .296 | .296 / .293 | .270 (6/6) | .461 |
+| niah | .531 | .533 / .531 | .531 / .531 | .579 (6/6) | .579 |
+| strmatch | .504 | .567 / .567 | .567 (envelope) | .499 (6/6) / .351 (4/6) | .627 |
+
+Across tasks (median of per-task medians) at τ 0.05:
+
+| method | FLOPs vs full |
+|---|---|
+| fair token+layer oracle | ×0.235 (4.3×) |
+| fair token-only oracle | ×0.248 |
+| frontier pick | ×0.262 |
+| bar | ×0.453 |
+| free, leak-prone oracle: token+layer | ×0.137 |
+| free, leak-prone oracle: token-only | ×0.163 |
+
+* **The forced prefix is the binding cost.** On 6 of 8 tasks the fair oracle lands within ×0.01–0.06
+  of the floor set by the forced ids alone, keeping 3–10% of gold body (contradiction 34%, strmatch
+  77%).
+* **Little headroom left over the deployable frontier.** The frontier pick (not forced to keep every
+  prefix) is already at or below the fair oracle on nq, contradiction and strmatch. Real headroom
+  remains on textgroups (×0.28 vs ×0.62), rerank (×0.19 vs ×0.26–0.32, where the frontier also
+  misses τ on rows) and outlier at τ 0.02.
+* **Layer routing inside the oracle matters only on textgroups** (×0.51 → ×0.28 at τ 0.05; 66%
+  attention / 54% GDN pairs skipped, late layers 0.77 vs early 0.36). Elsewhere it skips <20% of
+  pairs once the id prefix is forced. In the free version it skips 75–95%, because almost nothing is
+  kept.
+* **The oracle is not a tight bound where many scattered tokens are needed.** On strmatch, 300 steps
+  plus 150 greedy evaluations reach ×0.57, worse than the frontier's ×0.35–0.50.
+* **Wall time:** 3.5–10 min per example (soft 300 steps ≈ 1.2 s/step for the 4 batched
+  configurations, + greedy).
+* Outputs: `runs/<task>/oracle{,_fid8}_2k_r0-5.json`, `oracle_summary_{free,fid8}.{json,txt}`,
+  `fid8_floor.json`, `runs/nq/oracle_dump_2k_r0-1.json` (kept-token dump).
+
+### 10.8 32k quality of the timed setting (`longcheck.py`; nq, 56 testlong 32k rows, ⚠ eval_size 56)
+
+Both routers were trained at 2k only. The token router keeps 0.5 × the bar's per-row budget (`@pair`
+× 0.5).
+
+| configuration | FLOPs vs full | ΔCE vs bar ± SE (rows >0.1) | wall-clock vs full, CUDA graph, batch 1 |
+|---|---|---|---|
+| full context | ×1 | +0.065 ± 0.030 (6) | 1× |
+| bar `gold_fl20p8_noslot` | ×0.203 | 0 | — |
+| v6a router, bar budget | ×0.203 | −0.001 ± 0.001 (0) | — |
+| token router 0.5 × bar | ×0.099 | −0.001 ± 0.001 (0) | **10.3×** |
+| + layer keep 0.75 | ×0.078 | **+0.000 ± 0.002 (0)** | **12.3×** |
+| + layer keep 0.5 | ×0.054 | +0.110 ± 0.015 (22) | 15.9× |
+
+* At 32k, full context is itself worse than the bar (+0.065).
+* **Parity point: token router at 0.5 × bar + layer keep 0.75.** It is at parity with the bar at
+  ×0.078 FLOPs (2.6× fewer than the bar) and runs **12.3× faster than the full model** at batch 1.
+* **Layer keep 0.5 does not transfer from 2k to 32k** (+0.110 vs the bar on 22 of 56 rows), even
+  though it is still +0.045 ± 0.033 vs full context. Calibrating the layer cutoff on long val rows,
+  or training on mixed lengths, would be the fix.
+* Outputs: `runs/nq/longcheck_32k_L0.5_k{0.5,0.75}.json`, `runs/nq/fastskip_32k_b1_k{0.5,0.75}.json`.

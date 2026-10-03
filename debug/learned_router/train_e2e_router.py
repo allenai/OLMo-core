@@ -50,18 +50,43 @@ class _Swap:
     Rows are visited in task blocks, so models move only at block boundaries."""
 
     enabled = False
-    resident = None
+    resident = None  # the model in use (on GPU)
+    lru = []  # models currently on the GPU, least recently used first (--xt-resident K keeps up to K)
+    max_resident = 1
     n_swaps = 0
     sec = 0.0
+
+
+def _tensors(m):
+    return list(m.parameters()) + list(m.buffers())
+
+
+def park(m):
+    """Move a frozen model to PINNED host memory once; later swaps only re-point ``.data`` (2026-10-02: the
+    plain module.to() round trip cost ~4.7 s per swap, 7.4 h of the 9.3 h 17-task pooled run)."""
+    if getattr(m, "_pinned", None) is None:
+        m._pinned = [t.detach().to("cpu").pin_memory() for t in _tensors(m)]
+    for t, h in zip(_tensors(m), m._pinned):
+        t.data = h
+    torch.cuda.empty_cache()
 
 
 def swap_in(m):
     if not _Swap.enabled or m is None or m is _Swap.resident:
         return
+    if any(x is m for x in _Swap.lru):  # already on the GPU: just mark it most recently used
+        _Swap.lru = [x for x in _Swap.lru if x is not m] + [m]
+        _Swap.resident = m
+        return
     t = time.time()
-    if _Swap.resident is not None:
-        _Swap.resident.to("cpu")
-    m.to("cuda")
+    while len(_Swap.lru) >= _Swap.max_resident:
+        old = _Swap.lru.pop(0)
+        for tt, h in zip(_tensors(old), old._pinned):  # frozen: no copy back, just drop the GPU copy
+            tt.data = h
+    for tt, h in zip(_tensors(m), m._pinned):
+        tt.data = h.to("cuda", non_blocking=True)
+    torch.cuda.synchronize()
+    _Swap.lru.append(m)
     _Swap.resident = m
     _Swap.n_swaps += 1
     _Swap.sec += time.time() - t
@@ -141,6 +166,30 @@ def val_threshold(model, router, rows, cef, c):
     return {"dce": float(np.mean(dce)), "dce_median": float(np.median(dce)), "dce_max": float(np.max(dce)),
             "dce_se": float(np.std(dce, ddof=1) / math.sqrt(len(dce))) if len(dce) > 1 else float("nan"),
             "comp": float(np.mean(comp)), "keep": float(np.mean(keep)), "n": len(dce), "offset": c, "per_row_dce": dce}
+
+
+@torch.no_grad()
+def score_many(model, routers, rows, cef, pair: bool, offsets=None):
+    """Score several candidate routers on ``rows`` TASK-BLOCKED: rows are grouped by their frozen model and
+    every candidate is evaluated on one model's rows before the next model is swapped in (one swap per task
+    per batch of candidates instead of one per candidate). Returns [(mean dCE, offset, mean T2/T)]."""
+    groups = {}
+    for i, p in enumerate(rows):
+        groups.setdefault(id(p.get("_m", model)), []).append(i)
+    dce = [[0.0] * len(rows) for _ in routers]
+    comp = [[0.0] * len(rows) for _ in routers]
+    for idxs in groups.values():
+        m = rows[idxs[0]].get("_m", model)
+        swap_in(m)
+        for ci, r in enumerate(routers):
+            for i in idxs:
+                p = rows[i]
+                z = r.logits(p["feats"], p["e"].float() if r.use_emb else None)
+                k = RL.topk_keep(z, p["feats"], int(p["k_pair"]), getattr(r, "span", 0)) if pair else (z + offsets[ci] > 0)
+                ce, cc = TR.ce_masked(m, p, RL.keep_mask_from(p["feats"], k, p["T"])[None])
+                dce[ci][i] = float(ce[0]) - cef[i]
+                comp[ci][i] = float(cc[0])
+    return [(float(np.mean(d)), (0.0 if pair else offsets[ci]), float(np.mean(c))) for ci, (d, c) in enumerate(zip(dce, comp))]
 
 
 @torch.no_grad()
@@ -389,7 +438,9 @@ def train_rho(model, rho, tr, va, cef_tr, lpf_tr, cef_va, a, wb=None):
                     t_prev[0] = now
 
             tick("start")
-            if a.batch_rows and not a.hard_drop_zero:
+            # batched forward unless a row is long (absence's ~3k-token rows OOM batched): per-batch decision
+            use_batch = a.batch_rows and not a.hard_drop_zero and max(tr[i]["T"] for i in batch) <= a.batch_max_T
+            if use_batch:
                 zs, las = [], []
                 for i in batch:
                     p = tr[i]
@@ -404,7 +455,7 @@ def train_rho(model, rho, tr, va, cef_tr, lpf_tr, cef_va, a, wb=None):
                     zs.append(unit_gate(la, beta, gen, st, True, tr[i]["feats"], router.span, a.keep_dropout, a.kd_token))
                     acc["keep_det"].append(float((la.detach() > 0).float().mean()))
                 tick("router+gates")
-                lgs = relaxed_logits_batch(model, [tr[i] for i in batch], zs, a.pad_id)
+                lgs = relaxed_logits_batch(tr[batch[0]].get("_m", model), [tr[i] for i in batch], zs, a.pad_id)
                 tick("forward")
                 loss = 0.0
                 for i, lg in zip(batch, lgs):
@@ -420,7 +471,7 @@ def train_rho(model, rho, tr, va, cef_tr, lpf_tr, cef_va, a, wb=None):
                 tick("loss")
                 loss.backward()
                 tick("backward")
-            for i in (batch if not (a.batch_rows and not a.hard_drop_zero) else []):
+            for i in (batch if not use_batch else []):
                 p = tr[i]
                 e = p["e"].float() if router.use_emb else None
                 la = rlog(i)
@@ -620,7 +671,7 @@ POLISH_SCALES = (0.25, 0.5, 1.0, 2.0, 4.0)
 
 @torch.no_grad()
 def polish(model, state, rows, cef, rho, dev, passes: int = 2, fine: bool = False, comp_target=None,
-           fine_shifts=(-10.0, -3.0, 3.0, 10.0), pair: bool = False):
+           fine_shifts=(-10.0, -3.0, 3.0, 10.0), pair: bool = False, blocked: bool = False):
     """Zeroth-order HARD-loss polish of a few scalar directions the relaxed gradient can miss (e.g. keeping
     a document WHOLE is worth more than the sum of its tokens' marginal values): additive shifts of w_gold
     and w_marker, multiplicative scales of the w_pos / w_rel / w_emb groups. Every candidate is scored by the
@@ -653,11 +704,24 @@ def polish(model, state, rows, cef, rho, dev, passes: int = 2, fine: bool = Fals
         v = val_threshold(model, r, rows, cef, off)
         return v["dce"], off, v["comp"]
 
+    def score_batch(rs_):
+        offs = None if pair else [offset_for(r_) for r_ in rs_]
+        return score_many(model, rs_, rows, cef, pair, offs)
+
     t_pol = time.time()
     best, trace = score(cur), []
-    log(f"[polish] start: train hard dCE {best[0]:+.4f} (T2/T {best[2]:.3f}) on {len(rows)} rows")
+    log(f"[polish] start: train hard dCE {best[0]:+.4f} (T2/T {best[2]:.3f}) on {len(rows)} rows{' (task-blocked)' if blocked else ''}")
     for ps in range(passes):
         for k, grid in grids.items():
+            if blocked:
+                # all values of this coordinate scored in one task-blocked sweep; argmin == the greedy result
+                cs = [dict(cur, **{k: g}) for g in grid if g != cur[k]]
+                for c, sc in zip(cs, score_batch([build(c) for c in cs])):
+                    trace.append({"pass": ps, "coord": k, "value": c[k], "dce": sc[0], "comp": sc[2]})
+                    if sc[0] < best[0] - 1e-4:
+                        best, cur = sc, c
+                log(f"[polish] pass {ps} {k}: best {cur[k]} -> train hard dCE {best[0]:+.4f} (T2/T {best[2]:.3f}) | {time.time() - t_pol:.0f}s")
+                continue
             for g in grid:
                 if g == cur[k]:
                     continue
@@ -682,6 +746,41 @@ def polish(model, state, rows, cef, rho, dev, passes: int = 2, fine: bool = Fals
             return v["dce"], off, v["comp"]
 
         n_imp = 0
+        if blocked:
+            # task-blocked fine polish (2026-10-02, v2): up to 3 rounds of (a) one sweep over every single-feature
+            # shift, (b) one sweep over the PREFIXES of the improving shifts sorted by gain (top-1, top-2, ...),
+            # taking the best prefix. v1 (single sweep, joint-or-best-single) accepted only 1 shift on the 17-task
+            # run (train +0.111 vs +0.086 for the sequential search) and lost 6 verdicts
+            for rnd in range(3):
+                cands = []
+                for grp, i in coords:
+                    w0 = float((r.w_pos if grp == "pos" else r.w_rel)[i])
+                    for d in fine_shifts:
+                        rr = RL.LinearRouter.from_state(r.state()).to(dev)
+                        (rr.w_pos if grp == "pos" else rr.w_rel)[i] = w0 + d
+                        cands.append(((grp, i), d, rr))
+                scs = score_batch([c[2] for c in cands])
+                per_feat = {}
+                for (key, d, _), sc in zip(cands, scs):
+                    trace.append({"pass": f"fine{rnd}", "coord": f"{key[0]}{key[1]}", "value": d, "dce": sc[0], "comp": sc[2]})
+                    if sc[0] < best[0] - 1e-4 and (key not in per_feat or sc[0] < per_feat[key][1][0]):
+                        per_feat[key] = (d, sc)
+                if not per_feat:
+                    break
+                order_ = sorted(per_feat.items(), key=lambda kv: kv[1][1][0])[:16]
+                prefs = []
+                for n_ in range(1, len(order_) + 1):
+                    pr_ = RL.LinearRouter.from_state(r.state()).to(dev)
+                    for (grp, i), (d, _) in order_[:n_]:
+                        (pr_.w_pos if grp == "pos" else pr_.w_rel)[i] += d
+                    prefs.append(pr_)
+                psc = score_batch(prefs)
+                j_ = min(range(len(prefs)), key=lambda q: psc[q][0])
+                if psc[j_][0] >= best[0] - 1e-4:
+                    break
+                r, best = prefs[j_], psc[j_]
+                n_imp += j_ + 1
+            coords = []
         for grp, i in coords:
             w = r.w_pos if grp == "pos" else r.w_rel
             w0 = float(w[i])
@@ -751,6 +850,9 @@ def main() -> None:
     ap.add_argument("--marker-follow-doc", action="store_true",
                     help="markers are not routed: a document's markers are kept iff >= 1 of its body tokens is kept")
     ap.add_argument("--stg-tasks", default="", help="comma list of tasks whose train/val rows come from router_*_stg")
+    ap.add_argument("--batch-max-T", type=int, default=2700, help="rows longer than this train per-row")
+    ap.add_argument("--xt-resident", type=int, default=1, help="--xtask-offload: keep up to K task models on the GPU (LRU)")
+    ap.add_argument("--no-xt-batch", action="store_true", help="cross-task: per-row forwards (old behaviour)")
     ap.add_argument("--pair-eval", action="store_true",
                     help="polish + restart selection scored with the PAIRED budget (each row keeps the bar's own count)")
     ap.add_argument("--marker-follow-whole", action="store_true",
@@ -805,7 +907,9 @@ def main() -> None:
     rungs = a.rungs.split(",")
     xt = [t for t in a.xtasks.split(",") if t] if a.xtasks else [a.task]
     if a.xtasks:
-        a.batch_rows = False  # rows of different tasks go through different frozen models
+        # rows of different tasks go through different frozen models; batches are task-blocked (one task per
+        # batch), so batched forwards are allowed unless explicitly disabled
+        a.batch_rows = a.batch_rows and not a.no_xt_batch
         man = json.load(open(os.path.join(TR.REPO, "debug", "devloss_grid", "manifest.json")))["tasks"]
     pieces = tok.convert_ids_to_tokens(list(range(vocab)))
     tr, va, model = [], [], None
@@ -861,7 +965,7 @@ def main() -> None:
                 q["_lpf"] = full_logprobs(m_t, q)
             for q in va_t:
                 q["_cef"] = TR.ce_full(m_t, q)
-            m_t.to("cpu")
+            park(m_t)
             torch.cuda.empty_cache()
             log(f"task {t}: targets done, model parked on CPU (GPU mem {torch.cuda.memory_allocated() / 2**30:.1f} GiB)")
     if a.xtask_offload:
@@ -872,6 +976,7 @@ def main() -> None:
         TR.ce_masked = _swapping(TR.ce_masked)  # compacts through model internals before its forward
         TR.vocab_scores = _swapping(TR.vocab_scores)
         _Swap.enabled = True
+        _Swap.max_resident = max(1, a.xt_resident)
     t0 = time.time()
     cef_tr, lpf_tr = [], []
     for j, p in enumerate(tr):
@@ -959,7 +1064,7 @@ def main() -> None:
             if a.polish:  # with restarts, the (slower) fine pass runs only on the selected one
                 state, res["polish"] = polish(model, state, tr_pol, cef_pol, rho, dev, passes=a.polish_passes if a.polish_passes else (1 if a.polish_fast else 2),
                                               fine=a.polish_fine and a.restarts == 1, comp_target=sel_target if a.polish_on == "val" else getattr(a, "_comp_target", None),
-                                              fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval)
+                                              fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval, blocked=bool(a.xtasks))
             if a.restarts > 1:
                 rr = RL.LinearRouter.from_state(state).to(dev)
                 if a.pair_eval:
@@ -994,7 +1099,7 @@ def main() -> None:
             if a.polish and a.polish_fine:
                 best_state, _ = polish(model, best_state, tr_pol, cef_pol, rho, dev, passes=0, fine=True,
                                        comp_target=sel_target if a.polish_on == "val" else getattr(a, "_comp_target", None),
-                                       fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval)
+                                       fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval, blocked=bool(a.xtasks))
             torch.save(best_state, os.path.join(a.out_dir, "weights", a.task, f"{name}_best.pt"))
             log(f"[restarts] best single restart saved as {name}_best.pt")
         if a.restarts > 1 and a.restart_avg == "none":
@@ -1006,7 +1111,7 @@ def main() -> None:
             if a.polish and a.polish_fine:
                 state, res["polish_fine"] = polish(model, state, tr_pol, cef_pol, rho, dev, passes=0, fine=True,
                                                    comp_target=sel_target if a.polish_on == "val" else getattr(a, "_comp_target", None),
-                                                   fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval)
+                                                   fine_shifts=(-5.0, 5.0) if a.polish_fast else (-10.0, -3.0, 3.0, 10.0), pair=a.pair_eval, blocked=bool(a.xtasks))
         a.seed = seed0
         wpath = os.path.join(a.out_dir, "weights", a.task, f"{name}.pt")
         torch.save(state, wpath + ".part")

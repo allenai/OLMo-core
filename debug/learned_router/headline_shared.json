@@ -1,0 +1,176 @@
+{
+ "xt17h": {
+  "train": [
+   "absence",
+   "contradiction",
+   "fiqa",
+   "grouping",
+   "msmarco",
+   "niah",
+   "nq",
+   "obliq",
+   "oolong",
+   "outlier",
+   "outlier_amzn",
+   "qdmatch_hpqa",
+   "reorder",
+   "rerank",
+   "scifact",
+   "strmatch",
+   "textgroups"
+  ],
+  "tally": {
+   "held-in": {
+    "matches": 9,
+    "loses": 7
+   },
+   "held-out": {}
+  },
+  "rows": {
+   "nq": {
+    "comp": 0.33967377972231727,
+    "dce": -0.00680928063417241,
+    "paired": -0.0003567856063000363,
+    "se": 0.0002709312805669912,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "contradiction": {
+    "comp": 0.4684044352579908,
+    "dce": 0.00010644257940839452,
+    "paired": 5.174082650682976e-05,
+    "se": 0.0009910223650036309,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "scifact": {
+    "comp": 0.43750054037275193,
+    "dce": -0.0005416395706561161,
+    "paired": -0.00024576837950007757,
+    "se": 0.000692412374929271,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "strmatch": {
+    "comp": 0.6264385262496883,
+    "dce": -0.0013568275531099516,
+    "paired": -5.502359788067679e-05,
+    "se": 5.37871986153709e-05,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "outlier": {
+    "comp": 0.45485467977856286,
+    "dce": 0.005225753024785007,
+    "paired": 0.004081552034257641,
+    "se": 0.009263131834992533,
+    "n_bad": 4,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "fiqa": {
+    "comp": 0.4523467622388372,
+    "dce": 0.07295392537716339,
+    "paired": 0.01960699836529045,
+    "se": 0.04254499680226199,
+    "n_bad": 7,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "msmarco": {
+    "comp": 0.33707092825237284,
+    "dce": -0.004532596916078546,
+    "paired": 0.0015403765444261808,
+    "se": 0.0011349131773175996,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "oolong": {
+    "comp": 0.3958315238385698,
+    "dce": 0.029191357080321723,
+    "paired": 0.0011857720627403978,
+    "se": 0.004549486019639484,
+    "n_bad": 2,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "outlier_amzn": {
+    "comp": 0.445530280864158,
+    "dce": 0.14902370935010367,
+    "paired": 0.04487097484991409,
+    "se": 0.02601253606798953,
+    "n_bad": 21,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "reorder": {
+    "comp": 0.3159318777636924,
+    "dce": 0.610021695400917,
+    "paired": 0.17927427450194955,
+    "se": 0.02014209959396557,
+    "n_bad": 46,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "qdmatch_hpqa": {
+    "comp": 0.7671471439881263,
+    "dce": -0.0018003905541650897,
+    "paired": 8.662954500053914e-06,
+    "se": 6.3702557794410285e-06,
+    "n_bad": 0,
+    "verdict": "matches",
+    "split": "held-in"
+   },
+   "rerank": {
+    "comp": 0.42020883839290135,
+    "dce": 0.13297563046216965,
+    "paired": 0.09261811710894108,
+    "se": 0.013051854887371582,
+    "n_bad": 32,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "textgroups": {
+    "comp": 0.6111876784890773,
+    "dce": 0.11782730557024479,
+    "paired": 0.09964955400209874,
+    "se": 0.025793868796357065,
+    "n_bad": 15,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "grouping": {
+    "comp": 0.2904052556968276,
+    "dce": 0.14147772867673325,
+    "paired": 0.11878911674529036,
+    "se": 0.014647433034918549,
+    "n_bad": 33,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "niah": {
+    "comp": 0.5743135408474167,
+    "dce": 0.41755624645798584,
+    "paired": 0.4175583367863176,
+    "se": 0.09939357377016685,
+    "n_bad": 17,
+    "verdict": "loses",
+    "split": "held-in"
+   },
+   "absence": {
+    "comp": 0.6986035012983834,
+    "dce": 0.9486576445983701,
+    "paired": 0.06663871740056493,
+    "se": 0.05001333090656537,
+    "n_bad": 31,
+    "verdict": "loses",
+    "split": "held-in"
+   }
+  }
+ }
+}

@@ -75,6 +75,29 @@ nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader
 
 
 
+if [ -n "${ORACLE:-}" ]; then  # ORACLE=1: per-example overfit ceiling (oracle_ls.py); OR_ROWS, OR_RUNG, OR_EXTRA
+  export WANDB_DIR=/data/prasann/wandb; mkdir -p "$WANDB_DIR"
+  DR="$ROOT/data/test64"; [ "${OR_RUNG:-2k}" != "2k" ] && DR="$ROOT/data"
+  "$PY" -u debug/learned_router/layerskip/oracle_ls.py --task "$TASK" --ckpt "$CKPT" --ckpt-format "$FMT" --data-root "$DR" \
+      --rung "${OR_RUNG:-2k}" --rows "${OR_ROWS:-0-5}" --tokenizer "$TOK" --wandb-group "${WANDB_GROUP:-router-layerskip}" ${OR_EXTRA:-} \
+      || { echo "!! oracle FAILED rc=$?"; exit 2; }
+  exit 0
+fi
+if [ -n "${LONGCHECK:-}" ]; then  # LONGCHECK="<tok weights:f> <layerskip weights>"; LC_RUNG (32k), LC_REF (extra token routers)
+  set -- $LONGCHECK
+  "$PY" -u debug/learned_router/layerskip/longcheck.py --task "$TASK" --ckpt "$CKPT" --ckpt-format "$FMT" --data-root "$ROOT/data/testlong" \
+      --rung "${LC_RUNG:-32k}" --tokenizer "$TOK" --tok "$1" --ls "$2" --tok-ref "${LC_REF:-}" \
+      --out "$REPO/debug/learned_router/layerskip/runs/$TASK/longcheck_${LC_RUNG:-32k}.json" || { echo "!! longcheck FAILED"; exit 2; }
+  exit 0
+fi
+if [ -n "${FAST:-}" ]; then  # FAST="<weights:f> <layerskip weights>": fastskip.py; FS_RUNG, FS_BATCH, FS_ROWS
+  set -- $FAST
+  DR="$ROOT/data/test64"; [ "${FS_RUNG:-2k}" != "2k" ] && DR="$ROOT/data"
+  "$PY" -u debug/learned_router/layerskip/fastskip.py --task "$TASK" --ckpt "$CKPT" --ckpt-format "$FMT" --data-root "$DR" \
+      --rung "${FS_RUNG:-2k}" --batch "${FS_BATCH:-1}" --rows "${FS_ROWS:-8}" --tokenizer "$TOK" --tok "$1" --ls "$2" ${FS_EXTRA:-} \
+      --out "$REPO/debug/learned_router/layerskip/runs/$TASK/fastskip_${FS_RUNG:-2k}_b${FS_BATCH:-1}.json" || { echo "!! fastskip FAILED"; exit 2; }
+  exit 0
+fi
 if [ -n "${WALLCLOCK:-}" ]; then  # WALLCLOCK="<weights:f> <layerskip weights rel. to layerskip/>"
   set -- $WALLCLOCK
   "$PY" -u debug/learned_router/layerskip/wallclock.py --task "$TASK" --ckpt "$CKPT" --ckpt-format "$FMT" \

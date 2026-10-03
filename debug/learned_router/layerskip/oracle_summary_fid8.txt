@@ -1,0 +1,71 @@
+
+== nq 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.337 (dCE [0.001, 0.0, -0.0, 0.0, 0.0, -0.002]); wall 353 s/row
+   tau 0.02: tok: median ×0.103 min ×0.098 (6/6 meet) | tok+layer: median ×0.102 min ×0.098 (6/6 meet) | envelope tok ×0.103 | envelope tok+layer ×0.102 | frontier b0.35+k0.5: median ×0.096 (6/6 meet)
+   tau 0.05: tok: median ×0.103 min ×0.098 (6/6 meet) | tok+layer: median ×0.101 min ×0.097 (6/6 meet) | envelope tok ×0.103 | envelope tok+layer ×0.101 | frontier b0.35+k0.5: median ×0.096 (6/6 meet)
+   keeps tok@0.02      : gold 0.08 non-gold 0.05 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.08 non-gold 0.05 ids 1.00 markers 1.00 | skip attn 0.04 gdn 0.03 early 0.02 late 0.04
+   keeps tok@0.05      : gold 0.07 non-gold 0.05 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.08 non-gold 0.05 ids 1.00 markers 1.00 | skip attn 0.05 gdn 0.04 early 0.03 late 0.05
+
+== scifact 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.398 (dCE [-0.0, 0.0, 0.0, 0.0, 0.0, 0.0]); wall 307 s/row
+   tau 0.02: tok: median ×0.091 min ×0.055 (6/6 meet) | tok+layer: median ×0.091 min ×0.055 (6/6 meet) | envelope tok ×0.091 | envelope tok+layer ×0.091 | frontier L0.35+k0.5: median ×0.118 (6/6 meet)
+   tau 0.05: tok: median ×0.091 min ×0.055 (6/6 meet) | tok+layer: median ×0.091 min ×0.055 (6/6 meet) | envelope tok ×0.091 | envelope tok+layer ×0.091 | frontier L0.35+k0.5: median ×0.118 (6/6 meet)
+   keeps tok@0.02      : gold 0.03 non-gold 0.02 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.03 non-gold 0.02 ids 1.00 markers 1.00 | skip attn 0.01 gdn 0.01 early 0.00 late 0.01
+   keeps tok@0.05      : gold 0.03 non-gold 0.02 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.03 non-gold 0.02 ids 1.00 markers 1.00 | skip attn 0.02 gdn 0.02 early 0.02 late 0.02
+
+== outlier 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.444 (dCE [0.0, 0.0, 0.0, 0.0, 0.01, 0.0]); wall 455 s/row
+   tau 0.02: tok: median ×0.129 min ×0.119 (6/6 meet) | tok+layer: median ×0.126 min ×0.117 (6/6 meet) | envelope tok ×0.129 | envelope tok+layer ×0.126 | frontier L0.35+k0.75: median ×0.164 (4/6 meet)
+   tau 0.05: tok: median ×0.128 min ×0.121 (6/6 meet) | tok+layer: median ×0.127 min ×0.117 (6/6 meet) | envelope tok ×0.127 | envelope tok+layer ×0.126 | frontier L0.35+k0.5: median ×0.134 (5/6 meet)
+   keeps tok@0.02      : gold 0.07 non-gold 0.06 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.08 non-gold 0.06 ids 1.00 markers 1.00 | skip attn 0.08 gdn 0.08 early 0.07 late 0.10
+   keeps tok@0.05      : gold 0.07 non-gold 0.06 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.09 non-gold 0.06 ids 1.00 markers 1.00 | skip attn 0.16 gdn 0.15 early 0.13 late 0.18
+
+== contradiction 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.461 (dCE [0.0, 0.0, 0.0, 0.0, -0.0, 0.0]); wall 580 s/row
+   tau 0.02: tok: median ×0.302 min ×0.286 (6/6 meet) | tok+layer: median ×0.296 min ×0.282 (6/6 meet) | envelope tok ×0.302 | envelope tok+layer ×0.296 | frontier b0.5+k1: median ×0.270 (6/6 meet)
+   tau 0.05: tok: median ×0.296 min ×0.284 (6/6 meet) | tok+layer: median ×0.293 min ×0.278 (6/6 meet) | envelope tok ×0.296 | envelope tok+layer ×0.293 | frontier b0.5+k1: median ×0.270 (6/6 meet)
+   keeps tok@0.02      : gold 0.33 non-gold 0.19 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.42 non-gold 0.21 ids 1.00 markers 1.00 | skip attn 0.14 gdn 0.13 early 0.09 late 0.17
+   keeps tok@0.05      : gold 0.29 non-gold 0.19 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.34 non-gold 0.20 ids 1.00 markers 1.00 | skip attn 0.07 gdn 0.06 early 0.05 late 0.08
+
+== rerank 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.398 (dCE [0.114, 0.07, 0.047, 0.03, 0.052, 0.039]); wall 437 s/row
+   tau 0.02: tok: median ×0.202 min ×0.178 (6/6 meet) | tok+layer: median ×0.196 min ×0.177 (6/6 meet) | envelope tok ×0.202 | envelope tok+layer ×0.196 | frontier b1.0+k0.75: median ×0.324 (3/6 meet)
+   tau 0.05: tok: median ×0.199 min ×0.177 (6/6 meet) | tok+layer: median ×0.192 min ×0.176 (6/6 meet) | envelope tok ×0.199 | envelope tok+layer ×0.192 | frontier b0.7+k0.75: median ×0.255 (2/6 meet)
+   keeps tok@0.02      : gold 0.09 non-gold 0.11 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.10 non-gold 0.11 ids 1.00 markers 1.00 | skip attn 0.08 gdn 0.06 early 0.05 late 0.08
+   keeps tok@0.05      : gold 0.12 non-gold 0.11 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.10 non-gold 0.11 ids 1.00 markers 1.00 | skip attn 0.13 gdn 0.11 early 0.09 late 0.14
+
+== strmatch 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.627 (dCE [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]); wall 340 s/row
+   tau 0.02: tok: median ×0.658 min ×0.523 (6/6 meet) | tok+layer: median ×0.720 min ×0.649 (6/6 meet) | envelope tok ×0.567 | envelope tok+layer ×0.567 | frontier b0.7+k1: median ×0.499 (6/6 meet)
+   tau 0.05: tok: median ×0.567 min ×0.520 (6/6 meet) | tok+layer: median ×0.706 min ×0.605 (6/6 meet) | envelope tok ×0.567 | envelope tok+layer ×0.567 | frontier b0.35+k1: median ×0.351 (4/6 meet)
+   keeps tok@0.02      : gold 0.71 non-gold 0.52 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.79 non-gold 0.71 ids 1.00 markers 1.00 | skip attn 0.18 gdn 0.13 early 0.09 late 0.20
+   keeps tok@0.05      : gold 0.58 non-gold 0.38 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.77 non-gold 0.69 ids 1.00 markers 1.00 | skip attn 0.17 gdn 0.14 early 0.09 late 0.21
+
+== niah 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.579 (dCE [0.0, 0.0, -0.0, -0.0, 0.0, 0.0]); wall 208 s/row
+   tau 0.02: tok: median ×0.533 min ×0.469 (6/6 meet) | tok+layer: median ×0.531 min ×0.468 (6/6 meet) | envelope tok ×0.533 | envelope tok+layer ×0.531 | frontier b1.0+k1: median ×0.579 (6/6 meet)
+   tau 0.05: tok: median ×0.531 min ×0.469 (6/6 meet) | tok+layer: median ×0.531 min ×0.468 (6/6 meet) | envelope tok ×0.531 | envelope tok+layer ×0.531 | frontier b1.0+k1: median ×0.579 (6/6 meet)
+   keeps tok@0.02      : gold 0.30 non-gold 0.42 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.33 non-gold 0.43 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok@0.05      : gold 0.28 non-gold 0.42 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.28 non-gold 0.42 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+
+== textgroups 2k: 6 rows [0, 1, 2, 3, 4, 5] ⚠ per-example; bar FLOPs median ×0.618 (dCE [0.174, -0.007, 0.137, -0.076, 0.111, 0.117]); wall 449 s/row
+   tau 0.02: tok: median ×0.547 min ×0.505 (6/6 meet) | tok+layer: median ×0.344 min ×0.260 (6/6 meet) | envelope tok ×0.547 | envelope tok+layer ×0.344 | frontier b1.0+k1: median ×0.618 (4/6 meet)
+   tau 0.05: tok: median ×0.506 min ×0.446 (6/6 meet) | tok+layer: median ×0.277 min ×0.223 (6/6 meet) | envelope tok ×0.506 | envelope tok+layer ×0.274 | frontier b1.0+k1: median ×0.618 (5/6 meet)
+   keeps tok@0.02      : gold 0.67 non-gold 0.38 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.02: gold 0.63 non-gold 0.42 ids 1.00 markers 1.00 | skip attn 0.63 gdn 0.51 early 0.32 late 0.75
+   keeps tok@0.05      : gold 0.57 non-gold 0.30 ids 1.00 markers 1.00 | skip attn 0.00 gdn 0.00 early 0.00 late 0.00
+   keeps tok+layer@0.05: gold 0.54 non-gold 0.18 ids 1.00 markers 1.00 | skip attn 0.66 gdn 0.54 early 0.36 late 0.77
+ACROSS tasks tau 0.02 tok: median-of-medians ×0.252 (= 4.0× fewer); envelope ×0.252 (= 4.0×)
+ACROSS tasks tau 0.02 tok+layer: median-of-medians ×0.246 (= 4.1× fewer); envelope ×0.246 (= 4.1×)
+ACROSS tasks tau 0.02 frontier pick: median-of-medians ×0.297
+ACROSS tasks tau 0.05 tok: median-of-medians ×0.248 (= 4.0× fewer); envelope ×0.248 (= 4.0×)
+ACROSS tasks tau 0.05 tok+layer: median-of-medians ×0.235 (= 4.3× fewer); envelope ×0.233 (= 4.3×)
+ACROSS tasks tau 0.05 frontier pick: median-of-medians ×0.262
+ACROSS tasks bar: median-of-medians ×0.453
