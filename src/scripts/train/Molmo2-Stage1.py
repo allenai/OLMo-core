@@ -424,10 +424,11 @@ GUI_POINTING = True
 #         task, then sqrt(size) with the synthetic sets capped (`_ocr_fractions`), so that pass
 #         is uneven: the figure captions ~1 pass, olmOCR documents 2.1, the small olmOCR subsets,
 #         TextOCR and the receipts 7-10, NVIDIA's 1.46M synthetic images 0.32. Caption and
-#         pointing keep about v2's passes (4.2 over PixMo-Cap, v2 4.0; 4.4 over the pointing
-#         sources, v2 4.4); the academic group gets 1.55 passes and the clock group 271k examples
-#         (0.34 passes). The expected weighted loss splits caption / pointing / OCR / academic as
-#         39.2% / 12.8% / 38.9% / 9.1% (v2: 55.1% / 18.5% / 26.5% / 0), clocks 0.08%.
+#         pointing keep about v2's passes (4.2 over PixMo-Cap, v2 4.0; 4.0 over the pointing
+#         sources with GUISyn, v2 4.0, and 4.4 for both with `--gui_pointing=false`); the
+#         academic group gets 1.55 passes and the clock group 271k examples (0.34 passes). The
+#         expected weighted loss splits caption / pointing / OCR / academic as 39.2% / 12.8% /
+#         38.9% / 9.1% (v2: 55.1% / 18.5% / 26.5% / 0), clocks 0.08%, measured without GUISyn.
 RECIPES = {
     "v1": dict(
         pointing_rate=POINTING_RATE,
