@@ -43,6 +43,13 @@ the base swapped to each CPT export, on contradiction / oolong / nq / outlier, d
 - FLOP meter charges dense FFN cost on the drop arm (CPT is amortized, so this is only a wall-clock note).
 
 ## Status
+- 2026-10-03 04:33: **drop-CPT finished (exit 0) and its probe is in** -- same dev rows, same drop pattern as
+  the base probe (⚠ eval_size=32 rows): CE r=0 1.264, r=0.25 1.346 (+0.08), r=0.5 1.467 (+0.20),
+  r=0.75 1.656 (+0.39) vs base +0.58/+2.73/+6.87 -- the null-FFN penalty shrank ~7-17x. Dense quality at r=0
+  is 1.264 vs base 1.320; for scale, the sdcpt dense-CPT points on this dev set are 1.283 (32M) / 1.245
+  (128M), so drop-CPT keeps dense CE roughly at dense-CPT level (no dense-1B reference: control dropped).
+  First launches failed (another session's unpushed HEAD -> gantry UnpushedChangesError); pushed, relaunched
+  04:26: SFT 01M40R8PBE5C192A0TFS7PE9NY (contra 28M), 01M40R9FN39TNRVGPJKXV3CM2S (nq 32M).
 - 2026-10-02 15:50: Beaker capacity outage (jupiter/ceres/titan heavily cordoned) held both jobs ~2.5 days.
   **Base drop-robustness probe** (q35-4b-base-markerfix, cpt_dev, 32 held-out 64k rows ⚠ eval_size=32 rows,
   ~2M tokens; paired deltas): CE r=0 1.320, r=0.25 1.898 (+0.58), r=0.5 4.046 (+2.73), r=0.75 8.187 (+6.87)
