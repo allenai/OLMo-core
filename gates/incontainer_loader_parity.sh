@@ -5,7 +5,7 @@ set -uo pipefail
 mkdir -p /results/dumps
 G=$PWD/gates
 pip install -q -U 'datasets>=4,<6' pypdfium2 h5py   # the same post-setup the Molmo2 Stage-1 jobs run
-for spec in vision:jasonr/sync-main-into-vision:05885efa4 infra:jasonr/parity-infra-0075:0075fa480; do
+for spec in vision:jasonr/parity-vision-05885:05885efa4 infra:jasonr/parity-infra-0075:0075fa480; do
   n=${spec%%:*}; rest=${spec#*:}; branch=${rest%%:*}; want=${rest#*:}
   git clone -q --branch "$branch" https://github.com/allenai/OLMo-core.git /tmp/$n
   got=$(git -C /tmp/$n rev-parse --short=9 HEAD)
