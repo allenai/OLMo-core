@@ -1,5 +1,5 @@
 """CPU tests for the MolmoPoint-GUISyn source (mm_olmo ``molmo2_syn_point`` port): reading the
-Hugging Face datasets cache, the ``gui_point:`` / ``pointing:`` question forms, the box-center
+Arrow shards laid out like the copy on weka, the ``gui_point:`` / ``pointing:`` question forms, the box-center
 point, element sampling per image and epoch, and the Molmo2-Stage1 v2 pointing group."""
 
 import importlib.util
@@ -44,8 +44,8 @@ def _el(name, intents, x=32, y=12):
     return {"name": name, "intent": intents, "x_center": x, "y_center": y, "width": 8, "height": 6}
 
 
-def _write_split(cache_dir: Path, part: str, split: str, annotations, tmp_path: Path):
-    """One shard of ``split`` laid out the way ``datasets.load_dataset`` caches GUISyn."""
+def _write_split(root: Path, part: str, split: str, annotations, tmp_path: Path):
+    """One shard of ``split`` laid out like ``GUI_SYN_ROOT``."""
     from datasets import Dataset
     from PIL import Image
 
@@ -61,7 +61,7 @@ def _write_split(cache_dir: Path, part: str, split: str, annotations, tmp_path: 
     )
     tmp = tmp_path / f"_save_{part}_{split}"
     ds.save_to_disk(str(tmp))
-    shard_dir = cache_dir / "allenai___molmo_point-gui_syn" / part / "0.0.0" / GUI_SYN_REVISION
+    shard_dir = root / part / "0.0.0" / GUI_SYN_REVISION
     shard_dir.mkdir(parents=True, exist_ok=True)
     name = "molmo_point-gui_syn-validation.arrow"
     if split == "train":
@@ -70,7 +70,7 @@ def _write_split(cache_dir: Path, part: str, split: str, annotations, tmp_path: 
 
 
 def _cache(tmp_path, train=None, validation=None, part="web"):
-    cache = tmp_path / "hf_datasets"
+    cache = tmp_path / "gui_syn"
     train = train or [
         [_el("Close Google tab button", ["Close the Google tab", "Click the X to close Google"])],
         # No usable element at all: the image is never trained on.
@@ -87,7 +87,7 @@ def _cache(tmp_path, train=None, validation=None, part="web"):
 def _cfg(cache, **kw):
     kw.setdefault("parts", ("web",))
     kw.setdefault("max_crops", 1)
-    return GuiSynDatasetConfig(cache_dir=cache, **kw)
+    return GuiSynDatasetConfig(dataset_path=cache, **kw)
 
 
 def _turns(ds, i, epoch=0):
@@ -189,8 +189,8 @@ def test_example_end_to_end(tmp_path):
     assert any(p.startswith("gui_point: ") for p in tok.prompts)
 
 
-def test_missing_cache_is_a_clear_error(tmp_path):
-    with pytest.raises(OLMoConfigurationError, match="load_dataset"):
+def test_missing_data_is_a_clear_error(tmp_path):
+    with pytest.raises(OLMoConfigurationError, match="No 'train' shards"):
         _cfg(str(tmp_path / "nowhere")).build(None)
 
 
@@ -206,7 +206,7 @@ def test_missing_cache_is_a_clear_error(tmp_path):
 )
 def test_config_validation(tmp_path, kw):
     with pytest.raises(OLMoConfigurationError):
-        GuiSynDatasetConfig(cache_dir=str(tmp_path), **kw).build(None)
+        GuiSynDatasetConfig(dataset_path=str(tmp_path), **kw).build(None)
 
 
 # ---------------------------------------------------------------------------

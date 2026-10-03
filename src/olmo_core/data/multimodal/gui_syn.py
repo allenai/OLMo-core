@@ -29,10 +29,9 @@ Differences from mm_olmo, all deliberate:
   12-pixel buttons is downscaled, so the smallest targets lose detail. mm_olmo's GUI-only
   mixtures force its high-resolution crops instead.
 
-The data is read from the Hugging Face datasets cache that ``datasets.load_dataset`` builds
-(:data:`~olmo_core.data.multimodal.paths.GUI_SYN_CACHE`), straight from its Arrow shards, so no
-network access or lock files are needed and the revision is pinned. Only the train split is
-read; the 256-image validation split of each part stays held out.
+The data is mm_olmo's copy on weka (:data:`GUI_SYN_ROOT`), read straight from its Arrow shards
+at a pinned revision, with no network access. Only the train split is read; the 256-image
+validation split of each part stays held out.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ import numpy as np
 from olmo_core.config import Config
 from olmo_core.exceptions import OLMoConfigurationError
 
-from .paths import GUI_SYN_CACHE
+from .paths import MOLMO_DATA_DIR
 from .pixmo_points import _build_example
 from .pixmo_points_v2 import STAGE1_PROMPT_FAMILY, _rows_with_any
 from .sft_common import EpochSeededExamples
@@ -59,6 +58,7 @@ __all__ = [
     "GUI_SYN_HF_REPO",
     "GUI_SYN_REVISION",
     "GUI_SYN_PARTS",
+    "GUI_SYN_ROOT",
     "GuiSynDatasetConfig",
     "GuiSynDataset",
     "load_gui_syn_part",
@@ -70,26 +70,27 @@ log = logging.getLogger(__name__)
 GUI_POINT_STYLE = "gui_point"
 
 GUI_SYN_HF_REPO = "allenai/MolmoPoint-GUISyn"
-#: The revision the cache on weka holds (the Hub's ``main`` as of 2026-09-30).
+#: The revision the copy on weka holds (the Hub's ``main`` as of 2026-09-30).
 GUI_SYN_REVISION = "24bb3e990bb1e48796d80ade9dbc858dda695e75"
 GUI_SYN_PARTS: Tuple[str, ...] = ("desktop", "mobile", "web")
 
-# How `datasets` names the cache of `allenai/MolmoPoint-GUISyn`, and its Arrow shards.
-_CACHE_NAME = "allenai___molmo_point-gui_syn"
+#: mm_olmo's copy of GUISyn on weka, as ``datasets.load_dataset`` laid it out:
+#: ``<part>/0.0.0/<revision>/molmo_point-gui_syn-<split>*.arrow``.
+GUI_SYN_ROOT = os.path.join(MOLMO_DATA_DIR, "hf_datasets", "allenai___molmo_point-gui_syn")
 _SHARD_PREFIX = "molmo_point-gui_syn"
 
 
-def load_gui_syn_part(cache_dir: str, part: str, revision: str = GUI_SYN_REVISION, split="train"):
-    """One part of GUISyn as a ``datasets.Dataset``, memory-mapped from the Arrow shards
-    ``datasets.load_dataset(GUI_SYN_HF_REPO, part, revision=revision, cache_dir=cache_dir)``
-    leaves in ``cache_dir``.
+def load_gui_syn_part(
+    dataset_path: str, part: str, revision: str = GUI_SYN_REVISION, split: str = "train"
+):
+    """One part of GUISyn as a ``datasets.Dataset``, memory-mapped from its Arrow shards under
+    ``dataset_path`` (laid out like :data:`GUI_SYN_ROOT`).
 
-    :raises OLMoConfigurationError: if the cache holds no shard of ``split`` for that part and
-        revision.
+    :raises OLMoConfigurationError: if there is no shard of ``split`` for that part and revision.
     """
     import datasets
 
-    shard_dir = os.path.join(cache_dir, _CACHE_NAME, part, "0.0.0", revision)
+    shard_dir = os.path.join(dataset_path, part, "0.0.0", revision)
     files = sorted(
         glob.glob(os.path.join(shard_dir, f"{_SHARD_PREFIX}-{split}.arrow"))
         + glob.glob(os.path.join(shard_dir, f"{_SHARD_PREFIX}-{split}-*.arrow"))
@@ -97,9 +98,7 @@ def load_gui_syn_part(cache_dir: str, part: str, revision: str = GUI_SYN_REVISIO
     if not files:
         raise OLMoConfigurationError(
             f"No {split!r} shards of {GUI_SYN_HF_REPO} ({part!r}, revision {revision}) under "
-            f"{shard_dir!r}. Populate the cache with datasets.load_dataset({GUI_SYN_HF_REPO!r}, "
-            f"{part!r}, revision={revision!r}, cache_dir={cache_dir!r}), or point "
-            "GUI_SYN_CACHE_DIR / --gui_syn.cache_dir at a cache that has them."
+            f"{shard_dir!r}."
         )
     return datasets.concatenate_datasets([datasets.Dataset.from_file(f) for f in files])
 
@@ -108,11 +107,11 @@ def load_gui_syn_part(cache_dir: str, part: str, revision: str = GUI_SYN_REVISIO
 class GuiSynDatasetConfig(Config):
     """mm_olmo ``Molmo2SyntheticPointConfig`` (``molmo2_syn_point``), stage-1 form."""
 
-    cache_dir: str = GUI_SYN_CACHE
-    """The Hugging Face datasets cache holding GUISyn (see :func:`load_gui_syn_part`)."""
+    dataset_path: str = GUI_SYN_ROOT
+    """Where GUISyn is on disk (see :data:`GUI_SYN_ROOT`)."""
 
     revision: str = GUI_SYN_REVISION
-    """The dataset revision to read from the cache."""
+    """The dataset revision to read."""
 
     parts: Tuple[str, ...] = GUI_SYN_PARTS
     """Which of ``desktop`` / ``mobile`` / ``web`` to train on."""
@@ -163,7 +162,7 @@ class GuiSynDataset(EpochSeededExamples):
         self.config = config
         self.tokenizer = tokenizer
         parts = [
-            load_gui_syn_part(config.cache_dir, part, config.revision).select_columns(
+            load_gui_syn_part(config.dataset_path, part, config.revision).select_columns(
                 ["image", "annotation"]
             )
             for part in config.parts
