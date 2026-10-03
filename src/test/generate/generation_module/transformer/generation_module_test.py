@@ -220,7 +220,7 @@ def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
 @requires_gpu
 @requires_fla
 @requires_flash_attn_2
-@pytest.mark.parametrize("chunk_size", [4, 5, 16])
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 6, 7, 16])
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("fuse_qkv", [False, True])
 def test_generation_module_chunked_prefill_matches_one_shot(
