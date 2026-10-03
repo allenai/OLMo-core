@@ -63,6 +63,8 @@ class MoERouterConfigV2(Config):
     z_loss_weight: Optional[float] = None
     orth_loss_weight: Optional[float] = None
     restore_weight_scale: bool = False  # if True, multiply the router weights by topK so that the scores have similar scale as dense models.
+    reference_top_k: Optional[int] = None
+    """Normalize and restore scale at this native K, then dispatch only ``top_k`` experts."""
     expert_weight_scale: Optional[float] = None
     original_top_k: Optional[
         int
@@ -108,6 +110,8 @@ class MoERouterConfigV2(Config):
             kwargs["dtype"] = self.dtype.as_pt()
 
         if self.emo is not None:
+            if self.reference_top_k is not None:
+                raise OLMoConfigurationError("Reference scaling is not implemented for EMO routing")
             from .emo_router import EmoRouterV2
 
             return EmoRouterV2(**kwargs, init_device=init_device)
@@ -150,6 +154,7 @@ class MoERouterV2(nn.Module):
         init_device: str = "cpu",
         record_routing_batch_size: bool = False,
         restore_weight_scale: bool = False,
+        reference_top_k: Optional[int] = None,
         expert_weight_scale: Optional[float] = None,
         original_top_k: Optional[int] = None,
         use_recompute_fp32_cast=False,
@@ -181,6 +186,26 @@ class MoERouterV2(nn.Module):
         self.tp_mesh: Optional[DeviceMesh] = None
         self.record_routing_batch_size = record_routing_batch_size
         self.restore_weight_scale = restore_weight_scale
+        self.reference_top_k = reference_top_k
+        if reference_top_k is not None:
+            if not 1 <= top_k <= reference_top_k <= num_experts:
+                raise OLMoConfigurationError("Require 1 <= top_k <= reference_top_k <= num_experts")
+            if (
+                gating_function != MoERouterGatingFunction.softmax
+                or normalize_expert_weights != 1.0
+                or not restore_weight_scale
+                or original_top_k is not None
+                or uniform_expert_assignment
+                or random_expert_assignment
+                or bias_gamma is not None
+                or score_correction_bias
+                or n_group is not None
+                or topk_group is not None
+            ):
+                raise OLMoConfigurationError(
+                    "Reference routing currently requires unbiased softmax, L1 normalization, "
+                    "native weight-scale restoration and no additional K compensation"
+                )
         self.expert_weight_scale = expert_weight_scale
         self.original_top_k = original_top_k
         self.use_recompute_fp32_cast = use_recompute_fp32_cast
@@ -475,10 +500,11 @@ class MoERouterV2(nn.Module):
             selection_scores = selection_scores.masked_fill(~score_mask, float("-inf"))
 
         with torch.no_grad() if self.score_bias is not None else torch.enable_grad():
-            if self.top_k == 1:
+            selection_k = self.reference_top_k or self.top_k
+            if selection_k == 1:
                 _, expert_indices = selection_scores.max(dim=-1, keepdim=True)
             else:
-                _, expert_indices = torch.topk(selection_scores, self.top_k, dim=-1)
+                _, expert_indices = torch.topk(selection_scores, selection_k, dim=-1)
         expert_weights = scores.gather(-1, expert_indices)
 
         if self.uniform_expert_assignment:
@@ -643,6 +669,8 @@ class MoERouterV2(nn.Module):
             scores = scores * 0 + torch.rand_like(scores)  # random, but keep the autograd graph
 
         if scores_only:
+            if self.reference_top_k is not None:
+                raise OLMoConfigurationError("Reference scaling applies only to routed experts")
             if self.gating_function == MoERouterGatingFunction.topk_softmax:
                 # The scores-only path (e.g. shared-expert mixing) returns the dense score
                 # vector over all experts; topk_softmax has no top-k masking here, so it would
@@ -714,13 +742,19 @@ class MoERouterV2(nn.Module):
         # if used together normalize_expert_weights=True,
         # then the weights for each token sum to TOP_K instead of 1.0
         if self.restore_weight_scale:
-            expert_weights = expert_weights * self.top_k
+            expert_weights = expert_weights * (self.reference_top_k or self.top_k)
 
         if self.expert_weight_scale is not None:
             expert_weights = expert_weights * self.expert_weight_scale
 
         if self.original_top_k is not None and self.top_k != self.original_top_k:
             expert_weights = expert_weights * (self.original_top_k / self.top_k) ** 0.5
+
+        if self.reference_top_k is not None:
+            # Select at native width before slicing, including at tied logits. The
+            # discarded experts retain denominator gradients but are not dispatched.
+            expert_weights = expert_weights[..., : self.top_k].contiguous()
+            expert_indices = expert_indices[..., : self.top_k].contiguous()
 
         with torch.no_grad():
             # Histogram the expert ids to identify the number of items/tokens routed to each expert.

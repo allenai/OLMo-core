@@ -564,6 +564,18 @@ class Olmo3MoeRouter(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts_per_tok = config.num_experts_per_tok
         self.original_num_experts_per_tok = config.original_num_experts_per_tok
+        self.reference_num_experts_per_tok = config.reference_num_experts_per_tok
+        if self.reference_num_experts_per_tok is not None and not (
+            1
+            <= self.num_experts_per_tok
+            <= self.reference_num_experts_per_tok
+            <= config.n_routed_experts
+            and config.gating_function == "softmax"
+            and config.normalize_expert_weights == 1.0
+            and config.restore_weight_scale
+            and config.original_num_experts_per_tok is None
+        ):
+            raise ValueError("Unsupported reference-scaled routing configuration")
         self.n_routed_experts = config.n_routed_experts
         self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
@@ -630,7 +642,10 @@ class Olmo3MoeRouter(nn.Module):
             # unmasked ones. An all-allowed mask is an exact no-op.
             scores = scores.masked_fill(~self.allowed_experts, float("-inf"))
 
-        expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
+        selection_k = self.reference_num_experts_per_tok or self.num_experts_per_tok
+        if self.reference_num_experts_per_tok is not None and self.allowed_experts is not None:
+            raise ValueError("Reference scaling with an expert-pool restriction is unsupported")
+        expert_weights, expert_indices = torch.topk(scores, selection_k, dim=-1)
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -643,7 +658,7 @@ class Olmo3MoeRouter(nn.Module):
             )
 
         if self.restore_weight_scale:
-            expert_weights = expert_weights * self.num_experts_per_tok
+            expert_weights = expert_weights * selection_k
 
         if (
             self.original_num_experts_per_tok is not None
@@ -654,7 +669,10 @@ class Olmo3MoeRouter(nn.Module):
                 * (self.original_num_experts_per_tok / self.num_experts_per_tok) ** 0.5
             )
 
-        return expert_weights, expert_indices
+        return (
+            expert_weights[..., : self.num_experts_per_tok].contiguous(),
+            expert_indices[..., : self.num_experts_per_tok].contiguous(),
+        )
 
 
 def get_moe_routers(model: nn.Module) -> Dict[int, Olmo3MoeRouter]:
