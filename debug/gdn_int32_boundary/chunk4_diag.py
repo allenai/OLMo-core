@@ -55,17 +55,19 @@ for dtype in (DType.bfloat16, DType.float32):
             got_ids, got_lg = run(cs)
             n = min(len(ref_ids), len(got_ids))
             div = next((i for i in range(n) if ref_ids[i] != got_ids[i]), None)
-            first_gen = 12  # logits row for the first generated token
-            d0 = (got_lg[first_gen - 1] - ref_lg[first_gen - 1]).abs().max().item()
-            dmax = (got_lg[: n - 1] - ref_lg[: n - 1]).abs().max().item()
+            # logits come back for the generated steps only: row k produced token 12 + k
+            n_rows = min(len(ref_lg), len(got_lg))
+            d0 = (got_lg[0] - ref_lg[0]).abs().max().item()
+            upto = n_rows if div is None else div - 12 + 1
+            dmax = (got_lg[:upto] - ref_lg[:upto]).abs().max().item()
             if div is not None:
-                top2 = ref_lg[div - 1].topk(2).values
+                top2 = ref_lg[div - 12].topk(2).values
                 margin = (top2[0] - top2[1]).item()
-                where = f"diverges at token {div} (gen step {div - 12}), one-shot top-2 margin {margin:.4f}"
+                where = f"diverges at gen step {div - 12}, one-shot top-2 margin there {margin:.4f}"
             else:
                 where = "identical ids"
             print(
                 f"{str(dtype):<16} fuse={fuse!s:<5} chunk={cs}: {where}; "
-                f"|dlogit| first-gen step {d0:.4f}, max over shared prefix {dmax:.4f}",
+                f"|dlogit| first-gen step {d0:.4f}, max up to divergence {dmax:.4f}",
                 flush=True,
             )
