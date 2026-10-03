@@ -78,10 +78,14 @@ KDA cannot apply an attention mask; it resets its state at document boundaries i
 the LM has such layers, the multimodal model isolates packed examples through document
 boundaries derived from the loader's `example_ids` (one document per packed example, padding
 in its own document), sends no attention masks or positions, and treats image tokens as
-causal like text. Sibling-branch packing (`subsegment_ids`) needs a mask and is rejected. The
-recipe turns the experimental `kernel-fun` KDA kernels off for such models: they do not take
-packed documents (`cu_seqlens`) and their support check crashes on them, so the FLA kernels
-are used until that is fixed upstream.
+causal like text. Sibling-branch packing (`subsegment_ids`) needs a mask and is rejected, so
+the recipe sets `annotation_sampling="one"` on the multi-annotation sources (PixMo points and
+CoSyn pointing, which otherwise pack each of an image's annotations as a sibling branch): each
+example keeps one annotation, sampled deterministically per seed, row and epoch, and those
+sources use the matching calibration (`ALIGNMENT_ONE_ANNOTATION_MEAN_LOSS_WEIGHTS`). The
+recipe also turns the experimental `kernel-fun` KDA kernels off for such models: they do not
+take packed documents (`cu_seqlens`) and their support check crashes on them, so the FLA
+kernels are used until that is fixed upstream.
 
 ## Configure and launch
 
@@ -187,9 +191,12 @@ means = dataset.estimate_mean_loss_weights(samples_per_source=128, seed=0)
 ```
 
 Supply the source config, `dataset.target_loss_mass.SOURCE` and
-`dataset.mean_loss_weight.SOURCE` together. Calibration is not a full corpus replay, but
-still incurs ordinary dataset preparation. Train/validation image disjointness belongs in
-data preparation; retain the prepared selections when using the default sources.
+`dataset.mean_loss_weight.SOURCE` together. A copy of the default artifacts in another
+`recipe.artifact_root` keeps the supplied means when its build manifests are byte-identical
+(`ALIGNMENT_ARTIFACT_MANIFESTS`); any other root needs explicit means. Calibration is not a
+full corpus replay, but still incurs ordinary dataset preparation. Train/validation image
+disjointness belongs in data preparation; retain the prepared selections when using the
+default sources.
 
 `recipe.sequence_length` updates training lengths without changing RoPE. Source serialization,
 crop, packing or split changes require compatible calibration and a fresh data stream.
