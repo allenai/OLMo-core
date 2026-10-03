@@ -35,6 +35,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         n_routed_experts=64,
         num_experts_per_tok=4,
         original_num_experts_per_tok=None,
+        reference_num_experts_per_tok=None,
         num_hidden_layers=32,
         num_attention_heads=32,
         num_key_value_heads=None,
@@ -112,6 +113,7 @@ class Olmo3MoeConfig(PretrainedConfig):
         self.n_routed_experts = n_routed_experts
         self.num_experts_per_tok = num_experts_per_tok
         self.original_num_experts_per_tok = original_num_experts_per_tok
+        self.reference_num_experts_per_tok = reference_num_experts_per_tok
         assert gating_function in [
             "softmax",
             "sigmoid",

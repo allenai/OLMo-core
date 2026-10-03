@@ -419,6 +419,16 @@ class Olmo3MoeRouter(nn.Module):
         self.hidden_size = config.hidden_size
         self.num_experts_per_tok = config.num_experts_per_tok
         self.original_num_experts_per_tok = config.original_num_experts_per_tok
+        self.reference_num_experts_per_tok = config.reference_num_experts_per_tok
+        if self.reference_num_experts_per_tok is not None:
+            if not (
+                1 <= self.num_experts_per_tok <= self.reference_num_experts_per_tok <= config.n_routed_experts
+                and config.gating_function == "softmax"
+                and config.normalize_expert_weights == 1.0
+                and config.restore_weight_scale
+                and config.original_num_experts_per_tok is None
+            ):
+                raise ValueError("Unsupported reference-scaled routing configuration")
         self.gate = nn.Linear(self.hidden_size, config.n_routed_experts, bias=False)
         self.normalize_expert_weights = config.normalize_expert_weights
         self.restore_weight_scale = config.restore_weight_scale
@@ -436,7 +446,8 @@ class Olmo3MoeRouter(nn.Module):
         else:
             raise NotImplementedError(self.gating_function)
 
-        expert_weights, expert_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
+        selection_k = self.reference_num_experts_per_tok or self.num_experts_per_tok
+        expert_weights, expert_indices = torch.topk(scores, selection_k, dim=-1)
 
         if self.normalize_expert_weights is not None:
             expert_weights = expert_weights.div(
@@ -449,7 +460,7 @@ class Olmo3MoeRouter(nn.Module):
             )
 
         if self.restore_weight_scale:
-            expert_weights = expert_weights * self.num_experts_per_tok
+            expert_weights = expert_weights * selection_k
 
         if (
             self.original_num_experts_per_tok is not None
@@ -460,7 +471,10 @@ class Olmo3MoeRouter(nn.Module):
                 * (self.original_num_experts_per_tok / self.num_experts_per_tok) ** 0.5
             )
 
-        return expert_weights, expert_indices
+        return (
+            expert_weights[..., : self.num_experts_per_tok].contiguous(),
+            expert_indices[..., : self.num_experts_per_tok].contiguous(),
+        )
 
 
 class Olmo3MoeCausalConv1d(nn.Conv1d):
