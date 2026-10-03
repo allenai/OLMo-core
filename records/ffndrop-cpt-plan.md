@@ -43,6 +43,28 @@ the base swapped to each CPT export, on contradiction / oolong / nq / outlier, d
 - FLOP meter charges dense FFN cost on the drop arm (CPT is amortized, so this is only a wall-clock note).
 
 ## Status
+- 2026-10-03 05:30: **SFT results** (routed `ffnmoe-t10`, L12+, two-sided target 0.10 -- both drop-CPT runs
+  converged to it like the base-model runs; meter actual/dense 0.900/0.885 vs base-model 0.880/0.876 on the
+  same packed pricing, so ~1-2% more FLOPs; real-length PF below scaled from the results35 numbers).
+  Eval sets = fs35 ladders (contra eval_size 500/rung, nq 600/rung), routing ON at eval.
+
+  | setting | run | 2k | 8k | 16k | 32k | mean | ~PF |
+  |---|---|---|---|---|---|---|---|
+  | contra 28M | base -> routed | .935 | .881 | .790 | .627 | .808 | 515 |
+  | contra 28M | **drop-CPT -> routed** | .924 | .871 | .814 | .687 | **.824** | ~541 |
+  | contra | dense 14M / 28M | .909/.967 | .836/.932 | .751/.873 | .592/— | .772/.924* | 337/674 |
+  | nq 32M | base -> routed | .977 | .915 | .818 | .700 | .853 | 572 |
+  | nq 32M | **drop-CPT -> routed** | .972 | .908 | .857 | .778 | **.879** | ~586 |
+  | nq | dense 16M / 32M | .977/.977 | .917/.930 | .857/.885 | .760/.837 | .878/.907 | 379/758 |
+
+  (*dense-28M contra lacks its 32k rung.) Read: drop-CPT lifts routed SFT exactly where it used to lose --
+  16k/32k (contra 32k +.06, nq 32k +.08, nq 16k +.04; 2k/8k within noise) -- but neither point reaches the
+  dense frontier at matched FLOPs: nq ~.017 below log-interpolated dense at ~586 PF (base routed was ~.04
+  below; drop-CPT routed matches dense-16M's .878 at ~1.55x its FLOPs); contra on the 3 rungs dense-28M has
+  (2k/8k/16k) .870 vs ~.895 interpolated dense (base routed .869 -- no change there; the gain is all 32k).
+  **Confound:** without the dense-CPT control, the 16k/32k gains may be the long-context CPT data itself,
+  which would lift dense SFT too and move the frontier. Cheapest disambiguation: dense SFT from the drop-CPT
+  base on the same two settings (`FS35_BASE=... FS35_BASE_TAG=-bfdrop launch_grid35.py --arms dense`).
 - 2026-10-03 04:33: **drop-CPT finished (exit 0) and its probe is in** -- same dev rows, same drop pattern as
   the base probe (⚠ eval_size=32 rows): CE r=0 1.264, r=0.25 1.346 (+0.08), r=0.5 1.467 (+0.20),
   r=0.75 1.656 (+0.39) vs base +0.58/+2.73/+6.87 -- the null-FFN penalty shrank ~7-17x. Dense quality at r=0
