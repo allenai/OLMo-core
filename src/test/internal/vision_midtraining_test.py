@@ -1474,3 +1474,35 @@ def test_merged_stage_isolates_dead_embedding_rows(merged_stage, mixed_recipe):
     assert all(
         g.params != ["*lm.embeddings.weight"] for g in eight_k.train_module.optim.group_overrides
     )
+
+
+def test_stage1_v4_samples_each_source_by_passes_times_rows(merged_stage):
+    """v4 keeps v3's sources and means and samples each source in proportion to its planned
+    passes x rows; at its text share the text gets one pass's loss mass."""
+    from olmo_core.internal.vision_alignment_data import (
+        STAGE1_V3_SOURCE_SIZES,
+        STAGE1_V4_EPOCHS,
+        STAGE1_V4_LOSS_TARGETS,
+        STAGE1_V4_VISUAL_LOSS_MASS,
+    )
+
+    text_mass = 2_277_632 * 65_500.0
+    share = text_mass / (text_mass + STAGE1_V4_VISUAL_LOSS_MASS)
+    config = merged_stage.build(
+        "--recipe.visual_data=stage1_v4", f"--recipe.text_loss_share={share}"
+    )
+    assert config.recipe.visual_loss_shares == STAGE1_V4_LOSS_TARGETS
+    weights = config.dataset.sampling_weights()
+    planned = {
+        name: STAGE1_V4_EPOCHS[name] * STAGE1_V3_SOURCE_SIZES[name] for name in STAGE1_V4_EPOCHS
+    }
+    visual = {name: weights[name] for name in planned}
+    total_weight, total_planned = sum(visual.values()), sum(planned.values())
+    for name in planned:
+        assert visual[name] / total_weight == pytest.approx(planned[name] / total_planned, rel=1e-9)
+    # Per text example, the vision examples drawn match the planned draws per text pass.
+    assert sum(visual.values()) / weights["text_midtraining"] == pytest.approx(
+        total_planned / 2_277_632, rel=1e-9
+    )
+    v3 = merged_stage.build()
+    assert v3.recipe.visual_loss_shares != STAGE1_V4_LOSS_TARGETS

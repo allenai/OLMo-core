@@ -75,6 +75,7 @@ from .vision_alignment_data import (
     DEFAULT_ALIGNMENT_ARTIFACT_ROOT,
     STAGE1_V3_LOSS_TARGETS,
     STAGE1_V3_MEAN_LOSS_WEIGHTS,
+    STAGE1_V4_LOSS_TARGETS,
     build_stage1_v3_sources,
 )
 from .vision_midtraining_data import (
@@ -199,9 +200,12 @@ class MixedMidtrainingRecipeConfig(Config):
     :attr:`~olmo_core.data.multimodal.mixture_data_loader.MixtureDataLoaderConfig.batch_prefetch_depth`).
     ``0`` packs and collates on the trainer's thread."""
     visual_data: str = "midtraining"
-    """Visual sources: ``midtraining`` (Rustin's eight groups) or ``stage1_v3`` (the Molmo2
+    """Visual sources: ``midtraining`` (Rustin's eight groups), ``stage1_v3`` (the Molmo2
     Stage-1 v3 mixture, as alignment's perception and joint use it: one sampled annotation per
-    example, its calibrated means, and its loss shares within the visual share)."""
+    example, its calibrated means, and its loss shares within the visual share) or ``stage1_v4``
+    (the same sources and means with the loss shares of
+    :data:`~olmo_core.internal.vision_alignment_data.STAGE1_V4_LOSS_TARGETS`, which set each
+    source's passes for the merged mid-training + long-context stage)."""
     compile_loss: bool = True
     """Run the chunked weighted loss's per-chunk math as static-shape ``torch.compile`` graphs
     (see :attr:`~olmo_core.nn.vision.MultimodalLMConfig.compile_loss`) instead of eagerly."""
@@ -288,8 +292,10 @@ def _build_recipe(
             continue
         if type(value) is not int or value < minimum:
             raise OLMoConfigurationError(f"recipe.{name} must be an integer of at least {minimum}")
-    if recipe.visual_data not in ("midtraining", "stage1_v3"):
-        raise OLMoConfigurationError("recipe.visual_data must be midtraining or stage1_v3")
+    if recipe.visual_data not in ("midtraining", "stage1_v3", "stage1_v4"):
+        raise OLMoConfigurationError(
+            "recipe.visual_data must be midtraining, stage1_v3 or stage1_v4"
+        )
     if (
         isinstance(recipe.text_loss_share, bool)
         or not isfinite(recipe.text_loss_share)
@@ -1086,11 +1092,14 @@ def build_config(
         ).build_tokenizer()
         model = _build_lm_model(recipe, text, token_ids)
     model.compile_loss = recipe.compile_loss
-    stage1_v3 = recipe.visual_data == "stage1_v3" and recipe.text_loss_share < 1.0
+    # v4 is v3's sources and calibration with its own loss split.
+    stage1_v3 = recipe.visual_data in ("stage1_v3", "stage1_v4") and recipe.text_loss_share < 1.0
     if stage1_v3:
         means = dict(_STAGE1_V3_MEANS.get(recipe.sequence_length, {}))
         recipe.visual_example_weights = {}
-        recipe.visual_loss_shares = dict(STAGE1_V3_LOSS_TARGETS)
+        recipe.visual_loss_shares = dict(
+            STAGE1_V4_LOSS_TARGETS if recipe.visual_data == "stage1_v4" else STAGE1_V3_LOSS_TARGETS
+        )
     else:
         means = dict(DEFAULT_VISUAL_MEAN_LOSS_WEIGHTS) if recipe.text_loss_share < 1.0 else {}
     if not masked_text:
