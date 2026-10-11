@@ -17,6 +17,7 @@ from olmoe3_hero_mt_plan import (
     END,
     LR,
     MIX_SHA256,
+    PT_STEP,
     REQUESTED_TOKENS,
     SEED,
     SMOKE_END,
@@ -27,10 +28,20 @@ from olmoe3_hero_mt_plan import (
 from olmoe3_lr_sweep_watch import atomic_json
 
 import olmo_core
-from olmo_core.data import InstanceFilterConfig, NumpyDataLoaderConfig, NumpyFSLDatasetConfig
+from olmo_core.data import (
+    InstanceFilterConfig,
+    NumpyDataLoaderConfig,
+    NumpyFSLDatasetConfig,
+)
 from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
 from olmo_core.distributed.utils import get_rank
-from olmo_core.internal.experiment import CliContext, DataComponents, SubCmd, build_config, main
+from olmo_core.internal.experiment import (
+    CliContext,
+    DataComponents,
+    SubCmd,
+    build_config,
+    main,
+)
 from olmo_core.optim.scheduler import CosWithWarmup
 from olmo_core.train import Duration
 from olmo_core.train.common import LoadStrategy
@@ -110,7 +121,7 @@ class MTAudit(hero.HeroAudit):
                 weights_and_buffers_sampled_exact=True,
                 optimizer_reset=True,
                 data_reset=True,
-                source_step=120000,
+                source_step=PT_STEP,
             )
             atomic_json(Path(self.output_dir) / f"initial-mt-transfer-rank{get_rank()}.json", proof)
         else:
@@ -197,7 +208,7 @@ def trainer_config(common):
     wb.tags = [
         r.arm,
         "midtraining",
-        "decayed-2t-source",
+        "decayed-12t400b-source",
         "mt20",
         "cosine",
         "64g",
@@ -240,6 +251,8 @@ def validate():
             c.as_dict(json_safe=True)
             tm, tr = c.train_module, c.trainer
             assert (c.model.num_active_params, c.model.num_params) == (794_233_472, 12_496_341_632)
+            source_model = json.loads((r.source / "config.json").read_text())["model"]
+            assert json.loads(json.dumps(c.model.as_config_dict())) == source_model
             assert c.data_loader.global_batch_size == BATCH and tm.rank_microbatch_size == 32768
             assert c.dataset.source_mixture_config.requested_tokens == REQUESTED_TOKENS
             assert c.data_loader.seed == SEED
