@@ -131,6 +131,31 @@ class HeroMTPlanTest(unittest.TestCase):
         self.assertTrue(routers)
         self.assertTrue(all(router.get("emo") for router in routers))
 
+    def test_eval_pins_match_2t_mt20(self):
+        self.assertEqual(plan.EVAL_ROOT, plan.MOUNT / "scratch" / plan.CAMPAIGN)
+        self.assertEqual(plan.CORE_REF, "b1fd2c9746e88baeb20e372bdca340d788d0f7e5")
+        self.assertEqual(plan.HELPER_REF, "3542d99ebeb6d156887ed1eaf2871cff5f07666d")
+
+    @unittest.skipUnless(plan.MOUNT.is_mount(), "verified_copy refuses non-Weka storage")
+    def test_verified_copy(self):
+        source = self.checkpoint(self.root / "src/step2", 2)
+        (source / "model_and_optim/__0_0.distcp").write_bytes(b"weights")
+        destination = self.root / "eval/step2/olmo-core"
+        receipt = plan.verified_copy(source, destination, 2)
+        self.assertTrue(receipt["all_file_hashes_verified"])
+        self.assertFalse(destination.with_name("olmo-core.partial").exists())
+        self.assertEqual((destination / "model_and_optim/__0_0.distcp").read_bytes(), b"weights")
+        self.assertEqual(plan.verified_copy(source, destination, 2), receipt)
+        with self.assertRaises(AssertionError):
+            plan.verified_copy(source, destination, 500)
+
+    @unittest.skipUnless(
+        (plan.ROOT / "olmo35-small-12t400b-mt20-20261011-emo" / f"step{plan.END}").is_dir(),
+        "final MT checkpoint is not mounted",
+    )
+    def test_final_checkpoint_is_ready(self):
+        self.assertTrue(plan.ready(plan.runs()[0], plan.END))
+
     def test_mixture_is_the_mt20_mixture(self):
         self.assertEqual(hashlib.sha256(MIX.read_bytes()).hexdigest(), plan.MIX_SHA256)
 
