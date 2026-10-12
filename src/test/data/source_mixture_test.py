@@ -430,7 +430,109 @@ def test_dataset_mixture_breaks_equal_source_remainders_by_capacity(tmp_path: Pa
     )
 
 
-def test_dataset_mixture_preserves_source_ratios_when_paths_hit_capacity(tmp_path: Path, caplog):
+@pytest.mark.parametrize(
+    ("path_sizes", "expected_source"),
+    [([[10], [9, 9]], 0), ([[9, 9], [10]], 1)],
+)
+def test_dataset_mixture_breaks_equal_remainders_by_whole_path_capacity(
+    tmp_path: Path, path_sizes, expected_source
+):
+    sources = []
+    for source_idx, source_path_sizes in enumerate(path_sizes):
+        paths = []
+        for path_idx, size in enumerate(source_path_sizes):
+            path = tmp_path / f"source_{source_idx}_{path_idx}.bin"
+            np.zeros(size, dtype=np.uint32).tofile(path)
+            paths.append(str(path))
+        sources.append(
+            SourceMixtureConfig(source_name=str(source_idx), target_ratio=0.5, paths=paths)
+        )
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=10,
+        source_list=SourceMixtureList(sources),
+        global_batch_size=10,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    selected_tokens = [
+        sum(item.tokens for item in source.path_tokens) for source in mixture.sources
+    ]
+    assert selected_tokens[expected_source] == 10
+    assert sum(selected_tokens) == 10
+
+
+def test_dataset_mixture_counts_allowed_repetitions_in_whole_path_capacity(tmp_path: Path):
+    repeated_path = tmp_path / "repeated.bin"
+    bounded_path = tmp_path / "bounded.bin"
+    np.zeros(15, dtype=np.uint32).tofile(repeated_path)
+    np.zeros(10, dtype=np.uint32).tofile(bounded_path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=30,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="repeated",
+                    target_ratio=0.5,
+                    paths=[str(repeated_path)],
+                    max_repetition_ratio=2.0,
+                ),
+                SourceMixtureConfig(
+                    source_name="bounded", target_ratio=0.5, paths=[str(bounded_path)]
+                ),
+            ]
+        ),
+        global_batch_size=30,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    selected_tokens = [
+        sum(item.tokens for item in source.path_tokens) for source in mixture.sources
+    ]
+    assert selected_tokens == [20, 10]
+
+
+def test_dataset_mixture_rejects_zero_sequence_capacity_before_materializing_repetitions(
+    tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "source.bin"
+    np.zeros(9, dtype=np.uint32).tofile(path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=10,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=1_000_000,
+                )
+            ]
+        ),
+        global_batch_size=10,
+        quiet=True,
+        render_tables=False,
+    )
+
+    def unexpected_materialization(**kwargs):
+        pytest.fail("source paths were materialized despite zero complete-sequence capacity")
+
+    monkeypatch.setattr(config, "get_paths_and_tokens_for_source", unexpected_materialization)
+
+    with pytest.raises(OLMoConfigurationError, match="provide at most 0 instances"):
+        config.build(npdtype=np.uint32, sequence_length=10)
+
+
+@pytest.mark.parametrize("processes", [1, 2])
+def test_dataset_mixture_preserves_source_ratios_when_paths_hit_capacity(
+    tmp_path: Path, caplog, processes
+):
     caplog.set_level(logging.INFO, logger="olmo_core.data.source_mixture")
     source_paths = []
     for name, size in (
@@ -452,6 +554,7 @@ def test_dataset_mixture_preserves_source_ratios_when_paths_hit_capacity(tmp_pat
             ]
         ),
         global_batch_size=200,
+        processes=processes,
         quiet=True,
         render_tables=True,
     )
