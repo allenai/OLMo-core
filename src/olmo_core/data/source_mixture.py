@@ -384,39 +384,39 @@ class SourceMixtureDatasetConfig(Config):
         # Apply Hamilton's method for rounding, but respect capacity constraints
         # https://mathematics-democracy-institute.org/apportionment/
         additional_instances_needed = requested_instances - sum(int_instances)
-        if additional_instances_needed > 0:
-            # Find indices that have capacity for more instances
+        while additional_instances_needed > 0:
             eligible_indices = [
                 idx
                 for idx in range(len(int_instances))
                 if int_instances[idx] < all_path_tokens[idx].max_tokens // sequence_length
             ]
+            if not eligible_indices:
+                break
 
-            if eligible_indices:
-                # Distribute base amount evenly among eligible paths
-                base, leftover = divmod(additional_instances_needed, len(eligible_indices))
-                if base:
-                    for idx in eligible_indices:
-                        max_instances = all_path_tokens[idx].max_tokens // sequence_length
-                        # Add base amount but don't exceed max capacity
-                        can_add = min(base, max_instances - int_instances[idx])
-                        int_instances[idx] += can_add
+            # Distribute base amounts evenly, repeating if some paths hit their caps.
+            base = additional_instances_needed // len(eligible_indices)
+            if base:
+                for idx in eligible_indices:
+                    max_instances = all_path_tokens[idx].max_tokens // sequence_length
+                    int_instances[idx] += min(base, max_instances - int_instances[idx])
+            else:
+                # Use fractional remainders to allocate the final instances.
+                candidates_with_remainders = [(remainders[idx], idx) for idx in eligible_indices]
+                candidates_with_remainders.sort(reverse=True)
+                for _, idx in candidates_with_remainders[:additional_instances_needed]:
+                    int_instances[idx] += 1
 
-                # Recalculate how many we still need after base distribution
-                additional_instances_needed = requested_instances - sum(int_instances)
+            additional_instances_needed = requested_instances - sum(int_instances)
 
-                # Distribute remaining by largest remainders (Hamilton's method)
-                if additional_instances_needed > 0:
-                    # Only consider paths that still have capacity
-                    candidates_with_remainders = [
-                        (remainders[idx], idx)
-                        for idx in eligible_indices
-                        if int_instances[idx] < all_path_tokens[idx].max_tokens // sequence_length
-                    ]
-                    candidates_with_remainders.sort(reverse=True)
-
-                    for _, idx in candidates_with_remainders[:additional_instances_needed]:
-                        int_instances[idx] += 1
+        if additional_instances_needed > 0:
+            max_possible_instances = sum(
+                path_token.max_tokens // sequence_length for path_token in all_path_tokens
+            )
+            raise OLMoConfigurationError(
+                "Insufficient source capacity to complete requested training steps: "
+                f"need {requested_instances} instances, but configured paths provide at most "
+                f"{max_possible_instances}"
+            )
 
         final_tokens_per_path = [inst * sequence_length for inst in int_instances]
 
