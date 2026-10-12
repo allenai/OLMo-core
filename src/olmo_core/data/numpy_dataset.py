@@ -1412,13 +1412,15 @@ class NumpyPackedFSLDataset(NumpyFSLDatasetBase):
                 # document boundary. The loaded documents give the lengths exactly.
                 doc_lens = [document.numel() for document in document_token_ids]
                 if (padding := input_ids.numel() - sum(doc_lens)) > 0:
-                    # Keep the scanner's padding segmentation, including one segment per EOS
-                    # padding token. With BOS, include the final real token to detect a boundary
-                    # between the last document and padding (e.g. when padding is BOS).
-                    if self.bos_token_id is None:
-                        doc_lens.extend(
-                            get_document_lengths(input_ids[-padding:], self.eos_token_id).tolist()
-                        )
+                    # Keep the scanner's padding segmentation. Include the final real token so a
+                    # boundary between the last document and the padding is detected (e.g. when
+                    # padding is BOS), and so that ``get_document_lengths`` -- which collapses a
+                    # run of consecutive EOS boundaries (EOS-as-pad tokenizers) into one empty
+                    # document -- sees the same run it would see when scanning the whole instance.
+                    if not doc_lens:
+                        doc_lens = get_document_lengths(
+                            input_ids, self.eos_token_id, self.bos_token_id
+                        ).tolist()
                     else:
                         tail_lens = get_document_lengths(
                             input_ids[-padding - 1 :], self.eos_token_id, self.bos_token_id

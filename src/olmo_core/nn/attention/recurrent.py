@@ -17,6 +17,7 @@ from olmo_core.distributed.parallel.context_parallel import (
 from olmo_core.nn.attention.base import SequenceMixer, SequenceMixerConfig
 from olmo_core.nn.attention.flash_linear_attn_api import (
     dispatch_chunk_gated_delta_rule,
+    dispatch_fused_recurrent_gated_delta_rule,
     has_fla,
 )
 from olmo_core.nn.attention.ring import (
@@ -29,6 +30,83 @@ from olmo_core.nn.feed_forward import ActivationFunction
 
 if TYPE_CHECKING:
     from olmo_core.nn.transformer.init import InitMethod
+
+
+class GatedDeltaNetStateCache(nn.Module):
+    """
+    Inference cache for :class:`GatedDeltaNet` decoding. Unlike attention (which caches keys and
+    values), a linear-RNN mixer caches two things: the short-convolution windows (the last
+    ``conv_size - 1`` inputs of each of the q/k/v convs) and the recurrent delta-rule state.
+
+    The conv states are fixed-shape and pre-allocated; the recurrent state is whatever the fla
+    kernel returns from prefill, so it's stored as a plain attribute rather than a buffer.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        key_dim: int,
+        value_dim: int,
+        conv_width: int,
+        device: torch.device,
+        dtype: torch.dtype = torch.bfloat16,
+    ):
+        super().__init__()
+        self._batch_size = batch_size
+        self.key_dim = key_dim
+        self.value_dim = value_dim
+        self.conv_width = conv_width
+        self._dtype = dtype
+
+        self.conv_state_q: torch.Tensor
+        self.conv_state_k: torch.Tensor
+        self.conv_state_v: torch.Tensor
+        for name, dim in (
+            ("conv_state_q", key_dim),
+            ("conv_state_k", key_dim),
+            ("conv_state_v", value_dim),
+        ):
+            self.register_buffer(
+                name,
+                torch.zeros(batch_size, dim, conv_width, device=device, dtype=dtype),
+                persistent=False,
+            )
+
+        # Set during prefill from the fla kernel's returned final state.
+        self.recurrent_state: Optional[torch.Tensor] = None
+        self.has_state: bool = False
+
+    def zero_cache(self):
+        self.conv_state_q.zero_()
+        self.conv_state_k.zero_()
+        self.conv_state_v.zero_()
+        self.recurrent_state = None
+        self.has_state = False
+
+    def is_reusable(self, batch_size: int) -> bool:
+        return self._batch_size == batch_size
+
+    def reallocate(self, batch_size: int):
+        self._batch_size = batch_size
+        for name, dim in (
+            ("conv_state_q", self.key_dim),
+            ("conv_state_k", self.key_dim),
+            ("conv_state_v", self.value_dim),
+        ):
+            self.register_buffer(
+                name,
+                getattr(self, name).new_zeros(batch_size, dim, self.conv_width),
+                persistent=False,
+            )
+        self.recurrent_state = None
+        self.has_state = False
+
+    def reset(self, batch_size: int):
+        """Reset the cache for new generation; reallocate if the batch size changed."""
+        if self.is_reusable(batch_size):
+            self.zero_cache()
+        else:
+            self.reallocate(batch_size)
 
 
 class GatedDeltaNet(SequenceMixer):
@@ -68,6 +146,7 @@ class GatedDeltaNet(SequenceMixer):
         conv_size: int = 4,
         conv_bias: bool = False,
         norm_eps: float = 1e-5,
+        fuse_qkv: bool = False,
         dtype: torch.dtype = torch.float32,
         init_device: str = "cpu",
     ):
@@ -82,6 +161,9 @@ class GatedDeltaNet(SequenceMixer):
         self.expand_v = expand_v
         self.allow_neg_eigval = allow_neg_eigval
         self.conv_size = conv_size
+        # Whether a ``kv_grad_mask`` passed to :meth:`forward` detaches the masked tokens' write
+        # channels (soft-token slots). Cleared by ``enable_pooled_soft_tokens(detach_soft_gdn=False)``.
+        self.detach_masked_writes = True
 
         self.head_k_dim = self.head_dim
         self.head_v_dim = int(self.head_dim * self.expand_v)
@@ -93,49 +175,87 @@ class GatedDeltaNet(SequenceMixer):
         assert math.isclose(self.head_dim * expand_v, self.head_v_dim, rel_tol=1e-5)
         assert self.n_v_heads >= self.n_heads and self.n_v_heads % self.n_heads == 0
 
-        self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
-        self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
-        self.w_v = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
+        # q/k/v are three GEMMs off the same x, followed by three depthwise convs. Fusing each
+        # trio into one op is numerically exact (concatenating independent linear maps, and
+        # concatenating depthwise convs along the channel axis) and measured 1.19x on the
+        # projections and 3.66x on the convs at 4B geometry. The two must be fused TOGETHER: the
+        # fused conv needs q|k|v contiguous, which is exactly what the fused projection emits, so
+        # doing only the conv would pay a large concat copy that eats the win.
+        self.fuse_qkv = fuse_qkv
+        self.qkv_dim = 2 * self.key_dim + self.value_dim
+        if fuse_qkv:
+            self.w_qkv = nn.Linear(
+                d_model, self.qkv_dim, bias=False, dtype=dtype, device=init_device
+            )
+        else:
+            self.w_q = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
+            self.w_k = nn.Linear(d_model, self.key_dim, bias=False, dtype=dtype, device=init_device)
+            self.w_v = nn.Linear(
+                d_model, self.value_dim, bias=False, dtype=dtype, device=init_device
+            )
         self.w_a = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
         self.w_b = nn.Linear(d_model, self.n_v_heads, bias=False, dtype=dtype, device=init_device)
 
         self.A_log = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
         self.dt_bias = nn.Parameter(torch.empty(self.n_v_heads, dtype=dtype, device=init_device))
 
-        self.q_conv1d = CausalConv1d(
-            hidden_size=self.key_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
-        self.k_conv1d = CausalConv1d(
-            hidden_size=self.key_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
-        self.v_conv1d = CausalConv1d(
-            hidden_size=self.value_dim,
-            kernel_size=conv_size,
-            bias=conv_bias,
-            activation=ActivationFunction.silu.value,
-            dtype=dtype,
-            init_device=init_device,
-        )
+        def _conv(hidden: int) -> CausalConv1d:
+            return CausalConv1d(
+                hidden_size=hidden,
+                kernel_size=conv_size,
+                bias=conv_bias,
+                activation=ActivationFunction.silu.value,
+                dtype=dtype,
+                init_device=init_device,
+            )
+
+        if fuse_qkv:
+            # Depthwise, so one conv over the concatenated channels is exactly the three convs.
+            self.qkv_conv1d = _conv(self.qkv_dim)
+        else:
+            self.q_conv1d = _conv(self.key_dim)
+            self.k_conv1d = _conv(self.key_dim)
+            self.v_conv1d = _conv(self.value_dim)
         self.w_g = nn.Linear(d_model, self.value_dim, bias=False, dtype=dtype, device=init_device)
         self.o_norm = FusedRMSNormGated(self.head_v_dim, eps=norm_eps, device=init_device)  # type: ignore
         self.w_out = nn.Linear(self.value_dim, d_model, bias=False, dtype=dtype, device=init_device)
 
         self.cp_enabled = False
 
+        if fuse_qkv:
+            self._register_load_state_dict_pre_hook(self._fuse_qkv_load_hook, with_module=False)
+
+        # Inference state cache (conv windows + recurrent state), set by :meth:`init_state_cache`
+        # during cached generation. ``None`` during training and non-cached forward passes.
+        self.state_cache: Optional[GatedDeltaNetStateCache] = None
+
+    def init_state_cache(self, batch_size: int, max_seq_len: int):
+        """
+        Allocate (or reset) the decoding state cache. ``max_seq_len`` is accepted for parity with
+        the attention KV-cache interface but is unused: the recurrent state is constant-size.
+        """
+        del max_seq_len
+        param = (self.w_qkv if self.fuse_qkv else self.w_q).weight
+        if self.state_cache is None:
+            self.state_cache = GatedDeltaNetStateCache(
+                batch_size=batch_size,
+                key_dim=self.key_dim,
+                value_dim=self.value_dim,
+                conv_width=self.conv_size - 1,
+                device=param.device,
+                dtype=param.dtype,
+            )
+        else:
+            self.state_cache.reset(batch_size)
+
     def forward(
         self,
         x: torch.Tensor,
         cu_doc_lens: Optional[torch.Tensor] = None,
+        cache_leftpad: Optional[torch.Tensor] = None,
+        block_keep: Optional[torch.Tensor] = None,
+        kv_grad_mask: Optional[torch.Tensor] = None,
+        soft_keep: Optional[torch.Tensor] = None,
         **kwargs,
     ) -> torch.Tensor:
         """
@@ -145,32 +265,236 @@ class GatedDeltaNet(SequenceMixer):
         :param cu_doc_lens: Cumulative document lengths in the input ``x``, a 1D
             :class:`torch.int32` tensor that should always have one more element than there
             are documents (the first element in the tensor should always be ``0``).
+        :param cache_leftpad: Per-row count of **left-padding** tokens, shape ``(batch_size,)``
+            (see :func:`~olmo_core.data.utils.attention_mask_to_cache_leftpad`). Unlike attention,
+            this recurrent mixer's causal conv + delta-rule scan is not automatically invariant to
+            garbage history: a left-padded row's real tokens would otherwise be corrupted by
+            whatever the pad tokens' embeddings happen to convolve/decay into. When given (and this
+            is a multi-token, i.e. prefill, call) every padded position's query/key/value is zeroed
+            before the causal conv (matching the conv's own causal zero-init, so the first few real
+            tokens see an all-zero history exactly as they would with no padding at all) and its
+            gate/decay is forced to a pure pass-through (``beta=0``, ``g=0`` -> the recurrent state
+            is untouched at that step), so the state after processing the row is bit-identical to
+            processing only its real tokens from a zero initial state. Ignored during single-token
+            cached decode (no padding is ever fed there).
+        :param block_keep: Optional ``(batch_size, seq_len)`` bool from per-token block skipping
+            (:mod:`olmo_core.nn.block_skip`), ``False`` for tokens that skip this block. This is
+            the recurrent analogue of "not a key" in attention: a skipped token neither writes the
+            recurrent state (``beta=0``, ``g=0`` make the delta-rule update the identity at that
+            step) nor leaks into its neighbours through the causal short convolution (its ``k``/``v``
+            are zeroed before the conv). Its own read (``q``) is left intact so the output at that
+            position is well defined; the block-skip mixing discards it. Ignored during single-token
+            cached decode, where generated tokens always write (same convention as the KV router).
+        :param kv_grad_mask: Optional ``(batch_size, seq_len)`` bool, the same mask the attention
+            layers receive: ``False`` tokens have every channel through which they influence OTHER
+            positions -- ``q``, ``k``, ``v`` (before the causal conv, so the conv leak is covered
+            too), ``beta`` and ``g`` (the state write) -- DETACHED. Forward values are unchanged; only
+            the backward graph is cut, so no parameter receives gradient through such a token's
+            contribution to the recurrent state (soft-token slots must play no role in training:
+            records/pooled-doc-kv-attention.md, 2026-09-08). Honoured only while
+            ``self.detach_masked_writes`` is True (the default).
+        :param soft_keep: Optional ``(batch_size, seq_len)`` float keep probability ``p`` in
+            ``[0, 1]`` (differentiable token removal, the soft twin of ``block_keep``): ``beta`` and
+            ``g`` (log decay) are scaled by ``p`` (``p = 0`` -> identity state step), and the short
+            conv runs :meth:`~olmo_core.nn.convolution.CausalConv1d.forward_soft_keep`, whose
+            windows hold the previous KEPT tokens -- so for ``p in {0, 1}`` the mixer computes
+            exactly what it computes on the compacted row. ``p = 1`` everywhere matches the plain
+            path up to kernel numerics. Plain forwards only (no packing / cache / CP).
 
         :returns: The output with shape ``(batch_size, seq_len, d_model)``.
         """
         del kwargs  # Ignore any extra kwargs passed from attention interface
         B, T_og, _ = x.shape
 
+        # Positions strictly before a row's left-padding length are pad; ``None`` once there is
+        # nothing to mask, so the unpadded path stays allocation-free and bit-identical.
+        pad_mask: Optional[torch.Tensor] = None
+        if cache_leftpad is not None and T_og > 1:
+            leftpad = cache_leftpad.to(device=x.device).reshape(B, 1)
+            if bool((leftpad > 0).any()):
+                if self.cp_enabled:
+                    raise RuntimeError(
+                        "GatedDeltaNet does not support left-padding with context parallelism"
+                    )
+                if cu_doc_lens is not None:
+                    raise RuntimeError(
+                        "GatedDeltaNet does not support left-padding with packed cu_doc_lens"
+                    )
+                pad_mask = torch.arange(T_og, device=x.device).unsqueeze(0) < leftpad
+
+        # Cached decoding: once prefill has populated the cache, every subsequent single-token step
+        # advances the recurrent state instead of recomputing over the whole sequence. A multi-token
+        # call (prefill) always takes the parallel chunk path and, if caching, seeds the state.
+        cache = self.state_cache
+        use_precomputed = cache is not None and cache.has_state and T_og == 1
+        # Chunked prefill: a multi-token call arriving when the cache already holds state is the
+        # next slice of one long prompt, so it must continue the conv window and the recurrent
+        # state rather than restart from zero (see :meth:`CausalConv1d.forward_with_state`).
+        continue_prefill = cache is not None and cache.has_state and T_og > 1
+
         # shape: (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_heads * head_k_dim),
         #        (batch_size, seq_len, n_v_heads * head_v_dim)
-        q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
+        if self.fuse_qkv:
+            # Deliberately NOT split here: q/k/v stay in one tensor through the masks and the
+            # conv, and are split only afterwards. Splitting early and re-concatenating before the
+            # conv costs a full qkv-sized copy, which measured 0.91x -- slower than not fusing.
+            qkv = self.w_qkv(x)
+            q = k = v = None
+        else:
+            qkv = None
+            q, k, v = self.w_q(x), self.w_k(x), self.w_v(x)
 
         beta = self.w_b(x).sigmoid()
         if self.allow_neg_eigval:
             beta = beta * 2.0
         g = -self.A_log.float().exp() * F.softplus(self.w_a(x).float() + self.dt_bias)
 
+        if soft_keep is not None and not use_precomputed:
+            if cu_doc_lens is not None or cache is not None or (self.cp_enabled and self.uly is not None):
+                raise NotImplementedError("soft_keep supports plain (no packing / cache / CP) forwards only")
+            pk = soft_keep.to(device=x.device, dtype=torch.float32).unsqueeze(-1)  # (B, T_og, 1)
+            beta = beta * pk.to(beta.dtype)
+            g = g * pk.to(g.dtype)
+
+        if pad_mask is not None:  # computed above; prefill (multi-token) calls only
+            # Zeroing the conv INPUTS makes each real position's causal window see zeros where the
+            # pads are -- exactly what ``CausalConv1d`` feeds an unpadded sequence at its start.
+            # ``beta = 0`` and ``g = 0`` make the delta-rule update the identity across the pad
+            # prefix: ``S_t = S_{t-1} * exp(g_t) + beta_t * k_t (v_t - S_{t-1} k_t)^T`` collapses to
+            # ``S_t = S_{t-1}``, so the state entering the first real token is the unpadded state.
+            not_pad = (~pad_mask).unsqueeze(-1)  # (B, T_og, 1)
+            if self.fuse_qkv:
+                qkv = qkv * not_pad.to(qkv.dtype)
+            else:
+                q = q * not_pad.to(q.dtype)
+                k = k * not_pad.to(k.dtype)
+                v = v * not_pad.to(v.dtype)
+            beta = beta * not_pad.to(beta.dtype)
+            g = torch.where(pad_mask.unsqueeze(-1), torch.zeros_like(g), g)
+
+        if block_keep is not None and not use_precomputed:
+            # Per-token block skipping: no state write, no conv leak (see the docstring). Applied
+            # unconditionally (no host sync) -- multiplying by an all-ones mask is a no-op.
+            keep_f = block_keep.to(device=x.device, dtype=torch.bool).unsqueeze(-1)  # (B, T_og, 1)
+            if self.fuse_qkv:
+                # k and v are the contiguous tail of [q | k | v], so masking them is one slice
+                # multiply; q (the read) is left intact, as in the unfused path.
+                kv = qkv[..., self.key_dim :] * keep_f.to(qkv.dtype)
+                qkv = torch.cat([qkv[..., : self.key_dim], kv], dim=-1)
+            else:
+                k = k * keep_f.to(k.dtype)
+                v = v * keep_f.to(v.dtype)
+            beta = beta * keep_f.to(beta.dtype)
+            g = torch.where(keep_f, g, torch.zeros_like(g))
+
+        if kv_grad_mask is not None and not use_precomputed and self.detach_masked_writes:
+            # Sever the backward through the masked tokens' write channels (see the docstring).
+            # torch.where(mask, t, t.detach()) keeps the forward value bit-identical.
+            # q is detached too: the causal short conv mixes a position's q projection into the
+            # next conv_size-1 positions' queries, so an attached slot q would still leak gradient
+            # into the slot from its neighbours' reads (measured: the slot kept ~40% of its
+            # gradient with k/v/beta/g alone). The slot's own read is a dead end regardless.
+            m = kv_grad_mask.to(device=x.device, dtype=torch.bool).unsqueeze(-1)  # (B, T_og, 1)
+            if self.fuse_qkv:
+                qkv = torch.where(m, qkv, qkv.detach())
+            else:
+                q = torch.where(m, q, q.detach())
+                k = torch.where(m, k, k.detach())
+                v = torch.where(m, v, v.detach())
+            beta = torch.where(m, beta, beta.detach())
+            g = torch.where(m, g, g.detach())
+
         if self.cp_enabled and self.uly is not None:
+            assert (
+                cache is None
+            ), "context parallelism is not supported with inference state caching"
             assert self._cp_group is not None
+            if self.fuse_qkv:
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                qkv = None
             # [B, T_local, C] -> [B, T_total, C/CP]
             q, k = all_to_all_cp2hp([q, k], self._cp_group)
             v = all_to_all_single_cp2hp(v, self._cp_group)
             g, beta = all_to_all_cp2hp([g, beta], self._cp_group)
 
-        q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
-        k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
-        v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
+        if use_precomputed:
+            assert cache is not None
+            if self.fuse_qkv:
+                # The cache keeps three separate conv windows (its layout is shared with the
+                # unfused module). Concatenate them along the channel axis for the fused step,
+                # then write the advanced windows back.
+                st = torch.cat([cache.conv_state_q, cache.conv_state_k, cache.conv_state_v], dim=1)
+                if qkv is None:  # CP split it back apart
+                    qkv = torch.cat([q, k, v], dim=-1)
+                qkv = self.qkv_conv1d.step(qkv, st)
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                kd, vd = self.key_dim, self.value_dim
+                cache.conv_state_q.copy_(st[:, :kd])
+                cache.conv_state_k.copy_(st[:, kd : 2 * kd])
+                cache.conv_state_v.copy_(st[:, 2 * kd : 2 * kd + vd])
+            else:
+                q = self.q_conv1d.step(q, cache.conv_state_q)
+                k = self.k_conv1d.step(k, cache.conv_state_k)
+                v = self.v_conv1d.step(v, cache.conv_state_v)
+        elif continue_prefill:
+            assert cache is not None
+            assert cu_doc_lens is None, "chunked prefill does not support packed cu_doc_lens"
+            # ``forward_with_state`` both consumes and updates each window, so the conv sees the
+            # tokens that preceded this chunk.
+            if self.fuse_qkv:
+                # Same three-window layout as the fused decode step above.
+                st = torch.cat([cache.conv_state_q, cache.conv_state_k, cache.conv_state_v], dim=1)
+                if qkv is None:  # CP split it back apart
+                    qkv = torch.cat([q, k, v], dim=-1)
+                qkv = self.qkv_conv1d.forward_with_state(qkv, st)
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                kd, vd = self.key_dim, self.value_dim
+                cache.conv_state_q.copy_(st[:, :kd])
+                cache.conv_state_k.copy_(st[:, kd : 2 * kd])
+                cache.conv_state_v.copy_(st[:, 2 * kd : 2 * kd + vd])
+            else:
+                q = self.q_conv1d.forward_with_state(q, cache.conv_state_q)
+                k = self.k_conv1d.forward_with_state(k, cache.conv_state_k)
+                v = self.v_conv1d.forward_with_state(v, cache.conv_state_v)
+        else:
+            if cache is not None:
+                # Seed the conv windows from the prefill inputs (pre-convolution).
+                if self.fuse_qkv:
+                    st = self.qkv_conv1d.prefill_state(
+                        qkv if qkv is not None else torch.cat([q, k, v], dim=-1)
+                    )
+                    kd, vd = self.key_dim, self.value_dim
+                    cache.conv_state_q.copy_(st[:, :kd])
+                    cache.conv_state_k.copy_(st[:, kd : 2 * kd])
+                    cache.conv_state_v.copy_(st[:, 2 * kd : 2 * kd + vd])
+                else:
+                    cache.conv_state_q.copy_(self.q_conv1d.prefill_state(q))
+                    cache.conv_state_k.copy_(self.k_conv1d.prefill_state(k))
+                    cache.conv_state_v.copy_(self.v_conv1d.prefill_state(v))
+            if soft_keep is not None:
+                # removal-aware conv: each window holds the previous KEPT tokens (exact at p in {0,1})
+                sk = soft_keep.to(device=x.device)
+                if self.fuse_qkv:
+                    if qkv is None:
+                        qkv = torch.cat([q, k, v], dim=-1)
+                    qkv = self.qkv_conv1d.forward_soft_keep(qkv, sk)
+                    q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+                else:
+                    q = self.q_conv1d.forward_soft_keep(q, sk)
+                    k = self.k_conv1d.forward_soft_keep(k, sk)
+                    v = self.v_conv1d.forward_soft_keep(v, sk)
+            elif self.fuse_qkv:
+                # One depthwise conv over q|k|v, straight from the fused projection -- no copy.
+                # Only CP (above) ever breaks the tensor apart, so the cat is the rare path.
+                if qkv is None:
+                    qkv = torch.cat([q, k, v], dim=-1)
+                qkv = self.qkv_conv1d(x=qkv, cu_seqlens=cu_doc_lens)
+                q, k, v = qkv.split([self.key_dim, self.key_dim, self.value_dim], dim=-1)
+            else:
+                q = self.q_conv1d(x=q, cu_seqlens=cu_doc_lens)
+                k = self.k_conv1d(x=k, cu_seqlens=cu_doc_lens)
+                v = self.v_conv1d(x=v, cu_seqlens=cu_doc_lens)
 
         T = q.size(1)
         q = q.view(B, T, -1, self.head_k_dim)
@@ -182,19 +506,59 @@ class GatedDeltaNet(SequenceMixer):
             q = q.repeat_interleave(repeat_factor, dim=-2)
             k = k.repeat_interleave(repeat_factor, dim=-2)
 
-        o, _ = dispatch_chunk_gated_delta_rule(
-            q=q, k=k, v=v, g=g, beta=beta, cu_seqlens=cu_doc_lens, use_qk_l2norm_in_kernel=True
-        )
+        if pad_mask is not None:
+            # Zeroing the conv inputs above leaves q/k all-zero at the pad positions, and the kernel
+            # L2-normalises them (``use_qk_l2norm_in_kernel``), so a zero vector risks 0/0 -> NaN --
+            # which ``beta = 0`` would NOT cancel, since ``0 * NaN`` is NaN and would poison the
+            # carried state. Those positions contribute nothing by construction, so refill them with
+            # an arbitrary finite vector purely to keep the normalisation well-defined.
+            fill = pad_mask.view(B, pad_mask.shape[1], 1, 1)
+            q = q.masked_fill(fill, 1.0)
+            k = k.masked_fill(fill, 1.0)
+
+        if use_precomputed:
+            assert cache is not None
+            o, new_state = dispatch_fused_recurrent_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                initial_state=cache.recurrent_state,
+                output_final_state=True,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            # Continuing a chunked prefill resumes from the previous chunk's final state; a fresh
+            # prefill starts the recurrence from zero, as before.
+            initial_state = (
+                cache.recurrent_state if (continue_prefill and cache is not None) else None
+            )
+            o, new_state = dispatch_chunk_gated_delta_rule(
+                q=q,
+                k=k,
+                v=v,
+                g=g,
+                beta=beta,
+                cu_seqlens=cu_doc_lens,
+                initial_state=initial_state,
+                output_final_state=cache is not None,
+                use_qk_l2norm_in_kernel=True,
+            )
+
+        if cache is not None:
+            cache.recurrent_state = new_state
+            cache.has_state = True
 
         if self.cp_enabled and self.uly is not None:
             assert self._cp_group is not None
             # [B, T, H/CP, D] -> [B, T/CP, H, D]
             o = all_to_all_single_hp2cp(o, self._cp_group)
 
-        g = self.w_g(x).view(B, T, -1, self.head_v_dim)
+        out_gate = self.w_g(x).view(B, T, -1, self.head_v_dim)
 
         # shape: (batch_size, seq_len, d_model)
-        return self.w_out(self.o_norm(o, g).view(B, T_og, -1))
+        return self.w_out(self.o_norm(o, out_gate).view(B, T_og, -1))
 
     def apply_tp(
         self,
@@ -233,9 +597,8 @@ class GatedDeltaNet(SequenceMixer):
         self._cp_group = cp_mesh.get_group()
         self.cp_enabled = True
 
-        self.q_conv1d.apply_cp(cp_mesh)
-        self.k_conv1d.apply_cp(cp_mesh)
-        self.v_conv1d.apply_cp(cp_mesh)
+        for c in self._convs():
+            c.apply_cp(cp_mesh)
 
     @torch.no_grad()
     def init_weights(
@@ -258,9 +621,9 @@ class GatedDeltaNet(SequenceMixer):
         if init_method == InitMethod.normalized:
             std = d_model**-0.5
 
-        for w in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g):
+        for w in (*self._qkv_projs(), self.w_a, self.w_b, self.w_g):
             init_linear(w, std=std, generator=generator)
-        for w in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
+        for w in self._convs():
             init_linear(w, std=std, generator=generator)
 
         self.A_log.copy_(nn.init.uniform_(self.A_log, a=0, b=16, generator=generator).log())
@@ -283,6 +646,37 @@ class GatedDeltaNet(SequenceMixer):
 
         init_linear(self.w_out, std=std, generator=generator)
 
+    def _qkv_projs(self) -> tuple:
+        """The q/k/v projection modules, fused or split."""
+        return (self.w_qkv,) if self.fuse_qkv else (self.w_q, self.w_k, self.w_v)
+
+    def _convs(self) -> tuple:
+        """The short-convolution modules, fused or split."""
+        return (
+            (self.qkv_conv1d,) if self.fuse_qkv else (self.q_conv1d, self.k_conv1d, self.v_conv1d)
+        )
+
+    def _fuse_qkv_load_hook(
+        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+    ):
+        """Load a SPLIT (``w_q``/``w_k``/``w_v``, ``q_conv1d``/...) checkpoint into the fused layout.
+
+        Every checkpoint trained before the fusion stores the three projections and the three convs
+        separately. Concatenating them along the output-channel axis reproduces the fused weights
+        exactly -- the projections are independent linear maps off the same input, and the convs are
+        depthwise -- so old checkpoints keep loading with no rebuild.
+        """
+        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+
+        def _merge(dst: str, srcs: list, dim: int = 0):
+            keys = [prefix + s for s in srcs]
+            if all(k in state_dict for k in keys) and (prefix + dst) not in state_dict:
+                state_dict[prefix + dst] = torch.cat([state_dict.pop(k) for k in keys], dim=dim)
+
+        _merge("w_qkv.weight", ["w_q.weight", "w_k.weight", "w_v.weight"])
+        _merge("qkv_conv1d.weight", ["q_conv1d.weight", "k_conv1d.weight", "v_conv1d.weight"])
+        _merge("qkv_conv1d.bias", ["q_conv1d.bias", "k_conv1d.bias", "v_conv1d.bias"])
+
     def num_flops_per_token(self, seq_len: int) -> int:
         """
         Compute FLOPs per token for Gated Delta Net.
@@ -304,7 +698,7 @@ class GatedDeltaNet(SequenceMixer):
             * training_factor
             * sum(
                 m.weight.numel()
-                for m in (self.w_q, self.w_k, self.w_v, self.w_a, self.w_b, self.w_g, self.w_out)
+                for m in (*self._qkv_projs(), self.w_a, self.w_b, self.w_g, self.w_out)
             )
         )
 
@@ -337,6 +731,11 @@ class GatedDeltaNetConfig(SequenceMixerConfig[GatedDeltaNet]):
     See :class:`GatedDeltaNet` for a description of the configuration options.
     """
 
+    fuse_qkv: bool = False
+    """
+    Fuse the q/k/v projections into one GEMM and the three short convolutions into one depthwise
+    conv. Numerically exact; split checkpoints load unchanged via a state-dict hook.
+    """
     n_heads: int = 16
     """
     The number of attention heads.

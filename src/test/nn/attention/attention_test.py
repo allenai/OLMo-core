@@ -25,6 +25,7 @@ from olmo_core.nn.attention import (
     RingAttentionLoadBalancerType,
     SlidingWindowAttentionConfig,
     _causal_attention_positions,
+    _LANDMARK_ATTENTION_TYPES,
 )
 from olmo_core.nn.attention.ring import (
     RingContextParallelStyle,
@@ -1980,7 +1981,16 @@ def test_legacy_fused_attention_checkpoint(bias: bool, use_rope: bool):
     assert all(torch.isfinite(p).all() for p in attention.parameters())
 
 
-@pytest.mark.parametrize("name", list(AttentionType))
+# The landmark variants need ``mem_freq`` and ``dilated_sliding_window`` is deprecated, so a bare
+# ``{"name", "n_heads"}`` config cannot build them; they are not part of the legacy-flag contract.
+_LEGACY_USE_FLASH_TYPES = [
+    t
+    for t in AttentionType
+    if t not in _LANDMARK_ATTENTION_TYPES and t != AttentionType.dilated_sliding_window
+]
+
+
+@pytest.mark.parametrize("name", _LEGACY_USE_FLASH_TYPES)
 @pytest.mark.parametrize(
     "use_flash,backend",
     [

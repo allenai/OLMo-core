@@ -1,5 +1,7 @@
+import sys
 import uuid
 from functools import partial
+from pathlib import Path
 from typing import Generator
 
 import pytest
@@ -7,6 +9,11 @@ import torch
 import torch.nn as nn
 
 from olmo_core.io import clear_directory
+
+# A few tests check the library against the prompt/eval helpers in research/common/corpus_reasoning.
+_RESEARCH_COMMON = Path(__file__).resolve().parents[2] / "research" / "common"
+if _RESEARCH_COMMON.is_dir() and str(_RESEARCH_COMMON) not in sys.path:
+    sys.path.append(str(_RESEARCH_COMMON))
 
 
 @pytest.fixture

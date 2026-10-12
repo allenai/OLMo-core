@@ -23,6 +23,11 @@ from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
+from .flop_meter import FlopMeterCallback
+from .block_skip import BlockSkipCallback
+from .kv_route import KVRouteCallback
+from .ffn_token_drop import FFNTokenDropCallback
+from .nested_ffn_moe import NestedFFNMoECallback
 from .profiler import (
     NvidiaProfilerCallback,
     ProfilerCallback,
@@ -50,6 +55,11 @@ __all__ = [
     "GAPMonitorCallback",
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
+    "FlopMeterCallback",
+    "BlockSkipCallback",
+    "KVRouteCallback",
+    "FFNTokenDropCallback",
+    "NestedFFNMoECallback",
     "HFConverterCallback",
     "ProfilerCallback",
     "NvidiaProfilerCallback",

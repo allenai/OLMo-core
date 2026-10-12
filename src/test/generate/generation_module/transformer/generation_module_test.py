@@ -14,11 +14,25 @@ from olmo_core.generate.generation_module.config import GenerationConfig
 from olmo_core.generate.generation_module.transformer.config import (
     TransformerGenerationModuleConfig,
 )
-from olmo_core.nn.attention import AttentionBackendName, AttentionConfig
-from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.attention import (
+    AttentionBackendName,
+    AttentionConfig,
+    GatedDeltaNetConfig,
+)
+from olmo_core.nn.convolution import CausalConv1d
+from olmo_core.nn.feed_forward import FeedForwardConfig
+from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+from olmo_core.nn.lm_head import LMHeadConfig
+from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.transformer import (
+    TransformerBlockConfig,
+    TransformerBlockType,
+    TransformerConfig,
+)
 from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.testing.utils import (
     has_flash_attn_2,
+    requires_fla,
     requires_flash_attn_2,
     requires_gpu,
 )
@@ -28,6 +42,8 @@ from olmo_core.train.train_module.transformer.config import (
 from olmo_core.utils import seed_all
 
 BF16_RTOL = 1e-5
+#: top-2 logit gap below which a bf16 greedy step may legitimately pick either token
+NEAR_TIE_MARGIN = 0.02
 BF16_ATOL = 5e-3
 
 
@@ -40,6 +56,451 @@ def small_transformer_config(n_layers: int = 2, use_rope: bool = True, **kwargs)
         assert isinstance(config.block.sequence_mixer, AttentionConfig)
         config.block.sequence_mixer.rope = None
     return config
+
+
+def small_gdn_transformer_config(
+    n_layers: int = 2, dtype: DType = DType.bfloat16, **kwargs
+) -> TransformerConfig:
+    """A tiny pure-GatedDeltaNet transformer (no attention layers), for exercising the recurrent
+    decode-state cache in isolation (no flash-attn / KV cache involved). ``dtype`` is threaded into
+    every sub-config so the built model is uniformly typed (generation does not autocast)."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=dtype)
+    return TransformerConfig(
+        d_model=128,
+        vocab_size=512,
+        n_layers=n_layers,
+        dtype=dtype,
+        block=TransformerBlockConfig(
+            name=TransformerBlockType.reordered_norm,
+            sequence_mixer=GatedDeltaNetConfig(n_heads=4, dtype=dtype),
+            layer_norm=layer_norm,
+            feed_forward=FeedForwardConfig(hidden_size=256, bias=False, dtype=dtype),
+        ),
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+        **kwargs,
+    )
+
+
+def small_hybrid_gdn_transformer_config(
+    n_layers: int = 4, use_flash: bool = True, dtype: DType = DType.bfloat16, **kwargs
+) -> TransformerConfig:
+    """A tiny hybrid transformer that interleaves GatedDeltaNet and full-attention blocks
+    (pattern ``[gdn, gdn, gdn, attn]``), like the Qwen3.5 dense models. Exercises the GDN recurrent
+    state cache and the attention KV cache together in one decode. ``dtype`` is threaded into every
+    sub-config so the built model is uniformly typed (generation does not autocast)."""
+    layer_norm = LayerNormConfig(name=LayerNormType.rms, bias=False, dtype=dtype)
+    feed_forward = FeedForwardConfig(hidden_size=256, bias=False, dtype=dtype)
+    gdn_block = TransformerBlockConfig(
+        name=TransformerBlockType.reordered_norm,
+        sequence_mixer=GatedDeltaNetConfig(n_heads=4, dtype=dtype),
+        layer_norm=layer_norm,
+        feed_forward=feed_forward,
+    )
+    attn_block = TransformerBlockConfig(
+        name=TransformerBlockType.reordered_norm,
+        sequence_mixer=AttentionConfig(
+            n_heads=4,
+            rope=RoPEConfig(name=RoPEType.default, theta=10_000),
+            use_flash=use_flash,
+            dtype=dtype,
+        ),
+        layer_norm=layer_norm,
+        feed_forward=feed_forward,
+    )
+    return TransformerConfig(
+        d_model=128,
+        vocab_size=512,
+        n_layers=n_layers,
+        dtype=dtype,
+        block={"gdn": gdn_block, "attn": attn_block},
+        block_pattern=["gdn", "gdn", "gdn", "attn"],
+        lm_head=LMHeadConfig(layer_norm=layer_norm, bias=False, dtype=dtype),
+        **kwargs,
+    )
+
+
+@requires_gpu
+@requires_fla
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_generation_module_gdn_cache_equivalence(batch_size: int):
+    """
+    For a GatedDeltaNet model, greedy decoding must produce identical tokens (and matching logits)
+    whether or not the decode-state cache is used. ``use_cache=True`` advances the conv + recurrent
+    state one token at a time; ``use_cache=False`` recomputes the full sequence each step. They must
+    agree -- this is the guarantee the GDN state cache has to uphold.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    # One model -> both runs share identical weights; we only flip use_cache per call.
+    transformer_config = small_gdn_transformer_config(dtype=DType.bfloat16)
+    generation_module = TransformerGenerationModule(
+        model=transformer_config.build(),
+        generation_config=GenerationConfig(
+            max_length=24, do_sample=False, eos_token_id=1, pad_token_id=0, use_cache=True
+        ),
+        device=device,
+    )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    cached_ids, cached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=True,
+    )
+    uncached_ids, uncached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=False,
+    )
+
+    # Greedy decoding -> the chosen tokens must be exactly identical.
+    assert torch.equal(cached_ids, uncached_ids), (
+        f"cached vs uncached GDN decode diverged:\ncached:   {cached_ids.tolist()}\n"
+        f"uncached: {uncached_ids.tolist()}"
+    )
+    # And the underlying logits must match within bf16 tolerance.
+    assert isinstance(cached_logits, torch.Tensor) and isinstance(uncached_logits, torch.Tensor)
+    torch.testing.assert_close(cached_logits, uncached_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("batch_size", [1, 2])
+def test_generation_module_hybrid_gdn_attn_cache_equivalence(batch_size: int):
+    """
+    Same cache-equivalence guarantee as the pure-GDN test, but for a hybrid model that interleaves
+    GatedDeltaNet and full-attention blocks (the Qwen3.5 dense layout). Greedy decoding must give
+    identical tokens (and matching logits) with the decode-state caches on vs off, so the GDN
+    recurrent cache and the attention KV cache stay consistent together. Both runs use flash
+    attention (use_cache only toggles KV reuse, not the attention kernel), so the only variable is
+    caching.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    generation_module = TransformerGenerationModule(
+        model=transformer_config.build(),
+        generation_config=GenerationConfig(
+            max_length=24, do_sample=False, eos_token_id=1, pad_token_id=0, use_cache=True
+        ),
+        device=device,
+    )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    cached_ids, cached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=True,
+    )
+    uncached_ids, uncached_logits, _ = generation_module.generate_batch(
+        input_ids,
+        attention_mask=attention_mask,
+        return_logits=True,
+        completions_only=False,
+        use_cache=False,
+    )
+
+    assert torch.equal(cached_ids, uncached_ids), (
+        f"cached vs uncached hybrid decode diverged:\ncached:   {cached_ids.tolist()}\n"
+        f"uncached: {uncached_ids.tolist()}"
+    )
+    assert isinstance(cached_logits, torch.Tensor) and isinstance(uncached_logits, torch.Tensor)
+    torch.testing.assert_close(cached_logits, uncached_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("n_pad", [1, 4])
+@pytest.mark.parametrize("fuse_qkv", [False, True])
+def test_generation_module_hybrid_gdn_left_padding_equivalence(n_pad: int, fuse_qkv: bool):
+    """
+    Left-padding must not change what a hybrid GDN/attention model generates.
+
+    The full-attention blocks already honour left-padding: ``cache_leftpad`` reaches flash-attn
+    through :meth:`KVCacheManager.record_leftpad`, so the pad columns are masked out. The
+    :class:`~olmo_core.nn.attention.GatedDeltaNet` blocks are the gap this test closes -- GDN is
+    *recurrent*, so it scans from position 0 and folds whatever it is handed into the delta-rule
+    state and its causal-conv window. An unmasked pad prefix is therefore absorbed as real content
+    before the first real token is ever seen, and on the Qwen3.5 layout
+    (``block_pattern=[gdn, gdn, gdn, attn]``) that is three out of every four layers.
+
+    This is not a hypothetical: the eval harness left-pads (``tokenizer.padding_side = "left"``,
+    ``padding=True``) whenever ``batch_size > 1``, which is what made batched long-context evals
+    disagree with ``batch_size=1`` runs of the same checkpoint. ``batch_size=1`` is used for both
+    runs here so that padding, not batching, is the only variable.
+    """
+    device = torch.device("cuda")
+    pad_token_id = 0
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    # the fused-QKV GatedDeltaNet masks the pad prefix through its own branch
+    transformer_config.apply(
+        lambda c: setattr(c, "fuse_qkv", fuse_qkv) if hasattr(c, "fuse_qkv") else None
+    )
+    generation_module = TransformerGenerationModule(
+        model=transformer_config.build(),
+        generation_config=GenerationConfig(
+            max_new_tokens=8,
+            do_sample=False,
+            temperature=0.0,
+            eos_token_id=1,
+            pad_token_id=pad_token_id,
+            use_cache=True,
+        ),
+        device=device,
+    )
+
+    # Real tokens avoid pad/eos so the mask is unambiguous, and the prompt is longer than the GDN
+    # causal-conv window (conv_size=4) so the delta-rule state is exercised, not just the conv.
+    unpadded = torch.tensor([[3, 5, 7, 11, 13, 17, 19, 23]], dtype=torch.long, device=device)
+    left_padded = torch.cat(
+        [torch.full((1, n_pad), pad_token_id, dtype=torch.long, device=device), unpadded], dim=1
+    )
+
+    seed_all(0)
+    out_unpadded, logits_unpadded, _ = generation_module.generate_batch(
+        unpadded,
+        attention_mask=(unpadded != pad_token_id).to(torch.bool),
+        completions_only=True,
+        return_logits=True,
+    )
+    seed_all(0)
+    out_left, logits_left, _ = generation_module.generate_batch(
+        left_padded,
+        attention_mask=(left_padded != pad_token_id).to(torch.bool),
+        completions_only=True,
+        return_logits=True,
+    )
+
+    assert torch.equal(out_unpadded, out_left), (
+        f"left-padding with {n_pad} pad token(s) changed the generated tokens:\n"
+        f"unpadded:    {out_unpadded.tolist()}\nleft-padded: {out_left.tolist()}"
+    )
+    assert isinstance(logits_unpadded, torch.Tensor) and isinstance(logits_left, torch.Tensor)
+    torch.testing.assert_close(logits_unpadded, logits_left, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 6, 7, 16])
+@pytest.mark.parametrize("batch_size", [1, 2])
+@pytest.mark.parametrize("fuse_qkv", [False, True])
+def test_generation_module_chunked_prefill_matches_one_shot(
+    chunk_size: int, batch_size: int, fuse_qkv: bool
+):
+    """
+    ``prefill_chunk_size`` must not change what the model computes -- it only bounds the activation
+    memory of the prefill forward, which is what lets ultra-long rungs (512k/1M) fit on an 80GB GPU.
+
+    On the hybrid Qwen3.5 layout this exercises both mixer families at once: attention has to offset
+    each chunk's RoPE by the KV-cache position and attend over the full cached prefix, while the
+    GatedDeltaNet layers have to carry their short-conv window and delta-rule recurrent state across
+    chunk boundaries. Getting either wrong silently corrupts only the tokens near a chunk boundary,
+    so we compare the whole greedy continuation, not just the first token.
+
+    ``chunk_size`` is deliberately swept across values that do and do not divide the prompt length
+    (12), and one below the conv width, so a ragged final chunk and a chunk shorter than the
+    convolution's history are both covered.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    # the fused-QKV GatedDeltaNet continues its conv windows through its own branch
+    transformer_config.apply(
+        lambda c: setattr(c, "fuse_qkv", fuse_qkv) if hasattr(c, "fuse_qkv") else None
+    )
+    model = transformer_config.build()
+
+    def run(prefill_chunk_size):
+        seed_all(0)
+        generation_module = TransformerGenerationModule(
+            model=model,
+            generation_config=GenerationConfig(
+                max_length=24,
+                do_sample=False,
+                eos_token_id=1,
+                pad_token_id=0,
+                use_cache=True,
+                prefill_chunk_size=prefill_chunk_size,
+            ),
+            device=device,
+        )
+        return generation_module.generate_batch(
+            input_ids,
+            attention_mask=attention_mask,
+            return_logits=True,
+            completions_only=False,
+        )
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+    attention_mask = torch.ones(batch_size, context_len, device=device, dtype=torch.bool)
+
+    one_shot_ids, one_shot_logits, _ = run(None)
+    chunked_ids, chunked_logits, _ = run(chunk_size)
+    assert isinstance(one_shot_logits, torch.Tensor) and isinstance(chunked_logits, torch.Tensor)
+
+    # Greedy decoding may legitimately split where the one-shot top-2 logits are within bf16
+    # rounding of each other (measured: chunk_size=4 split at a 0.0039 margin while every logit
+    # stayed within 0.0039 -- the same deltas as the passing chunk sizes). Compare logits up to the
+    # first split, and accept a split only at such a near-tie.
+    n_prompt = context_len
+    steps = one_shot_logits.shape[1]
+    for b in range(batch_size):
+        diff = (one_shot_ids[b, n_prompt:] != chunked_ids[b, n_prompt:]).nonzero()
+        split = int(diff[0]) if len(diff) else steps
+        torch.testing.assert_close(
+            chunked_logits[b, : split + (split < steps)],
+            one_shot_logits[b, : split + (split < steps)],
+            atol=BF16_ATOL,
+            rtol=BF16_RTOL,
+        )
+        if split < steps:
+            top2 = one_shot_logits[b, split].float().topk(2).values
+            margin = float(top2[0] - top2[1])
+            assert margin < NEAR_TIE_MARGIN, (
+                f"chunked prefill (chunk_size={chunk_size}) diverged from one-shot at generated "
+                f"step {split} where the one-shot top-2 margin is {margin:.4f} (not a near-tie):\n"
+                f"one-shot: {one_shot_ids[b].tolist()}\nchunked:  {chunked_ids[b].tolist()}"
+            )
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 7, 8])
+@pytest.mark.parametrize("batch_size", [1, 2])
+@pytest.mark.parametrize("fuse_qkv", [False, True])
+def test_generation_module_chunked_prefill_state_matches_one_shot(
+    chunk_size: int, batch_size: int, fuse_qkv: bool
+):
+    """
+    ``prefill_chunk_size`` must not change what the model computes -- it only bounds the activation
+    memory of the prefill forward, which is what lets ultra-long rungs (512k/1M) fit on an 80GB GPU.
+
+    On the hybrid Qwen3.5 layout this exercises both mixer families at once: attention has to offset
+    each chunk's RoPE by the KV-cache position and attend over the full cached prefix, while the
+    GatedDeltaNet layers have to carry their short-conv window and delta-rule recurrent state across
+    chunk boundaries.
+
+    This test asserts on the **prefill output** -- the next-token logits and the carried recurrent
+    state -- rather than on a multi-step greedy rollout (the rollout, with near-tie tolerance, is
+    :func:`test_generation_module_chunked_prefill_matches_one_shot`). Chunking changes the reduction
+    order, so logits move by ~1 bf16 ULP; on a small randomly-initialized model the top candidates
+    sit within a couple of ULPs of each other, so a rollout would test bf16 determinism through a
+    near-tied argmax rather than the invariant we care about. The
+    recurrent-state check is the sharp one: it is compared in fp32 and a genuinely broken carry
+    (dropped ``initial_state``, or a conv that restarts cold each chunk) moves it far more than the
+    ~1e-6 tolerance here.
+
+    ``chunk_size`` sweeps values that do and do not divide the prompt length (12), values at and
+    below the convolution width (4), so a ragged final chunk and a chunk shorter than the
+    convolution's history are both covered.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    # the fused-QKV GatedDeltaNet continues its conv windows through its own branch
+    transformer_config.apply(
+        lambda c: setattr(c, "fuse_qkv", fuse_qkv) if hasattr(c, "fuse_qkv") else None
+    )
+    model = transformer_config.build()
+
+    context_len = 12
+    input_ids = torch.randint(2, 500, (batch_size, context_len), device=device)
+
+    def prefill(prefill_chunk_size):
+        seed_all(0)
+        generation_module = TransformerGenerationModule(
+            model=model,
+            generation_config=GenerationConfig(
+                max_length=context_len + 1,
+                do_sample=False,
+                eos_token_id=1,
+                pad_token_id=0,
+                use_cache=True,
+                prefill_chunk_size=prefill_chunk_size,
+            ),
+            device=device,
+        )
+        generation_module.prepare_inference_cache(batch_size, context_len + 1)
+        logits = generation_module._prefill_forward(
+            input_ids, cache_leftpad=None, chunk_size=prefill_chunk_size
+        )
+        states = [
+            block.attention.state_cache.recurrent_state.float().clone()
+            for block in generation_module.model.blocks.values()
+            if getattr(block.attention, "state_cache", None) is not None
+            and block.attention.state_cache.recurrent_state is not None
+        ]
+        return logits.float(), states
+
+    one_shot_logits, one_shot_states = prefill(None)
+    chunked_logits, chunked_states = prefill(chunk_size)
+
+    # The GatedDeltaNet state carried across chunk boundaries must be the same state a single
+    # prefill would have produced.
+    assert one_shot_states, "expected at least one GatedDeltaNet layer to hold recurrent state"
+    for i, (expected, got) in enumerate(zip(one_shot_states, chunked_states)):
+        torch.testing.assert_close(
+            got, expected, atol=1e-5, rtol=1e-4, msg=f"GDN recurrent state diverged at layer {i}"
+        )
+
+    # The prediction itself must be unchanged, and the logits equal to within bf16 rounding.
+    assert torch.equal(chunked_logits.argmax(-1), one_shot_logits.argmax(-1)), (
+        f"chunked prefill (chunk_size={chunk_size}) changed the predicted token:\n"
+        f"one-shot: {one_shot_logits.argmax(-1).tolist()}\n"
+        f"chunked:  {chunked_logits.argmax(-1).tolist()}"
+    )
+    torch.testing.assert_close(chunked_logits, one_shot_logits, atol=BF16_ATOL, rtol=BF16_RTOL)
+
+
+@requires_gpu
+@requires_fla
+def test_causal_conv1d_chunked_matches_one_shot():
+    """
+    :meth:`CausalConv1d.forward_with_state` fed a sequence in slices must equal one ``forward`` over
+    the whole sequence. This is the piece that makes chunked prefill exact on the GatedDeltaNet
+    layers: ``forward`` zero-pads its left edge, which is only right for the first chunk, so every
+    later chunk has to convolve against the real preceding tokens instead.
+    """
+    device = torch.device("cuda")
+    seed_all(0)
+    hidden, kernel, seq = 32, 4, 20
+    conv = CausalConv1d(
+        hidden_size=hidden, kernel_size=kernel, dtype=torch.float32, init_device="cuda"
+    ).to(device)
+    x = torch.randn(2, seq, hidden, device=device)
+
+    expected = conv(x)
+
+    state = torch.zeros(2, hidden, kernel - 1, device=device)
+    outs = []
+    for start in range(0, seq, 6):  # 6 does not divide 20 -> ragged final chunk
+        outs.append(conv.forward_with_state(x[:, start : start + 6], state))
+    got = torch.cat(outs, dim=1)
+
+    torch.testing.assert_close(got, expected, atol=1e-5, rtol=1e-5)
 
 
 @requires_gpu

@@ -57,3 +57,63 @@ def run_reduce_metrics():
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_reduce_metrics(backend):
     run_distributed_test(run_reduce_metrics, backend=backend)
+
+
+def run_reduce_metrics_inconsistent_per_step():
+    # Regression test: ranks record DIFFERENT reducible metric names on the *same* step (here rank 0
+    # logs an extra metric, as happens when e.g. a throughput metric is skipped on a rank whose
+    # micro-batch had no tokens). The caller still passes ``metrics_consistent=True`` -- exactly what
+    # the trainer does from its registry-level check, which doesn't catch per-step divergence. This
+    # used to build mismatched all-reduce tensors across ranks and DEADLOCK. ``reduce_metrics`` must
+    # detect the divergence, fall back to the consistent-handling path, and still return correct
+    # values (no hang).
+    device = get_default_device()
+    rank = dist.get_rank()
+    raw_metrics = {
+        0: {
+            "train/CrossEntropyLoss": torch.tensor(2.0 if rank == 0 else 4.0, device=device),
+        },
+    }
+    metrics_reduce_type = {"train/CrossEntropyLoss": ReduceType.mean}
+    if rank == 0:
+        raw_metrics[0]["train/throughput"] = torch.tensor(5.0, device=device)
+        metrics_reduce_type["train/throughput"] = ReduceType.mean
+
+    metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device, metrics_consistent=True)
+
+    assert metrics[0]["train/CrossEntropyLoss"] == 3.0  # mean over both ranks: (2 + 4) / 2
+    assert metrics[0]["train/throughput"] == 5.0  # recorded on one rank only
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_inconsistent_per_step(backend):
+    run_distributed_test(run_reduce_metrics_inconsistent_per_step, backend=backend)
+
+
+def run_reduce_metrics_inconsistent_steps():
+    # Regression test: ranks pass DIFFERENT sets of steps -- rank 0 recorded steps {0, 1} while rank
+    # 1 recorded only {0} (e.g. it had no metrics for an interval, the way the trainer's final
+    # shutdown flush can leave some ranks empty). With metrics_consistent=True this used to build
+    # mismatched all-reduce tensors across ranks and DEADLOCK. reduce_metrics must align the step set
+    # across ranks and still return correct values (no hang).
+    device = get_default_device()
+    rank = dist.get_rank()
+    metrics_reduce_type = {"train/CrossEntropyLoss": ReduceType.mean}
+    if rank == 0:
+        raw_metrics = {
+            0: {"train/CrossEntropyLoss": torch.tensor(2.0, device=device)},
+            1: {"train/CrossEntropyLoss": torch.tensor(3.0, device=device)},
+        }
+    else:
+        raw_metrics = {0: {"train/CrossEntropyLoss": torch.tensor(4.0, device=device)}}
+
+    metrics = reduce_metrics(raw_metrics, metrics_reduce_type, device, metrics_consistent=True)
+
+    assert metrics[0]["train/CrossEntropyLoss"] == 3.0  # both ranks at step 0: (2 + 4) / 2
+    # Step 1 recorded on rank 0 only; the absent rank counts as a zero over the world size.
+    assert metrics[1]["train/CrossEntropyLoss"] == 1.5  # (3 + 0) / 2
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_reduce_metrics_inconsistent_steps(backend):
+    run_distributed_test(run_reduce_metrics_inconsistent_steps, backend=backend)

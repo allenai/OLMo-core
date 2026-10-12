@@ -69,10 +69,11 @@ def build_launch_config(
     num_execution_units: Optional[int] = None,
     step_timeout: Optional[int] = None,
     step_soft_timeout: Optional[int] = 10 * 60,
+    num_gpus: int = 8,
 ) -> BeakerLaunchConfig:
     weka_buckets: List[BeakerWekaBucket] = []
 
-    default_root_dir = get_root_dir(cluster)
+    default_root_dir = get_root_dir(cluster.split(",")[0])
     if root_dir is None:
         root_dir = default_root_dir
     elif root_dir != default_root_dir:
@@ -143,11 +144,11 @@ def build_launch_config(
         cmd=cmd,
         task_name=task_name,
         workspace=workspace,
-        clusters=[cluster],
+        clusters=[c.strip() for c in cluster.split(",") if c.strip()],  # comma list = any of them
         weka_buckets=weka_buckets,
         beaker_image=beaker_image,
         num_nodes=num_nodes,
-        num_gpus=8,
+        num_gpus=num_gpus,
         num_execution_units=num_execution_units,
         shared_filesystem=not is_url(root_dir),
         allow_dirty=False,

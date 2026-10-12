@@ -535,6 +535,107 @@ def test_context_parallel_transformer_ulysses_backward(architecture: str, tmp_pa
     )
 
 
+def run_context_parallel_transformer_ulysses_packed(
+    checkpoint_dir, outputs_path, doc_lens, max_doc_len: int, compile_model: bool
+):
+    device = get_default_device()
+    config = get_transformer_config(
+        "olmo2", dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
+
+    mesh = init_device_mesh(device.type, (get_world_size(),), mesh_dim_names=("cp",))
+
+    model = config.build()
+    model.apply_cp(mesh["cp"], uly=UlyssesContextParallelStyle())
+    model.init_weights(device=device, max_seq_len=512)
+    load_model_and_optim_state(checkpoint_dir, model)
+    if compile_model:
+        # Real runs train with compile_model=True (per-block torch.compile). The CP + packing RoPE
+        # path must be torch.compile-friendly: a data-dependent position-buffer size previously broke
+        # inductor (InductorError: SliceView) even though eager was numerically correct.
+        model.apply_compile()
+
+    # The model shards input_ids and the RoPE buffers internally via the Ulysses load balancer; the
+    # document boundaries are passed through unchanged, so RoPE runs per-document on the local shard.
+    input_ids = get_transformer_inputs().to(device)
+    local_logits = model(
+        input_ids=input_ids,
+        doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+        max_doc_lens=[max_doc_len],
+    )
+    logits = DTensor.from_local(local_logits, mesh, (Shard(1),))
+
+    og_logits = torch.load(outputs_path, map_location=device)
+    # Compiled output is compared against an eager reference, so allow extra headroom for inductor's
+    # bf16 fusion rounding (a few logits drift in their last bits through the wide LM head); the eager
+    # variant of this test pins the actual CP-vs-no-CP numerics tightly.
+    tol_scale = 16.0 if compile_model else 4.0
+    torch.testing.assert_close(
+        og_logits, get_full_tensor(logits), rtol=BF16_RTOL * tol_scale, atol=BF16_ATOL * tol_scale
+    )
+
+
+@requires_multi_gpu
+@requires_flash_attn_2
+@pytest.mark.parametrize(
+    "compile_model", [pytest.param(False, id="eager"), pytest.param(True, id="compile")]
+)
+def test_context_parallel_transformer_ulysses_packing_matches_full(tmp_path, compile_model: bool):
+    """
+    Ulysses CP + sequence packing (intra-document masking) for a dense (non-landmark) transformer.
+
+    Regression test for two bugs in the CP + packing RoPE path: (1) an out-of-bounds RoPE position
+    index -- under Ulysses CP, RoPE runs on this rank's contiguous shard (length ``seq_len //
+    cp_degree``) before the all-to-all while ``cu_doc_lens`` still describes the full sequence, so a
+    document longer than the shard yields a per-document position beyond the shard-sized RoPE table
+    (a CUDA device-side assert in real runs); (2) a torch.compile break (InductorError: SliceView)
+    from sizing the position buffer with a data-dependent ``pos_idx.max()``. The fix uses explicit
+    per-shard ``position_ids`` indexed into the statically-sized warmed RoPE buffer. CP must
+    reproduce the single-rank packed forward exactly, both eager and compiled.
+    """
+    seed_all(0)
+    device = torch.device("cuda")
+    config = get_transformer_config(
+        "olmo2", dtype=torch.bfloat16, attn_backend=AttentionBackendName.flash_2
+    )
+
+    model = config.build()
+    model.init_weights(device=device, max_seq_len=512)
+
+    input_ids = get_transformer_inputs().to(device)  # shape (1, 128)
+    seq_len = input_ids.size(1)
+    # With CP degree 2 the per-rank shard is seq_len // 2 = 64. The leading 80-token document exceeds
+    # the shard and straddles the rank boundary -- exactly the case that overflowed the RoPE table.
+    doc_lens = [80, 48]
+    assert sum(doc_lens) == seq_len
+    max_doc_len = max(doc_lens)
+
+    logits = model(
+        input_ids=input_ids,
+        doc_lens=torch.tensor([doc_lens], dtype=torch.int32),
+        max_doc_lens=[max_doc_len],
+    )
+
+    outputs_path = tmp_path / "logits.pt"
+    torch.save(logits, outputs_path)
+
+    checkpoint_dir = tmp_path / "checkpoint"
+    save_model_and_optim_state(checkpoint_dir, model)
+
+    run_distributed_test(
+        run_context_parallel_transformer_ulysses_packed,
+        backend="nccl",
+        start_method="spawn",
+        func_args=(
+            checkpoint_dir,
+            outputs_path,
+            doc_lens,
+            max_doc_len,
+            compile_model,
+        ),
+    )
+
+
 def run_init_with_hsdp(architecture: str):
     assert dist.get_world_size() == 4
     mesh = build_world_mesh(
@@ -852,7 +953,8 @@ def test_qwen3_5_builder_configs(
     assert config.d_model == expected_d_model
     assert config.n_layers == 4
     assert config.block_pattern == ["gdn", "gdn", "gdn", "attn"]
-    assert config.tie_word_embeddings
+    # Untied by default on this branch: existing Qwen3.5 checkpoints were trained untied.
+    assert not config.tie_word_embeddings
 
     assert isinstance(config.block, dict)
     gdn_block = config.block["gdn"]
@@ -902,34 +1004,36 @@ def test_qwen3_5_param_count(config_builder):
 @pytest.mark.parametrize(
     "config_builder, expected_tie",
     [
-        pytest.param(TransformerConfig.qwen3_0_6B, True, id="qwen3_0_6B"),
-        pytest.param(TransformerConfig.qwen3_1_7B, True, id="qwen3_1_7B"),
-        pytest.param(TransformerConfig.qwen3_4B, True, id="qwen3_4B"),
+        pytest.param(TransformerConfig.qwen3_0_6B, False, id="qwen3_0_6B"),
+        pytest.param(TransformerConfig.qwen3_1_7B, False, id="qwen3_1_7B"),
+        pytest.param(TransformerConfig.qwen3_4B, False, id="qwen3_4B"),
         pytest.param(TransformerConfig.qwen3_8B, False, id="qwen3_8B"),
         pytest.param(TransformerConfig.qwen3_14B, False, id="qwen3_14B"),
         pytest.param(TransformerConfig.qwen3_32B, False, id="qwen3_32B"),
     ],
 )
 def test_qwen3_small_sizes_tie_word_embeddings(config_builder, expected_tie):
+    # Upstream ties the small Qwen3 sizes by default; this branch keeps them untied so existing
+    # (untied-trained) checkpoints rebuilt from the factories load unchanged.
     assert config_builder(vocab_size=128, n_layers=2).tie_word_embeddings == expected_tie
 
 
 def test_qwen3_tie_word_embeddings_can_be_overridden():
-    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=False)
-    assert not config.tie_word_embeddings
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=True)
+    assert config.tie_word_embeddings
 
 
 def test_qwen3_5_tie_word_embeddings_can_be_overridden():
     config = TransformerConfig.qwen3_5_0_8B(
         vocab_size=128,
         n_layers=4,
-        tie_word_embeddings=False,
+        tie_word_embeddings=True,
     )
-    assert not config.tie_word_embeddings
+    assert config.tie_word_embeddings
 
 
 def test_tied_word_embeddings_share_weight_after_init():
-    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=True)
     model = config.build(init_device="cpu")
     model.init_weights(device=torch.device("cpu"))
 
@@ -965,7 +1069,7 @@ def test_normalized_transformer_rejects_tied_word_embeddings():
 
 
 def test_pipeline_parallel_rejects_tied_word_embeddings():
-    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2)
+    config = TransformerConfig.qwen3_0_6B(vocab_size=128, n_layers=2, tie_word_embeddings=True)
     model = config.build(init_device="cpu")
     pp_config = TransformerPipelineParallelConfig(degree=1, split_points=[1])
 

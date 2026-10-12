@@ -3,9 +3,12 @@ import torch
 
 from olmo_core.nn.rope import (
     ABFRoPEScalingConfig,
+    BlockLocalRotaryEmbedding,
     ComplexRotaryEmbedding,
     FusedRotaryEmbedding,
     PIRoPEScalingConfig,
+    RoPEConfig,
+    RoPEType,
     RotaryEmbedding,
     StepwiseRoPEScalingConfig,
     YaRNRoPEScalingConfig,
@@ -43,6 +46,57 @@ def test_partial_rotary_embedding(device):
         rope_full = RotaryEmbedding(head_size=head_size, partial_rotary_factor=1.0)
         q_full, _ = rope_full(q_orig.clone(), k_orig.clone())
         assert not torch.allclose(q_full, q_orig)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_block_local_rope_resets_positions_per_block(device):
+    """Block-local RoPE reuses the same rotation for the corresponding token of every block."""
+    B, n_heads, head_size = 2, 4, 32
+    block_size = 4
+    n_blocks = 3
+    T = block_size * n_blocks
+
+    rope = BlockLocalRotaryEmbedding(head_size=head_size, block_size=block_size)
+
+    with torch.no_grad():
+        q = torch.rand(B, n_heads, T, head_size, device=device)
+        k = torch.rand(B, n_heads, T, head_size, device=device)
+
+        # Feed the *same* content in every block so that block-local RoPE (which reuses positions
+        # [0..block_size-1] per block) must produce identical outputs for each block.
+        block_q = q[:, :, :block_size, :]
+        block_k = k[:, :, :block_size, :]
+        q = block_q.repeat(1, 1, n_blocks, 1)
+        k = block_k.repeat(1, 1, n_blocks, 1)
+
+        q_out, k_out = rope(q, k)
+
+        for b in range(1, n_blocks):
+            sl = slice(b * block_size, (b + 1) * block_size)
+            torch.testing.assert_close(q_out[:, :, sl, :], q_out[:, :, :block_size, :])
+            torch.testing.assert_close(k_out[:, :, sl, :], k_out[:, :, :block_size, :])
+
+        # The first block is genuinely rotated (positions 1..block_size-1 differ from the input),
+        # matching a plain RotaryEmbedding restricted to a single block.
+        plain = RotaryEmbedding(head_size=head_size)
+        q_plain, k_plain = plain(block_q.clone(), block_k.clone())
+        torch.testing.assert_close(q_out[:, :, :block_size, :], q_plain)
+        torch.testing.assert_close(k_out[:, :, :block_size, :], k_plain)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_block_local_rope_config_validation(device):
+    """RoPEConfig requires block_size iff name == block_local, and builds the right class."""
+    # block_local without block_size -> error
+    with pytest.raises(Exception):
+        RoPEConfig(name=RoPEType.block_local).build(head_size=32)
+    # block_size without block_local -> error
+    with pytest.raises(Exception):
+        RoPEConfig(name=RoPEType.default, block_size=4).build(head_size=32)
+    # valid block_local config builds a BlockLocalRotaryEmbedding
+    rope = RoPEConfig(name=RoPEType.block_local, block_size=4).build(head_size=32)
+    assert isinstance(rope, BlockLocalRotaryEmbedding)
+    assert rope.block_size == 4
 
 
 @pytest.mark.parametrize("device", DEVICES)

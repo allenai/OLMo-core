@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import torch
 import torch.distributed as dist
@@ -54,6 +54,7 @@ class TransformerGenerationModuleConfig(Config):
         work_dir: Optional[PathOrStr] = None,
         pre_download: bool = True,
         load_thread_count: Optional[int] = None,
+        post_build_hook: Optional[Callable[[Any], None]] = None,
     ) -> "TransformerGenerationModule":
         """
         Build the corresponding :class:`TransformerGenerationModule`.
@@ -65,6 +66,8 @@ class TransformerGenerationModuleConfig(Config):
         :param work_dir: Working directory for temporary files during loading.
         :param pre_download: Whether to pre-download remote checkpoints.
         :param load_thread_count: Number of threads to use for loading.
+        :param post_build_hook: Called on the built model BEFORE the checkpoint load -- see
+            :meth:`TransformerGenerationModule.from_checkpoint`.
         """
         from olmo_core.generate.generation_module import TransformerGenerationModule
 
@@ -92,5 +95,6 @@ class TransformerGenerationModuleConfig(Config):
             pre_download=pre_download,
             load_thread_count=load_thread_count,
             dtype=dtype,
+            post_build_hook=post_build_hook,
             **config_dict,
         )

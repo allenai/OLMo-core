@@ -334,6 +334,8 @@ class PackingInstanceSource(InstanceSource):
                                 yield start_offset + min(
                                     end_idx, new_start_idx + self.sequence_length
                                 )
+                        elif self.long_doc_strategy == LongDocStrategy.exclude:
+                            continue  # drop the document entirely
                         else:
                             raise NotImplementedError(self.long_doc_strategy)
                     else:

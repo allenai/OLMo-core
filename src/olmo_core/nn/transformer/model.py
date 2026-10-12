@@ -8,6 +8,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -38,7 +39,20 @@ from olmo_core.nn.attention.ring import (
 )
 from olmo_core.utils import get_default_device, mark_dynamic, move_to_device
 
-from ..attention import Attention, RingAttentionLoadBalancer, SequenceMixer
+from ..attention import (
+    Attention,
+    RingAttentionLoadBalancer,
+    SequenceMixer,
+)
+from ..attention.chunked_mask import (
+    MASK_MIX_SCHEDULES,
+    build_chunk_ids_from_tokens,
+    causal_example_flags,
+    collapse_roles_to_causal,
+    mask_mix_standard_prob,
+)
+from ..attention.summary_mask import ROLE_EXAMPLE_ID, build_summary_roles
+from ..attention.summary_token import SummaryTokenAttention
 from ..buffer_cache import BufferCache
 from ..functional import l2_normalize
 from ..layer_norm import LayerNormConfig
@@ -124,6 +138,37 @@ class Transformer(nn.Module):
         self.n_layers = n_layers
         self.dtype = dtype
         self.embed_scale = embed_scale
+        # Optional document-chunked-attention config (see ``enable_document_chunk_attention``). When
+        # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
+        # forwards them to every block (for :class:`DocumentLandmarkAttention`).
+        self._document_chunk_attention: Optional[Dict[str, Any]] = None
+        # Soft-token document pooling ("B1"): set by ``enable_pooled_soft_tokens``.
+        self._pooled_soft_tokens: Optional[Dict[str, Any]] = None
+        self.pooled_projector: Optional[nn.Module] = None
+        self._pooled_keep_holder: Optional[Any] = None
+        # Role-gated FFN ("flexible-compute FFN"): set by ``enable_role_gated_ffn``.
+        self._role_gated_ffn: Optional[Dict[str, Any]] = None
+        # Nested-width FFN mixture (learned router): set by ``enable_nested_ffn_moe``.
+        self._nested_ffn_moe: Optional[Dict[str, Any]] = None
+        # Random per-token FFN dropping for drop-CPT: set by ``enable_ffn_token_drop``.
+        self._ffn_token_drop: Optional[Dict[str, Any]] = None
+        # Per-layer KV-cache allocation router: set by ``enable_kv_route``.
+        self._kv_route: Optional[Dict[str, Any]] = None
+        # Joint FFN+attention budget over both routers: set by ``joint_budget.install_joint_budget``.
+        self._joint_budget: Optional[Dict[str, Any]] = None
+        # Per-token block skipping (mixture-of-depths router): set by ``enable_block_skip``.
+        self._block_skip: Optional[Dict[str, Any]] = None
+        # Deliver router budget gradients through each block's output instead of a separate loss
+        # term (olmo_core.nn.budget_attach): required under activation checkpointing, where the
+        # separate term forces every block to be recomputed at the start of backward.
+        self.budget_attach: bool = False
+        # Optional summary-token-attention config (see ``enable_summary_token_attention``). When set,
+        # ``_prepare_inputs`` derives per-token ``summary_roles`` and the per-example
+        # ``causal_example`` arm and forwards both to every block (for
+        # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`).
+        self._summary_token_attention: Optional[Dict[str, Any]] = None
+        # Which arm of the mask mixture to serve at INFERENCE; see ``set_summary_eval_mask_mode``.
+        self._summary_eval_mask_mode: str = "causal"
 
         self.embeddings = nn.Embedding(vocab_size, d_model, dtype=dtype, device=init_device)
         self.embedding_norm = (
@@ -195,6 +240,1369 @@ class Transformer(nn.Module):
 
     def _validate_block(self, block: TransformerBlockBase) -> TransformerBlockBase:
         return block
+
+    def enable_document_chunk_attention(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        mode: str = "chunked",
+        pad_id: Optional[int] = None,
+        standard_mix_prob: float = 0.0,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_forwards: int = 0,
+        mix_seed: int = 42,
+        mix_log_interval: int = 500,
+    ) -> None:
+        """
+        Enable runtime ``chunk_ids`` reconstruction for document-chunked landmark attention.
+
+        When enabled, :meth:`forward` reconstructs a per-token ``chunk_id`` role tensor from the
+        ``<|doc_start|>`` / ``<|doc_end|>`` boundary tokens (and the EOS pad terminator) on every
+        step and forwards it to each block, so :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`
+        can build its chunked mask. All attention layers must accept a ``chunk_ids`` keyword (i.e. the
+        model is uniformly ``document_landmark``); mixing with other attention types via this path is
+        not supported. Context parallelism with chunked attention is not yet supported.
+
+        **Mask mixing** (optional): during *training*, each forward independently collapses a random
+        subset of examples from the chunked mask to plain causal (full) attention, by setting their
+        roles to all-FREE (see :func:`~olmo_core.nn.attention.chunked_mask.collapse_roles_to_causal`).
+        The per-example probability ``p`` is either static (``standard_mix_prob``) or a linear
+        curriculum (``mix_start_p -> mix_end_p`` over ``mix_total_forwards`` forwards). ``p == 0`` (all
+        defaults) is a no-op -- pure-chunked training stays bit-identical. Static and curriculum mixing
+        are mutually exclusive.
+
+        :param doc_start_id: The ``<|doc_start|>`` token id.
+        :param doc_end_id: The ``<|doc_end|>`` token id.
+        :param eos_id: The EOS / document terminator (everything after the first one is padding).
+        :param mode: ``"chunked"`` (no SINK) or ``"modified_swa"`` (mark the instruction prefix SINK).
+        :param pad_id: Optional dedicated interior-padding id (window fill for the landmark variant);
+            when set, those positions reconstruct to ``PAD`` (non-attendable) rather than ``FREE``.
+        :param standard_mix_prob: Static per-example mask-mix probability (constant every forward).
+        :param mix_start_p: Curriculum start probability (at forward 0).
+        :param mix_end_p: Curriculum end probability (at ``mix_total_forwards``).
+        :param mix_total_forwards: Number of forwards over which the curriculum anneals linearly.
+        :param mix_seed: Base seed for the deterministic per-(forward, example) mix coin.
+        :param mix_log_interval: Log a ``[curriculum]`` line (current ``p`` + cumulative collapse
+            count) every this many training forwards.
+
+        :raises OLMoConfigurationError: If static and curriculum mixing are both requested, or a
+            curriculum is requested without ``mix_total_forwards > 0``.
+        """
+        curriculum = mix_start_p > 0.0 or mix_end_p > 0.0
+        if standard_mix_prob > 0.0 and curriculum:
+            raise OLMoConfigurationError(
+                "Mask mixing: 'standard_mix_prob' (static) is mutually exclusive with the curriculum "
+                "('mix_start_p' / 'mix_end_p'); set only one."
+            )
+        if curriculum and mix_total_forwards <= 0:
+            raise OLMoConfigurationError(
+                "Mask-mix curriculum ('mix_start_p' / 'mix_end_p') requires 'mix_total_forwards' > 0 "
+                "(the number of forwards over which p anneals)."
+            )
+        mix: Optional[Dict[str, Any]] = None
+        if standard_mix_prob > 0.0 or curriculum:
+            mix = {
+                "standard_mix_prob": float(standard_mix_prob),
+                "mix_start_p": float(mix_start_p),
+                "mix_end_p": float(mix_end_p),
+                "mix_total_forwards": int(mix_total_forwards),
+                "mix_seed": int(mix_seed),
+                "log_interval": max(1, int(mix_log_interval)),
+                "forward_idx": 0,
+                "n_collapsed": 0,
+            }
+        self._document_chunk_attention = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "mode": mode,
+            "pad_id": None if pad_id is None else int(pad_id),
+            "mix": mix,
+        }
+
+    def enable_pooled_soft_tokens(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        *,
+        placeholder_id: int,
+        keep_prob: float = 0.1,
+        keep_seed: int = 42,
+        projector_hidden: Optional[int] = None,
+        aux_match_weight: float = 0.0,
+        aux_queries: int = 16,
+        aux_max_shadows: int = 8,
+        detach_soft_kv: bool = False,
+        len_bias: bool = False,
+        len_bias_scale: float = 1.0,
+        len_bias_extra: float = 0.0,
+        distill_prob: float = 0.0,
+        distill_weight: float = 1.0,
+        distill_layer_stride: int = 4,
+        oracle_cache: Optional[Any] = None,
+        header_stop_id: Optional[int] = None,
+        header_stop_count: int = 1,
+        header_cap: int = 32,
+        header_extra_tokens: int = 0,
+        keep_token_rule: str = "none",
+        keep_token_k: float = 0,
+        keep_token_weights: Optional[Dict[str, float]] = None,
+        keep_token_sd: Optional[Dict[str, float]] = None,
+        keep_token_tables: Optional[Any] = None,
+        keep_token_log_every: int = 50,
+        detach_soft_gdn: bool = True,
+        drop_slots: bool = False,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_calls: int = 0,
+        slot_mode: str = "mean",
+        slot_stop_ids: Optional[Sequence[int]] = None,
+        slot_centroid: str = "row",
+        cat_keep: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
+
+        During **training** forwards, each context document (identified from the
+        ``<|doc_start|>``/``<|doc_end|>`` markers) is either kept (real tokens) or replaced by a
+        single soft token -- the :class:`~olmo_core.nn.pooled_soft_token.PooledDocProjector` output
+        on the document's mean input embedding -- at the document's center position, with original
+        ``position_ids`` threaded to RoPE. The keep set is gold + random negatives via
+        :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep`, or a seeded random
+        ``keep_prob`` fraction as fallback. Eval/generation forwards are untouched (full attention
+        over real tokens -- the transfer condition), as are rows without markers.
+
+        Creates the ``pooled_projector`` submodule -- call this BEFORE building the optimizer, and
+        call ``pooled_projector.reset_parameters()`` after loading a base checkpoint without
+        projector keys. Not supported together with context/pipeline parallelism or
+        ``enable_document_chunk_attention``.
+
+        :param placeholder_id: Token id emitted at soft slots (embedding is overwritten; use a
+            repaired reserved id, e.g. the landmark id).
+        :param header_stop_id: When given, each document's header -- the tokens after
+            ``<|doc_start|>`` through the ``header_stop_count``-th occurrence of this id (at most
+            ``header_cap`` tokens) -- stays REAL and only the body is pooled
+            (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`). The eval-side
+            construction that reproduces full attention on contradiction (``":"``, count 1) and
+            oolong (``":"``, count 3); see records/pooled-doc-kv-attention.md (2026-09-08).
+        :param header_extra_tokens: ALSO keep the next ``header_extra_tokens`` body tokens (the
+            ones right after the header) real, so a pooled doc's compacted row becomes
+            ``<header><first header_extra_tokens body tokens><SLOT>``. ``0`` (default) is
+            bit-identical to header-only behaviour. Works even without ``header_stop_id`` (the
+            "header" is then zero-length, so the extra tokens are simply the document's first
+            ``header_extra_tokens`` tokens after ``<|doc_start|>``). If the document's remaining
+            body has fewer than ``header_extra_tokens`` tokens, the WHOLE document -- including
+            ``<|doc_end|>`` -- is freed (real), so it produces no soft-token slot at all. Counted
+            by position, not distance, so it is never truncated by ``header_cap`` -- no need to
+            enlarge that when raising this. See
+            :func:`~olmo_core.nn.attention.chunked_mask.mark_doc_headers_free`.
+        :param keep_token_rule: WHICH body tokens of a pooled document stay real.
+
+            * ``"none"`` (default) -- no per-token keeping; bit-identical to before this existed.
+            * ``"first"`` -- the first ``keep_token_k`` body tokens, i.e. exactly
+              ``header_extra_tokens=keep_token_k`` (it is implemented as that call, so the two are
+              bit-identical by construction). Mutually exclusive with ``header_extra_tokens``.
+            * ``"first_last"`` -- the first ``k // 2`` and last ``k - k // 2`` body tokens
+              (:func:`~olmo_core.nn.pooled_soft_token.first_last_scores`). Same cost as ``"first"``,
+              and it beats it on every rung of the frozen-model probe (ΔCE +0.044 vs +0.049 and
+              R@gold 0.927 vs 0.818 at 2k, genF1 0.800 vs 0.787 at 32k --
+              ``records/outlier-realtoken-parity-probe.md``). Needs no feature tables.
+            * ``"rule"`` -- the ``keep_token_k`` highest-scoring body tokens PER DOCUMENT under the
+              cheap feature rule of
+              :func:`~olmo_core.nn.pooled_soft_token.keep_token_scores` (idf, relative position,
+              first-sentence, capitalisation, digit, piece length), kept at their original
+              positions and so non-contiguous
+              (:func:`~olmo_core.nn.attention.chunked_mask.mark_doc_topk_tokens_free`). Ties go to
+              the earlier position; a document with ``<= k`` body tokens is kept whole. Needs
+              ``keep_token_tables``.
+
+            The eval-side probe this ports says the *choice* is the whole effect: at k=8 on outlier
+            the same budget spent at random is WORSE than keeping nothing (CE 0.558 vs 0.470),
+            ``first`` reaches 0.263, and this rule reaches 0.071 -- the gradient oracle's 0.072
+            (``records/outlier-saliency-preview-probe.md`` 5d).
+        :param keep_token_k: Tokens kept real per pooled document (``0`` = rule off).
+        :param keep_token_weights: Feature -> weight for ``"rule"``
+            (:data:`~olmo_core.nn.pooled_soft_token.DEFAULT_KEEP_TOKEN_WEIGHTS` when ``None``).
+        :param keep_token_sd: Optional per-feature standard deviations the weights are divided by
+            (for a ridge fitted on standardised features).
+        :param keep_token_tables: :class:`~olmo_core.nn.pooled_soft_token.KeepTokenTables` with the
+            vocab-sized idf / piece tables. Required for ``"rule"``.
+        :param keep_token_log_every: Log the realised keep-token cost (mean real tokens per pooled
+            document, real-token fraction) every N compactions; the first 5 are always logged.
+        :param mix_start_p: **Compression-mixing curriculum.** Probability that a row trains
+            UNCOMPRESSED (no pooling at all), annealed linearly to ``mix_end_p`` over
+            ``mix_total_calls`` training forwards
+            (:func:`~olmo_core.nn.attention.pooled_doc_kv.anneal_p_full`). This is the GOLD-BLIND
+            arm of the curriculum: it applies to the seeded ``keep_prob`` fallback draw. When the
+            :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep` hook is installed
+            the hook's own curriculum is used instead and these are ignored (the hook sees gold, so
+            it must make the same decision). ``0.0`` = no curriculum, the historical behaviour.
+        :param mix_end_p: End point of the anneal (see ``mix_start_p``).
+        :param mix_total_calls: Forwards over which to anneal; ``0`` holds ``mix_start_p`` constant.
+        :param slot_mode: How the pooled slot's feature vector is built from the document's input
+            embeddings (:func:`~olmo_core.nn.pooled_soft_token.apply_slot_mode`).
+
+            * ``"mean"`` (default, the historical behaviour) -- the plain mean.
+            * ``"cmean"`` -- the mean over CONTENT tokens only, i.e. dropping ``slot_stop_ids``
+              (punctuation/whitespace, the markers/pad, and the top-K most frequent corpus ids).
+            * ``"cent_cmean"`` -- ``cmean`` minus the row centroid, rescaled to the row's mean
+              real-token embedding norm.
+
+            A document's mean input embedding is ~94% shared common-word mass, which is why the
+            plain-mean slot is unreadable for outlier (every document sits at cosine 0.93-0.94
+            from the corpus centroid, gold and non-gold alike). Removing that mass is free and
+            lifts the oracle readout 3.2x/4.5x over the ``k/n`` floor at 2k/8k -- see
+            ``records/outlier-richer-slot-probe.md``. This has to happen in the slot CONSTRUCTION,
+            not in training: with ``detach_soft_kv`` (the default) the projector gets no LM
+            gradient on pooled slots, so the slot stays whatever this makes it for the whole run.
+        :param slot_stop_ids: The stop set for ``cmean``/``cent_cmean``, built once at startup by
+            :func:`~olmo_core.nn.pooled_soft_token.build_slot_stop_ids`. Required (and only used)
+            when ``slot_mode != "mean"``.
+        :param slot_centroid: Which centre ``cent_cmean`` subtracts. Only ``"row"`` (the mean over
+            all of that row's document content tokens, computed online, no extra pass) is
+            implemented; the eval-side probe used the corpus centroid, which a row of 14-56
+            documents from the same corpus estimates.
+        :param drop_slots: Emit NO slot token for pooled documents (their tokens simply vanish
+            from the compacted row; kept tokens keep their original positions). Slot-less
+            compaction has no slot K/V or recurrent write to detach, so ``detach_soft_kv`` /
+            ``detach_soft_gdn`` become no-ops.
+        :param detach_soft_gdn: With ``detach_soft_kv``, ALSO sever the backward through the
+            slots' recurrent-mixer write channels (``k``/``v`` before the conv, ``beta``, ``g``)
+            on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
+            attention K/V and GDN writes are detached, and its own query/FFN path is then a dead
+            end. ``False`` = the pre-2026-09-08 behaviour (GDN co-adaptation through slots).
+        """
+        if self._document_chunk_attention is not None:
+            raise OLMoConfigurationError(
+                "enable_pooled_soft_tokens is mutually exclusive with "
+                "enable_document_chunk_attention (the compacted sequence is plain causal)."
+            )
+        from ..pooled_soft_token import KEEP_TOKEN_RULES, SLOT_MODES, PooledDocProjector
+
+        if keep_token_rule not in KEEP_TOKEN_RULES:
+            raise OLMoConfigurationError(
+                f"unknown keep_token_rule {keep_token_rule!r} (expected one of {KEEP_TOKEN_RULES})"
+            )
+        if keep_token_rule != "none":
+            if keep_token_k <= 0:
+                raise OLMoConfigurationError(
+                    f"keep_token_rule={keep_token_rule!r} needs keep_token_k > 0"
+                )
+            if header_extra_tokens > 0:
+                raise OLMoConfigurationError(
+                    "keep_token_rule and header_extra_tokens both select real body tokens; set "
+                    "only one (keep_token_rule='first' IS header_extra_tokens)."
+                )
+        if keep_token_rule == "rule" and keep_token_tables is None:
+            raise OLMoConfigurationError(
+                "keep_token_rule='rule' needs keep_token_tables (build them with "
+                "olmo_core.nn.pooled_soft_token.build_token_idf / build_token_piece_tables)"
+            )
+        if slot_mode not in SLOT_MODES:
+            raise OLMoConfigurationError(
+                f"unknown slot_mode {slot_mode!r} (expected one of {SLOT_MODES})"
+            )
+        if slot_mode != "mean" and not slot_stop_ids:
+            raise OLMoConfigurationError(
+                f"slot_mode={slot_mode!r} needs a non-empty slot_stop_ids (build it with "
+                "olmo_core.nn.pooled_soft_token.build_slot_stop_ids)"
+            )
+
+        emb_weight = self.embeddings.weight  # type: ignore[union-attr]
+        self.pooled_projector = PooledDocProjector(
+            self.d_model,
+            hidden=projector_hidden,
+            dtype=emb_weight.dtype,
+            init_device="meta" if emb_weight.device.type == "meta" else str(emb_weight.device),
+        )
+        self._pooled_soft_tokens = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "placeholder_id": int(placeholder_id),
+            "keep_prob": float(keep_prob),
+            "keep_seed": int(keep_seed),
+            # Compression-mixing curriculum for the GOLD-BLIND keep draw (see anneal_p_full). The
+            # gold-aware hook carries its own copy; ``mix_calls`` counts training compactions on
+            # this rank and is the anneal's clock.
+            "mix_start_p": float(mix_start_p),
+            "mix_end_p": float(mix_end_p),
+            "mix_total_calls": int(mix_total_calls),
+            "mix_calls": 0,
+            "mix_debug_calls": 12,
+            # Aux attention-contribution matching (see pooled_soft_token.aux_matching_loss): train
+            # the projector ONLINE so a soft token's per-layer KV reproduces its doc's real
+            # attention behavior, using the keep set as the supervision source. > 0 enables
+            # shadows + the position-causal masked attention path.
+            "aux_match_weight": float(aux_match_weight),
+            "aux_queries": int(aux_queries),
+            "aux_max_shadows": int(aux_max_shadows),
+            # Treat pooled slots as STATIC KV: sever the LM loss's backward through the slot
+            # columns' K/V at EVERY layer (and their input injection), so the main model receives
+            # task gradient only through real tokens and cannot co-invent a private "summary
+            # language" (the co-drift channel). The projector then trains ONLY via the aux
+            # shadow objective (frozen if aux_match_weight == 0).
+            "detach_soft_kv": bool(detach_soft_kv),
+            # +log(doc_len) on every pooled slot's logit (pooled_soft_token.add_soft_len_bias):
+            # restores a diffuse document's softmax MASS; needs the additive-bias SDPA path.
+            "len_bias": bool(len_bias),
+            "len_bias_scale": float(len_bias_scale),
+            "len_bias_extra": float(len_bias_extra),
+            # Paired consistency distillation: with probability distill_prob a training forward
+            # runs BOTH the full pass (LM gradient -> protects the full-attention pathway from
+            # co-drift) and the compressed pass, matching the student's hidden states at the
+            # divergence layers (probe: L16+) to the DETACHED teacher at answer positions.
+            # The coin is seeded on a shared forward counter so every FSDP rank takes the same
+            # branch (asymmetric double-forwards would desynchronize the collectives).
+            "distill_prob": float(distill_prob),
+            "distill_weight": float(distill_weight),
+            "distill_layers": sorted(
+                set(range(int(self.n_layers * 0.4), self.n_layers, max(1, distill_layer_stride)))
+                | {self.n_layers - 1}
+            ),
+            "_distill_counter": 0,
+            # Oracle slot cache (olmo_core.nn.oracle_slot.OracleSlotCache): when set, pooled
+            # slots' per-layer K/V are OVERRIDDEN with precomputed oracle log-mass slots instead
+            # of whatever the network computes from the projected soft token -- the
+            # maximal-fidelity static slot. Docs missing from the cache fall back to the
+            # projector path.
+            "oracle_cache": oracle_cache,
+            "_oracle_stats": {"hits": 0, "misses": 0, "calls": 0},
+            # Header-real pooling: the question's exact-match tokens (ids, dates) stay real.
+            "header_stop_id": None if header_stop_id is None else int(header_stop_id),
+            "header_stop_count": int(header_stop_count),
+            "header_cap": int(header_cap),
+            "header_extra_tokens": int(header_extra_tokens),
+            # Keep-token rule: WHICH body tokens of a pooled doc stay real (none/first/rule). The
+            # "first" branch is literally mark_doc_headers_free(extra_tokens=k), so it is
+            # bit-identical to --st-header-extra-tokens; "rule" adds a non-contiguous per-document
+            # top-k over cheap token features (pooled_soft_token.keep_token_scores).
+            "keep_token_rule": str(keep_token_rule),
+            "keep_token_k": float(keep_token_k),
+            "keep_token_weights": (
+                None if keep_token_weights is None else dict(keep_token_weights)
+            ),
+            "keep_token_sd": None if keep_token_sd is None else dict(keep_token_sd),
+            "keep_token_tables": keep_token_tables,
+            "keep_token_log_every": int(keep_token_log_every),
+            "_keep_token_calls": 0,
+            "detach_soft_gdn": bool(detach_soft_gdn),
+            # Slot construction (pooled_soft_token.apply_slot_mode). "mean" is the historical
+            # path and is bit-identical to it; the others need ``slot_stop_ids``. The vocab-sized
+            # bool mask is built lazily on the first compaction (the embedding may be on meta
+            # here) and cached under "slot_stop_mask".
+            "slot_mode": slot_mode,
+            # drop_slots=True: pooled documents get NO slot at all -- their tokens vanish from the
+            # compacted row (pooled_soft_token.compact_pooled_rows). Slot-less training then has
+            # nothing to detach: the detach paths see zero slot columns and are no-ops.
+            "drop_slots": bool(drop_slots),
+            "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
+            "slot_stop_mask": None,
+            "slot_centroid": str(slot_centroid),
+            "_slot_stats": {"calls": 0, "fallback_docs": 0},
+            # WHOLE-CATEGORY keep policy (olmo_core.nn.attention.doc_categories). When set, the
+            # keep mask comes from clustering the DOCUMENTS' OWN SLOT VECTORS instead of from the
+            # per-document keep_prob draw or the gold hook's mask, and a category is kept or
+            # pooled as a unit -- never partially. Keys: mode, n_small, n_decoy,
+            # decoy_max_size_mult, n_cats, cats_random, threshold_rule, log_every.
+            "cat_keep": None if cat_keep is None else dict(cat_keep),
+            "_cat_calls": 0,
+        }
+        for mod in self.modules():
+            if hasattr(mod, "detach_masked_writes"):
+                mod.detach_masked_writes = bool(detach_soft_kv and detach_soft_gdn)
+
+    def enable_role_gated_ffn(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        *,
+        start_layer: int = 4,
+        pad_id: Optional[int] = None,
+    ) -> None:
+        """
+        Enable role-gated FFN compute (see :mod:`olmo_core.nn.role_gated_ffn`): context-document
+        tokens (between ``<|doc_start|>``/``<|doc_end|>`` markers) skip the full FFN from
+        ``start_layer`` on -- identity residual -- while free/query/answer tokens (and generated
+        tokens at decode time) keep it. The gate applies to EVERY forward (train, eval, prefill),
+        so training and inference see identical routing; no new parameters, so base checkpoints
+        load untouched.
+
+        Call BEFORE building the optimizer / applying data parallelism.
+
+        :param start_layer: First gated layer (earlier layers keep the full FFN everywhere).
+        """
+        from ..role_gated_ffn import RoleGateHolder, install_role_gated_ffn
+
+        holder = RoleGateHolder()
+        gated = install_role_gated_ffn(self.blocks, holder, start_layer=start_layer)
+        if not gated:
+            raise OLMoConfigurationError("enable_role_gated_ffn gated no blocks")
+        self._role_gated_ffn = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+            "pad_id": pad_id,
+            "start_layer": int(start_layer),
+            "holder": holder,
+        }
+        log.info("Role-gated FFN enabled on %d blocks (start_layer=%d)", len(gated), start_layer)
+
+    def enable_nested_ffn_moe(
+        self,
+        *,
+        start_layer: int = 4,
+        divisors: Sequence[float] = (1, 4, 16, 64),
+        include_null: bool = True,
+        target_cost: float = 0.05,
+        budget_weight: float = 1.0,
+        hinge_power: int = 1,
+        two_sided: bool = False,
+        target_anneal_calls: int = 0,
+        explore_prob: float = 0.0,
+        explore_anneal_calls: int = 0,
+        recon_frac: float = 0.0,
+        recon_weight: float = 0.0,
+        entropy_weight: float = 0.0,
+        seed: int = 0,
+        layer_curriculum_calls: int = 0,
+        width_multiple: int = 8,
+        trainable_width: int = 0,
+    ) -> None:
+        """
+        Enable the nested-width FFN mixture (see :mod:`olmo_core.nn.nested_ffn_moe`): from
+        ``start_layer`` on, a learned per-token router picks one of several nested FFN widths
+        (down to a zero-cost null rung), and a budget hinge loss pushes the mean per-token FFN
+        cost under ``target_cost``.
+
+        Adds a small router and per-rung gains per gated block -- NEW state-dict keys, so the base
+        checkpoint must be re-saved with them (``bake_ffn_moe_into_base.py``). The router is
+        initialized to select the full rung with probability ~1, so an enabled but untrained model
+        reproduces its base exactly.
+
+        Call BEFORE building the optimizer / applying data parallelism.
+
+        :param start_layer: First routed layer.
+        :param divisors: Cost divisors for the rungs, e.g. ``(1, 4, 16, 64)``.
+        :param include_null: Append a zero-compute null rung.
+        :param target_cost: Mean per-token FFN cost the budget hinge allows for free.
+        :param budget_weight: Weight of the budget hinge.
+        :param recon_frac: Fraction of tokens carrying a local full-FFN reconstruction target.
+        :param seed: Base seed for the exploration draws (kept deterministic per forward so
+            activation-checkpoint recompute reproduces the routing).
+        :param layer_curriculum_calls: If > 0, routing opens from the last layer downward to
+            ``start_layer`` linearly over this many forwards (see
+            :meth:`NestedFFNHolder.current_min_layer`).
+        :param width_multiple: Rung widths are floored to a multiple of this (minimum = this).
+            ``1`` allows a single-hidden-unit rung, e.g. divisor 9728 on Qwen3-4B.
+
+        :raises OLMoConfigurationError: If no blocks were routed.
+        """
+        from ..nested_ffn_moe import (
+            NestedFFNHolder,
+            install_nested_ffn_moe,
+            resolve_rung_widths,
+        )
+
+        first_block = next(iter(self.blocks.values()))
+        hidden_size = first_block.feed_forward.w1.out_features  # type: ignore[union-attr]
+        widths, costs = resolve_rung_widths(
+            hidden_size, divisors, include_null=include_null, multiple_of=width_multiple
+        )
+        holder = NestedFFNHolder(
+            costs,
+            target_cost=target_cost,
+            budget_weight=budget_weight,
+            hinge_power=hinge_power,
+            two_sided=two_sided,
+            target_anneal_calls=target_anneal_calls,
+            explore_prob=explore_prob,
+            explore_anneal_calls=explore_anneal_calls,
+            recon_frac=recon_frac,
+            recon_weight=recon_weight,
+            entropy_weight=entropy_weight,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+            layer_curriculum_calls=layer_curriculum_calls,
+        )
+        routed = install_nested_ffn_moe(
+            self.blocks,
+            holder,
+            start_layer=start_layer,
+            widths=widths,
+            costs=costs,
+            trainable_width=trainable_width,
+        )
+        if not routed:
+            raise OLMoConfigurationError("enable_nested_ffn_moe routed no blocks")
+        self._nested_ffn_moe = {
+            "start_layer": int(start_layer),
+            "widths": widths,
+            "costs": costs,
+            "holder": holder,
+        }
+        log.info(
+            "Nested-FFN MoE enabled on %d blocks (start_layer=%d) rungs=%s costs=%s target=%.4f",
+            len(routed),
+            start_layer,
+            widths,
+            [round(c, 5) for c in costs],
+            target_cost,
+        )
+
+    def enable_ffn_token_drop(
+        self,
+        *,
+        max_rate: float,
+        layer_prob: float = 0.0,
+        start_layer: int = 1,
+        seed: int = 0,
+        rank: int = 0,
+    ) -> None:
+        """
+        Enable random per-token FFN dropping during training (see
+        :mod:`olmo_core.nn.ffn_token_drop`): each token skips a block's FFN (identity residual)
+        with a per-row rate ``r ~ U[0, max_rate]``, and each (row, layer) is dropped whole with
+        probability ``layer_prob``. Training-only; adds no parameters, so the checkpoint stays a
+        plain dense checkpoint.
+
+        Call BEFORE applying data parallelism.
+
+        :param max_rate: Upper end of the per-row token drop rate.
+        :param layer_prob: Probability of dropping a layer's FFN for a whole row.
+        :param start_layer: First layer that may drop.
+        :param seed: Base seed for the draws.
+        :param rank: Data-parallel rank (mixed into the seed).
+
+        :raises OLMoConfigurationError: If no blocks were patched.
+        """
+        from ..ffn_token_drop import FFNTokenDropHolder, install_ffn_token_drop
+
+        holder = FFNTokenDropHolder(
+            max_rate=max_rate, layer_prob=layer_prob, seed=seed, rank=rank
+        )
+        patched = install_ffn_token_drop(self.blocks, holder, start_layer=start_layer)
+        if not patched:
+            raise OLMoConfigurationError("enable_ffn_token_drop patched no blocks")
+        self._ffn_token_drop = {
+            "max_rate": float(max_rate),
+            "layer_prob": float(layer_prob),
+            "start_layer": int(start_layer),
+            "holder": holder,
+        }
+        log.info(
+            "FFN token drop enabled on %d blocks (start_layer=%d, max_rate=%.3f, layer_prob=%.3f)",
+            len(patched),
+            start_layer,
+            max_rate,
+            layer_prob,
+        )
+
+    def enable_kv_route(
+        self,
+        *,
+        start_layer: int = 0,
+        target: float = 0.5,
+        budget_weight: float = 1.0,
+        two_sided: bool = True,
+        target_anneal_calls: int = 0,
+        explore_prob: float = 0.0,
+        explore_anneal_calls: int = 0,
+        seed: int = 0,
+        router_location: str = "root",
+    ) -> None:
+        """
+        Enable learned per-layer KV-cache allocation (see :mod:`olmo_core.nn.attention.kv_route`):
+        every plain full-attention layer at or after ``start_layer`` gets a per-token keep/drop
+        router; dropped keys leave that layer's cache, and a budget term pulls the mean keep
+        fraction (over tokens and routed layers) to ``target``.
+
+        Adds NEW state-dict keys (``blocks.<i>.attention._kvr_router.w.*``), initialised to keep
+        everything so an enabled-but-untrained model reproduces its base exactly. Call BEFORE
+        building the optimizer / applying data parallelism.
+
+        :raises OLMoConfigurationError: If no attention layer was routed.
+        """
+        from ..attention.kv_route import KVRouteHolder, install_kv_route
+
+        holder = KVRouteHolder(
+            target=target,
+            budget_weight=budget_weight,
+            two_sided=two_sided,
+            target_anneal_calls=target_anneal_calls,
+            explore_prob=explore_prob,
+            explore_anneal_calls=explore_anneal_calls,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+        )
+        routed = install_kv_route(
+            self.blocks, holder, start_layer=start_layer, owner=self, location=router_location
+        )
+        if not routed:
+            raise OLMoConfigurationError("enable_kv_route routed no attention layers")
+        self._kv_route = {
+            "start_layer": int(start_layer),
+            "routed": routed,
+            "holder": holder,
+            "router_location": router_location,
+        }
+        log.info(
+            "KV routing enabled on %d attention layers %s (start_layer=%d) target=%.3f",
+            len(routed),
+            routed,
+            start_layer,
+            target,
+        )
+
+    def enable_block_skip(
+        self,
+        *,
+        start_layer: int = 0,
+        target: float = 0.5,
+        budget_weight: float = 1.0,
+        two_sided: bool = True,
+        target_anneal_calls: int = 0,
+        seed: int = 0,
+        compact: bool = False,
+        capacity_frac: Optional[float] = None,
+    ) -> None:
+        """
+        Enable learned per-token block skipping (see :mod:`olmo_core.nn.block_skip`): every block at
+        or after ``start_layer`` gets a router deciding per token whether the block runs; skipped
+        tokens pass the residual stream unchanged and are not keys in that block's attention (in a
+        GatedDeltaNet block: do not write the recurrent state). Adds
+        NEW state-dict keys ``bskip_routers.<i>.w.*`` (on the model root) initialised to run everything.
+
+        :param compact: Gather the kept tokens into a shorter sequence instead of masking, so the
+            skipped work is really not done. This is what makes block skipping a wall-clock lever
+            rather than a FLOP-meter one -- and it changes what "skipped" means for the
+            GatedDeltaNet short convolution. Read the caveat in :mod:`olmo_core.nn.block_skip`
+            before enabling it.
+        :param capacity_frac: Fixed per-block capacity (mixture-of-depths): run the top
+            ``capacity_frac`` of tokens by router logit instead of thresholding. Makes the
+            compacted shape static, which removes one host sync per block. Changes the router's
+            semantics -- see :func:`olmo_core.nn.block_skip.block_skip_decide`.
+
+        :raises OLMoConfigurationError: If no block was routed.
+        """
+        from ..block_skip import BlockSkipHolder, install_block_skip
+
+        holder = BlockSkipHolder(
+            target=target,
+            budget_weight=budget_weight,
+            two_sided=two_sided,
+            target_anneal_calls=target_anneal_calls,
+            seed=seed,
+            start_layer=start_layer,
+            n_layers=len(self.blocks),
+            compact=compact,
+            capacity_frac=capacity_frac,
+        )
+        routed = install_block_skip(self.blocks, holder, start_layer=start_layer, owner=self)
+        if not routed:
+            raise OLMoConfigurationError("enable_block_skip routed no blocks")
+        self._block_skip = {"start_layer": int(start_layer), "routed": routed, "holder": holder}
+        log.info(
+            "Block skipping enabled on %d blocks (start_layer=%d) target=%.3f compact=%s",
+            len(routed),
+            start_layer,
+            target,
+            compact,
+        )
+
+    def _attach_block_budget(self, h: torch.Tensor, block_idx: int) -> torch.Tensor:
+        """
+        Hand this block's router expectations their budget gradient through ``h`` (see
+        :mod:`olmo_core.nn.budget_attach`). Coefficients are the budget derivatives linearised
+        with the previous forward's values; zero on the first forward.
+        """
+        from ..budget_attach import attach_budget_grads
+
+        nffn = self._nested_ffn_moe
+        kvr = self._kv_route
+        bsk = self._block_skip
+        jb = self._joint_budget
+        terms: List[torch.Tensor] = []
+        coefs: List[float] = []
+
+        def _this_layer(holder, attr):
+            vals = getattr(holder, attr)
+            return [e for li, e in zip(holder._exp_layers, vals) if int(li) == block_idx]
+
+        if jb is not None:
+            if "last_cost" not in jb:
+                return h
+            sign = 1.0 if jb["last_cost"] > jb["last_target"] else -1.0
+            lam = jb["weight"] * sign
+            sh = jb["per_block"][block_idx]
+            keep_prev = bsk["holder"].last_exp_per_layer.get(block_idx, 1.0) if bsk else 1.0
+            ffn_prev = nffn["holder"].last_exp_per_layer.get(block_idx, 1.0) if nffn else 1.0
+            kv_prev = kvr["holder"].last_exp_per_layer.get(block_idx, 1.0) if kvr else 1.0
+            if nffn is not None:
+                for e in _this_layer(nffn["holder"], "_exp_costs"):
+                    terms.append(e)
+                    coefs.append(lam * sh["ffn"] * keep_prev)
+            if kvr is not None:
+                for e in _this_layer(kvr["holder"], "_exp_keep"):
+                    terms.append(e)
+                    coefs.append(lam * sh["attn"] * keep_prev)
+            if bsk is not None:
+                for e in _this_layer(bsk["holder"], "_exp_keep"):
+                    terms.append(e)
+                    coefs.append(lam * (sh["proj"] + sh["ffn"] * ffn_prev + sh["attn"] * kv_prev))
+        else:
+            for cfg, attr in ((nffn, "_exp_costs"), (kvr, "_exp_keep"), (bsk, "_exp_keep")):
+                if cfg is None:
+                    continue
+                holder = cfg["holder"]
+                if holder.budget_weight <= 0 or holder.last_exp_mean is None:
+                    continue
+                gap = holder.last_exp_mean - holder.current_target()
+                if gap <= 0 and not getattr(holder, "two_sided", True):
+                    continue
+                n_layers = max(1, len(holder.last_exp_per_layer))
+                sign = 1.0 if gap > 0 else -1.0
+                for e in _this_layer(holder, attr):
+                    terms.append(e)
+                    coefs.append(holder.budget_weight * sign / n_layers)
+        return attach_budget_grads(h, terms, coefs)
+
+    def _set_role_gate_mask(self, input_ids: torch.Tensor) -> None:
+        """Recompute the FFN gate mask from the (possibly compacted) token stream."""
+        cfg = self._role_gated_ffn
+        assert cfg is not None
+        holder = cfg["holder"]
+        if input_ids.is_floating_point():
+            holder.clear()  # PP hidden states: cannot derive roles here
+            return
+        chunk_ids = build_chunk_ids_from_tokens(
+            input_ids,
+            doc_start_id=cfg["doc_start_id"],
+            doc_end_id=cfg["doc_end_id"],
+            eos_id=cfg["eos_id"],
+            mode="chunked",
+            pad_id=cfg["pad_id"],
+        )
+        holder.set_from_chunk_ids(move_to_device(chunk_ids, self.device))
+
+    def _compact_pooled_soft_tokens(
+        self,
+        input_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        ignore_index: int,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[Tuple]]:
+        """
+        Apply soft-token compaction for this training forward. Returns
+        ``(input_ids, labels, position_ids, soft_inject)`` -- unchanged inputs and ``None``s when
+        the batch has no context documents. ``soft_inject = (rows, cols, mean_embeds)`` is consumed
+        after the embedding lookup.
+        """
+        from ..attention.pooled_doc_kv import anneal_p_full, resolve_keep_docs
+        from ..pooled_soft_token import apply_slot_mode, compact_pooled_rows
+
+        cfg = self._pooled_soft_tokens
+        assert cfg is not None
+        if self._cp_load_balancer is not None or self._pp_enabled:
+            raise OLMoConfigurationError(
+                "pooled soft tokens are not supported with context/pipeline parallelism"
+            )
+        chunk_ids = build_chunk_ids_from_tokens(
+            input_ids,
+            doc_start_id=cfg["doc_start_id"],
+            doc_end_id=cfg["doc_end_id"],
+            eos_id=cfg["eos_id"],
+            mode="chunked",
+        )
+        n_docs = int(chunk_ids.max().item()) + 1
+        if n_docs <= 0:
+            return None
+        # Which body tokens stay REAL. "first" IS --st-header-extra-tokens (same call, so
+        # bit-identical); "rule" adds a non-contiguous per-document top-k afterwards.
+        keep_rule = cfg.get("keep_token_rule", "none")
+        extra_tokens = int(cfg.get("header_extra_tokens", 0))
+        # "first" with 0 < k < 1 is a per-document FRACTION (first ceil(k*|body|) tokens) and goes
+        # through the top-k path with first_scores; integer k stays on the header call below.
+        frac_first = keep_rule == "first" and 0.0 < float(cfg["keep_token_k"]) < 1.0
+        if keep_rule == "first" and not frac_first:
+            extra_tokens = int(cfg["keep_token_k"])
+        pre_free_chunk_ids = chunk_ids if keep_rule != "none" else None
+        if cfg.get("header_stop_id") is not None or extra_tokens > 0:
+            from ..attention.chunked_mask import mark_doc_headers_free
+
+            chunk_ids = mark_doc_headers_free(
+                chunk_ids,
+                input_ids,
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                stop_id=cfg["header_stop_id"],
+                stop_count=cfg["header_stop_count"],
+                extra_tokens=extra_tokens,
+                cap=cfg["header_cap"],
+            )
+        if keep_rule in ("rule", "first_last") or frac_first:
+            from ..attention.chunked_mask import mark_doc_topk_tokens_free
+            from ..pooled_soft_token import (
+                DEFAULT_KEEP_TOKEN_WEIGHTS,
+                first_last_scores,
+                first_scores,
+                keep_token_scores,
+            )
+
+            if frac_first:
+                scores = first_scores(
+                    input_ids,
+                    chunk_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
+            elif keep_rule == "first_last":
+                scores = first_last_scores(
+                    input_ids,
+                    chunk_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
+            else:
+                scores = keep_token_scores(
+                    input_ids,
+                    chunk_ids,
+                    tables=cfg["keep_token_tables"],
+                    weights=cfg.get("keep_token_weights") or DEFAULT_KEEP_TOKEN_WEIGHTS,
+                    sd=cfg.get("keep_token_sd"),
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    n_docs=n_docs,
+                )
+            chunk_ids = mark_doc_topk_tokens_free(
+                chunk_ids,
+                input_ids,
+                scores,
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                k=float(cfg["keep_token_k"]),
+                n_docs=n_docs,
+            )
+        elif keep_rule == "custom":
+            # caller-supplied per-token keep mask (saliency / attention-budget selectors that the
+            # model cannot score from token features alone); see chunked_mask.mark_positions_free
+            from ..attention.chunked_mask import mark_positions_free
+
+            chunk_ids = mark_positions_free(
+                chunk_ids,
+                input_ids,
+                cfg["keep_token_mask"],
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                n_docs=n_docs,
+                free_markers=cfg.get("keep_token_mask_markers", False) or False,
+            )
+        # Compression-mixing curriculum on the GOLD-BLIND path: with probability ``p_full`` a row
+        # trains uncompressed. With the gold-aware hook installed the hook already applied it
+        # (it needs the gold table), so this stays off to avoid applying it twice.
+        mix_on = (cfg.get("mix_start_p", 0.0) > 0.0 or cfg.get("mix_end_p", 0.0) > 0.0) and (
+            self._pooled_keep_holder is None
+        )
+        p_full = (
+            anneal_p_full(
+                cfg["mix_calls"],
+                mix_start_p=cfg["mix_start_p"],
+                mix_end_p=cfg["mix_end_p"],
+                mix_total_calls=cfg["mix_total_calls"],
+            )
+            if mix_on
+            else 0.0
+        )
+        # NB the keep set is resolved AFTER the slot vectors below, not here: a whole-category
+        # policy (cfg["cat_keep"]) decides which documents to keep FROM those vectors.
+        # Mean input embedding per pooled doc (from the ORIGINAL row), the projector's feature.
+        emb = self.embeddings(input_ids)  # type: ignore[misc]
+        B, T, D = emb.shape
+        cid = chunk_ids.to(torch.long)
+        is_ctx = cid >= 0
+        flat = (torch.arange(B, device=emb.device)[:, None] * n_docs + cid.clamp(min=0)).reshape(
+            -1
+        )[is_ctx.reshape(-1)]
+        sums = torch.zeros(B * n_docs, D, dtype=emb.dtype, device=emb.device).index_add(
+            0, flat, emb.reshape(B * T, D)[is_ctx.reshape(-1)]
+        )
+        counts = (
+            torch.zeros(B * n_docs, dtype=torch.float32, device=emb.device)
+            .index_add(0, flat, torch.ones_like(flat, dtype=torch.float32))
+            .clamp(min=1.0)
+        )
+        doc_means = (sums / counts.unsqueeze(-1).to(emb.dtype)).reshape(B, n_docs, D)
+        if cfg.get("slot_mode", "mean") != "mean":
+            # Content-only (and optionally centred) slot: the plain mean is ~94% shared
+            # common-word mass, which is what makes it unreadable -- records/outlier-richer-slot-probe.md.
+            mask = cfg.get("slot_stop_mask")
+            if mask is None or mask.device != emb.device:
+                V = int(self.embeddings.weight.shape[0])  # type: ignore[union-attr]
+                mask = torch.zeros(V, dtype=torch.bool, device=emb.device)
+                ids_t = torch.tensor(cfg["slot_stop_ids"], dtype=torch.long, device=emb.device)
+                mask[ids_t[ids_t < V]] = True
+                cfg["slot_stop_mask"] = mask
+            doc_means, n_fallback = apply_slot_mode(
+                emb,
+                input_ids,
+                chunk_ids,
+                n_docs,
+                doc_means,
+                mode=cfg["slot_mode"],
+                stop_mask=mask,
+                centroid=cfg.get("slot_centroid", "row"),
+            )
+            st_slot = cfg["_slot_stats"]
+            st_slot["calls"] += 1
+            st_slot["fallback_docs"] += n_fallback
+            if n_fallback and st_slot["calls"] % 100 == 1:
+                log.warning(
+                    "[soft-slot] %s: %d documents lost every token to the stop set so far and "
+                    "fell back to the plain mean (%d compactions)",
+                    cfg["slot_mode"],
+                    st_slot["fallback_docs"],
+                    st_slot["calls"],
+                )
+
+        cat_cfg = cfg.get("cat_keep")
+        if cat_cfg is None:
+            keep = resolve_keep_docs(
+                chunk_ids,
+                n_docs,
+                holder=self._pooled_keep_holder,
+                keep_prob=cfg["keep_prob"],
+                keep_seed=cfg["keep_seed"],
+                mix_p_full=p_full,
+                mix_call=cfg["mix_calls"] if mix_on else 0,
+            )
+        else:
+            # Whole-category keep: cluster the documents by the SAME slot vectors the pooled slot
+            # carries, then keep or pool each category as a unit. For "gold_plus_wholecats" the
+            # gold-sidecar hook's mask is read as the GOLD set (the trainer installs that hook with
+            # n_random=0 precisely so it carries gold and nothing else); "smallcat_keep" is
+            # gold-blind and ignores the holder entirely.
+            from ..attention.doc_categories import resolve_category_keep
+
+            doc_valid = (
+                torch.zeros(B, n_docs, dtype=torch.bool, device=doc_means.device)
+                .reshape(-1)
+                .index_fill_(0, flat, True)
+                .reshape(B, n_docs)
+            )
+            gold_mask = None
+            if cat_cfg["mode"] == "gold_plus_wholecats":
+                holder = self._pooled_keep_holder
+                gold_mask = None if holder is None else holder.keep_docs
+                if gold_mask is None:
+                    raise OLMoConfigurationError(
+                        "cat_keep mode 'gold_plus_wholecats' needs the gold-sidecar keep hook "
+                        "(install_pooled_doc_keep); no holder mask was set for this forward."
+                    )
+                gold_mask = gold_mask.to(device=doc_means.device, dtype=torch.bool)
+                if gold_mask.shape[0] == 1 and B > 1:
+                    gold_mask = gold_mask.expand(B, -1)
+                if gold_mask.shape[1] < n_docs:
+                    gold_mask = torch.cat(
+                        [
+                            gold_mask,
+                            torch.zeros(
+                                B,
+                                n_docs - gold_mask.shape[1],
+                                dtype=torch.bool,
+                                device=doc_means.device,
+                            ),
+                        ],
+                        dim=1,
+                    )
+                gold_mask = gold_mask[:, :n_docs]
+            cfg["_cat_calls"] += 1
+            keep, cat_stats = resolve_category_keep(
+                doc_means.detach().float(),
+                doc_valid,
+                mode=cat_cfg["mode"],
+                gold_docs=gold_mask,
+                n_small=cat_cfg.get("n_small", 3),
+                n_decoy=cat_cfg.get("n_decoy", 1),
+                decoy_max_size_mult=cat_cfg.get("decoy_max_size_mult", 2.0),
+                n_cats=cat_cfg.get("n_cats", 3),
+                cats_random=cat_cfg.get("cats_random", False),
+                threshold_rule=cat_cfg.get("threshold_rule", "gap"),
+                seed=cfg["keep_seed"],
+                call=cfg["_cat_calls"],
+                doc_counts=counts.reshape(B, n_docs),
+            )
+            n_call = cfg["_cat_calls"]
+            every = int(cat_cfg.get("log_every", 50))
+            if n_call <= 5 or (every > 0 and n_call % every == 0):
+                # The FLOP cost of this policy is `real_token_frac`, and it is DATA-DEPENDENT (a
+                # decoy category's size varies row to row), so it has to be logged, not assumed.
+                print(
+                    f"[cat-keep] call#{n_call} {cat_cfg['mode']}: B={B} n_docs<={n_docs} "
+                    f"cats={cat_stats['n_cats_mean']:.1f} kept_docs={cat_stats['kept_docs_mean']:.1f} "
+                    f"kept_sizes={cat_stats['kept_sizes']} "
+                    f"real_token_frac={cat_stats['real_token_frac']} "
+                    f"decoy_skipped={cat_stats['decoy_skipped']} "
+                    f"saturated_rows={cat_stats['saturated_rows']}",
+                    flush=True,
+                )
+        if mix_on:
+            cfg["mix_calls"] += 1
+            calls, B_ = cfg["mix_calls"], keep.shape[0]
+            if calls <= cfg["mix_debug_calls"] or calls % 100 == 0:
+                # Same ``[pooled-kv] ... p_full=`` shape as the gold-aware hook, so the job-log
+                # greps in debug/ds64 and records/ see the curriculum on either path.
+                print(
+                    f"[pooled-kv] call#{calls} gold-blind: B={B_} n_docs<={n_docs} "
+                    f"keep_prob={cfg['keep_prob']} pooled_docs={int((~keep).sum().item())} "
+                    f"p_full={p_full:.2f} mixed={int(keep.all(dim=1).sum().item())}",
+                    flush=True,
+                )
+
+        cb = compact_pooled_rows(
+            input_ids,
+            labels,
+            chunk_ids,
+            keep,
+            placeholder_id=cfg["placeholder_id"],
+            pad_token_id=cfg["eos_id"],
+            ignore_index=ignore_index,
+            add_shadows=cfg["aux_match_weight"] > 0.0,
+            max_shadows_per_row=cfg["aux_max_shadows"],
+            drop_slots=bool(cfg.get("drop_slots", False)),
+        )
+        if pre_free_chunk_ids is not None:
+            cfg["_keep_token_calls"] += 1
+            n_call = cfg["_keep_token_calls"]
+            every = int(cfg.get("keep_token_log_every", 50))
+            if n_call <= 5 or (every > 0 and n_call % every == 0):
+                # The realised cost of a keep-token rule is DATA-dependent (short documents are
+                # kept whole, so the mean is <= k and the FLOP saving is not 1/k of anything):
+                # it has to be measured, not assumed. Freed-per-document is counted against the
+                # PRE-free roles, which still carry each freed token's document id.
+                from ..attention.chunked_mask import PAD_CHUNK_ID
+
+                pre_cid = pre_free_chunk_ids.to(torch.long)
+                freed = (chunk_ids < 0) & (pre_cid >= 0)
+                gid_full = torch.arange(B, device=input_ids.device)[
+                    :, None
+                ] * n_docs + pre_cid.clamp(min=0)
+                per_doc = torch.zeros(
+                    B * n_docs, dtype=torch.float32, device=input_ids.device
+                ).index_add_(
+                    0, gid_full[freed], torch.ones(int(freed.sum()), device=input_ids.device)
+                )
+                present = (
+                    torch.zeros(B * n_docs, dtype=torch.bool, device=input_ids.device)
+                    .index_fill_(0, gid_full[pre_cid >= 0], True)
+                    .reshape(B, n_docs)
+                )
+                pooled = present & ~keep[:, :n_docs]
+                n_pooled = int(pooled.sum().item())
+                kept_per_doc = (
+                    float(per_doc.reshape(B, n_docs)[pooled].mean().item()) if n_pooled else 0.0
+                )
+                n_in = int((chunk_ids != PAD_CHUNK_ID).sum().item())
+                n_real = int(cb.row_lens.sum().item()) - int(cb.soft_rows.numel())
+                print(
+                    f"[keep-token] call#{n_call} rule={keep_rule} k={cfg['keep_token_k']}: "
+                    f"B={B} pooled_docs={n_pooled} real_tokens_per_pooled_doc={kept_per_doc:.2f} "
+                    f"real_token_frac={n_real / max(1, n_in):.4f}",
+                    flush=True,
+                )
+
+        # Projector features for pooled slots AND (when aux is on) the shadow candidates -- both
+        # are P(mean input embeds of the doc), same distribution, same module.
+        inj_rows = torch.cat([cb.soft_rows, cb.shadow_rows])
+        inj_cols = torch.cat([cb.soft_cols, cb.shadow_cols])
+        inj_docs = torch.cat([cb.soft_docs, cb.shadow_docs])
+        mean_feats = doc_means[inj_rows, inj_docs]
+
+        # Oracle slot lookup: hash each pooled doc's token span, gather its cached per-layer
+        # slots. Docs missing from the cache stay on the projector path.
+        oracle_ovr = None
+        cache = cfg.get("oracle_cache")
+        if cache is not None and cb.soft_rows.numel() > 0:
+            import numpy as np
+
+            from ..oracle_slot import doc_hash64
+
+            ids_np = input_ids.cpu().numpy()
+            cid_np = cid.cpu().numpy()
+            s_rows = cb.soft_rows.cpu().numpy()
+            s_docs = cb.soft_docs.cpu().numpy()
+            row_order: Dict[int, Tuple[Any, Any]] = {}
+            hashes = []
+            for b, d in zip(s_rows.tolist(), s_docs.tolist()):
+                if b not in row_order:
+                    order = np.argsort(cid_np[b], kind="stable")
+                    row_order[b] = (order, cid_np[b][order])
+                order, srt = row_order[b]
+                span_lo = int(np.searchsorted(srt, d))
+                span_hi = int(np.searchsorted(srt, d, side="right"))
+                hashes.append(doc_hash64(ids_np[b][order[span_lo:span_hi]]))
+            idx = cache.lookup(hashes)
+            found = idx >= 0
+            st = cfg["_oracle_stats"]
+            st["hits"] += int(found.sum())
+            st["misses"] += int((~found).sum())
+            st["calls"] += 1
+            if st["misses"] > 0 and st["calls"] % 100 == 1:
+                log.warning(
+                    "[oracle-slot] cache misses so far: %d / %d slots (missing docs fall back "
+                    "to the projector)",
+                    st["misses"],
+                    st["hits"] + st["misses"],
+                )
+            if st["calls"] >= 10 and st["hits"] == 0:
+                raise RuntimeError(
+                    "[oracle-slot] 0 cache hits after 10 forwards -- the doc-hash scheme "
+                    "almost certainly mismatches the cache builder; refusing to silently "
+                    "train plain B1"
+                )
+            if found.any():
+                sel = torch.from_numpy(np.flatnonzero(found)).to(cb.soft_rows.device)
+                slots, biases = cache.gather(idx[found])
+                rows = cb.soft_rows[sel]
+                cols = cb.soft_cols[sel]
+                oracle_ovr = {
+                    "rows": rows,
+                    "cols": cols,
+                    "pos": cb.position_ids[rows, cols],
+                    "slots": slots.to(input_ids.device, non_blocking=True),
+                    "biases": biases.to(input_ids.device, non_blocking=True),
+                }
+        return cb, (inj_rows, inj_cols, mean_feats), oracle_ovr
+
+    def _run_blocks(
+        self,
+        h: torch.Tensor,
+        all_block_kwargs: Dict[str, Any],
+        per_block_kwargs: Dict[int, Dict[str, Any]],
+        capture_layers: Optional[Set[int]] = None,
+    ) -> Tuple[torch.Tensor, Dict[int, torch.Tensor]]:
+        """Run the block stack; optionally capture (attached) hidden states at given layer indices."""
+        captured: Dict[int, torch.Tensor] = {}
+        for block_key, block in self.blocks.items():
+            block_idx = int(block_key)
+            block_kwargs = per_block_kwargs.get(block_idx, {})
+            if self.compile_enabled:
+                mark_dynamic(h, (0, 1), strict=False)
+            # Routers evaluated on the block INPUT, outside the checkpoint region (router_fn.py):
+            # a router inside the region kept every layer's norm intermediates alive under FSDP2.
+            extra: Dict[str, Any] = {}
+            attn_mod = getattr(block, "attention", None)
+            kv_cfg = getattr(attn_mod, "_kv_route", None)
+            if (
+                kv_cfg is not None
+                and kv_cfg["holder"].enabled
+                and kv_cfg.get("location", "attention") == "root"
+            ):
+                from ..attention.kv_route import kv_route_decide
+
+                extra.update(kv_route_decide(self, attn_mod, h))
+            if getattr(block, "_bskip", None) is not None:
+                from ..block_skip import block_skip_decide, block_skip_forward
+
+                p_skip, keep_skip = block_skip_decide(block, h)
+                h = block_skip_forward(
+                    block, h, {**all_block_kwargs, **block_kwargs, **extra}, p_skip, keep_skip
+                )
+            else:
+                h = block(h, **all_block_kwargs, **block_kwargs, **extra)
+            if self.budget_attach and h.requires_grad:
+                h = self._attach_block_budget(h, block_idx)
+            if capture_layers is not None and block_idx in capture_layers:
+                captured[block_idx] = h
+        return h, captured
+
+    def enable_summary_token_attention(
+        self,
+        doc_start_id: int,
+        doc_end_id: int,
+        summary_token_id: int,
+        eos_id: int,
+        pad_id: Optional[int] = None,
+        standard_mix_prob: float = 0.0,
+        mix_start_p: float = 0.0,
+        mix_end_p: float = 0.0,
+        mix_total_forwards: int = 0,
+        mix_schedule: str = "linear",
+        mix_step_frac: float = 0.5,
+        mix_seed: int = 42,
+        mix_log_interval: int = 500,
+    ) -> None:
+        """
+        Enable per-token ``summary_roles`` construction for
+        :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention`.
+
+        When enabled, :meth:`forward` derives the roles from the token stream on every step (see
+        :func:`~olmo_core.nn.attention.summary_mask.build_summary_roles`) and forwards them, plus the
+        per-example mask-mixture arm, to every block.
+
+        .. note::
+            Every sequence mixer must *tolerate* the ``summary_roles`` / ``causal_example`` keywords,
+            but they need not consume them. On a hybrid such as Qwen3.5
+            (``block_pattern=["gdn","gdn","gdn","attn"]``) only the 8 attention layers of 32 are
+            masked; the 24 :class:`~olmo_core.nn.attention.recurrent.GatedDeltaNet` layers absorb the
+            keyword via ``**kwargs`` and are an **unrestricted cross-document channel**. That is a
+            deliberate scoping choice for the SummTokenSFT experiment, not an oversight -- but it
+            means results describe what the *attention* layers route, not the whole model. The
+            realized split is logged at :meth:`enable_summary_token_attention` time so it lands in the
+            saved config rather than having to be rediscovered.
+
+        **Mask mixing** (optional): during *training*, each example is independently assigned to the
+        causal arm with probability ``p`` from
+        :func:`~olmo_core.nn.attention.chunked_mask.mask_mix_standard_prob` -- either static
+        (``standard_mix_prob``) or a curriculum (``mix_start_p -> mix_end_p`` over
+        ``mix_total_forwards``, ``"linear"`` or ``"step"``). ``p == 0`` (all defaults) means every
+        example is masked.
+
+        :param doc_start_id: The ``<|box_start|>`` token id.
+        :param doc_end_id: The ``<|box_end|>`` token id.
+        :param summary_token_id: The ``<|summ|>`` token id appended after each context document.
+        :param eos_id: The EOS / example terminator.
+        :param pad_id: Optional dedicated padding id. Needed whenever the tokenizer ties ``pad`` to
+            ``eos`` (Qwen3.5 does), or tail padding cannot be told from content.
+        :param standard_mix_prob: Static per-example causal-arm probability.
+        :param mix_start_p: Curriculum start probability (at forward 0).
+        :param mix_end_p: Curriculum end probability (at ``mix_total_forwards``).
+        :param mix_total_forwards: Forwards over which the curriculum runs. **This must be the number
+            of forwards a single rank performs**, i.e.
+            ``(n_instances * epochs) // (world_size * micro_batch_instances)`` -- getting it wrong
+            leaves ``p`` short of ``mix_end_p`` and has silently voided prior arms.
+        :param mix_schedule: ``"linear"`` or ``"step"``; see
+            :data:`~olmo_core.nn.attention.chunked_mask.MASK_MIX_SCHEDULES`.
+        :param mix_step_frac: ``"step"`` only -- where in training the switch happens.
+        :param mix_seed: Base seed for the deterministic per-(forward, example) coin.
+        :param mix_log_interval: Log a ``[curriculum]`` line every this many training forwards.
+
+        :raises OLMoConfigurationError: If static and curriculum mixing are both requested, or a
+            curriculum is requested without ``mix_total_forwards > 0``.
+        """
+        curriculum = mix_start_p > 0.0 or mix_end_p > 0.0
+        if standard_mix_prob > 0.0 and curriculum:
+            raise OLMoConfigurationError(
+                "Mask mixing: 'standard_mix_prob' (static) is mutually exclusive with the curriculum "
+                "('mix_start_p' / 'mix_end_p'); set only one."
+            )
+        if curriculum and mix_total_forwards <= 0:
+            raise OLMoConfigurationError(
+                "Mask-mix curriculum ('mix_start_p' / 'mix_end_p') requires 'mix_total_forwards' > 0 "
+                "(the number of forwards ONE RANK performs)."
+            )
+        if mix_schedule not in MASK_MIX_SCHEDULES:
+            raise OLMoConfigurationError(
+                f"Unknown mix_schedule {mix_schedule!r}; expected {MASK_MIX_SCHEDULES}"
+            )
+
+        # Record how much of the model the mask actually covers. On a hybrid this is a minority of
+        # layers, and that fact belongs in the saved config rather than in someone's memory.
+        n_mixers = 0
+        n_summary_layers = 0
+        for block in self.blocks.values():
+            mixer = getattr(block, "attention", None)
+            if mixer is None:
+                continue
+            n_mixers += 1
+            if isinstance(mixer, SummaryTokenAttention):
+                n_summary_layers += 1
+        if n_summary_layers == 0:
+            raise OLMoConfigurationError(
+                "enable_summary_token_attention() was called but no layer uses "
+                "AttentionType.summary_token, so the mask would be a silent no-op."
+            )
+        unmasked = n_mixers - n_summary_layers
+        log.info(
+            f"[summary-token] masking {n_summary_layers} of {n_mixers} sequence mixers"
+            + (
+                f"; the other {unmasked} ignore the roles and are an UNRESTRICTED cross-document "
+                "channel. Results describe what the attention layers route, not the whole model."
+                if unmasked
+                else " (every layer is masked)."
+            )
+        )
+
+        mix: Optional[Dict[str, Any]] = None
+        if standard_mix_prob > 0.0 or curriculum:
+            mix = {
+                "standard_mix_prob": float(standard_mix_prob),
+                "mix_start_p": float(mix_start_p),
+                "mix_end_p": float(mix_end_p),
+                "mix_total_forwards": int(mix_total_forwards),
+                "mix_schedule": str(mix_schedule),
+                "mix_step_frac": float(mix_step_frac),
+                "mix_seed": int(mix_seed),
+                "log_interval": max(1, int(mix_log_interval)),
+                "forward_idx": 0,
+            }
+        self._summary_token_attention = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "summary_token_id": int(summary_token_id),
+            "eos_id": int(eos_id),
+            "pad_id": None if pad_id is None else int(pad_id),
+            "n_summary_layers": n_summary_layers,
+            "n_sequence_mixers": n_mixers,
+            "mix": mix,
+        }
+
+    def set_summary_eval_mask_mode(self, mode: str) -> str:
+        """
+        Choose which arm of the summary-token mask mixture is served at **inference**.
+
+        The mixture coin in :meth:`forward` is drawn during training only, so at inference the arm is
+        not a per-example random variable but a single decision about how to serve the model -- and it
+        has to be made explicitly, because the two arms are different masks:
+
+        - ``"causal"`` (default): every example is on the causal arm, i.e. plain causal attention with
+          the ``<|summ|>`` tokens present as ordinary tokens. This is the arm that models trained with
+          ``standard_mix_prob=1.0``, or with a curriculum ending at ``mix_end_p=1.0``, actually saw.
+        - ``"restricted"``: no example is on the causal arm, so the summary mask applies in full and
+          the trailing query reads only summaries and its own document (subject to the layer's
+          :class:`~olmo_core.nn.attention.summary_token.SummaryMaskSpec`). This measures what the
+          summary tokens compressed, and is the condition to use when the question is whether the
+          model can answer from summaries alone.
+
+        Defaulting to ``"causal"`` makes the served mask match the trained one for the arms that end
+        up fully causal; serving ``"restricted"`` to those is a train/test mismatch that reads as a
+        capability result. Training is unaffected either way -- this is consulted only when
+        ``self.training`` is ``False``.
+
+        :param mode: ``"causal"`` or ``"restricted"``.
+
+        :returns: The mode that was set.
+
+        :raises OLMoConfigurationError: If ``mode`` is not one of the two arms.
+        """
+        if mode not in ("causal", "restricted"):
+            raise OLMoConfigurationError(
+                f"Unknown summary eval mask mode {mode!r}; expected 'causal' or 'restricted'."
+            )
+        self._summary_eval_mask_mode = mode
+        return mode
+
+    def set_landmark_eval_top_k(self, top_k: Optional[int]) -> int:
+        """
+        Enable inference-only hard top-k landmark retrieval on every eager landmark attention layer
+        (e.g. :class:`~olmo_core.nn.attention.DocumentLandmarkAttention`): each query attends only the
+        ``top_k`` highest-scoring landmark blocks. ``None`` restores exact (all-block) attention.
+        Training is unaffected. Returns the number of layers updated.
+
+        :param top_k: Number of landmark blocks to keep per query, or ``None`` for exact.
+        """
+        n = 0
+        for module in self.modules():
+            if hasattr(module, "set_eval_top_k") and callable(module.set_eval_top_k):
+                module.set_eval_top_k(top_k)
+                n += 1
+        return n
 
     def compute_auxiliary_metrics(
         self, reset: bool = True
@@ -347,9 +1755,11 @@ class Transformer(nn.Module):
                 self.embeddings,
                 d_model=self.d_model,
                 embed_scale=self.embed_scale,
-                std=self.embedding_init_std
-                if self.embedding_init_std is not None
-                else self.init_std,
+                std=(
+                    self.embedding_init_std
+                    if self.embedding_init_std is not None
+                    else self.init_std
+                ),
                 generator=generator,
             )
 
@@ -494,11 +1904,120 @@ class Transformer(nn.Module):
         doc_lens: Optional[torch.Tensor] = None
         cache_leftpad: Optional[torch.Tensor] = kwargs.pop("cache_leftpad", None)
 
+        # Explicit per-token positions (soft-token pooling: kept tokens keep their ORIGINAL
+        # positions so RoPE geometry matches full-attention inference). Threaded to every block.
+        if (position_ids := kwargs.pop("position_ids", None)) is not None:
+            if self._cp_load_balancer is not None:
+                raise NotImplementedError("position_ids is not supported with context parallelism")
+            all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
+        # Soft-token aux matching: the position-causal masked-attention bias + the shared per-layer
+        # capture dict (each Attention appends its q/k/v slices for the matching loss).
+        if (attn_bias := kwargs.pop("attn_bias", None)) is not None:
+            all_block_kwargs["attn_bias"] = move_to_device(attn_bias, self.device)
+        if (aux_capture := kwargs.pop("aux_capture", None)) is not None:
+            all_block_kwargs["aux_capture"] = aux_capture
+        if (kv_grad_mask := kwargs.pop("kv_grad_mask", None)) is not None:
+            all_block_kwargs["kv_grad_mask"] = move_to_device(kv_grad_mask, self.device)
+        if (soft_keep := kwargs.pop("soft_keep", None)) is not None:
+            # Differentiable token removal (debug/learned_router, 2026-09-27): a (B, T) keep
+            # probability every sequence mixer applies without compacting the row -- attention as
+            # a +log(p) key bias, GatedDeltaNet as p-scaled q/k/v/beta/g. Absent -> untouched.
+            all_block_kwargs["soft_keep"] = move_to_device(soft_keep, self.device)
+        # Oracle slot K/V overrides (soft-token pooling): one gathered slot stack for the batch,
+        # sliced per layer into per-block kwargs (each Attention rotates + injects its own slice).
+        if (oracle_ovr := kwargs.pop("soft_kv_override_layers", None)) is not None:
+            slots = move_to_device(oracle_ovr["slots"], self.device)
+            biases = move_to_device(oracle_ovr["biases"], self.device)
+            rows = move_to_device(oracle_ovr["rows"], self.device)
+            cols = move_to_device(oracle_ovr["cols"], self.device)
+            slot_pos = move_to_device(oracle_ovr["pos"], self.device)
+            for li in range(slots.shape[1]):
+                per_block_kwargs[li]["soft_kv_override"] = {
+                    "rows": rows,
+                    "cols": cols,
+                    "pos": slot_pos,
+                    "k": slots[:, li, 0],
+                    "v": slots[:, li, 1],
+                    "bias": biases[:, li],
+                }
+
         if (doc_lens := kwargs.pop("doc_lens", None)) is not None and (
             max_doc_lens := kwargs.pop("max_doc_lens", None)
         ) is not None:
             max_doc_len = max(max_doc_lens)
             cu_doc_lens = get_cumulative_document_lengths(doc_lens)
+
+        if self._document_chunk_attention is not None and self._cp_load_balancer is not None:
+            raise NotImplementedError(
+                "Document-chunked landmark attention (enable_document_chunk_attention) is not yet "
+                "supported together with context parallelism (chunk_ids are not sequence-sharded)."
+            )
+
+        # Summary-token attention: derive the per-token roles and the per-example mixture arm from the
+        # FULL, unsharded token stream, before the context-parallel sharding below. Under Ulysses the
+        # roles deliberately stay full-length: the all-to-all inside
+        # :class:`~olmo_core.nn.attention.summary_token.SummaryTokenAttention` restores the whole
+        # sequence (with partitioned heads) before the mask is applied, so a sharded roles tensor
+        # would be the wrong object.
+        summary_roles: Optional[torch.Tensor] = None
+        causal_example: Optional[torch.Tensor] = None
+        if self._summary_token_attention is not None:
+            st_cfg = self._summary_token_attention
+            summary_roles = build_summary_roles(
+                input_ids,
+                doc_start_id=st_cfg["doc_start_id"],
+                doc_end_id=st_cfg["doc_end_id"],
+                summary_token_id=st_cfg["summary_token_id"],
+                eos_id=st_cfg["eos_id"],
+                pad_id=st_cfg.get("pad_id"),
+            )
+            # Mask mixing (training only): assign each example to the causal or the masked arm with a
+            # scheduled, seeded probability. Unlike the chunked path this does not rewrite the roles;
+            # the arm is passed to the mask as its own input. Kept eager (python-seeded coin plus a
+            # counter) -- exclude from torch.compile.
+            mix = st_cfg.get("mix")
+            if mix is not None and self.training:
+                idx = mix["forward_idx"]
+                p = mask_mix_standard_prob(
+                    idx,
+                    standard_mix_prob=mix["standard_mix_prob"],
+                    mix_start_p=mix["mix_start_p"],
+                    mix_end_p=mix["mix_end_p"],
+                    mix_total_forwards=mix["mix_total_forwards"],
+                    mix_schedule=mix["mix_schedule"],
+                    mix_step_frac=mix["mix_step_frac"],
+                )
+                mix["forward_idx"] = idx + 1
+                # One coin per packed EXAMPLE, not per instance: an instance may hold several
+                # examples, and drawing once for the row would make the realized causal fraction
+                # depend on how the packer happened to bin them. The flags are then scattered to
+                # tokens by example_id, which is the form the mask consumes.
+                example_id = summary_roles[:, ROLE_EXAMPLE_ID]
+                n_examples = int(example_id.max().item()) + 1  # -1 everywhere (all pad) -> 0
+                n_examples = max(1, n_examples)
+                flags = causal_example_flags(
+                    input_ids.shape[0] * n_examples,
+                    p,
+                    forward_idx=mix["forward_idx"],
+                    mix_seed=mix["mix_seed"],
+                ).view(input_ids.shape[0], n_examples)
+                causal_example = torch.gather(
+                    flags.to(example_id.device), 1, example_id.clamp_min(0).long()
+                )
+                if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
+                    log.info(
+                        f"[curriculum] forward={mix['forward_idx']} p_causal={p:.3f} "
+                        f"causal_this_batch={int(flags.sum())}/{flags.numel()} examples "
+                        f"({input_ids.shape[0]} instances x {n_examples})"
+                    )
+            elif not self.training and self._summary_eval_mask_mode == "causal":
+                # Inference: the arm is a serving decision, not a coin. Mark every token causal so the
+                # mask reduces to plain causal attention (see ``set_summary_eval_mask_mode``). Leaving
+                # this None -- as every forward did before the mode existed -- silently served the
+                # fully restricted mask to models that trained entirely on the causal arm.
+                causal_example = torch.ones(
+                    input_ids.shape, dtype=torch.bool, device=input_ids.device
+                )
 
         # Shard inputs and RoPE buffers on sequence dimension if using context parallelism.
         if (cp_load_balancer := self._cp_load_balancer) is not None:
@@ -611,6 +2130,57 @@ class Transformer(nn.Module):
             if cache_leftpad is not None:
                 all_block_kwargs["cache_leftpad"] = move_to_device(cache_leftpad, self.device)
 
+            # Document-chunked landmark attention: reconstruct per-token chunk_ids from the boundary
+            # tokens and forward them to every block (see ``enable_document_chunk_attention``).
+            if self._document_chunk_attention is not None:
+                cfg = self._document_chunk_attention
+                chunk_ids = build_chunk_ids_from_tokens(
+                    input_ids,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    eos_id=cfg["eos_id"],
+                    mode=cfg["mode"],
+                    pad_id=cfg.get("pad_id"),
+                )
+                # Mask mixing (training only): with a scheduled, seeded probability, collapse a random
+                # subset of examples to plain causal by neutralizing their roles to all-FREE. Runs once
+                # per forward on the shared chunk_ids (before they are threaded to every block), so all
+                # layers and any AC recompute see the same mixed roles. p == 0 (no mix configured, or a
+                # forward where no example is drawn) leaves chunk_ids untouched -> bit-identical to
+                # pure chunked. Kept eager (python-seeded coin + counter) -- exclude from torch.compile.
+                mix = cfg.get("mix")
+                if mix is not None and self.training:
+                    idx = mix["forward_idx"]
+                    p = mask_mix_standard_prob(
+                        idx,
+                        standard_mix_prob=mix["standard_mix_prob"],
+                        mix_start_p=mix["mix_start_p"],
+                        mix_end_p=mix["mix_end_p"],
+                        mix_total_forwards=mix["mix_total_forwards"],
+                    )
+                    mix["forward_idx"] = idx + 1
+                    new_chunk_ids = collapse_roles_to_causal(
+                        chunk_ids, p, forward_idx=mix["forward_idx"], mix_seed=mix["mix_seed"]
+                    )
+                    if (
+                        new_chunk_ids is not chunk_ids
+                    ):  # at least one example collapsed this forward
+                        mix["n_collapsed"] += 1
+                    chunk_ids = new_chunk_ids
+                    if p > 0.0 and mix["forward_idx"] % mix["log_interval"] == 0:
+                        log.info(
+                            f"[curriculum] forward={mix['forward_idx']} p_standard={p:.3f} "
+                            f"collapsed_forwards={mix['n_collapsed']}"
+                        )
+                all_block_kwargs["chunk_ids"] = move_to_device(chunk_ids, self.device)
+
+        # Threaded to every block in both the CP and non-CP paths, and deliberately NOT sequence-
+        # sharded (see the construction above).
+        if summary_roles is not None:
+            all_block_kwargs["summary_roles"] = move_to_device(summary_roles, self.device)
+            if causal_example is not None:
+                all_block_kwargs["causal_example"] = move_to_device(causal_example, self.device)
+
         emo_blocks = []
         emo_eos_token_ids = set()
         for block_idx, block in self.blocks.items():
@@ -691,6 +2261,171 @@ class Transformer(nn.Module):
                 "would misalign the hidden states."
             )
 
+        # Soft-token document pooling ("B1"): during training, compact the sequence (pooled docs ->
+        # one placeholder each) BEFORE anything else sees it. Eval/generation forwards untouched.
+        soft_inject: Optional[Tuple] = None
+        aux_ctx: Optional[Dict[str, Any]] = None
+        distill_teacher: Optional[Dict[str, Any]] = None
+        if (
+            self._pooled_soft_tokens is not None
+            and self.training
+            and not input_ids.is_floating_point()  # PP passes hidden states; only act on token ids
+        ):
+            # Paired-distillation coin: synchronized across ranks via the shared forward counter.
+            pst0 = self._pooled_soft_tokens
+            paired = False
+            if pst0["distill_prob"] > 0.0 and labels is not None:
+                import random as _random
+
+                cnt = pst0["_distill_counter"]
+                pst0["_distill_counter"] = cnt + 1
+                paired = (
+                    _random.Random(f"distill:{pst0['keep_seed']}:{cnt}").random()
+                    < pst0["distill_prob"]
+                )
+            if paired:
+                # TEACHER pass: the ORIGINAL row, plain full attention, WITH LM gradient.
+                t_ids, t_labels, t_abk, t_pbk, t_lmk = self._prepare_inputs(
+                    input_ids,
+                    labels,
+                    ignore_index=ignore_index,
+                    loss_reduction=loss_reduction,
+                    z_loss_multiplier=z_loss_multiplier,
+                    loss_div_factor=loss_div_factor,
+                    return_logits=False,
+                )
+                h_t = self.embeddings(t_ids)  # type: ignore[misc]
+                if self.embed_scale is not None:
+                    h_t = h_t * self.embed_scale
+                if self.embedding_norm is not None:
+                    h_t = self.embedding_norm(h_t)
+                h_t, t_caps = self._run_blocks(
+                    h_t, t_abk, t_pbk, capture_layers=set(pst0["distill_layers"])
+                )
+                t_lmk["labels"] = t_labels
+                t_out = self.lm_head(h_t, **t_lmk)  # type: ignore[misc]
+                # Distill positions: every labeled (answer) position PLUS sampled FREE-region
+                # positions -- free tokens survive compaction, so both passes have them, and
+                # matching across the whole row constrains the pathway far more per teacher
+                # than answer positions alone (the 32k signal-density fix).
+                ans_r, ans_c = (t_labels != ignore_index).nonzero(as_tuple=True)
+                roles_t = build_chunk_ids_from_tokens(
+                    t_ids,
+                    doc_start_id=pst0["doc_start_id"],
+                    doc_end_id=pst0["doc_end_id"],
+                    eos_id=pst0["eos_id"],
+                    mode="chunked",
+                )
+                free_r, free_c = (roles_t == -1).nonzero(as_tuple=True)
+                n_extra = min(96 * t_ids.shape[0], int(free_r.numel()))
+                if n_extra > 0:
+                    sel_f = torch.randperm(free_r.numel(), device=free_r.device)[:n_extra]
+                    d_rows = torch.cat([ans_r, free_r[sel_f]])
+                    d_pos = torch.cat([ans_c, free_c[sel_f]])
+                else:
+                    d_rows, d_pos = ans_r, ans_c
+                distill_teacher = {
+                    "loss_full": t_out.loss,
+                    "rows": d_rows,
+                    "pos": d_pos,
+                    "caps": {li: t_caps[li][d_rows, d_pos].detach() for li in t_caps},
+                }
+            n_tokens_in = int(input_ids.numel())
+            compacted = self._compact_pooled_soft_tokens(input_ids, labels, ignore_index)
+            if compacted is not None:
+                cb, soft_inject, oracle_ovr = compacted
+                input_ids, labels = cb.input_ids, cb.labels
+                # Compaction accounting for the FLOP meter (accumulated across microbatches; the
+                # FlopMeterCallback reads and resets it every step).
+                stats = getattr(self, "_soft_token_compaction", None)
+                if stats is None:
+                    stats = self._soft_token_compaction = {
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "rows": 0,
+                    }
+                stats["tokens_in"] += n_tokens_in
+                stats["tokens_out"] += int(input_ids.numel())
+                stats["rows"] += int(input_ids.shape[0])
+                kwargs["position_ids"] = cb.position_ids
+                if oracle_ovr is not None:
+                    kwargs["soft_kv_override_layers"] = oracle_ovr
+                    # Slot biases need the additive-bias SDPA path: position-causality is
+                    # equivalent to sequence-causality on the compacted row (content is sorted
+                    # by original position), so this only changes the kernel, not the math.
+                    from ..pooled_soft_token import build_position_causal_bias
+
+                    kwargs.setdefault(
+                        "attn_bias",
+                        build_position_causal_bias(
+                            cb,
+                            dtype=self.embeddings.weight.dtype,  # type: ignore[union-attr]
+                            device=input_ids.device,
+                        ),
+                    )
+                pst = self._pooled_soft_tokens
+                if pst["detach_soft_kv"] and cb.soft_rows.numel() > 0:
+                    kv_grad_mask = torch.ones_like(cb.input_ids, dtype=torch.bool)
+                    kv_grad_mask[cb.soft_rows, cb.soft_cols] = False
+                    kwargs["kv_grad_mask"] = kv_grad_mask
+                if (
+                    pst["aux_match_weight"] > 0.0
+                    and cb.shadow_rows.numel() > 0
+                    and labels is not None
+                ):
+                    from ..pooled_soft_token import build_position_causal_bias
+
+                    kwargs["attn_bias"] = build_position_causal_bias(
+                        cb, dtype=self.embeddings.weight.dtype, device=input_ids.device  # type: ignore[union-attr]
+                    )
+                    lab_rows, lab_cols = (labels != ignore_index).nonzero(as_tuple=True)
+                    if lab_rows.numel() > 0:
+                        nq = min(pst["aux_queries"] * cb.input_ids.shape[0], int(lab_rows.numel()))
+                        sel = torch.randperm(lab_rows.numel(), device=lab_rows.device)[:nq]
+                        valid = cb.shadow_doc_cols >= 0
+                        n_sh = cb.shadow_rows.numel()
+                        aux_ctx = {
+                            "rows_q": lab_rows[sel],
+                            "cols_q": lab_cols[sel],
+                            "rows_kv": cb.shadow_rows[:, None].expand_as(cb.shadow_doc_cols)[valid],
+                            "cols_kv": cb.shadow_doc_cols[valid],
+                            "doc_of_kv": torch.arange(n_sh, device=lab_rows.device)[
+                                :, None
+                            ].expand_as(cb.shadow_doc_cols)[valid],
+                            "rows_sh": cb.shadow_rows,
+                            "cols_sh": cb.shadow_cols,
+                            "log_len": cb.shadow_log_len,
+                            "layers": [],
+                        }
+                        kwargs["aux_capture"] = aux_ctx
+                if pst.get("len_bias") and cb.soft_rows.numel() > 0:
+                    from ..pooled_soft_token import add_soft_len_bias, build_position_causal_bias
+
+                    if kwargs.get("attn_bias") is None:
+                        kwargs["attn_bias"] = build_position_causal_bias(
+                            cb, dtype=self.embeddings.weight.dtype, device=input_ids.device  # type: ignore[union-attr]
+                        )
+                    kwargs["attn_bias"] = add_soft_len_bias(
+                        kwargs["attn_bias"],
+                        cb,
+                        scale=pst.get("len_bias_scale", 1.0),
+                        extra=pst.get("len_bias_extra", 0.0),
+                    )
+        # Role-gated FFN: gate mask from the FINAL token stream (post-compaction when the
+        # soft-token path rewrote input_ids), so kept-doc tokens are gated in compacted rows too.
+        if self._role_gated_ffn is not None:
+            self._set_role_gate_mask(input_ids)
+        # Nested-FFN router: reset per-forward accumulators and advance the budget/exploration
+        # schedules. Loss terms are only collected when we are actually computing a loss.
+        if self._nested_ffn_moe is not None:
+            self._nested_ffn_moe["holder"].begin_forward(collect_loss=labels is not None)
+        if self._ffn_token_drop is not None:
+            self._ffn_token_drop["holder"].begin_forward(training=self.training)
+        if self._kv_route is not None:
+            self._kv_route["holder"].begin_forward(collect_loss=labels is not None)
+        if self._block_skip is not None:
+            self._block_skip["holder"].begin_forward(collect_loss=labels is not None)
+
         (
             input_ids,
             labels,
@@ -715,19 +2450,53 @@ class Transformer(nn.Module):
             h = move_to_device(input_embeddings, self.device)
         else:
             h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+            if soft_inject is not None:
+                # Overwrite the placeholder embeddings with the projector's soft doc tokens. Under
+                # detach_soft_kv the POOLED slots are injected detached (static-KV semantics; the
+                # per-layer K/V cut happens in Attention via kv_grad_mask) while SHADOW candidates
+                # stay attached so the aux objective can train the projector.
+                s_rows, s_cols, mean_feats = soft_inject
+                assert self.pooled_projector is not None
+                h = h.clone()
+                soft_vecs = self.pooled_projector(mean_feats).to(h.dtype)
+                if self._pooled_soft_tokens["detach_soft_kv"]:  # type: ignore[index]
+                    n_slots = s_rows.shape[0] - (
+                        aux_ctx["rows_sh"].shape[0] if aux_ctx is not None else 0
+                    )
+                    soft_vecs = torch.cat(
+                        [soft_vecs[:n_slots].detach(), soft_vecs[n_slots:]], dim=0
+                    )
+                h[s_rows, s_cols] = soft_vecs
             if self.embeddings is not None and self.embed_scale is not None:
                 h = h * self.embed_scale
             if self.embedding_norm is not None:
                 h = self.embedding_norm(h)
 
-        # Run each block.
-        for block_key, block in self.blocks.items():
-            block_idx = int(block_key)
-            block_kwargs = per_block_kwargs.get(block_idx, {})
-            # Mark sizes as dynamic for torch.compile().
-            if self.compile_enabled:
-                mark_dynamic(h, (0, 1), strict=False)
-            h = block(h, **all_block_kwargs, **block_kwargs)
+        # Run each block (capturing student hiddens at the distill layers on paired forwards).
+        cap_set = (
+            set(self._pooled_soft_tokens["distill_layers"])  # type: ignore[index]
+            if distill_teacher is not None
+            else None
+        )
+        h, s_caps = self._run_blocks(h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set)
+
+        # Aux attention-contribution matching loss (soft-token pooling; see aux_matching_loss).
+        aux_loss: Optional[torch.Tensor] = None
+        if aux_ctx is not None and aux_ctx["layers"]:
+            from ..pooled_soft_token import aux_matching_loss
+
+            first_block = next(iter(self.blocks.values()))
+            scale = first_block.attention.head_dim**-0.5  # type: ignore[union-attr]
+            aux_loss = aux_matching_loss(
+                [
+                    (qs, kd, vd, aux_ctx["doc_of_kv"], ksh, vsh)
+                    for (qs, kd, vd, ksh, vsh) in aux_ctx["layers"]
+                ],
+                q_rows=aux_ctx["rows_q"],
+                shadow_rows=aux_ctx["rows_sh"],
+                shadow_log_len=aux_ctx["log_len"],
+                scale=scale,
+            )
 
         # Get final logits but again pass-through in case of pipeline parallelism.
         if self.lm_head is not None:
@@ -739,7 +2508,61 @@ class Transformer(nn.Module):
             # will throw an exception.
             if labels is not None:
                 lm_head_kwargs["labels"] = labels
-            return self.lm_head(h, **lm_head_kwargs)
+            out = self.lm_head(h, **lm_head_kwargs)
+            if isinstance(out, LMOutputWithLoss) and out.loss is not None:
+                loss = out.loss
+                if aux_loss is not None:
+                    w = self._pooled_soft_tokens["aux_match_weight"]  # type: ignore[index]
+                    loss = loss + w * aux_loss.to(loss.dtype)
+                attach = self.budget_attach  # gradients already delivered per block
+                if self._nested_ffn_moe is not None:
+                    nffn_loss = self._nested_ffn_moe["holder"].regularization_loss()
+                    if nffn_loss is not None and not attach:
+                        loss = loss + nffn_loss.to(loss.dtype)
+                if self._kv_route is not None:
+                    kvr_loss = self._kv_route["holder"].regularization_loss()
+                    if kvr_loss is not None and not attach:
+                        loss = loss + kvr_loss.to(loss.dtype)
+                if self._block_skip is not None:
+                    bs_loss = self._block_skip["holder"].regularization_loss()
+                    if bs_loss is not None and not attach:
+                        loss = loss + bs_loss.to(loss.dtype)
+                if self._joint_budget is not None:
+                    from ..joint_budget import joint_budget_loss
+
+                    jb_loss = joint_budget_loss(self)  # also records last_cost / last_target
+                    if jb_loss is not None and not attach:
+                        loss = loss + jb_loss.to(loss.dtype)
+                if distill_teacher is not None and labels is not None:
+                    # Map teacher (row, ORIGINAL position) -> student compacted column via the
+                    # per-row ascending position_ids (free/answer tokens survive compaction).
+                    pos_ids_s = all_block_kwargs.get("position_ids")
+                    s_r = distill_teacher["rows"]
+                    if pos_ids_s is not None:
+                        s_c = (
+                            torch.searchsorted(
+                                pos_ids_s[s_r].contiguous(),
+                                distill_teacher["pos"][:, None].contiguous(),
+                            )
+                            .squeeze(-1)
+                            .clamp(max=pos_ids_s.shape[1] - 1)
+                        )
+                    else:
+                        s_c = distill_teacher["pos"]
+                    terms = []
+                    for li, t_h in distill_teacher["caps"].items():
+                        s_h = s_caps[li][s_r, s_c].float()
+                        t_f = t_h.float()
+                        terms.append(
+                            ((s_h - t_f) ** 2).sum(-1).mean()
+                            / t_f.pow(2).sum(-1).mean().clamp(min=1e-6)
+                        )
+                    d_loss = torch.stack(terms).mean()
+                    w_d = self._pooled_soft_tokens["distill_weight"]  # type: ignore[index]
+                    loss = loss + distill_teacher["loss_full"] + w_d * d_loss.to(loss.dtype)
+                if loss is not out.loss:
+                    out = LMOutputWithLoss(out.logits, loss, out.ce_loss, out.z_loss)
+            return out
         else:
             return h
 
@@ -1036,6 +2859,29 @@ class Transformer(nn.Module):
         mp_policy = MixedPrecisionPolicy(
             param_dtype=param_dtype or self.dtype, reduce_dtype=reduce_dtype
         )
+        # NOTE: blocks get a policy with 'cast_forward_inputs' DISABLED, which is required for
+        # correctness whenever activation checkpointing wraps a block (the AC wrapper sits
+        # *outside* the block, so FSDP's pre-forward hook runs *inside* the checkpointed region).
+        # FSDP2 only casts forward inputs in 'FSDPState._pre_forward', which early-returns when
+        # the state is 'PRE_BACKWARD' -- i.e. exactly during the AC recompute. So any float32
+        # tensor passed to a block as an argument reaches the block as 'param_dtype' in the
+        # forward but as float32 in the recompute. Under context parallelism that's precisely the
+        # CP-sharded RoPE buffers ('pos_sin'/'pos_cos', built in fp32 by '_prepare_inputs'), and
+        # since torch.compile guards on input dtypes the recompute recompiles the block into a
+        # differently-partitioned graph that saves a different sequence of tensors. The result is
+        #   CheckpointError: torch.utils.checkpoint: Recomputed values for the following tensors
+        #   have different metadata than during the forward pass.
+        # on the very first backward (seen on 128k-context CP=2 runs; see
+        # 'debug/cp_ac_rope_dtype/').
+        # Disabling the cast is safe: the hidden state entering a block is already in
+        # 'param_dtype' (the embedding layer is sharded with the same policy and every layer norm
+        # preserves its input dtype), and the RoPE buffers are meant to stay in fp32 anyway --
+        # 'RotaryEmbedding.forward' casts them itself with 'type_as'.
+        block_mp_policy = MixedPrecisionPolicy(
+            param_dtype=param_dtype or self.dtype,
+            reduce_dtype=reduce_dtype,
+            cast_forward_inputs=False,
+        )
         fsdp_config = dict(mesh=dp_mesh, mp_policy=mp_policy)
         # For PP, do not reshard after forward to avoid per-microbatch all-gathers,
         # which can be expensive and non-overlapped
@@ -1048,7 +2894,7 @@ class Transformer(nn.Module):
                 prefetch_factor=prefetch_factor,
                 wrapping_strategy=wrapping_strategy,
                 reshard_after_forward=reshard_after_forward,
-                mp_policy=mp_policy,
+                mp_policy=block_mp_policy,
             )
 
         # When weights are tied the embeddings and LM head share a parameter, so they must

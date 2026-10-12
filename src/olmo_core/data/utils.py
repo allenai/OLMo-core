@@ -248,21 +248,26 @@ def iter_document_indices(
             total_tokens = get_file_size(data_path) // dtype(0).itemsize
 
         with gzip.open(metadata_path, "rt") as f:
-            for line in f:
-                start_index_str, end_index_str, *_ = line.split(",")
-                start_index, end_index = int(start_index_str), int(end_index_str)
-                if total_tokens is not None:
-                    if start_index >= total_tokens:
-                        raise RuntimeError(
-                            f"Document start index {start_index:,d} from metadata file "
-                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
-                        )
-                    if end_index > total_tokens:
-                        raise RuntimeError(
-                            f"Document end index {end_index:,d} from metadata file "
-                            f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
-                        )
-                yield start_index, end_index
+            try:
+                for line in f:
+                    start_index_str, end_index_str, *_ = line.split(",")
+                    start_index, end_index = int(start_index_str), int(end_index_str)
+                    if total_tokens is not None:
+                        if start_index >= total_tokens:
+                            raise RuntimeError(
+                                f"Document start index {start_index:,d} from metadata file "
+                                f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                            )
+                        if end_index > total_tokens:
+                            raise RuntimeError(
+                                f"Document end index {end_index:,d} from metadata file "
+                                f"for source '{data_path}' with {total_tokens:,d} tokens is out-of-bounds"
+                            )
+                    yield start_index, end_index
+            except EOFError as e:
+                raise RuntimeError(
+                    f"Compressed metadata file '{metadata_path}' for source '{data_path}' is truncated or corrupt"
+                ) from e
 
 
 def iter_document_indices_with_max_sequence_length(
@@ -277,8 +282,14 @@ def iter_document_indices_with_max_sequence_length(
     long_doc_strategy: LongDocStrategy = LongDocStrategy.truncate,
 ) -> Generator[Tuple[int, int], None, None]:
     """
-    Like :func:`iter_document_indices` but will either truncate or split documents that are
-    longer than ``max_sequence_length``.
+    Like :func:`iter_document_indices` but handles documents that are longer than
+    ``max_sequence_length`` according to ``long_doc_strategy`` (truncate, fragment, or exclude).
+
+    .. warning::
+        With :data:`~olmo_core.data.types.LongDocStrategy.exclude` the yielded ranges no longer
+        tile the whole source (over-long documents are skipped), so this must only be used by
+        consumers that treat the ranges as an arbitrary set to pack (e.g. the packed datasets),
+        not as a consecutive layout of the token array.
     """
     for start_idx, end_idx in iter_document_indices(
         data_path,
@@ -294,6 +305,8 @@ def iter_document_indices_with_max_sequence_length(
             elif long_doc_strategy == LongDocStrategy.fragment:
                 for new_start_idx in range(start_idx, end_idx, max_sequence_length):
                     yield new_start_idx, min(end_idx, new_start_idx + max_sequence_length)
+            elif long_doc_strategy == LongDocStrategy.exclude:
+                continue
             else:
                 raise NotImplementedError(long_doc_strategy)
         else:
@@ -351,6 +364,26 @@ def load_array_slice_into_tensor(
         return torch.tensor(array.astype(np.int_), dtype=torch.long)
 
 
+def _collapse_boundary_runs(boundaries: torch.Tensor) -> torch.Tensor:
+    """
+    Drop the interior of every run of consecutive document boundaries, keeping only the first and
+    last boundary of each run.
+
+    A run of consecutive boundaries means a span of empty documents, which comes up whenever the
+    padding token is the same as the EOS token: every padding token then reads as its own
+    single-token document. Keeping the first boundary of the run terminates the last real document
+    and keeping the last one turns the whole span into a single empty document, so the resulting
+    lengths still tile the sequence.
+    """
+    if boundaries.numel() < 3:
+        return boundaries
+    prev_adjacent = torch.zeros_like(boundaries, dtype=torch.bool)
+    prev_adjacent[1:] = boundaries[1:] == boundaries[:-1] + 1
+    next_adjacent = torch.zeros_like(boundaries, dtype=torch.bool)
+    next_adjacent[:-1] = prev_adjacent[1:]
+    return boundaries[~(prev_adjacent & next_adjacent)]
+
+
 def get_document_lengths(
     input_ids: Union[torch.Tensor, np.ndarray],
     eos_token_id: int,
@@ -358,6 +391,11 @@ def get_document_lengths(
 ) -> torch.Tensor:
     """
     Get the length of documents.
+
+    Runs of consecutive document boundaries are collapsed into a single (empty) document. This
+    matters for tokenizers whose padding token is also their EOS token, where the padding tail of a
+    packed instance would otherwise turn into one single-token document per padding token. The
+    returned lengths always sum to ``len(input_ids)``.
 
     :param input_ids: An integer-type tensor of token IDs.
     :param eos_token_id: The ID of the EOS token (use to denote document boundaries).
@@ -368,26 +406,26 @@ def get_document_lengths(
         input_ids = torch.tensor(input_ids.astype(np.int_), dtype=torch.long)
 
     if bos_token_id is None:
-        doc_boundaries = torch.cat(
-            [
-                torch.tensor([-1], dtype=torch.int32),
-                (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32),
-                torch.tensor(
-                    [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1],
-                    dtype=torch.int32,
-                ),
-            ]
+        boundaries = (input_ids == eos_token_id).nonzero(as_tuple=True)[0].to(dtype=torch.int32)
+        final_boundary = torch.tensor(
+            [] if input_ids[-1] == eos_token_id else [input_ids.shape[0] - 1],
+            dtype=torch.int32,
         )
     else:
-        doc_boundaries = torch.cat(
-            [
-                torch.tensor([-1], dtype=torch.int32),
-                torch.logical_and(input_ids[:-1] == eos_token_id, input_ids[1:] == bos_token_id)
-                .nonzero(as_tuple=True)[0]
-                .to(dtype=torch.int32),
-                torch.tensor([input_ids.shape[0] - 1], dtype=torch.int32),
-            ]
+        boundaries = (
+            torch.logical_and(input_ids[:-1] == eos_token_id, input_ids[1:] == bos_token_id)
+            .nonzero(as_tuple=True)[0]
+            .to(dtype=torch.int32)
         )
+        final_boundary = torch.tensor([input_ids.shape[0] - 1], dtype=torch.int32)
+
+    doc_boundaries = torch.cat(
+        [
+            torch.tensor([-1], dtype=torch.int32),
+            _collapse_boundary_runs(boundaries),
+            final_boundary,
+        ]
+    )
 
     return doc_boundaries[1:] - doc_boundaries[:-1]
 
@@ -791,12 +829,23 @@ class SegmentTreeNode:
 
 
 class SegmentTree:
+    """
+    A max-segment-tree over bin capacities ``1..N``, where leaf ``i`` stands for capacity ``i + 1``.
+
+    ``N`` need not be a power of 2: the tree is built over the next power of 2 above ``N`` and the
+    surplus leaves are left at weight 0, so they are never selected by :meth:`query`. When ``N``
+    *is* a power of 2 this is exactly the old power-of-2-only tree, node for node.
+    """
+
     def __init__(self, N: int):
-        assert math.log2(N) % 1 == 0, "N should be a power of 2"
+        assert N >= 1, "N should be at least 1"
+        self.N = N
         self.root_node = SegmentTreeNode()
         self.leaf_nodes: List[SegmentTreeNode] = []
 
-        max_depth = int(math.log2(N))
+        # Number of leaves, rounded up to a power of 2 so the tree stays perfect.
+        num_leaves = 1 << (N - 1).bit_length()
+        max_depth = num_leaves.bit_length() - 1
         leaf_id = 0
         queue: deque[Tuple[SegmentTreeNode, int]] = deque([(self.root_node, 0)])
         while queue:
@@ -810,8 +859,9 @@ class SegmentTree:
                 self.leaf_nodes.append(parent)
                 leaf_id += 1
 
-        assert len(self.leaf_nodes) == N
-        self.leaf_nodes[-1].update(N)
+        assert len(self.leaf_nodes) == num_leaves
+        # Leaf ``N - 1`` (capacity ``N``) stands for the always-available "open a fresh bin" option.
+        self.leaf_nodes[N - 1].update(N)
 
     def query(self, weight: int) -> SegmentTreeNode:
         node = self.root_node
@@ -844,6 +894,22 @@ class InstancePacker:
     @property
     def total_tokens(self) -> int:
         return self.max_sequence_length * len(self.instance_bins) - self.total_padding
+
+    def pack_document(self, document_id: int, document_length: int) -> int:
+        """
+        Place a single document of ``document_length`` units into the tightest bin that fits it,
+        opening a new bin if none does.
+
+        Callers that need to control the document ordering themselves (best-fit-*decreasing*
+        requires longest-first) can drive the packer with this instead of :meth:`pack_documents`.
+
+        :param document_id: An opaque id recorded in :data:`instance_bins`.
+        :param document_length: The document's length, in the same units as
+            ``max_sequence_length``.
+
+        :returns: The index of the bin the document landed in.
+        """
+        return self._pack_document(document_id, document_length)
 
     def _pack_document(self, document_id: int, document_length: int) -> int:
         # Query for best-fit capacity.
@@ -934,6 +1000,7 @@ def pack_documents_into_instances(
         the excess tokens are discarded.
         If set to "fragment" then those documents are split into smaller documents so that no tokens
         are discarded, but you end up with fragmented documents.
+        If set to "exclude" then those documents are dropped entirely.
     :param use_array_if_local: Forwarded to :func:`iter_document_indices`. Set to ``False`` to take
         document boundaries from the source metadata file instead of inferring them by scanning the
         token array for ``eos_token_id``. Inferring is only correct when every document is
