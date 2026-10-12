@@ -1,0 +1,20 @@
+{#-
+  Minimal ChatML template for the OLMo-3 vocabulary (<|im_start|> = 100264, <|im_end|> = 100265).
+
+  Why not allenai/Olmo-3-7B-Instruct's shipped chat_template.jinja: that template injects a
+  function-calling system preamble ("You are a helpful function-calling AI assistant... <functions>
+  </functions>") whenever the caller supplies no system message. Prepending an irrelevant
+  tool-use instruction to every long-context eval prompt is a prompt change we would then have to
+  reason about in every result. This keeps the exact message framing that template uses for
+  user/assistant turns and drops only the preamble.
+
+  Used for the --prompt-format chat condition on BASE models, whose tokenizers ship no template at
+  all (Olmo-3-1025-7B and HiLS-Attention-7B both lack one). Attaching the same file to both makes
+  "chat" mean the identical thing across the models being compared.
+-#}
+{%- for message in messages -%}
+{{- '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- '<|im_start|>assistant\n' -}}
+{%- endif -%}
