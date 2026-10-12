@@ -43,6 +43,11 @@ try:
 except ImportError:
     Olmo3Config = None
 
+try:
+    from transformers import Qwen3Config  # type: ignore
+except ImportError:
+    Qwen3Config = None
+
 
 def _validate_olmo3moe_router_selection(router: Any) -> None:
     """Reject router behavior that the HF Olmo3Moe implementation cannot reproduce."""
@@ -311,8 +316,7 @@ def _get_olmo3moe_config(model: "OLMoDDPModel") -> PretrainedConfig:
         )
     if attention.rope is None:
         raise NotImplementedError(
-            f"Attention does not use rope, unable to build HF config for "
-            f"{model.__class__.__name__}"
+            f"Attention does not use rope, unable to build HF config for {model.__class__.__name__}"
         )
     # The olmo3moe converter only round-trips head-wise QK-norm, unscaled RoPE, and bias-free
     # attention; reject anything else rather than silently exporting a divergent model.
@@ -708,6 +712,61 @@ def _get_olmo3moe_kda_emo_config(model: "OLMoDDPModel") -> PretrainedConfig:
     )
 
 
+def _is_qwen3_like(blocks) -> bool:
+    """Pre-norm blocks (:class:`TransformerBlock`, not a subclass) with per-head QK-norm, e.g. ``TransformerConfig.qwen3_*``."""
+    return all(
+        type(block) is TransformerBlock
+        and isinstance(block.attention, Attention)
+        and block.attention.use_head_qk_norm
+        for block in blocks
+    )
+
+
+def _get_qwen3_config(model: Transformer, blocks) -> PretrainedConfig:
+    if Qwen3Config is None:
+        raise RuntimeError("The installed transformers version does not support Qwen3")
+
+    first_block = blocks[0]
+    attention = first_block.attention
+    if attention.backend is None:
+        raise ValueError("Attention backend is not set.")
+    if any(block.attention.backend.window_size != (-1, -1) for block in blocks):
+        raise NotImplementedError(
+            "Exporting Qwen3-style models with sliding window attention is not supported."
+        )
+    if attention.rope is None:
+        raise NotImplementedError("HF Qwen3 requires RoPE.")
+    if (attention.w_q.bias is None) != (attention.w_out.bias is None):
+        raise NotImplementedError(
+            "HF Qwen3 uses the same bias setting for all attention projections."
+        )
+
+    config = Qwen3Config(
+        vocab_size=model.vocab_size,
+        hidden_size=model.d_model,
+        intermediate_size=first_block.feed_forward.hidden_size,
+        num_hidden_layers=model.n_layers,
+        num_attention_heads=attention.n_heads,
+        num_key_value_heads=attention.n_kv_heads,
+        head_dim=attention.head_dim,
+        hidden_act="silu",
+        max_position_embeddings=-1,
+        attention_bias=attention.w_q.bias is not None,
+        rope_theta=attention.rope.theta,
+        rope_scaling=_get_and_validate_rope_scaling_config(blocks),
+        rms_norm_eps=first_block.feed_forward_norm.eps,
+        use_sliding_window=False,
+        pad_token_id=None,
+        bos_token_id=None,
+        eos_token_id=None,
+        tie_word_embeddings=model.tie_word_embeddings,
+    )
+    # transformers>=5 only serializes `rope_parameters`; older versions (<5) ignore that and silently
+    # fall back to rope_theta=10000. Also write the legacy top-level key so both can load the export.
+    config.rope_theta = attention.rope.theta
+    return config
+
+
 @beta_feature
 def get_hf_config(model: Transformer) -> PretrainedConfig:
     if OLMoDDPModel is not None and isinstance(model, OLMoDDPModel):
@@ -723,6 +782,8 @@ def get_hf_config(model: Transformer) -> PretrainedConfig:
 
     blocks = list(model.blocks.values())
     first_block = blocks[0]
+    if _is_qwen3_like(blocks):
+        return _get_qwen3_config(model, blocks)
     if not isinstance(first_block, ReorderedNormTransformerBlock):
         raise NotImplementedError(
             f"Block is not a {ReorderedNormTransformerBlock.__name__}, unable to build HF config for {model.__class__.__name__}"
