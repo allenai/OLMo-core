@@ -36,7 +36,11 @@ Add `--dry-run` to print the gantry command without submitting.
 - Evaluate with the olmo-eval launcher, **with `--doc-markers`**:
   `scripts/ctc_suite/launch_ctc_suite.py --arm full --doc-markers --ckpt <step dir>` (branch
   `prasann/ctc-suite-launcher`). It renders prompts in the chat template, with each document
-  wrapped in the same markers as these shards, and is token-identical to the training prompts.
+  wrapped in the same markers as these shards. With the default `Qwen/Qwen3.5-0.8B` tokenizer each
+  eval prompt is an exact token prefix of its training sequence, ending where the answer starts.
+  Do **not** pass the 4B tokenizer: its template opens `<think>\n` for a generation prompt, a split
+  the training data never contains. The r256k rung runs with YaRN x2 + chunked prefill by default:
+  its prompts run to ~272k tokens and would otherwise be left-truncated.
 
 ## Recipe source
 
@@ -70,9 +74,11 @@ for the IID audit against the eval's own rows).
 
 - **Document markers.** The shards wrap each document in `<|box_start|>`/`<|box_end|>`; oolong wraps
   each `||` item line instead. The eval matches this through olmo-eval's `CTC_SUITE_DOC_MARKERS=1`
-  (the launcher's `--doc-markers`). On real eval rows of all 11 tasks, its prompts are
-  token-identical to the converter's (66/66, `debug/ctc_sft_setA/check_doc_marker_parity.py` on
-  `prasann/landmark`). Without the flag, the eval prompts would be out of format for these models.
+  (the launcher's `--doc-markers`). On real eval rows of all 11 tasks, its prompts are exact token
+  prefixes of the converter's training sequences, ending where the labeled answer starts (66/66,
+  `debug/ctc_sft_setA/check_doc_marker_parity.py` on `prasann/landmark`). The check's first version
+  compared against the prompt-only render with the 4B template and so passed an out-of-format
+  generation prompt; fixed 2026-09-28. Without the flag, the eval prompts would be out of format.
 - **Marker embeddings.** Qwen never trains the marker rows (see CLAUDE.md). `prep` audits the base's
   rows with `fix_marker_embeddings.py`'s cosine/norm gates and prints the verdict.
 - **Packing.** Whole examples are packed Best-Fit-Decreasing into windows, across all tasks, with
@@ -94,3 +100,14 @@ examples / tokens kept at each window:
 |---|---|---|---|
 | `32k` | `q35-4b-dense-ctc-setA-32k-20260923T1537` | [01M386N34ADGF0DVCNH5V0DNY6](https://beaker.org/ex/01M386N34ADGF0DVCNH5V0DNY6) | `2582480a8` |
 | `256k` | `q35-4b-dense-ctc-setA-256k-20260923T1537` | [01M386N7CM9Y66RH505F6A9T2Z](https://beaker.org/ex/01M386N7CM9Y66RH505F6A9T2Z) | `2582480a8` |
+
+Both runs finished one epoch: `32k` at `step888` and `256k` at `step1595` (resumed from `step1200`
+after two preemptions).
+
+Evals (olmo-eval launcher, `--arm full --doc-markers`; per-cell values in the run's results):
+
+| Run name (launcher) | What |
+|---|---|
+| `q35-4b-dense-ctc-setA-{32k-step888,256k-step1595}-full-dm` | 12 setA rows, every rung 2k-256k. **Their r256k cells were left-truncated (43-100% of rows): do not use them** |
+| `q35-4b-dense-ctc-setA-{...}-r256k-fit` | r256k with `--fit-window` (6 rows; not oolong) |
+| `q35-4b-dense-ctc-setA-{...}-r256k-yarn2-chunked` | r256k with YaRN x2 + chunked prefill (7 rows) -- the launcher's default for this rung |
