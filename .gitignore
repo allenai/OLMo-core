@@ -60,3 +60,17 @@ site/
 /scratch/
 core
 /dataset-cache/
+
+# --- research/recipes layout (flopdrop_clean) ---
+/slurm-*.out
+/hs_err_pid*.log
+/*.zip
+/*.pdf
+.ruff_cache/
+**/*.log
+*.pt
+research/**/results*/
+research/**/runs/
+research/**/weights/
+/wandb/
+/logs/

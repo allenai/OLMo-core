@@ -1,0 +1,508 @@
+# Learned KV-cache allocation ("KV routing") — design, brainstorm, and experiment plan
+
+*Started 2026-09-04. Code: `src/olmo_core/nn/attention/kv_route.py`, `src/olmo_core/nn/joint_budget.py`,
+trainer variants `kvroute` / `flexcompute` in `train_ctc_suite.py`, arms `attnroute-c*` / `flex-c*`
+in `research/ffn_compute/flop_scaling/launch_grid35.py`. Sibling of the nested-width FFN router
+(`records/flop-scaling-ffn-kv-plan.md` §10–11).*
+
+## Goal
+
+A model that, after a task fine-tune, spends a **task-dependent** amount of FFN compute *and* a
+task-dependent amount of attention/KV compute — both learned under a FLOP budget, not hand-set.
+The FFN half exists (nested-width router). This adds the attention half and a joint budget.
+
+## Brainstorm (five designs; 1 is implemented, 5 is next)
+
+1. **Per-layer keep/drop (implemented).** Each full-attention layer has a `Linear(d_model,1)`
+   router; a token's K/V is either written to that layer's cache (attendable by later queries) or
+   dropped (the token still attends *from* itself). Tiers emerge: a token kept in *k* of *R*
+   routed layers has cost *k/R*. Straight-through K/V scaling `1+p_sel−p_sel.detach()`, keep-all
+   init (bias +10), two-sided budget on the mean keep probability, annealed target.
+2. **Shared monotone tier.** One router per token emits tier *t ∈ {0..R}*; the token is kept in
+   the last *t* routed layers. Fewer decisions, explicit tier vocabulary, but forbids "early layers
+   need it, late don't".
+3. **Per-head keep/drop (DMC-style).** Router per KV head; finer, but the cache saving only
+   materialises if the kernel can handle ragged per-head lengths (Nawrot et al. 2024 do this with
+   merge-not-drop).
+4. **Merge into a running summary instead of dropping.** Dropped tokens fold into the previous
+   kept slot (DMC). Preserves information; less clean as "compute allocation" and needs a custom
+   kernel for the running average.
+5. **Joint FFN+attention budget (implemented as `flexcompute`, not yet run).** Both routers on,
+   *one* target on total FLOPs with the routers' FLOP shares as weights
+   (`joint_budget.py`), so the fine-tune decides the split.
+
+Design 1 was chosen because it is the exact analogue of the FFN router (same ST/budget
+machinery, same "base is reproduced at init" property), needs no new kernel, and yields real
+inference savings (cache compaction) with no per-head raggedness.
+
+## Implementation notes
+
+- **Training kernel.** FlexAttention over *compacted* keys: kept K/V gathered in position order
+  (padded to a multiple of 1024) and concatenated with the full key set whose only allowed
+  entries are the diagonal for dropped queries. Block mask (compiled `create_block_mask`) then
+  skips everything outside the compacted causal frontier, so kernel work ∝ keep fraction.
+  Measured per layer at 4B geometry (32q/8kv/128, 64k as 8×8k, fwd+bwd, H200):
+  flash varlen 48.6 ms; routed keep-all 89.6 ms; keep 0.25 66.0 ms; keep 0.05 51.8 ms.
+  The ~25 ms fixed overhead is `create_block_mask` evaluating the mask on the full grid; a
+  block-level mask builder would remove it (`BlockMask.from_kv_blocks`). ≈5% of a 4B step, so
+  left for later.
+- **Inference.** Prefill runs the routed mask and then compacts each row's kept K/V into the
+  KV cache right-aligned (leftpad += evicted count, `cache_seqlens = T`). Decode steps use the
+  plain flash cached path (generated tokens always kept). Verified: cached prefill + 1 decode
+  step == no-cache routed forward over the same tokens (rel 7e-3 bf16).
+- **Cost accounting.** FLOP meter subtracts `(1−keep) × Σ_routed (attn.nfpt(L) − attn.nfpt(0))`
+  (the length-dependent QKᵀ/PV part only; K/V projections for dropped tokens are *not* credited,
+  so the number is conservative). `flops.json` carries `kv_route_keep_frac` and `ffn_cost_frac`;
+  `collect_results35.arm_flops(lens, ffn_cost, attn_keep)` re-prices at real example lengths.
+- **Eval.** `post_build_hook_from_config` (nested_ffn_moe.py) also enables `kv_route` from the
+  exported `config.json`, so the docchunk/native evaluators score with the router.
+- Tests: `src/test/nn/attention/kv_route_test.py` (CPU), `research/ffn_compute/flop_scaling/smoke_kv_route_gpu.py`.
+
+## Experiment plan (4B, Qwen3.5, jupiter, FLOP-scaling grid recipe)
+
+Stage A — attention only (`attnroute-c50/c25/c10` = keep targets 0.50/0.25/0.10), oolong
+(20M/80M) and contradiction (14M/56M): 12 runs, orchestrator `FS_SCALE=4b FS_TAG_SUFFIX=attn`,
+state `research/ffn_compute/flop_scaling/orchestrate_s4battn_state.json`, run names `fs35s4battn-<task>-attnroute-c<k>-s<B>`.
+Stage B — combined (`flex-c*`: FFN router L12+ + KV router, joint target) after Stage A reads.
+
+## What "60× overall" would need
+
+At 32k context on 4B the per-token training FLOPs split roughly: FFN ≈ 57%, attention-score
+(8 full-attn layers) ≈ 25–30%, fixed (Q/out projections, GDN layers, embeddings, LM head) ≈
+13–18%. Even with FFN → 0 and attention keep → 0 the *total* saving is bounded by the fixed part:
+≈6–8× on total FLOPs. 60× is reachable only on the *routed* share (FFN 100× × attention 20×) or
+if the GDN layers and projections are also routed (a per-token "skip the whole block" rung —
+design 6, not built). The reports quote both numbers: routed-share speedup and total.
+
+## Run log
+
+- 2026-09-04 22:10 Stage A launched (12 runs). Three oolong 20M runs landed on saturn A100s and ran
+  ~20x slower than the H100 runs (TPS 258 vs 5.7k per device; 8 min/step) — FlexAttention on sm80
+  is not viable here; cancelled and relaunched pinned to jupiter, evals pinned to jupiter too.
+- Early routing (step 40–50, budgets on target): the router evicts from the TOP layers first.
+  contradiction keep-0.5: L3/L7 1.00, L11 0.98, L15 0.62, L19 0.37, L23–L31 ≤0.02; oolong
+  keep-0.25: L3–L11 0.47–0.70, L15 0.23, L19+ ≤0.02. The last full-attention layers give up their
+  cache almost entirely at every budget; the first three keep most of it.
+- The 14M contradiction runs (27 steps, anneal 8 steps) finished at keep ≈0.93 for all three
+  targets — the anneal never reached them. They are near-dense controls, not budget points.
+- Eval-time routing confirmed: every export's `config.json` carries the `kv_route` block (harvest
+  2026-09-04 23:55), so `post_build_hook_from_config` enables the router before the strict load.
+  (Eval logs hide INFO; both hooks now also print to stdout.)
+- **Budget dynamics under Adam.** The three 14M contradiction runs and the three 20M oolong runs
+  have byte-identical token-weighted keep fractions across targets 0.5/0.25/0.1 (0.9616 and
+  0.8523). The two-sided |mean − target| term has a constant-magnitude gradient while the mean is
+  above target, and Adam normalises it away, so the router descends at a rate fixed by its LR
+  (1e-3) until it crosses a target; a 27-step run never gets there. The target anneal therefore
+  does not pace eviction — the router LR does. Fix if short runs must hit budget: squared hinge or
+  a higher router LR. Long-budget runs did converge onto target (0.51/0.25/0.09 hard keep).
+- Final train CE (last 10 steps): contradiction 56M 0.039 / 0.53 / 0.67 at keep 0.5 / 0.25 / 0.1;
+  oolong 80M 0.204 / 0.262 / 0.283. Contradiction breaks below half cache, oolong degrades
+  gracefully; per-layer choice differs by task (contradiction spends a 10% budget on layer 3,
+  oolong on layer 7).
+
+## Stage A held-out results (4B, mean f1 over 2k/8k/16k/32k, eval_size 500 per rung)
+
+| task / budget | dense | KV route 0.50 | KV route 0.25 | KV route 0.10 | soft-token ref | routed FFN t10 |
+|---|---|---|---|---|---|---|
+| oolong 80M | 0.723 | 0.671 | 0.643 | 0.625 | kv17 0.665 / kv33 0.675 | 0.688 |
+| contradiction 56M | 0.944 | **0.894** (2k .969 / 8k .950 / 16k .888 / 32k .770) | **0.005** | **0.002** | kv33 0.861 | 0.880 |
+| contradiction 14M (router stuck at keep 0.93) | 0.772 | 0.783 | 0.783 | 0.783 | kv33 0.525 | 0.579 |
+
+- oolong degrades smoothly with cache size (−0.05 / −0.08 / −0.10), evenly across rungs; the
+  keep-0.10 point sits near the soft-token 1/6 arm at a smaller cache.
+- contradiction COLLAPSES below half cache: keep 0.25 and 0.10 score ~0 at every rung. Generations
+  are well-formed pair lists (`[[3, 85], [47, 86], [65, 87]]` vs gold `[[3, 91], ...]`), i.e. the
+  format is learned but retrieval is impossible once layers 11–31 hold ≤10% of keys. Consistent
+  with train CE 0.53 / 0.67 vs 0.04 dense. The router's choice to keep two whole early layers and
+  empty the rest is what a mean-keep budget rewards, but it removes the late-layer retrieval the
+  task needs — a per-layer floor or a cost that penalises emptying a layer entirely is the obvious
+  next knob.
+- the 14M controls (keep 0.93) match/slightly beat dense (0.783 vs 0.772, within ±0.02 noise):
+  evicting the 7% the router chose first is free.
+
+### Compute axis (Stage A complete, 2026-09-05 01:00)
+
+Priced at real example lengths (`results/flop_scaling/results_scale_s4battn.csv`), the *training*
+FLOP saving of KV routing is small: ratio 0.955 (keep 0.5), 0.93 (0.25), 0.92 (0.10). The
+attention-score share of training FLOPs on this short-heavy 2k–32k mix is only ~10–15% at 4B, so
+even emptying the caches cannot buy much on that axis, and the matched-compute multipliers are all
+< 1 (contradiction keep-0.5: dense reaches 0.894 at ~900 PF vs 1286 PF spent → 0.70x; oolong
+keep-0.5 0.33x, keep-0.25 0.18x, keep-0.10 0.12x — oolong's dense curve is flat in FLOPs, so
+every f1 point lost costs a lot of matched compute). On the training-FLOP axis KV routing therefore cannot be
+compute-optimal at these lengths — the same conclusion the soft-token arms reached, and for the
+same reason: attention is not where 4B training FLOPs go below 32k.
+
+The axis where it pays is **inference**: a 50% smaller KV cache on every full-attention layer
+(decode memory / bandwidth ∝ cache) for −0.05 mean f1 on contradiction (0.894 vs 0.944; still
+above soft-token 1/3 at 0.861 and routed FFN at 0.880) and −0.05 on oolong; a 10x smaller cache
+for −0.10 on oolong. Contradiction cannot go below half.
+
+**Stage B (combined, `flex-c70` / `flex-c60`)** launched on the large budgets only: joint budget
+with FLOP shares evaluated at 8k (`--flex-share-seq-len`), because shares at the 65k padded window
+over-credit attention (score FLOPs ≈ 50% there vs ~12% at real lengths) and would steer the whole
+saving into eviction. Achievable floor at 8k ≈ 1 − 0.36 (FFN L12+) − 0.12 (attn) ≈ 0.52, so 0.70
+and 0.60 leave the router a real choice of split.
+
+### Stage B (joint budget) — how the model splits the saving (2026-09-05 02:00, training-time)
+
+Shares at 8k: FFN(L12+) 0.347, attention-score 0.131, fixed 0.522.
+
+| run | joint target | FFN mean cost (L12+) | KV keep | final train CE |
+|---|---|---|---|---|
+| contradiction 56M flex-c70 | 0.70 | 0.145 (6.9x) | **0.997** | 0.033 |
+| contradiction 56M flex-c60 | 0.60 | 0.008 (~120x) | 0.56 (L3–L11 full, L15 .63, L19–L27 ~.1, L31 .51) | 0.058 |
+| oolong 80M flex-c70 | 0.70 | 0.141 (7.1x) | **0.998** | 0.196 |
+| oolong 80M flex-c60 | 0.60 | 0.009 (112x) | 0.58 (L3–L15 full, L19 .45, L23+ ≤.1) | 0.260 |
+
+Given a free choice, BOTH tasks spend the entire 30% saving on FFN width and keep every key
+(keep 0.998 at target 0.70). Only when the budget exceeds what FFN can give (0.60 needs 0.40 >
+0.347) does the router start evicting cache, and then it still drives FFN to ~1% first. So the
+learned preference is FFN-first, cache-last — the opposite ordering from the Stage A intuition
+that attention is the cheap thing to cut. Contradiction at 0.60 sits at CE 0.058 vs dense 0.04
+with L12+ FFN at 1/120 width AND 44% of keys evicted; the eval will say whether that holds.
+(Dense-priced: 0.60 of dense training FLOPs = 1.67x; on the ROUTED share it is FFN 120x x
+attention 1.8x.)
+
+### Stage B held-out results (2026-09-05 03:20) — the combined router is the first compute-optimal routed point
+
+Mean f1 over 2k/8k/16k/32k; PF = training FLOPs priced at real example lengths (token-weighted
+routing fractions over the whole run, anneal included); mult = FLOPs dense needs for the same f1 ÷
+FLOPs spent (>1 = compute-optimal vs the 4B dense curve).
+
+| task | arm | what it ended with (inference) | f1 | 32k | PF | train ratio | mult |
+|---|---|---|---|---|---|---|---|
+| contradiction 56M | dense | — | 0.944 | 0.881 | 1347 | 1.00 | — |
+| contradiction 56M | **flex-c70** | FFN(L12+) 7x, keep 1.00 | **0.927** | 0.850 | 1020 | 0.757 | **1.15** |
+| contradiction 56M | flex-c60 | FFN(L12+) ~120x, keep 0.56 | 0.893 | 0.782 | 918 | 0.681 | 0.97 |
+| contradiction 56M | ffnmoe-t10 (FFN only, 7x) | | 0.880 | 0.741 | 998 | 0.74 | 0.81 |
+| contradiction 56M | attnroute-c50 (KV only) | keep 0.50 | 0.894 | 0.770 | 1286 | 0.955 | 0.70 |
+| contradiction 56M | kv33 (soft tokens) | | 0.861 | 0.719 | 695 | 0.52 | 1.00 |
+| oolong 80M | dense | — | 0.723 | 0.617 | 1946 | 1.00 | — |
+| oolong 80M | flex-c70 | FFN 7x, keep 1.00 | 0.696 | 0.606 | 1468 | 0.754 | 0.73 |
+| oolong 80M | flex-c60 | FFN ~110x, keep 0.58 | 0.647 | 0.549 | 1314 | 0.675 | 0.27 |
+| oolong 80M | ffnmoe-t10 | | 0.688 | 0.581 | 1437 | 0.74 | 0.62 |
+| oolong 80M | attnroute-c50 | keep 0.50 | 0.671 | 0.562 | 1858 | 0.955 | 0.33 |
+
+- **Contradiction flex-c70 is compute-optimal (1.15x)** — the first routed-FFN-family point above
+  1 at 4B (FFN-only t10 was 0.81x with the SAME final FFN cut). The joint budget did not use the
+  cache at all here; what changed is that the joint target (0.70 of total FLOPs ≈ FFN cost 0.14)
+  is milder than t10's per-router 0.10 and the anneal reaches it, so the router lands at 7x on
+  L12+ without the accuracy cliff. It also beats KV-only at half cache (0.894) and soft tokens.
+- **flex-c60 (FFN 120x + 44% keys evicted) holds 0.893** — the same mean as KV-only keep-0.5
+  (0.894) with a far more aggressive cut on the routed share (FFN 120x, attention 1.8x): the
+  combination is where the "dramatic routed-share speedup" lives; on total training FLOPs it is
+  0.68 of dense because the un-routed 52% (projections, GDN layers, embeddings) is untouched.
+- **oolong**: nothing beats dense on compute (flat dense curve); flex-c70 (0.696) still edges the
+  FFN-only arm (0.688) at the same cut.
+- Learned preference on both tasks: cut FFN first, cache last (Stage B split table above).
+
+Next knobs (not run): per-layer keep floor for the KV router (contradiction dies when L11+ empty);
+route the GDN layers / block-skip rung to reach the un-routed 52%; flex at 9B/27B where the FFN
+share is larger and the FFN-only multiplier was already 0.91.
+
+## Stage C — Qwen3-4B (no GDN) and the third router (block skipping), 2026-09-05
+
+Prasann: "Qwen3 for now sounds good", "Building 2 [block skip] while that runs also sounds good".
+
+**Why Qwen3.** On Qwen3.5 the 24 GDN layers were ~40 of the 52% of per-token FLOPs the routers
+cannot reach. Qwen3-4B is 36 attention+FFN layers, all routable. Measured shares at 8k (joint
+budget log): FFN(L12+) 0.255 / FFN(all) 0.418, attention-score 0.375, fixed 0.369 (L12+) or
+0.207 (all-layer FFN). Two-router ceiling ≈ 5x (8k) / 14x (32k) vs ~2x on Qwen3.5.
+
+**Data.** The length-mix arms were Qwen3.5-tokenized; re-tokenized with Qwen/Qwen3-4B (eos 151643)
+into `taskscale_lengthmix/arms_tokenized_qwen3/` (`build_task_rungs.py --stage tokenize` with
+`TASKSCALE_TOKENIZER/EOS/TOK_SUBDIR`; the oolong manifest only lists s320M, so `--arms` names
+s20M/s80M explicitly). Tokenizer staged at `hf_tokenizers/Qwen3-4B` for the evaluators
+(`FS_TOKENIZER`). Base: `ctc_suite/bases/qwen3-4b-base-trainedmark`.
+
+**Runs** (orchestrate_scale `FS_FAMILY=qwen3`, run names `fs35q3s4b{dense,flex}-…`, 8 GPUs per
+routed run — 36 flex-attention layers OOM'd 4×80GB): dense at both budgets (the reference
+curve), flex-c60 (FFN L12+ + KV), flex-c45, flexa-c40 (FFN on all layers + KV) at contradiction
+56M / oolong 80M. Targets chosen against the achievable floors (0.37 / 0.21).
+
+**Block skipping (`olmo_core.nn.block_skip`, arm prefix `flexs-c*`).** Per block a
+`Linear(d_model,1)` run/skip router; a skipped token passes the residual unchanged and is removed
+from that block's key set (``block_keep`` → the KV-route masked attention, so it also leaves the
+KV cache at prefill). Straight-through on the residual update, run-all init, own budget or the
+joint budget. The joint budget is now per block: ``cost = s_fixed + Σ_b keep_b·(proj_b +
+ffn_b·c_b + attn_b·kv_b)`` (`joint_budget.py`), and the FLOP meter prices the same way
+(`flops.json: block_skip_keep_frac`). Realised as a mask (block runs on all tokens, skipped
+outputs discarded): exact MoD semantics, analytical FLOPs, no wall-clock saving yet — the gather/
+scatter compacted variant is the follow-up. CPU tests `src/test/nn/block_skip_test.py`; GPU
+smoke `research/ffn_compute/flop_scaling/smoke_block_skip_gpu.py`.
+
+**Validation (Beaker 1-GPU jobs, 2026-09-05 11:30–11:40).** Block-level BlockMask == dense builder
+(rel diff ≤2e-3 at 4k/64k, keep 1.0/0.3/0.05); at 64k keep 0.05 it is 2.5x faster (11.7 vs 28.7 ms)
+and slower only at keep-all (79.8 vs 55.6 ms: every listed block is partial). KV-route smoke OK
+(keep-all == base, eviction + cache decode == no-cache). Block-skip smoke OK after fixing decode
+to honour the skip decision on the query side (generated tokens still append K/V to every layer,
+the one documented deviation from training semantics); joint budget grads reach all three routers.
+Three-router arms launched on Qwen3-4B: flexs-c30 / c15 / c05 (total-FLOP targets 0.30 / 0.15 /
+0.05, i.e. 3.3x / 6.7x / 20x on training FLOPs; floor ≈ LM head + embeddings) at contradiction
+56M / oolong 80M, run names `fs35q3s4bflexs-…`.
+
+**Memory on Qwen3-4B (2026-09-05 12:00).** Dense 65k window on 4 GPUs: 45 GB. Two-router L12+ arms
+(flex-c60/c45) on 8 GPUs: 77 GB — they fit but only just; all-layer FFN arms (flexa, flexs) OOM
+inside `_NestedLadderFn.backward` even with the block-level mask. Dense at 8 ranks would be ~37
+GB, so the routers add ~40 GB of retained activations under full AC (~1.1 GB per routed layer ≈
+one 65k×9728 bf16 FFN intermediate per layer) — not yet diagnosed; suspect something in the
+ladder's saved tensors or the flex compile escaping the checkpoint. Workaround for flexa/flexs:
+`--seq-len 40960` (every example fits, max 36.7k; same tokens, 1.6x more optimizer steps than
+the dense/flex arms). Diagnose with a memory snapshot before any 9B Qwen3 attempt.
+
+**LR (2026-09-05 12:10).** At the Qwen3.5 study's lr 5e-6 the Qwen3-4B base barely fits: dense
+contradiction 56M ended at CE 0.54 (Qwen3.5: 0.04), oolong 80M at 1.3 (Qwen3.5: 0.2), starting
+from CE 2.1 / 5.3 vs 0.7 / 0.8 — the Qwen3 base does not know the answer formats and 5e-6 is too
+slow to teach it in ~100 steps. All Qwen3 arms relaunched at the suite's Qwen3 default **5e-5**
+(`FS_LR`), fresh run names `fs35q3s4b{dense2,flex2,flexs2}-…` (old states archived as
+`*_lr5e-6_state.json`). Qwen3.5 and Qwen3 are therefore NOT at matched LR; comparisons are within
+family.
+
+**Memory profile (Beaker 1-GPU, Qwen3-4B 12 layers, 65k packed row, full AC, block stack only —
+`research/ffn_compute/flop_scaling/mem_profile_routers.py`, 2026-09-05 13:45):** dense peak +18.5 GB; +KV router
++1.3 GB; +FFN router +5.4 GB *independent of how many layers are routed* (one transient inside the
+ladder backward); +block skip +9.2 GB of which 3.8 GB was RETAINED through the forward — the ST
+mixing ran outside the checkpointed block and kept every block output alive (0.31 GB/block →
+12 GB at 36 layers). Fixed: the skip wrapper now checkpoints router+block+mixing as one region on
+the unwrapped block (`_skip_and_run`), decision cache makes the recompute exact; CPU test
+`test_activation_checkpointing_matches_and_frees`. The earlier attribution of the 77 GB two-router
+footprint to "~40 GB of retained activations" is therefore wrong for the block stack; the FSDP
+trainer's remaining gap vs this single-GPU profile is not yet explained (LM-head/CE and FSDP
+all-gather transients are the candidates). Decision: `flexs` keeps the FFN router on L12+ (block
+skipping already removes all FFN work for skipped tokens); the all-layer two-router arm `flexa`
+is dropped on Qwen3 for now.
+
+**Two more memory/FSDP fixes for the three-router arm (14:15):** (1) the skip routers were block
+children and ran before the block's FSDP2 forward → sharded DTensor params (`aten.addmm: got mixed
+torch.Tensor and DTensor`); they now live on the model root (`bskip_routers.<i>`, gathered at the
+start of every forward). (2) the fused FFN ladder backward materialised six (65k × 9728) bf16
+intermediates at once (~10 GB) — the OOM site of every all-layer/three-router attempt; it is now
+chunked over 8192-row blocks (fp32 weight-grad accumulation), ~1 GB transient. Both committed
+(030faa573, a3ff5367b); flexs2 relaunched at 65k on 8 GPUs.
+
+**Root cause of the routed-run memory (14:45, `--mem-snapshot` peak attribution inside the FSDP
+trainer):** dense peaks at 26.5 GB live (one block's intermediates at a time); the two-router run
+peaks at 68.6 GB with the RMSNorm fp32 intermediates of ALL 36 blocks live (24.4 + 12.2 + 11.6 GB)
+plus 7.5 GB residual tensors. Every router's budget expectation is computed inside its block's
+checkpoint region and was summed into the loss as a separate term; those scalars are direct
+children of the loss, so autograd reaches them first and forces the recompute of every checkpointed
+block at the start of backward, all of which stay alive. Fix (`olmo_core.nn.budget_attach`): an
+identity op on each block's output whose backward hands that block's budget scalars their
+gradient coefficient (the budget derivative, linearised with the previous forward's values), so
+each block is recomputed once in the normal order; the reported loss no longer contains the budget
+term. `model.budget_attach = True` for every routed variant in the trainer; CPU test
+`test_budget_attach_matches_loss_term_gradients` shows identical router gradients. This also means
+every earlier routed run (Qwen3.5 included) trained with the wasteful recompute order — correct
+gradients, just ~2x the activation memory.
+
+**Correction (15:25):** budget_attach did NOT change the routed peak (68.6 GB again), so the
+"budget term recomputes every block" story was wrong (kept: it is still the right way to deliver
+the gradient, and it removes the budget from the reported loss). Isolation runs: FFN router alone
+26.7 GB (= dense), KV router alone 61 GB with all 36 layers' norm tensors live. The KV path's one
+unusual ingredient is the ``torch.compile``d FlexAttention call inside the eager checkpoint
+region, which defeats the region's saved-tensor dropping for the whole block. Fix: `_FlexIsolated`
+(autograd.Function) runs the compiled kernel under no_grad in forward, saves q/k/v like any other
+tensor, and re-runs kernel+autograd on its own in backward. Verification runs: memsnap8 (KV-only
+peak), kvroute-iso-smoke (correctness).
+
+**Root cause, finally (16:40, ablations `KV_ROUTE_DEBUG=no_router|no_holder`):** KV path with no
+router graph 27.1 GB; KV router evaluated inside the block but handing nothing to the holder
+27.4 GB; router + holder 61 GB. So the trigger is the router's expectation tensor escaping the
+checkpoint region into the holder, which pins every block's saved tensors (the FFN router's
+escaping scalar does not, for reasons not chased). Fix (commit below): the KV and block-skip
+routers now live on the model root (`kvr_routers.<i>`, `bskip_routers.<i>`) and are evaluated on
+the block INPUT outside the region through `router_fn.RouterOnInput` (saves only the block input,
+which the checkpoint already keeps, plus a per-token RMS scale; the decisions and probabilities are
+passed into the block as inputs). Router input changes from attention_norm(x) to RMS-normalised
+h without the learned norm weight — routers are trained from scratch, so this is a variant, not a
+regression. Legacy checkpoints (`router_location: attention`) still load and evaluate; new exports
+record `router_location: root`. The compiled-flex isolation (`_FlexIsolated`) stays: harmless and
+keeps the kernel opaque to the checkpoint.
+
+**Verified (17:30):** with root routers evaluated on the block input, KV-only and KV+FFN peak at
+27.4 / 27.6 GB — equal to dense (26.5). The three-router arm still leaked because the skip
+wrapper ran its own checkpoint around the UNWRAPPED block (bypassing the AC+FSDP wrappers: AC is
+applied first, FSDP on the wrapper). The skip mixing now lives inside the block's own patched
+forward (`_skipping_block_forward`, installed by `install_block_skip`), so routed blocks pass
+through the standard wrappers exactly like dense blocks.
+
+**Three-router memory (18:15):** KV+FFN with root routers is at dense level (27.6 GB); adding
+block skipping (kwargs path) leaks again (72 GB: all-layer norm tensors). Detaching the skip
+probabilities did not help; a "stash" variant appeared to fix it (28 GB) but had silently disabled
+skipping (attribute set on the AC wrapper, never seen by the inner block) — a false positive,
+reverted. Running ablations `no_block_keep` (skipped tokens remain keys) and `no_mix` (no residual
+mixing) to split the two remaining candidates.
+
+**Three-router memory, resolved (18:50):** ablations `no_block_keep` (72 GB, OOM) vs `no_mix`
+(28 GB) pin it on the straight-through residual mixing when it runs INSIDE the checkpointed block;
+the "stash" variant's 28 GB was a false positive (attribute set on the AC wrapper, skipping was
+silently off). Final layout: routers on the root evaluated on the block input, the block applies
+only the key mask (`skip_keep` kwarg), and the mixing runs outside the region in
+`block_skip_forward` (one retained `out − h` per block, ~12 GB at 36 layers). Memory pattern
+across all three routers: anything computed inside a checkpointed block that also feeds the graph
+outside it (a router expectation to the holder; the ST mixing on the block output) pins the block's
+saved tensors under FSDP2 — keep router graphs and mixing outside, pass decisions in.
+Verified: three-router peak 37.2 GB (memsnap18; the two per-block mixing tensors are the
+10.9 + 10.9 GB entries), block-skip GPU smoke OK. `flexs2` arms relaunched 19:05.
+
+### Stage C first three-router result (Qwen3-4B, oolong 80M, joint target 0.30 = 3.3x total)
+
+Trained on target (joint cost 0.289), final train CE ≈0.19 (dense 0.11). Learned split: blocks
+0–20 run for every token, blocks 21–34 skipped for ~99% of tokens (1–2% run), block 35 runs;
+inside the surviving blocks FFN(L12+) 54% null rung, KV cache kept in full on a few layers and
+emptied on the rest. The joint budget's first move on a dense 36-layer model is DEPTH (skip the
+late blocks for context tokens), not width or cache. Memory 48.5 GB/GPU at 65k on 8 ranks.
+
+### Stage C two-router results, Qwen3-4B (lr 5e-5), priced at real lengths (2026-09-05 19:05)
+
+| task | arm | mean f1 (2k/8k/16k/32k) | train FLOPs ÷ dense | matched-compute mult |
+|---|---|---|---|---|
+| contradiction 56M | dense | 0.872 (.962/.925/.863/.737) | 1.00 | — |
+| contradiction 56M | flex-c60 | 0.153 (.355/.180/.067/.011) | 0.72 | 0.45 |
+| contradiction 56M | flex-c45 | 0.480 (.739/.636/.424/.119) | 0.71 | 0.75 |
+| oolong 80M | dense | 0.667 (.844/.643/.623/.557) | 1.00 | — |
+| oolong 80M | flex-c60 | 0.620 (.817/.610/.548/.504) | 0.68 | 1.27 |
+| oolong 80M | flex-c45 | 0.628 (.834/.598/.569/.511) | 0.64 | 1.39 |
+
+Dense curve for the multipliers: 20M (0.224, underfit at 26/38 steps) → 80M (0.667); it is steep,
+so the oolong multipliers are optimistic. Contradiction: the joint budget at 0.60/0.45 of dense
+FLOPs (a 0.40–0.55 saving out of a routable 0.63) hollows out the late layers' caches and FFNs and
+the task collapses at long context; the c60 run collapsed harder than c45 (early loss spikes to
+~10, router basin), an optimization pathology rather than capacity. Qwen3 dense is itself weaker
+than Qwen3.5 dense on both tasks at matched data (0.872 vs 0.944; 0.667 vs 0.723). CSVs:
+`results/flop_scaling/results_q3s4b{dense2,flex2}.csv`.
+
+### Stage C three-router runs, Qwen3-4B — learned allocations at the end of training (19:40)
+
+| run | joint target (achieved) | blocks run for most tokens | mean run frac | KV keep (mean) | FFN cost (L12+) | train CE (dense) |
+|---|---|---|---|---|---|---|
+| oolong 80M flexs-c30 | 0.30 (0.289) | 11 of 36: {0,1,2,3,4,7,12,19,20,22,35} | 0.31 | 0.70 | 0.004 | 0.19 (0.11) |
+| oolong 80M flexs-c15 | 0.15 (0.149) | 4 of 36: {0,4,13,19} | 0.12 | 0.64 | 0.046 | 0.27 |
+| oolong 80M flexs-c05 | 0.05 (0.136, floor) | 4 of 36: {0,4,13,19} | 0.11 | 0.56 | 0.046 | 0.31 |
+| contradiction 56M flexs-c30 | 0.30 (0.296) | 11 of 36 | 0.33 | 0.55 | — | 0.93 (0.016) |
+| contradiction 56M flexs-c15 | 0.15 (0.211) | 7 of 36 | 0.20 | 0.70 | — | 0.94 |
+| contradiction 56M flexs-c05 | 0.05 (0.270) | 10 of 36 | 0.31 | 0.64 | — | 0.86 |
+
+With depth on the table the joint budget spends it FIRST: at 3.3x total it keeps 11 blocks, at
+6.7x only 4 blocks ({0,4,13,19}) for context tokens, and the 20x target is unreachable (floor
+≈0.13: four blocks + LM head + the un-skippable answer-token compute). Oolong survives a 4-block
+context pass at CE 0.27–0.31 (dense 0.11; the attention-only keep-0.10 run was 0.28); contradiction
+does not fit at any of these budgets (CE 0.86–0.94 vs 0.016) — precise retrieval needs depth.
+Evals pending.
+
+### Three-router held-out results (partial, 22:20)
+
+| run | f1 (2k/8k/16k/32k) | mean | train FLOPs ÷ dense (real lengths) | mult vs Qwen3 dense curve |
+|---|---|---|---|---|
+| oolong flexs-c30 | .799/.536/.498/.499 | 0.583 | 0.40 | 1.90 (steep dense curve) |
+| oolong flexs-c15 | .746/.471/.485/— | (0.567 partial) | ~0.30 | — |
+| oolong flexs-c05 | .658/.434/.443/— | (0.512 partial) | ~0.29 | — |
+| contradiction flexs-c30/c15/c05 | 0 at every rung | 0.000 | 0.42 | collapsed |
+
+Token-weighted routing fractions (flops.json): oolong c30 block-run 0.55, KV keep 0.84, FFN cost
+0.41 (anneal included; end-of-run values are much lower). Dense reference: oolong 80M 0.667.
+
+### Three-router held-out results, FINAL (2026-09-05 23:05)
+
+| Qwen3-4B | arm | 2k/8k/16k/32k | mean f1 | train FLOPs ÷ dense | mult vs dense curve |
+|---|---|---|---|---|---|
+| oolong 80M | dense | .844/.643/.623/.557 | 0.667 | 1.00 | — |
+| oolong 80M | flexs-c30 (11 blocks) | .799/.536/.498/.499 | 0.583 | 0.40 | 1.90 |
+| oolong 80M | flexs-c15 (4 blocks) | .746/.471/.485/.485 | 0.547 | 0.33 | 2.09 |
+| oolong 80M | flexs-c05 (4 blocks, floor) | .658/.434/.443/.436 | 0.493 | 0.33 | 1.77 |
+| contradiction 56M | flexs-c30/c15/c05 | 0/0/0/0 | 0.000 | 0.42–0.51 | collapsed |
+
+Oolong at a 3x training-FLOP cut keeps 0.58 of a 0.67 dense score, and at 4 of 36 blocks for
+context tokens still 0.55; the matched-compute multipliers (1.8–2.1x) lean on a steep Qwen3 dense
+curve (20M point underfit) and should be read as "well above parity", not as precise factors.
+Contradiction is zero at every three-router budget: precise retrieval does not survive depth
+skipping at 3x. Total-FLOP ceiling observed: the routers bottom out at ~0.33 of dense on this
+data (four blocks + LM head + answer tokens), i.e. ~3x on TRAINING FLOPs; on the routed share the
+cut is far larger (FFN 25x, cache ~5x on skipped layers, depth 9x for context tokens).
+CSV `results/flop_scaling/results_q3s4bflexs2.csv`.
+
+## Stage D — the hybrid analogue: block skipping on GatedDeltaNet blocks (2026-09-06)
+
+Prasann: "Would there be some sort of equivalent routing thing for hybrid? Maybe just deciding
+whether or not GDN will be applied to a given token?"
+
+**What GDN costs.** Measured with the model's own FLOP formulas (`num_flops_per_token`), Qwen3.5-4B
+per-token shares: at 2k FFN 0.615 / GDN 0.096 / attention projections 0.080 / attention scores
+0.036 / embeddings+LM head 0.173; at 8k FFN 0.554 / GDN 0.087 / proj 0.072 / scores 0.131 /
+fixed 0.156; at 32k FFN 0.398 / GDN 0.062 / proj 0.052 / scores 0.377 / fixed 0.112. The GDN
+mixer is cheap (constant per token, ~9% at short context) and has no cache to shrink (constant-size
+state), so a router over the mixer alone cannot pay for itself. What matters on the hybrid is that
+3/4 of the FFN sits in GDN blocks, and the two-router ceiling (1 − FFN(L12+) 0.347 − scores 0.131
+≈ 0.52 at 8k) is mostly the FFN of layers 0–11 (0.21) and the LM head/embeddings (0.16), NOT the
+GDN mixers — an earlier statement in this record blaming the GDN layers for the unroutable half
+was wrong.
+
+**What was built.** Block skipping now routes GatedDeltaNet blocks. The decision half is
+unchanged (root router on the block input, residual mixing outside the checkpoint region). The
+inside half — "a skipped token is not a key" — becomes "a skipped token does not write the
+recurrent state": `GatedDeltaNet.forward` takes the same `block_keep` and, for skipped tokens,
+zeroes `k`/`v` before the causal short conv (no leak into neighbours) and forces `beta=0`, `g=0`
+so the delta-rule update is the identity at that step (the padding path already used this
+pass-through). `q` is left intact so the position's output is defined; the block-skip mixing
+discards it. Cached decode ignores it (generated tokens always write, as with the KV router).
+`install_block_skip` accepts GDN blocks because they expose `w_q`; the joint budget already prices
+a GDN block as a skippable `proj` term (its FLOPs are length-independent, so `attn_score` is 0).
+Tests `src/test/nn/block_skip_gdn_test.py` (GPU + fla): keep-all is a no-op; prefilling through a
+skipped token leaves the recurrent state exactly where it was and earlier outputs unchanged; a
+2-block GDN model routes both blocks, reproduces its base at init and is the identity when
+everything is skipped; the joint budget prices the whole block as skippable and the router gets a
+budget gradient. Commit 18c1b1ebe; verified on a jupiter H100 (Beaker 01M1VZ915JTZK3RMCWHXM66RQ6, 2026-09-06): 4/4 new + 6/6 existing block-skip tests pass.
+
+**Ceiling this opens on Qwen3.5-4B.** With all 32 blocks skippable the floor is embeddings + LM
+head + answer tokens (0.16 at 8k, 0.11 at 32k), i.e. the same ~7x-in-practice regime as Qwen3
+(four surviving blocks), versus 1.9x for the two routers. Not yet run: `flexs-c*` arms on
+Qwen3.5-4B (`launch_grid35.py` already passes `--block-skip-target 0.5 --block-skip-start-layer 0`
+for `flexs`; `FS_FAMILY` defaults to qwen3_5).
+
+### Stage D runs: Qwen3.5-4B three routers (FFN L12+ / KV on the 8 attention layers / skip on all 32 blocks), end-of-training allocations (2026-09-06 13:10)
+
+Runs `fs35s4bflexs-{contradiction-s56M,oolong-s80M}-flexs-c{30,15}`, 8 GPUs, lr 5e-6, joint budget at 8k
+shares. Attention layers are 3,7,11,15,19,23,27,31; the other 24 blocks are GDN.
+
+| run | joint cost (target) | blocks run for most tokens | KV keep per attention layer | FFN(L12+) |
+|---|---|---|---|---|
+| contradiction c30 | **0.485** (0.30) | 0–13, 15–18, 20 (blocks 19, 21–31 skipped; 14 at 0.23) | 3/7/11 full; 15 .18; 19–31 ≈.065 | ≈0 (null) |
+| contradiction c15 | **0.502** (0.15) | 0–14, 16–18, 20, 25, 31 (15, 19, 21–24, 26–30 skipped) | 3/7/11 full; 15 .29; 19–31 ≈.14 | ≈0 |
+| oolong c15 | 0.299 (0.15) | 0, 1, 2, 5, 13–16, 18, 20, 24, 29 (+ partial 4 .6, 6 .35, 12 .29); 7–11, 17, 19, 21–23, 25–28, 30, 31 skipped | 7/11/19/23 full; 3 .88; 15/27/31 ≈.05 | 177x |
+
+- **Neither task met its budget on the hybrid.** Contradiction settled at ~0.49 of dense at BOTH
+  targets (2x), oolong at 0.30 (3.3x): the CE gradient beat the budget term, the opposite of Qwen3
+  where the targets were met and contradiction collapsed. So on the hybrid the router "refuses"
+  rather than collapses — likely the budget coefficients on GDN blocks (proj-only share, small)
+  are weak relative to CE; a larger `--flex-joint-weight` or a longer anneal would test that.
+- **The two tasks choose different architectures.** Contradiction keeps the first two-thirds of
+  the depth intact (blocks 0–20), drops the tail, keeps the early attention caches (L3/7/11) in
+  full and empties the late ones (L19+ at 6–14%). Oolong drops most of the early GDN blocks
+  (7–11) and the late tail, keeps a scattered set of mid blocks (13–16, 18, 20, 24, 29) and the
+  mid attention caches (L7/11/19/23) in full, and cuts FFN 177x. On Qwen3 the pattern was again
+  different (four blocks {0,4,13,19}). This is the "flexible architecture per task" result.
+- flexs-c30 oolong still training; evals launched for the other three (orchestrator
+  `orchestrate_s4bflexs`). Held-out f1 pending.
+
+### Stage D held-out results (2026-09-08): hybrid three routers lose to dense on compute
+
+Mean f1 over 2k/8k/16k/32k, eval_size 500 per rung; FLOPs priced at real lengths with token-weighted
+routing fractions (anneal included); mult = dense FLOPs for the same f1 ÷ FLOPs spent.
+
+| Qwen3.5-4B | arm | 2k/8k/16k/32k | mean | train FLOPs ÷ dense | mult |
+|---|---|---|---|---|---|
+| contradiction 56M | dense | .982/.971/.941/.881 | 0.944 | 1.00 | — |
+| contradiction 56M | flexs-c15 (budget not met: joint cost 0.50) | .927/.854/.767/.641 | 0.797 | 0.57 | 0.39 |
+| contradiction 56M | flexs-c30 (joint cost 0.49) | .878/.779/.641/.394 | 0.673 | 0.57 | 0.11 |
+| oolong 80M | dense | .913/.692/.668/.617 | 0.723 | 1.00 | — |
+| oolong 80M | flexs-c15 (joint cost 0.30) | .816/.562/.546/.519 | 0.611 | 0.52 | 0.04 |
+| oolong 80M | flexs-c30 (joint cost 0.29) | .807/.589/.548/.533 | 0.619 | 0.52 | 0.06 |
+
+- On the hybrid the three routers never got below ~0.5 of dense on the training average (the
+  budget was not met, see the allocation table above) and still cost 0.10–0.27 f1 on contradiction
+  and 0.10 on oolong: strictly worse than the Qwen3 three-router points at a similar FLOP ratio
+  (Qwen3 oolong flexs-c30: 0.583 at 0.40 vs dense 0.667). Contradiction's 32k rung collapses first
+  (0.394 at c30), consistent with the late-layer caches being emptied to ~6% keep.
+- Two confounds before reading this as "hybrids route worse": the per-router budget coefficients on
+  GDN blocks are small (projection share only) so the router pressure is weaker than on Qwen3, and
+  lr is 5e-6 here vs 5e-5 on Qwen3. Neither was tuned. CSV `results/flop_scaling/results_scale_s4bflexs.csv`.

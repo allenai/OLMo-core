@@ -10,3 +10,9 @@ Instead, see [`src/scripts/official/`](https://github.com/allenai/Olmo-core/tree
 
 Most of the scripts here have a consistent command-line API, but that's not guaranteed.
 Generally if you run the script without any arguments it will print out some usage information.
+
+---
+
+Our own code does not live here. The canonical data → train → eval recipe is in
+[`recipes/`](../../../recipes/README.md), and experiment code is in `research/<family>/`. Upstream
+AI2 scripts stay at this level.
