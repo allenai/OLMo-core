@@ -1,4 +1,4 @@
-"""Scoped 100B cosine MT from the 14T + 600B EMO fixed PT decay endpoint, EMO kept on."""
+"""Scoped 100B cosine MT from the 14T + 200B EMO fixed PT decay endpoint, EMO kept on."""
 
 import concurrent.futures
 import hashlib
@@ -12,8 +12,8 @@ from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 from olmoe3_small_hero_plan import BATCH, BUCKET, CONTROL, MOUNT
 
-CAMPAIGN = "olmo35-small-14t600b-mt20-20261012"
-BRANCH = "tanushy/hero-14t600b-mt20-20261012"
+CAMPAIGN = "olmo35-small-14t200b-mt20-20261012"
+BRANCH = "tanushy/hero-14t200b-mt20-20261012"
 ROOT = MOUNT / "production-hero-small-midtrain" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
@@ -21,8 +21,8 @@ CORE_REF = "b1fd2c9746e88baeb20e372bdca340d788d0f7e5"
 HELPER_REF = "3542d99ebeb6d156887ed1eaf2871cff5f07666d"
 DATA_WORK = ROOT / "data-work"
 METADATA_CACHE = DATA_WORK / "cached-path-metadata"
-PARENT = "olmo35-small-14t-plus600bdecay-20261008-emo"
-PT_STEP = 870229
+PARENT = "olmo35-small-14t-plus200bdecay-20261008-emo"
+PT_STEP = 846387
 SOURCE = MOUNT / "production-fixed-pt-decays" / PARENT / f"step{PT_STEP}"
 LR = 1.1e-3 * 0.2
 WARMUP = 2000
@@ -31,7 +31,7 @@ END = (REQUESTED_TOKENS + BATCH - 1) // BATCH
 SMOKE_END = 2
 SEED = 103_117_110_100_105 % (2**31 - 1)
 MIX_SHA256 = "1ed52c81c3f33fb864157f8e01ed0d0aff24548149c2ca4376182578181c25ba"
-DECAY_JOBS = {"emo": "01M4D727Z0M27GDCZ6RQQNGXFA"}
+DECAY_JOBS = {"emo": "01M4D782XZNKD0BFK1EKNB40W5"}
 
 
 def inventory(root):
@@ -190,7 +190,7 @@ class MTRun:
 
     @property
     def prefix(self):
-        return f"mt20-after-14t600b/{self.arm}"
+        return f"mt20-after-14t200b/{self.arm}"
 
     def registration(self):
         """Fields for the uploader Registration of this isolated child lineage."""

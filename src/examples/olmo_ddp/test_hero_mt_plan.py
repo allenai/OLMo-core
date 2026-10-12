@@ -48,9 +48,9 @@ class HeroMTPlanTest(unittest.TestCase):
         self.assertEqual((plan.END, plan.END * plan.BATCH), (5961, 100_008_984_576))
         self.assertEqual((plan.LR, plan.WARMUP, plan.SMOKE_END), (1.1e-3 * 0.2, 2000, 2))
         self.assertEqual(plan.SEED, 1_387_822_106)
-        run = plan.find_run("olmo35-small-14t600b-mt20-20261012-emo")
-        self.assertEqual(run.as_dict()["parent_tokens"], 14_600_019_902_464)
-        self.assertEqual(run.as_dict()["total_seen_tokens"], 14_700_028_887_040)
+        run = plan.find_run("olmo35-small-14t200b-mt20-20261012-emo")
+        self.assertEqual(run.as_dict()["parent_tokens"], 14_200_017_518_592)
+        self.assertEqual(run.as_dict()["total_seen_tokens"], 14_300_026_503_168)
 
     @unittest.skipUnless(PRIOR_MT20.is_file(), "2T mt20 EMO session record is not mounted")
     def test_recipe_matches_2t_mt20_emo_run(self):
@@ -78,7 +78,7 @@ class HeroMTPlanTest(unittest.TestCase):
         (run,) = plan.runs()
         self.assertTrue(run.emo)
         self.assertEqual(run.root, plan.ROOT / run.run_id)
-        self.assertEqual(run.prefix, "mt20-after-14t600b/emo")
+        self.assertEqual(run.prefix, "mt20-after-14t200b/emo")
         self.assertNotEqual(run.root.parent, plan.SOURCE.parent)
         registration = run.registration()
         self.assertEqual(
@@ -89,7 +89,7 @@ class HeroMTPlanTest(unittest.TestCase):
         self.assertGreaterEqual(registration["min_local_checkpoints"], 2)
         self.assertGreaterEqual(registration["delete_grace_seconds"], 3600)
         with self.assertRaises(StopIteration):
-            plan.find_run("olmo35-small-14t600b-mt20-20261012-non-emo")
+            plan.find_run("olmo35-small-14t200b-mt20-20261012-non-emo")
 
     def test_checkpoint_gate(self):
         good = self.checkpoint(self.root / "step2", 2)
@@ -110,7 +110,7 @@ class HeroMTPlanTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Wrong checkpoint audit"):
             plan.validate_checkpoint(self.checkpoint(self.root / "step1500", 1500, gpus=128), 1500)
 
-    @unittest.skipUnless(plan.SOURCE.is_dir(), "14T + 600B decay endpoint is not mounted")
+    @unittest.skipUnless(plan.SOURCE.is_dir(), "14T + 200B decay endpoint is not mounted")
     def test_source_is_the_fully_decayed_emo_endpoint(self):
         plan.validate_checkpoint(plan.SOURCE, plan.PT_STEP)
         config = json.loads((plan.SOURCE / "config.json").read_text())
@@ -150,7 +150,7 @@ class HeroMTPlanTest(unittest.TestCase):
             plan.verified_copy(source, destination, 500)
 
     @unittest.skipUnless(
-        (plan.ROOT / "olmo35-small-14t600b-mt20-20261012-emo" / f"step{plan.END}").is_dir(),
+        (plan.ROOT / "olmo35-small-14t200b-mt20-20261012-emo" / f"step{plan.END}").is_dir(),
         "final MT checkpoint is not mounted",
     )
     def test_final_checkpoint_is_ready(self):

@@ -1,4 +1,4 @@
-"""Frozen hero conversion/qualification/OLMoBase recipes for the 14T + 600B mt20 endpoint."""
+"""Frozen hero conversion/qualification/OLMoBase recipes for the 14T + 200B mt20 endpoint."""
 
 import argparse
 import hashlib
