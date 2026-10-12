@@ -167,7 +167,9 @@ class KVRouteHolder:
                 int(li): float(e.detach()) / max(1e-9, w)
                 for li, e, w in zip(self._exp_layers, self._exp_keep, self._exp_weights)
             }
-            self.last_exp_mean = sum(self.last_exp_per_layer.values()) / len(self.last_exp_per_layer)
+            self.last_exp_mean = sum(self.last_exp_per_layer.values()) / len(
+                self.last_exp_per_layer
+            )
         if self._n_tokens:
             self.last_per_layer_keep = {
                 li: self._hard_kept[li] / max(1, self._n_tokens[li]) for li in self._n_tokens
@@ -416,9 +418,18 @@ def _compacted_block_mask(
     block's first key position (positions are ascending within the compacted set) is ``<=`` the
     block's last query position (causal) and the two blocks' document ranges intersect; padded
     slots carry position ``T + 1`` and fail the causal test. Every diagonal block of the appended
-    full key set is listed (dropped queries read their own key there). Listed blocks are all
-    *partial*: the kernel applies ``mask_mod`` inside them, so an over-approximation here costs
-    compute but never correctness.
+    full key set is listed (dropped queries read their own key there).
+
+    Blocks are split into **full** and **partial**. A block is full when every one of its
+    ``bs x bs`` entries is allowed: the block's LAST key position is at or before its FIRST query
+    position (so causality holds for the whole tile), no slot in it is compaction padding, and --
+    when packing -- the whole tile sits inside one document. FlexAttention then runs those tiles
+    with no mask at all. That matters here because ``mask_mod`` is expensive: it gathers
+    ``pos_k[b, kj]`` and two entries of ``doc`` for EVERY (query, key) element, and before this
+    split every listed block paid that. Partial blocks (the causal frontier, document edges, and
+    the appended diagonal) still evaluate ``mask_mod``; an over-approximation of the partial set
+    costs compute but never correctness, while an over-approximation of the FULL set would be a
+    correctness bug -- hence the conservative tests below.
     """
     bs = FLEX_BLOCK_SIZE
     B = pos_k.shape[0]
@@ -426,9 +437,17 @@ def _compacted_block_mask(
     nkc = Kp // bs
     nkd = nq
     pos_pad = torch.arange(nq * bs, device=device).clamp(max=T - 1)
-    q_last = (torch.arange(nq, device=device) * bs + bs - 1).clamp(max=T - 1)  # (nq,)
+    q_idx = torch.arange(nq, device=device)
+    q_last = (q_idx * bs + bs - 1).clamp(max=T - 1)  # (nq,)
+    q_first = q_idx * bs  # (nq,)
     k_first = pos_k[:, ::bs]  # (B, nkc) first slot position of each compacted block (T+1 if padded)
+    k_last = pos_k[:, bs - 1 :: bs]  # (B, nkc) last slot position (T+1 if the block has padding)
     causal_ok = k_first[:, None, :] <= q_last[None, :, None]  # (B, nq, nkc)
+    # Full: the whole key tile precedes the whole query tile AND holds no padding slot. A padded
+    # slot carries position T + 1, so ``k_last <= q_first <= T - 1`` rules padding out by itself.
+    # The last query block may be short (T not a multiple of bs); its queries beyond T are never
+    # scored, so a full tile there is still safe.
+    full_ok = k_last[:, None, :] <= q_first[None, :, None]  # (B, nq, nkc)
     if doc is not None:
         doc_q = doc[pos_pad].view(nq, bs)
         q_dmin, q_dmax = doc_q[:, 0], doc_q[:, -1]  # docs ascend with position
@@ -441,14 +460,34 @@ def _compacted_block_mask(
             k_dmax[:, None, :] >= q_dmin[None, :, None]
         )
         causal_ok = causal_ok & doc_ok
+        # one document across the whole tile, on both sides
+        same_doc = (
+            (k_dmin == k_dmax)[:, None, :]
+            & (q_dmin == q_dmax)[None, :, None]
+            & (k_dmin[:, None, :] == q_dmin[None, :, None])
+        )
+        full_ok = full_ok & same_doc
+    full_ok = full_ok & causal_ok
     diag = torch.eye(nq, dtype=torch.bool, device=device)[None].expand(B, nq, nkd)
-    dense_blocks = torch.cat([causal_ok, diag], dim=-1)  # (B, nq, nkc + nkd)
+    zeros_d = torch.zeros_like(diag)
+    dense_blocks = torch.cat([causal_ok & ~full_ok, diag], dim=-1)  # (B, nq, nkc + nkd) PARTIAL
+    full_blocks = torch.cat([full_ok, zeros_d], dim=-1)
     kv_num_blocks = dense_blocks.sum(-1, dtype=torch.int32)[:, None]  # (B, 1, nq)
     kv_indices = torch.argsort((~dense_blocks).to(torch.int8), dim=-1, stable=True).to(torch.int32)[
         :, None
     ]
+    full_num_blocks = full_blocks.sum(-1, dtype=torch.int32)[:, None]
+    full_indices = torch.argsort((~full_blocks).to(torch.int8), dim=-1, stable=True).to(
+        torch.int32
+    )[:, None]
     return BlockMask.from_kv_blocks(
-        kv_num_blocks, kv_indices, BLOCK_SIZE=bs, mask_mod=mask_mod, seq_lengths=(T, Kp + T)
+        kv_num_blocks,
+        kv_indices,
+        full_num_blocks,
+        full_indices,
+        BLOCK_SIZE=bs,
+        mask_mod=mask_mod,
+        seq_lengths=(T, Kp + T),
     )
 
 
@@ -488,6 +527,7 @@ def kv_route_attention(
     v: torch.Tensor,
     *,
     cu_doc_lens: Optional[torch.Tensor] = None,
+    max_doc_len: Optional[int] = None,
     cache_leftpad: Optional[torch.Tensor] = None,
     block_keep: Optional[torch.Tensor] = None,
     kv_route_p: Optional[torch.Tensor] = None,
@@ -520,7 +560,11 @@ def kv_route_attention(
             "kv_route does not support context parallelism (single-rank attention only)"
         )
 
-    if cfg is not None and cfg["holder"].enabled and os.environ.get("KV_ROUTE_DEBUG") == "no_router":
+    if (
+        cfg is not None
+        and cfg["holder"].enabled
+        and os.environ.get("KV_ROUTE_DEBUG") == "no_router"
+    ):
         # memory-diagnostic ablation: flex path with no router graph at all (keep everything)
         keep = torch.ones(B, T, dtype=torch.bool, device=x.device)
         if block_keep is not None:
@@ -578,7 +622,29 @@ def kv_route_attention(
     if doc is not None and B != 1:
         raise RuntimeError("kv_route: cu_doc_lens implies a single packed row (B == 1)")
     leftpad = cache_leftpad.to(torch.int64) if cache_leftpad is not None else None
-    att = _masked_attention(q, k, v, keep, doc, leftpad, attn.head_dim**-0.5)
+    if kvm is None and bool(keep.all()):
+        # Nothing is dropped, so the kept-key mask degenerates to plain causal (+ intra-document)
+        # attention and the ordinary flash path computes exactly the same thing -- including the
+        # gradient to the router, which rides on the straight-through coefficient already applied
+        # to k and v above. Worth the one host sync: the FlexAttention path below costs ~1.17x
+        # (8k) to ~1.33x (16k) of a whole 4B step even when it drops NOTHING
+        # (debug/flexcompute_40x/router_matrix_4B_*.json), and a target-annealed router keeps
+        # everything for the first third of a run.
+        #
+        # Only without a KV cache manager, i.e. training and uncached prefill -- the case this is
+        # for. With a cache the layer must still write it through ``_write_compacted_cache``
+        # below, and handing ``cache_leftpad`` to the backend instead raises
+        # "'TorchAttentionBackend' doesn't support KV caching" (kv_route_test, 2026-09-09).
+        att = attn.sdpa(
+            q,
+            k,
+            v,
+            cu_doc_lens=cu_doc_lens,
+            max_doc_len=max_doc_len,
+            cache_leftpad=cache_leftpad,
+        )
+    else:
+        att = _masked_attention(q, k, v, keep, doc, leftpad, attn.head_dim**-0.5)
 
     if kvm is not None:
         with torch.no_grad():

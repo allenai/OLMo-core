@@ -90,6 +90,32 @@ class LMHeadConfig(ModuleConfig):
     bias: Optional[bool] = None
     dtype: DType = DType.float32
     loss_implementation: LMLossImplementation = LMLossImplementation.default
+    sparse_loss_positions: bool = False
+    sparse_loss_unfused_max_rows: int = 4096
+    """
+    Row count below which a gathered loss falls back to the unfused cross entropy.
+
+    Fused-linear CE exists to avoid materialising a ``seq_len x vocab_size`` logits tensor. Once
+    :attr:`sparse_loss_positions` has gathered to the supervised rows that tensor is tiny, while
+    the fused kernel keeps paying an N-independent cost -- it touches a full
+    ``d_model x vocab_size`` fp32 gradient accumulator every step no matter how few rows survive.
+    Measured on the 4B head (H200, fwd+bwd) at 13-118 surviving rows, the fused path costs 70-308
+    ms against 1.6-1.9 ms unfused, and 2.8x the memory. Above this threshold the logits tensor
+    stops being negligible and the fused path wins again.
+    """
+    """
+    Only run the LM head at positions that contribute to the loss.
+
+    On masked-label fine-tunes (SFT) the loss covers a small suffix of each sequence -- measured
+    between 0.2% and 5% of positions on our task shards -- while the head projects to the full
+    248k vocabulary at *every* position. Gathering to the loss positions first is exact (the final
+    norm and the vocabulary projection are both position-wise), and removes the largest un-routed
+    term in the training FLOP budget: the head is 17% of Qwen3.5-4B's per-token training FLOPs at
+    2k context and 11% at 32k.
+
+    Ignored unless the caller asks for a reduced loss and no logits, so evaluation paths that need
+    one row per input position are unaffected. Not applied under tensor or context parallelism.
+    """
 
     def num_params(self, d_model: int, vocab_size: int) -> int:
         """
@@ -131,6 +157,13 @@ class LMHeadConfig(ModuleConfig):
             if self.name == LMHeadType.default:
                 return LMHead(**kwargs)
             elif self.name == LMHeadType.normalized:
+                # NormalizedLMHead has its own forward and does not implement the fast path, so
+                # accepting the flag here would silently do nothing.
+                kwargs.pop("sparse_loss_unfused_max_rows", None)
+                if kwargs.pop("sparse_loss_positions", False):
+                    raise OLMoConfigurationError(
+                        "'sparse_loss_positions' is not implemented for the normalized LM head"
+                    )
                 return NormalizedLMHead(**kwargs)
             else:
                 raise NotImplementedError(self.name)
@@ -166,6 +199,8 @@ class LMHead(nn.Module):
         bias: bool = True,
         init_device: str = "cpu",
         loss_implementation: LMLossImplementation = LMLossImplementation.default,
+        sparse_loss_positions: bool = False,
+        sparse_loss_unfused_max_rows: int = 4096,
     ):
         super().__init__()
         self.norm = (
@@ -175,6 +210,8 @@ class LMHead(nn.Module):
         self._d_model = d_model
         self._vocab_size = vocab_size
         self._loss_implementation = loss_implementation
+        self._sparse_loss_positions = sparse_loss_positions
+        self._sparse_loss_unfused_max_rows = sparse_loss_unfused_max_rows
         self._tp_mesh: Optional[DeviceMesh] = None
         self._cp_mesh: Optional[DeviceMesh] = None
 
@@ -226,6 +263,39 @@ class LMHead(nn.Module):
                   If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]
+        loss_implementation = self.loss_implementation
+
+        # Sparse-label fast path. When the loss is masked to a small set of positions, the head
+        # only has to run there: the final norm and the vocabulary projection are both position-
+        # wise, so gathering before them is exact rather than an approximation, and the fused CE
+        # kernel already contributes nothing for an ignored label. Restricted to callers that want
+        # a reduced loss and no logits -- "none" reduction and logit consumers need one row per
+        # input position -- and to the single-mesh case, since TP/CP hand us sharded tensors.
+        if (
+            self._sparse_loss_positions
+            and labels is not None
+            and return_logits is not True
+            and loss_reduction != "none"
+            and isinstance(logits_to_keep, int)
+            and logits_to_keep == 0
+            and not self.tp_enabled
+            and not self.cp_enabled
+        ):
+            labels_flat = labels.reshape(-1)
+            keep = labels_flat != ignore_index
+            if not bool(keep.any()):
+                # Every position masked. Keep one ignored row so shapes stay non-empty and every
+                # rank runs the same collectives; it contributes zero loss and zero gradient.
+                keep = torch.zeros_like(keep)
+                keep[0] = True
+            x = x.reshape(-1, x.shape[-1])[keep].unsqueeze(0)
+            labels = labels_flat[keep].unsqueeze(0)
+            # Having gathered, the fused kernel is the wrong tool: it exists to avoid a
+            # seq_len x vocab logits tensor we no longer build, and charges an N-independent
+            # cost for a full d_model x vocab fp32 gradient accumulator. See
+            # `sparse_loss_unfused_max_rows`.
+            if x.shape[1] <= self._sparse_loss_unfused_max_rows:
+                loss_implementation = LMLossImplementation.default
 
         h = self.norm(x) if self.norm is not None else x
 
@@ -249,7 +319,7 @@ class LMHead(nn.Module):
         loss: torch.Tensor
         ce_loss: torch.Tensor
         z_loss: Optional[torch.Tensor]
-        if self.loss_implementation == LMLossImplementation.default:
+        if loss_implementation == LMLossImplementation.default:
             logits = self.w_out(h)
             assert logits is not None
             ce_loss, z_loss = cross_entropy_loss(
@@ -264,7 +334,7 @@ class LMHead(nn.Module):
                 loss = ce_loss + z_loss
             else:
                 loss = ce_loss
-        elif self.loss_implementation == LMLossImplementation.fused_linear:
+        elif loss_implementation == LMLossImplementation.fused_linear:
             logits = None
             loss, z_loss = fused_linear_cross_entropy_loss(
                 get_local_tensor(h).contiguous().view(-1, self.d_model),
@@ -283,14 +353,14 @@ class LMHead(nn.Module):
                 ce_loss = loss
         else:
             raise NotImplementedError(
-                f"'{self.loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
+                f"'{loss_implementation}' loss implementation is not supported by {self.__class__.__name__}"
             )
 
         if return_logits is False:
             logits = None
         elif return_logits is True and logits is None:
             raise RuntimeError(
-                f"'return_logits=True' is not compatible '{self.loss_implementation}' loss implementation"
+                f"'return_logits=True' is not compatible '{loss_implementation}' loss implementation"
             )
 
         return LMOutputWithLoss(
