@@ -1,0 +1,723 @@
+<title>Where the Router Speedup Runs Out</title>
+<style>
+/* Categorical series slots validated with the dataviz skill's
+   scripts/validate_palette.js: s1..s3 pass --pairs all in BOTH modes; the
+   4th hue is only ever used in the stacked composition bar, where the
+   adjacent pairlist applies and it passes there in both modes. --sn is a
+   deliberate neutral for the residual bucket, not a categorical hue. */
+:root {
+  --bg:#F4F6F8; --surface:#FFFFFF; --ink:#141D26; --ink-2:#41505E; --muted:#6B7A88;
+  --rule:#D7DDE3; --rule-soft:#E8ECEF;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --sn:#6B7A88;
+  --o1:#86b6ef; --o2:#2a78d6; --o3:#104281;
+  --on1:#FFFFFF; --on2:#3A1400; --on3:#04301F; --on4:#3A2B00; --onn:#FFFFFF;
+  --bad:#B33A26; --ok:#1E6B4E; --chip:#EDF1F4;
+}
+@media (prefers-color-scheme:dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#11161B; --surface:#171E25; --ink:#E4EAEF; --ink-2:#B3C0CB; --muted:#8494A1;
+    --rule:#2A343D; --rule-soft:#212A32;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --sn:#8494A1;
+    --o1:#9ec5f4; --o2:#3987e5; --o3:#1c5cab;
+    --on1:#FFFFFF; --on2:#FFFFFF; --on3:#04301F; --on4:#241800; --onn:#11161B;
+    --bad:#E0765C; --ok:#5FB98F; --chip:#1D262E;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#11161B; --surface:#171E25; --ink:#E4EAEF; --ink-2:#B3C0CB; --muted:#8494A1;
+  --rule:#2A343D; --rule-soft:#212A32;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --sn:#8494A1;
+  --o1:#9ec5f4; --o2:#3987e5; --o3:#1c5cab;
+  --on1:#FFFFFF; --on2:#FFFFFF; --on3:#04301F; --on4:#241800; --onn:#11161B;
+  --bad:#E0765C; --ok:#5FB98F; --chip:#1D262E;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font-family:Charter,"Iowan Old Style","Source Serif Pro",Georgia,serif;font-size:16.5px;line-height:1.6}
+main{max-width:1080px;margin:0 auto;padding:56px 24px 96px;display:flex;flex-direction:column;gap:30px}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.eyebrow{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.7rem;
+ letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:2.05rem;font-weight:600;
+ letter-spacing:-.02em;margin:.15em 0 0;text-wrap:balance;line-height:1.15}
+h2{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1.02rem;font-weight:600;
+ letter-spacing:.01em;margin:0 0 2px;padding-bottom:8px;border-bottom:1px solid var(--rule)}
+p{margin:0;max-width:70ch;color:var(--ink-2)}
+section{display:flex;flex-direction:column;gap:14px}
+.lede{font-size:1.1rem;color:var(--ink-2);max-width:66ch}
+.answer{display:flex;flex-wrap:wrap;gap:14px}
+.card{flex:1 1 228px;background:var(--surface);border:1px solid var(--rule-soft);
+ border-radius:3px;padding:15px 17px;display:flex;flex-direction:column;gap:5px}
+.card .big{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1.55rem;
+ font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.card .cap{font-size:.9rem;color:var(--muted);line-height:1.45}
+.card .tagline{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.62rem;
+ letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.card .tagline.meas{color:var(--ok)} .card .tagline.calc{color:var(--s3)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+/* a lone panel must not stretch to 1080px -- the SVG is authored at ~350px wide and
+   scales its type with it, which is what made the labels collide. */
+.solo{max-width:560px}
+.panel{margin:0;background:var(--surface);border:1px solid var(--rule-soft);border-radius:3px;padding:10px 10px 4px}
+figcaption{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+ padding:2px 4px 8px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.74rem}
+.tok{font-weight:600;letter-spacing:.02em}
+.vd{color:var(--ok)} .vd.bad{color:var(--bad)} .vd.neutral{color:var(--muted)}
+svg{display:block;width:100%;height:auto}
+.grid{stroke:var(--rule-soft);stroke-width:1}
+.axis{stroke:var(--rule);stroke-width:1}
+.tick,.axlab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5px;fill:var(--muted)}
+.vallab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;fill:var(--ink-2);
+ font-variant-numeric:tabular-nums}
+.line{fill:none;stroke-width:2;stroke-linejoin:round}
+.line.dashed{stroke-dasharray:5 3}
+.capline{fill:none;stroke:var(--ink-2);stroke-width:1.1;stroke-dasharray:5 3;opacity:.55}
+/* used by the retained kernel-level sections */
+.actfloor{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:5 3;opacity:.5}
+.guide{stroke:var(--muted);stroke-width:1;stroke-dasharray:1 3;opacity:.75}
+.guidelab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;fill:var(--muted);opacity:.9}
+.dot{stroke:var(--surface);stroke-width:1.6}
+.dot.hollow{fill:var(--surface);stroke-width:2}
+.s1{stroke:var(--s1)} .s2{stroke:var(--s2)} .s3{stroke:var(--s3)} .s4{stroke:var(--s4)}
+.sn{stroke:var(--sn)} .o1{stroke:var(--o1)} .o2{stroke:var(--o2)} .o3{stroke:var(--o3)}
+.ink{stroke:var(--ink-2)}
+circle.s1{fill:var(--s1)} circle.s2{fill:var(--s2)} circle.s3{fill:var(--s3)} circle.s4{fill:var(--s4)}
+circle.sn{fill:var(--sn)}
+circle.o1{fill:var(--o1)} circle.o2{fill:var(--o2)} circle.o3{fill:var(--o3)}
+circle.ink{fill:var(--ink-2)}
+circle.hollow.s1{fill:var(--surface);stroke:var(--s1)}
+circle.hollow.s2{fill:var(--surface);stroke:var(--s2)}
+circle.hollow.s3{fill:var(--surface);stroke:var(--s3)}
+circle.hollow.s4{fill:var(--surface);stroke:var(--s4)}
+circle.hollow.sn{fill:var(--surface);stroke:var(--sn)}
+circle.hollow.ink{fill:var(--surface);stroke:var(--ink-2)}
+circle.hollow.o1{fill:var(--surface);stroke:var(--o1)}
+circle.hollow.o2{fill:var(--surface);stroke:var(--o2)}
+circle.hollow.o3{fill:var(--surface);stroke:var(--o3)}
+rect.s1{fill:var(--s1)} rect.s2{fill:var(--s2)} rect.s3{fill:var(--s3)} rect.s4{fill:var(--s4)}
+rect.sn{fill:var(--sn)} rect.neutral{fill:var(--sn)}
+.onbar{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;
+ font-variant-numeric:tabular-nums;font-weight:600;stroke:none}
+.onbar.s1{fill:var(--on1)} .onbar.s2{fill:var(--on2)} .onbar.s3{fill:var(--on3)}
+.onbar.s4{fill:var(--on4)} .onbar.sn{fill:var(--onn)}
+.bar{stroke:var(--surface);stroke-width:2}
+.legend{display:flex;flex-wrap:wrap;gap:18px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+ font-size:.76rem;color:var(--ink-2)}
+.panel-legend{gap:11px;font-size:.64rem;padding:7px 4px 3px;border-top:1px solid var(--rule-soft);
+ margin-top:4px;color:var(--muted)}
+.panel-legend .key{width:9px;height:9px}
+.lg{display:inline-flex;align-items:center;gap:7px}
+.key{width:11px;height:11px;border-radius:2px;display:inline-block;flex:none}
+.key.s1{background:var(--s1)} .key.s2{background:var(--s2)} .key.s3{background:var(--s3)}
+.key.s4{background:var(--s4)} .key.sn,.key.neutral{background:var(--sn)}
+.key.o1{background:var(--o1)} .key.o2{background:var(--o2)} .key.o3{background:var(--o3)}
+.key.dash{background:none;border-top:2px dashed var(--ink-2);height:0;border-radius:0;width:14px}
+.key.dash.s1{border-top-color:var(--s1)} .key.dash.s2{border-top-color:var(--s2)}
+.key.dash.s3{border-top-color:var(--s3)} .key.dash.s4{border-top-color:var(--s4)}
+.key.dash.o1{border-top-color:var(--o1)} .key.dash.o3{border-top-color:var(--o3)}
+.key.dash.ink{border-top-color:var(--ink-2)}
+.key.hollow{background:var(--surface);border:2px solid var(--muted)}
+.key.hollow.s1{border-color:var(--s1)} .key.hollow.s3{border-color:var(--s3)}
+.note{display:flex;gap:9px;align-items:baseline;font-size:.93rem;color:var(--ink-2);max-width:76ch}
+.note .key{position:relative;top:1px}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule-soft);border-radius:3px}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:7px 12px;border-bottom:1px solid var(--rule-soft);text-align:left;vertical-align:middle}
+th{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.68rem;letter-spacing:.07em;
+ text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--rule)}
+td{font-family:Charter,"Iowan Old Style",Georgia,serif}
+.num{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;text-align:right;font-variant-numeric:tabular-nums}
+.num.strong{font-weight:600;color:var(--ink)}
+.num.muted{color:var(--muted)}
+.num.was{color:var(--muted);text-decoration:line-through}
+.src{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.72rem;
+ letter-spacing:.04em;text-transform:uppercase}
+.src.meas{color:var(--ok)} .src.calc{color:var(--s3)} .src.model{color:var(--muted)}
+.tok-cell{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-weight:600;
+ border-right:1px solid var(--rule-soft);vertical-align:top;padding-top:10px}
+.tok-cell .sub{font-weight:400;color:var(--muted);font-size:.78rem}
+.bad{color:var(--bad);font-weight:600}
+.pill{display:inline-block;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.62rem;
+ letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border-radius:2px;
+ border:1px solid var(--rule);color:var(--muted);white-space:nowrap}
+.pill.train{border-color:var(--ok);color:var(--ok)}
+.pill.deploy{border-color:var(--s2);color:var(--s2)}
+.callout{background:var(--chip);border-left:2px solid var(--s2);padding:13px 17px;border-radius:0 3px 3px 0;
+ font-size:.97rem;color:var(--ink-2);max-width:78ch}
+.callout.warn{border-left-color:var(--bad)}
+footer{border-top:1px solid var(--rule);padding-top:14px;color:var(--muted);font-size:.83rem;max-width:80ch}
+code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.85em;background:var(--chip);
+ padding:1px 5px;border-radius:2px}
+</style>
+<main>
+<header>
+  <div class="eyebrow">Qwen3.5 &middot; one H200 &middot; head gating + compute routers &middot; all 32/32 FFN layers routed &middot; log&ndash;log</div>
+  <h1>Where the Router Speedup Runs Out</h1>
+  <p class="lede">The 40x question priced in <em>wall-clock</em> rather than FLOPs, re-measured after a bug left a third of the FFN unrouted. Every number below is a real forward+backward step on one H200; the trainable ceiling and the deployment-only ceiling are kept apart throughout.</p>
+</header>
+
+<section><h2>The answer</h2><div class="answer"><div class="card"><div class="tagline meas">measured &middot; trainable</div><div class="big">6.46x</div><div class="cap">the best <b>all-learned</b> configuration, 4B at 16k against a 1419&nbsp;ms dense control: head gating, routed FFN and compacted block skip at keep=1/16. The defensible operating point &mdash; keep=0.25 &mdash; is 4.09x. 27B at 8k reaches 5.10x.</div></div><div class="card"><div class="tagline calc">measured &middot; deployment only</div><div class="big">8.39x</div><div class="cap">the same operating point with the always-null FFN layers <b>deleted</b> rather than routed. This is not available during training. It is faster only because it stops issuing router kernels: 6,740 launches against 9,886. 27B: 6.77x.</div></div><div class="card"><div class="tagline meas">measured &middot; packed</div><div class="big">4.22x</div><div class="cap">the same 4B recipe with the sequence <b>packed into 32 documents</b>, which is how real training runs. Packing already makes attention cheap, so it roughly halves the prize: 6.46x &rarr; 4.22x trainable, 8.39x &rarr; 5.08x with deletion. <b>Plan against this number.</b></div></div><div class="card"><div class="tagline">verdict</div><div class="big">20x is not reachable</div><div class="cap">the honest best is 8.39x. Zeroing GDN entirely gives 17.0x; zeroing GDN <em>and</em> attention gives 21.1x; the un-routable floor at that keep is 22.4x. So 20x needs both mixers at zero, at a keep of 1/16 that is not a trainable model.</div></div></div>
+<div class="callout warn"><b>These are pinned-operating-point costs, not achieved training speedups.</b> Every number on this page is what the hardware does when the token distribution is <em>forced</em> to a given sparsity. A parallel real-training run shows that a learned router under a budget hinge does <b>not</b> reach its target sparsity inside a short (31-step) SFT epoch, so a training job that merely switches these routers on will not realise these numbers. Read them as the wall-clock price of an operating point &mdash; an upper bound on what routing could pay if a router got there &mdash; and never as a measured training speedup.</div>
+<div class="callout warn"><b>Read keep &le; 0.125 as a mechanism probe, not an operating point.</b>
+Every routed block is forced to skip the <em>same</em> tokens, so at keep=1/16 the 93.75% that are
+skipped do no mixing in any block &mdash; they ride the residual stream from embedding to head. The
+wall-clock is honest (the compacted path's cost depends on how many tokens are kept, not which), but
+it is not a model anyone would train. The defensible trainable point is keep=0.25:
+<b>4.09x</b> at 4B/16k.</div>
+<div class="callout"><b>What changed since the published version of this page.</b>
+<code>--ffn-start-layer</code> defaulted to 12, leaving twelve of thirty-two FFNs dense on
+Qwen3.5-4B, so every FFN and stacked number here was understated. Re-measured with all layers
+routed, the dense control re-taken each round (drift 1.004x at 4B, 1.009x at 27B):</div>
+<div class="tablewrap"><table>
+<thead><tr><th>arm</th><th class="num">4B was</th><th class="num">4B now</th><th class="num">&Delta;</th><th class="num">27B was</th><th class="num">27B now</th><th class="num">&Delta;</th></tr></thead>
+<tbody><tr><td class="mono">ffn-fnull1.00</td><td class="num was">1.177x</td><td class="num strong">1.314x</td><td class="num muted">+11.7%</td><td class="num was">1.524x</td><td class="num strong">1.748x</td><td class="num muted">+14.7%</td></tr><tr><td class="mono">ffn-static</td><td class="num was">1.200x</td><td class="num strong">1.362x</td><td class="num muted">+13.5%</td><td class="num was">1.604x</td><td class="num strong">1.867x</td><td class="num muted">+16.4%</td></tr><tr><td class="mono">staticFFN+bskipK-0.25+headgate</td><td class="num was">5.650x</td><td class="num strong">6.420x</td><td class="num muted">+13.6%</td><td class="num was">5.720x</td><td class="num strong">6.667x</td><td class="num muted">+16.6%</td></tr></tbody></table></div>
+</section>
+
+<section><h2>The ceiling is not a fixed number &mdash; it rises as you skip harder</h2>
+<p>The earlier reading of this study was that a floor of roughly 8.7% of every step caps the family
+at about 11.5x. That is correct <em>at dense</em>, and it reproduces independently at both scales.
+It is <b>not</b> a ceiling on an aggressively skipped model, because compaction removes skipped
+tokens from the block shell too &mdash; the two RMSNorms and two residual adds each block runs over
+the whole activation stream. Cut the kept fraction and the floor itself shrinks, so
+<span class="mono">dense / floor</span> climbs.</p>
+<div class="solo"><figure class="panel"><figcaption><span class="tok">the un-routable floor, as a share of a dense step</span><span class="vd bad">11.6x at dense &rarr; 22.4x at keep 1/16</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="ceiling on speedup against block-skip keep, both scales">
+<line class="grid" x1="58" y1="207.7" x2="334" y2="207.7"/>
+<text class="tick" x="51" y="210.7" text-anchor="end">10x</text>
+<line class="grid" x1="58" y1="126.4" x2="334" y2="126.4"/>
+<text class="tick" x="51" y="129.4" text-anchor="end">15x</text>
+<line class="grid" x1="58" y1="68.6" x2="334" y2="68.6"/>
+<text class="tick" x="51" y="71.6" text-anchor="end">20x</text>
+<line class="grid" x1="58" y1="23.9" x2="334" y2="23.9"/>
+<text class="tick" x="51" y="26.9" text-anchor="end">25x</text>
+<line class="grid" x1="77.1" y1="16" x2="77.1" y2="218"/>
+<text class="tick" x="77.1" y="233" text-anchor="middle">1/16</text>
+<line class="grid" x1="136.6" y1="16" x2="136.6" y2="218"/>
+<text class="tick" x="136.6" y="233" text-anchor="middle">1/8</text>
+<line class="grid" x1="196.0" y1="16" x2="196.0" y2="218"/>
+<text class="tick" x="196.0" y="233" text-anchor="middle">1/4</text>
+<line class="grid" x1="255.4" y1="16" x2="255.4" y2="218"/>
+<text class="tick" x="255.4" y="233" text-anchor="middle">1/2</text>
+<line class="grid" x1="314.9" y1="16" x2="314.9" y2="218"/>
+<text class="tick" x="314.9" y="233" text-anchor="middle">dense</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">block-skip keep (log)</text>
+<text class="axlab" x="4" y="9">dense / floor</text>
+<path class="line s1" d="M314.9,177.4 L255.4,179.5 L196.0,104.9 L77.1,48.4"/>
+<circle class="dot s1" cx="314.9" cy="177.4" r="3.4"><title>4B / 16k plain &mdash; dense &mdash; floor 122.0 ms, cap 11.6x</title></circle>
+<circle class="dot s1" cx="255.4" cy="179.5" r="3.4"><title>4B / 16k plain &mdash; trainable &middot; keep 0.5 &mdash; floor 123.3 ms, cap 11.5x</title></circle>
+<circle class="dot s1" cx="196.0" cy="104.9" r="3.4"><title>4B / 16k plain &mdash; trainable &middot; keep 0.25 &mdash; floor 85.0 ms, cap 16.7x</title></circle>
+<circle class="dot s1" cx="77.1" cy="48.4" r="3.4"><title>4B / 16k plain &mdash; trainable &middot; keep 1/16 &mdash; floor 64.1 ms, cap 22.1x</title></circle>
+<path class="line s2" d="M314.9,177.3 L255.4,164.9 L196.0,91.0 L77.1,59.3"/>
+<circle class="dot s2" cx="314.9" cy="177.3" r="3.4"><title>27B / 8k checkpointed &mdash; dense &mdash; floor 309.9 ms, cap 11.6x</title></circle>
+<circle class="dot s2" cx="255.4" cy="164.9" r="3.4"><title>27B / 8k checkpointed &mdash; trainable &middot; keep 0.5 &mdash; floor 291.4 ms, cap 12.4x</title></circle>
+<circle class="dot s2" cx="196.0" cy="91.0" r="3.4"><title>27B / 8k checkpointed &mdash; trainable &middot; keep 0.25 &mdash; floor 201.6 ms, cap 17.9x</title></circle>
+<circle class="dot s2" cx="77.1" cy="59.3" r="3.4"><title>27B / 8k checkpointed &mdash; trainable &middot; keep 1/16 &mdash; floor 172.1 ms, cap 21.0x</title></circle>
+<path class="line s1 dashed" d="M196.0,105.9 L77.1,45.8"/>
+<circle class="dot hollow s1" cx="196.0" cy="105.9" r="3.4"><title>4B / 16k, static-FFN arms &mdash; static FFN &middot; keep 0.25 &mdash; floor 85.4 ms, cap 16.6x</title></circle>
+<circle class="dot hollow s1" cx="77.1" cy="45.8" r="3.4"><title>4B / 16k, static-FFN arms &mdash; static FFN &middot; keep 1/16 &mdash; floor 63.3 ms, cap 22.4x</title></circle>
+<text class="vallab" x="314.9" y="191.4" text-anchor="middle">11.6x</text>
+<text class="vallab" x="255.4" y="193.5" text-anchor="middle">11.5x</text>
+<text class="vallab" x="196.0" y="118.9" text-anchor="middle">16.7x</text>
+<text class="vallab" x="77.1" y="39.4" text-anchor="middle">22.1x</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s1"></span>4B / 16k, plain</span><span class="lg"><span class="key s2"></span>27B / 8k, checkpointed</span><span class="lg"><span class="key hollow"></span>4B static-FFN arms</span></div></figure></div>
+<p>All measured, by the same cumulative-ablation method on each arm at its own operating point:
+<b>11.6x</b> at dense and keep=0.5, <b>16.7x</b> at keep=0.25, <b>22.4x</b> at keep=1/16 for 4B/16k.
+27B/8k traces the same curve from a completely different component mix: 11.6 / 12.3 / 17.8 /
+20.9x.</p></section>
+
+<section><h2>The joint sweep: every lever at once</h2>
+<p>Head gating on throughout, block skip compacted and fixed-capacity, KV router excluded except for
+one arm that keeps it to re-confirm the verdict. Measured wall-clock against the calculated FLOP cut,
+both axes logarithmic. Three things read straight off the panels: the trainable curves
+<b>saturate</b> &mdash; keep 0.25 &rarr; 0.125 buys 1.44x, 0.125 &rarr; 1/16 buys 1.09x for another
+2&times; less work; the three <span class="mono">f_null</span> curves sit almost on top of each other
+at low keep, so the FFN router stops mattering once block skip is aggressive (2.7% at keep=1/16, and
+in the <em>wrong</em> direction); and the static-deletion arms sit above every trainable one at the
+same FLOPs.</p>
+<div class="grid2"><figure class="panel"><figcaption><span class="tok">4B &middot; 16k &middot; plain &middot; dense 1419 ms</span><span class="vd bad">saturates at 6.5x</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="measured step speedup against calculated FLOP cut, log-log">
+<line class="grid" x1="58" y1="194.0" x2="334" y2="194.0"/>
+<text class="tick" x="51" y="197.0" text-anchor="end">2x</text>
+<line class="grid" x1="58" y1="150.5" x2="334" y2="150.5"/>
+<text class="tick" x="51" y="153.5" text-anchor="end">3x</text>
+<line class="grid" x1="58" y1="95.7" x2="334" y2="95.7"/>
+<text class="tick" x="51" y="98.7" text-anchor="end">5x</text>
+<line class="grid" x1="58" y1="45.2" x2="334" y2="45.2"/>
+<text class="tick" x="51" y="48.2" text-anchor="end">8x</text>
+<line class="grid" x1="58" y1="21.2" x2="334" y2="21.2"/>
+<text class="tick" x="51" y="24.2" text-anchor="end">10x</text>
+<line class="grid" x1="75.7" y1="16" x2="75.7" y2="218"/>
+<text class="tick" x="75.7" y="233" text-anchor="middle">5x</text>
+<line class="grid" x1="130.6" y1="16" x2="130.6" y2="218"/>
+<text class="tick" x="130.6" y="233" text-anchor="middle">10x</text>
+<line class="grid" x1="185.6" y1="16" x2="185.6" y2="218"/>
+<text class="tick" x="185.6" y="233" text-anchor="middle">20x</text>
+<line class="grid" x1="258.2" y1="16" x2="258.2" y2="218"/>
+<text class="tick" x="258.2" y="233" text-anchor="middle">50x</text>
+<line class="grid" x1="313.2" y1="16" x2="313.2" y2="218"/>
+<text class="tick" x="313.2" y="233" text-anchor="middle">100x</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">total FLOP cut vs dense, calculated (log)</text>
+<text class="axlab" x="4" y="9">measured step speedup</text>
+<path class="line o1" d="M96.9,176.9 L168.0,117.2 L231.5,77.4 L289.1,68.1"/>
+<circle class="dot o1" cx="96.9" cy="176.9" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.5000 &mdash; 6.5x FLOPs, 605 ms, 2.345x, conv 0.36</title></circle>
+<circle class="dot o1" cx="168.0" cy="117.2" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.2500 &mdash; 16.0x FLOPs, 347 ms, 4.091x, conv 0.26</title></circle>
+<circle class="dot o1" cx="231.5" cy="77.4" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.1250 &mdash; 35.7x FLOPs, 239 ms, 5.930x, conv 0.17</title></circle>
+<circle class="dot o1" cx="289.1" cy="68.1" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.0625 &mdash; 73.8x FLOPs, 220 ms, 6.464x, conv 0.09</title></circle>
+<path class="line o2" d="M107.6,177.1 L181.2,117.0 L246.4,78.4 L304.6,68.5"/>
+<circle class="dot o2" cx="107.6" cy="177.1" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.5000 &mdash; 7.5x FLOPs, 606 ms, 2.342x, conv 0.31</title></circle>
+<circle class="dot o2" cx="181.2" cy="117.0" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.2500 &mdash; 18.9x FLOPs, 346 ms, 4.097x, conv 0.22</title></circle>
+<circle class="dot o2" cx="246.4" cy="78.4" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.1250 &mdash; 43.1x FLOPs, 242 ms, 5.872x, conv 0.14</title></circle>
+<circle class="dot o2" cx="304.6" cy="68.5" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.0625 &mdash; 89.7x FLOPs, 220 ms, 6.441x, conv 0.07</title></circle>
+<path class="line o3" d="M110.5,177.3 L184.9,118.5 L250.6,79.1 L309.0,71.0"/>
+<circle class="dot o3" cx="110.5" cy="177.3" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.5000 &mdash; 7.8x FLOPs, 607 ms, 2.337x, conv 0.30</title></circle>
+<circle class="dot o3" cx="184.9" cy="118.5" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.2500 &mdash; 19.8x FLOPs, 351 ms, 4.043x, conv 0.20</title></circle>
+<circle class="dot o3" cx="250.6" cy="79.1" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.1250 &mdash; 45.4x FLOPs, 243 ms, 5.833x, conv 0.13</title></circle>
+<circle class="dot o3" cx="309.0" cy="71.0" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.0625 &mdash; 94.9x FLOPs, 225 ms, 6.293x, conv 0.07</title></circle>
+<path class="line s2 dashed" d="M184.9,68.8 L309.0,40.1"/>
+<circle class="dot s2" cx="184.9" cy="68.8" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.25+headgate &mdash; 19.8x FLOPs, 221 ms, 6.420x</title></circle>
+<circle class="dot s2" cx="309.0" cy="40.1" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.0625+headgate &mdash; 94.9x FLOPs, 169 ms, 8.390x</title></circle>
+<text class="vallab" x="184.9" y="59.8" text-anchor="middle">6.42x</text>
+<text class="vallab" x="309.0" y="31.1" text-anchor="middle">8.39x</text>
+<circle class="dot hollow s3" cx="204.2" cy="121.0" r="4.2"><title>+ KV router &mdash; 25.3x FLOPs but only 3.948x, down from 4.043x</title></circle>
+<text class="vallab" x="212.2" y="124.0" text-anchor="start">+KV router: slower</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key o1"></span>f_null=0.50</span><span class="lg"><span class="key o2"></span>f_null=0.90</span><span class="lg"><span class="key o3"></span>f_null=1.00</span><span class="lg"><span class="key dash s2"></span>static FFN deletion (deployment only)</span><span class="lg"><span class="key hollow s3"></span>+ KV router</span></div></figure><figure class="panel"><figcaption><span class="tok">27B &middot; 8k &middot; AC &middot; dense 3620 ms</span><span class="vd bad">saturates at 5.1x</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="measured step speedup against calculated FLOP cut, log-log">
+<line class="grid" x1="58" y1="194.0" x2="334" y2="194.0"/>
+<text class="tick" x="51" y="197.0" text-anchor="end">2x</text>
+<line class="grid" x1="58" y1="150.5" x2="334" y2="150.5"/>
+<text class="tick" x="51" y="153.5" text-anchor="end">3x</text>
+<line class="grid" x1="58" y1="95.7" x2="334" y2="95.7"/>
+<text class="tick" x="51" y="98.7" text-anchor="end">5x</text>
+<line class="grid" x1="58" y1="45.2" x2="334" y2="45.2"/>
+<text class="tick" x="51" y="48.2" text-anchor="end">8x</text>
+<line class="grid" x1="58" y1="21.2" x2="334" y2="21.2"/>
+<text class="tick" x="51" y="24.2" text-anchor="end">10x</text>
+<line class="grid" x1="75.7" y1="16" x2="75.7" y2="218"/>
+<text class="tick" x="75.7" y="233" text-anchor="middle">5x</text>
+<line class="grid" x1="130.6" y1="16" x2="130.6" y2="218"/>
+<text class="tick" x="130.6" y="233" text-anchor="middle">10x</text>
+<line class="grid" x1="185.6" y1="16" x2="185.6" y2="218"/>
+<text class="tick" x="185.6" y="233" text-anchor="middle">20x</text>
+<line class="grid" x1="258.2" y1="16" x2="258.2" y2="218"/>
+<text class="tick" x="258.2" y="233" text-anchor="middle">50x</text>
+<line class="grid" x1="313.2" y1="16" x2="313.2" y2="218"/>
+<text class="tick" x="313.2" y="233" text-anchor="middle">100x</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">total FLOP cut vs dense, calculated (log)</text>
+<text class="axlab" x="4" y="9">measured step speedup</text>
+<path class="line o1" d="M110.5,204.2 L170.6,146.4 L228.0,105.8 L283.4,93.5"/>
+<circle class="dot o1" cx="110.5" cy="204.2" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.5000 &mdash; 7.8x FLOPs, 1990 ms, 1.820x, conv 0.23</title></circle>
+<circle class="dot o1" cx="170.6" cy="146.4" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.2500 &mdash; 16.6x FLOPs, 1162 ms, 3.116x, conv 0.19</title></circle>
+<circle class="dot o1" cx="228.0" cy="105.8" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.1250 &mdash; 34.1x FLOPs, 796 ms, 4.548x, conv 0.13</title></circle>
+<circle class="dot o1" cx="283.4" cy="93.5" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.0625 &mdash; 68.7x FLOPs, 709 ms, 5.104x, conv 0.07</title></circle>
+<path class="line o2" d="M130.2,204.3 L191.9,147.1 L250.0,107.3 L305.7,94.9"/>
+<circle class="dot o2" cx="130.2" cy="204.3" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.5000 &mdash; 10.0x FLOPs, 1992 ms, 1.818x, conv 0.18</title></circle>
+<circle class="dot o2" cx="191.9" cy="147.1" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.2500 &mdash; 21.7x FLOPs, 1169 ms, 3.097x, conv 0.14</title></circle>
+<circle class="dot o2" cx="250.0" cy="107.3" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.1250 &mdash; 45.1x FLOPs, 807 ms, 4.486x, conv 0.10</title></circle>
+<circle class="dot o2" cx="305.7" cy="94.9" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.0625 &mdash; 90.9x FLOPs, 719 ms, 5.034x, conv 0.06</title></circle>
+<path class="line o3" d="M136.1,204.3 L198.3,146.2 L256.7,106.5 L312.4,94.5"/>
+<circle class="dot o3" cx="136.1" cy="204.3" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.5000 &mdash; 10.7x FLOPs, 1991 ms, 1.818x, conv 0.17</title></circle>
+<circle class="dot o3" cx="198.3" cy="146.2" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.2500 &mdash; 23.5x FLOPs, 1159 ms, 3.123x, conv 0.13</title></circle>
+<circle class="dot o3" cx="256.7" cy="106.5" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.1250 &mdash; 49.0x FLOPs, 801 ms, 4.520x, conv 0.09</title></circle>
+<circle class="dot o3" cx="312.4" cy="94.5" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.0625 &mdash; 98.9x FLOPs, 716 ms, 5.054x, conv 0.05</title></circle>
+<path class="line s2 dashed" d="M198.3,64.8 L312.4,63.2"/>
+<circle class="dot s2" cx="198.3" cy="64.8" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.25+headgate &mdash; 23.5x FLOPs, 543 ms, 6.667x</title></circle>
+<circle class="dot s2" cx="312.4" cy="63.2" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.0625+headgate &mdash; 98.9x FLOPs, 535 ms, 6.767x</title></circle>
+<text class="vallab" x="198.3" y="55.8" text-anchor="middle">6.67x</text>
+<text class="vallab" x="312.4" y="54.2" text-anchor="middle">6.77x</text>
+<circle class="dot hollow s3" cx="204.5" cy="148.9" r="4.2"><title>+ KV router &mdash; 25.4x FLOPs but only 3.046x, down from 3.123x</title></circle>
+<text class="vallab" x="212.5" y="151.9" text-anchor="start">+KV router: slower</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key o1"></span>f_null=0.50</span><span class="lg"><span class="key o2"></span>f_null=0.90</span><span class="lg"><span class="key o3"></span>f_null=1.00</span><span class="lg"><span class="key dash s2"></span>static FFN deletion (deployment only)</span><span class="lg"><span class="key hollow s3"></span>+ KV router</span></div></figure><figure class="panel"><figcaption><span class="tok">4B &middot; 16k &middot; packed &times;32 &middot; dense 1120 ms</span><span class="vd bad">packing halves it</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="measured step speedup against calculated FLOP cut, log-log">
+<line class="grid" x1="58" y1="194.0" x2="334" y2="194.0"/>
+<text class="tick" x="51" y="197.0" text-anchor="end">2x</text>
+<line class="grid" x1="58" y1="150.5" x2="334" y2="150.5"/>
+<text class="tick" x="51" y="153.5" text-anchor="end">3x</text>
+<line class="grid" x1="58" y1="95.7" x2="334" y2="95.7"/>
+<text class="tick" x="51" y="98.7" text-anchor="end">5x</text>
+<line class="grid" x1="58" y1="45.2" x2="334" y2="45.2"/>
+<text class="tick" x="51" y="48.2" text-anchor="end">8x</text>
+<line class="grid" x1="58" y1="21.2" x2="334" y2="21.2"/>
+<text class="tick" x="51" y="24.2" text-anchor="end">10x</text>
+<line class="grid" x1="75.7" y1="16" x2="75.7" y2="218"/>
+<text class="tick" x="75.7" y="233" text-anchor="middle">5x</text>
+<line class="grid" x1="130.6" y1="16" x2="130.6" y2="218"/>
+<text class="tick" x="130.6" y="233" text-anchor="middle">10x</text>
+<line class="grid" x1="185.6" y1="16" x2="185.6" y2="218"/>
+<text class="tick" x="185.6" y="233" text-anchor="middle">20x</text>
+<line class="grid" x1="258.2" y1="16" x2="258.2" y2="218"/>
+<text class="tick" x="258.2" y="233" text-anchor="middle">50x</text>
+<line class="grid" x1="313.2" y1="16" x2="313.2" y2="218"/>
+<text class="tick" x="313.2" y="233" text-anchor="middle">100x</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">total FLOP cut vs dense, calculated (log)</text>
+<text class="axlab" x="4" y="9">measured step speedup</text>
+<path class="line o1" d="M96.9,194.0 L168.0,153.0 L231.5,127.8 L289.1,114.0"/>
+<circle class="dot o1" cx="96.9" cy="194.0" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.5000 &mdash; 6.5x FLOPs, 560 ms, 2.000x, conv 0.31</title></circle>
+<circle class="dot o1" cx="168.0" cy="153.0" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.2500 &mdash; 16.0x FLOPs, 382 ms, 2.931x, conv 0.18</title></circle>
+<circle class="dot o1" cx="231.5" cy="127.8" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.1250 &mdash; 35.7x FLOPs, 302 ms, 3.707x, conv 0.10</title></circle>
+<circle class="dot o1" cx="289.1" cy="114.0" r="3.4"><title>f_null=0.50 (trainable) &mdash; J-f0.50-k0.0625 &mdash; 73.8x FLOPs, 266 ms, 4.213x, conv 0.06</title></circle>
+<path class="line o2" d="M107.6,193.6 L181.2,152.9 L246.4,127.6 L304.6,114.4"/>
+<circle class="dot o2" cx="107.6" cy="193.6" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.5000 &mdash; 7.5x FLOPs, 558 ms, 2.009x, conv 0.27</title></circle>
+<circle class="dot o2" cx="181.2" cy="152.9" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.2500 &mdash; 18.9x FLOPs, 382 ms, 2.933x, conv 0.15</title></circle>
+<circle class="dot o2" cx="246.4" cy="127.6" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.1250 &mdash; 43.1x FLOPs, 302 ms, 3.715x, conv 0.09</title></circle>
+<circle class="dot o2" cx="304.6" cy="114.4" r="3.4"><title>f_null=0.90 (trainable) &mdash; J-f0.90-k0.0625 &mdash; 89.7x FLOPs, 267 ms, 4.200x, conv 0.05</title></circle>
+<path class="line o3" d="M110.5,193.5 L184.9,152.6 L250.6,128.4 L309.0,113.8"/>
+<circle class="dot o3" cx="110.5" cy="193.5" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.5000 &mdash; 7.8x FLOPs, 557 ms, 2.011x, conv 0.26</title></circle>
+<circle class="dot o3" cx="184.9" cy="152.6" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.2500 &mdash; 19.8x FLOPs, 381 ms, 2.943x, conv 0.15</title></circle>
+<circle class="dot o3" cx="250.6" cy="128.4" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.1250 &mdash; 45.4x FLOPs, 304 ms, 3.687x, conv 0.08</title></circle>
+<circle class="dot o3" cx="309.0" cy="113.8" r="3.4"><title>f_null=1.00 (trainable) &mdash; J-f1.00-k0.0625 &mdash; 94.9x FLOPs, 265 ms, 4.222x, conv 0.04</title></circle>
+<path class="line s2 dashed" d="M184.9,113.0 L309.0,94.1"/>
+<circle class="dot s2" cx="184.9" cy="113.0" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.25+headgate &mdash; 19.8x FLOPs, 263 ms, 4.256x</title></circle>
+<circle class="dot s2" cx="309.0" cy="94.1" r="3.4"><title>static FFN deletion (deployment only) &mdash; staticFFN+bskipK-0.0625+headgate &mdash; 94.9x FLOPs, 221 ms, 5.075x</title></circle>
+<text class="vallab" x="184.9" y="104.0" text-anchor="middle">4.26x</text>
+<text class="vallab" x="309.0" y="85.1" text-anchor="middle">5.08x</text>
+<circle class="dot hollow s3" cx="204.2" cy="156.5" r="4.2"><title>+ KV router &mdash; 25.3x FLOPs but only 2.838x, down from 2.943x</title></circle>
+<text class="vallab" x="212.2" y="159.5" text-anchor="start">+KV router: slower</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key o1"></span>f_null=0.50</span><span class="lg"><span class="key o2"></span>f_null=0.90</span><span class="lg"><span class="key o3"></span>f_null=1.00</span><span class="lg"><span class="key dash s2"></span>static FFN deletion (deployment only)</span><span class="lg"><span class="key hollow s3"></span>+ KV router</span></div></figure></div>
+<div class="callout"><b>The KV router loses for the third independent time.</b> At 4B it takes
+4.043x down to
+3.948x while <em>raising</em> the FLOP cut from
+19.8x to
+25.3x; at 27B,
+3.123x &rarr;
+3.046x. Compacted block skip already removes a skipped
+token as a key by gathering rather than masking, so the KV router re-does that work and charges for
+it. Keep it out of the stack.</div>
+<p><b>Packing roughly halves the prize.</b> Same 4B, same 16k, sequence packed into 32 documents
+&mdash; how real training runs. The dense step falls 1419 ms &rarr; 1120 ms because
+packing already makes attention cheap, and the recipe falls with it: best trainable
+6.46x &rarr; <b>4.22x</b>, best with static
+deletion 8.39x &rarr; <b>5.08x</b>, with
+GPU busy at the best arm down to 37.5%.</p></section>
+
+<section><h2>The bottleneck moved: it is GDN now, not the FFN</h2>
+<p>The step partition re-measured <em>on the routed model</em>, with the routers live at each arm's
+operating point. One stage is new relative to earlier versions of this study: <b>delete the block
+itself</b>. Replacing a block's mixer and FFN leaves the block <em>shell</em> running &mdash; two
+RMSNorms and two residual adds per block over the whole activation stream, forward and backward,
+32 times. That is per-token GPU work no component ablation ever removed, and it is essentially the
+entire floor (8.4% of a dense 4B step, with the true base measuring 0.0% underneath it).</p>
+<div class="panel"><svg viewBox="0 0 604 184" role="img" aria-label="step composition per arm">
+<text class="tick" x="160" y="38" text-anchor="end">dense</text>
+<rect class="bar s1" x="168.0" y="24" width="85.0" height="21"><title>4B/16k dense &mdash; head waste 22.5% of a 1418 ms step</title></rect>
+<text class="onbar s1" x="210.5" y="38" text-anchor="middle">22%</text>
+<rect class="bar s2" x="253.1" y="24" width="99.4" height="21"><title>4B/16k dense &mdash; FFN 26.3% of a 1418 ms step</title></rect>
+<text class="onbar s2" x="302.8" y="38" text-anchor="middle">26%</text>
+<rect class="bar s3" x="352.5" y="24" width="82.4" height="21"><title>4B/16k dense &mdash; attention 21.8% of a 1418 ms step</title></rect>
+<text class="onbar s3" x="393.7" y="38" text-anchor="middle">22%</text>
+<rect class="bar s4" x="434.9" y="24" width="78.6" height="21"><title>4B/16k dense &mdash; GDN 20.8% of a 1418 ms step</title></rect>
+<text class="onbar s4" x="474.2" y="38" text-anchor="middle">21%</text>
+<rect class="bar sn" x="513.5" y="24" width="32.5" height="21"><title>4B/16k dense &mdash; routing + block shell + floor 8.6% of a 1418 ms step</title></rect>
+<text class="vallab" x="552" y="38">1418 ms</text>
+<text class="tick" x="160" y="62" text-anchor="end">trainable &middot; keep 0.5</text>
+<rect class="bar s1" x="168.0" y="49" width="128.9" height="21"><title>4B/16k trainable &middot; keep 0.5 &mdash; head waste 34.1% of a 920 ms step</title></rect>
+<text class="onbar s1" x="232.4" y="62" text-anchor="middle">34%</text>
+<rect class="bar s2" x="296.9" y="49" width="93.7" height="21"><title>4B/16k trainable &middot; keep 0.5 &mdash; FFN 24.8% of a 920 ms step</title></rect>
+<text class="onbar s2" x="343.8" y="62" text-anchor="middle">25%</text>
+<rect class="bar s3" x="390.6" y="49" width="42.7" height="21"><title>4B/16k trainable &middot; keep 0.5 &mdash; attention 11.3% of a 920 ms step</title></rect>
+<text class="onbar s3" x="412.0" y="62" text-anchor="middle">11%</text>
+<rect class="bar s4" x="433.4" y="49" width="62.0" height="21"><title>4B/16k trainable &middot; keep 0.5 &mdash; GDN 16.4% of a 920 ms step</title></rect>
+<text class="onbar s4" x="464.4" y="62" text-anchor="middle">16%</text>
+<rect class="bar sn" x="495.3" y="49" width="50.7" height="21"><title>4B/16k trainable &middot; keep 0.5 &mdash; routing + block shell + floor 13.4% of a 920 ms step</title></rect>
+<text class="onbar sn" x="520.7" y="62" text-anchor="middle">13%</text>
+<text class="vallab" x="552" y="62">920 ms</text>
+<text class="tick" x="160" y="88" text-anchor="end">trainable &middot; keep 0.25</text>
+<rect class="bar s1" x="168.0" y="74" width="181.8" height="21"><title>4B/16k trainable &middot; keep 0.25 &mdash; head waste 48.1% of a 664 ms step</title></rect>
+<text class="onbar s1" x="258.9" y="88" text-anchor="middle">48%</text>
+<rect class="bar s2" x="349.8" y="74" width="71.4" height="21"><title>4B/16k trainable &middot; keep 0.25 &mdash; FFN 18.9% of a 664 ms step</title></rect>
+<text class="onbar s2" x="385.5" y="88" text-anchor="middle">19%</text>
+<rect class="bar s3" x="421.3" y="74" width="23.4" height="21"><title>4B/16k trainable &middot; keep 0.25 &mdash; attention 6.2% of a 664 ms step</title></rect>
+<rect class="bar s4" x="444.7" y="74" width="52.9" height="21"><title>4B/16k trainable &middot; keep 0.25 &mdash; GDN 14.0% of a 664 ms step</title></rect>
+<text class="onbar s4" x="471.2" y="88" text-anchor="middle">14%</text>
+<rect class="bar sn" x="497.6" y="74" width="48.4" height="21"><title>4B/16k trainable &middot; keep 0.25 &mdash; routing + block shell + floor 12.8% of a 664 ms step</title></rect>
+<text class="onbar sn" x="521.8" y="88" text-anchor="middle">13%</text>
+<text class="vallab" x="552" y="88">664 ms</text>
+<text class="tick" x="160" y="112" text-anchor="end">trainable &middot; keep 1/16</text>
+<rect class="bar s1" x="168.0" y="99" width="224.5" height="21"><title>4B/16k trainable &middot; keep 1/16 &mdash; head waste 59.4% of a 539 ms step</title></rect>
+<text class="onbar s1" x="280.3" y="112" text-anchor="middle">59%</text>
+<rect class="bar s2" x="392.5" y="99" width="36.7" height="21"><title>4B/16k trainable &middot; keep 1/16 &mdash; FFN 9.7% of a 539 ms step</title></rect>
+<text class="onbar s2" x="410.9" y="112" text-anchor="middle">10%</text>
+<rect class="bar s3" x="429.2" y="99" width="7.2" height="21"><title>4B/16k trainable &middot; keep 1/16 &mdash; attention 1.9% of a 539 ms step</title></rect>
+<rect class="bar s4" x="436.4" y="99" width="64.6" height="21"><title>4B/16k trainable &middot; keep 1/16 &mdash; GDN 17.1% of a 539 ms step</title></rect>
+<text class="onbar s4" x="468.7" y="112" text-anchor="middle">17%</text>
+<rect class="bar sn" x="501.0" y="99" width="45.0" height="21"><title>4B/16k trainable &middot; keep 1/16 &mdash; routing + block shell + floor 11.9% of a 539 ms step</title></rect>
+<text class="onbar sn" x="523.5" y="112" text-anchor="middle">12%</text>
+<text class="vallab" x="552" y="112">539 ms</text>
+<text class="tick" x="160" y="138" text-anchor="end">static FFN &middot; keep 0.25</text>
+<rect class="bar s1" x="168.0" y="124" width="224.5" height="21"><title>4B/16k static FFN &middot; keep 0.25 &mdash; head waste 59.4% of a 540 ms step</title></rect>
+<text class="onbar s1" x="280.3" y="138" text-anchor="middle">59%</text>
+<rect class="bar s3" x="392.5" y="124" width="29.1" height="21"><title>4B/16k static FFN &middot; keep 0.25 &mdash; attention 7.7% of a 540 ms step</title></rect>
+<rect class="bar s4" x="421.6" y="124" width="65.0" height="21"><title>4B/16k static FFN &middot; keep 0.25 &mdash; GDN 17.2% of a 540 ms step</title></rect>
+<text class="onbar s4" x="454.1" y="138" text-anchor="middle">17%</text>
+<rect class="bar sn" x="486.7" y="124" width="59.7" height="21"><title>4B/16k static FFN &middot; keep 0.25 &mdash; routing + block shell + floor 15.8% of a 540 ms step</title></rect>
+<text class="onbar sn" x="516.5" y="138" text-anchor="middle">16%</text>
+<text class="vallab" x="552" y="138">540 ms</text>
+<text class="tick" x="160" y="162" text-anchor="end">static FFN &middot; keep 1/16</text>
+<rect class="bar s1" x="168.0" y="149" width="243.1" height="21"><title>4B/16k static FFN &middot; keep 1/16 &mdash; head waste 64.3% of a 494 ms step</title></rect>
+<text class="onbar s1" x="289.5" y="162" text-anchor="middle">64%</text>
+<rect class="bar s2" x="411.1" y="149" width="3.0" height="21"><title>4B/16k static FFN &middot; keep 1/16 &mdash; FFN 0.8% of a 494 ms step</title></rect>
+<rect class="bar s3" x="414.1" y="149" width="12.5" height="21"><title>4B/16k static FFN &middot; keep 1/16 &mdash; attention 3.3% of a 494 ms step</title></rect>
+<rect class="bar s4" x="426.6" y="149" width="71.1" height="21"><title>4B/16k static FFN &middot; keep 1/16 &mdash; GDN 18.8% of a 494 ms step</title></rect>
+<text class="onbar s4" x="462.1" y="162" text-anchor="middle">19%</text>
+<rect class="bar sn" x="497.6" y="149" width="48.4" height="21"><title>4B/16k static FFN &middot; keep 1/16 &mdash; routing + block shell + floor 12.8% of a 494 ms step</title></rect>
+<text class="onbar sn" x="521.8" y="162" text-anchor="middle">13%</text>
+<text class="vallab" x="552" y="162">494 ms</text>
+<text class="tick" x="168" y="16">0%</text>
+<text class="tick" x="546" y="16" text-anchor="end">100% of step wall-clock</text>
+</svg></div>
+<div class="legend"><span class="lg"><span class="key s1"></span>head waste</span><span class="lg"><span class="key s2"></span>FFN</span><span class="lg"><span class="key s3"></span>attention</span><span class="lg"><span class="key s4"></span>GDN</span><span class="lg"><span class="key sn"></span>routing + block shell + floor</span></div>
+<p>Routing overhead and the block shell are reported as one bucket on purpose: the ablation turns the
+routers off before it deletes the shell, so it measures the shell at <em>full</em> sequence length and
+books the difference as negative routing overhead. Their sum is the honest quantity; the split
+between them is an artifact.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>arm</th><th class="num">step ms</th><th class="num">head waste</th><th class="num">FFN</th><th class="num">attn</th><th class="num">GDN</th><th class="num">routing+shell+floor</th><th class="num">floor ms</th><th class="num">cap from dense</th></tr></thead>
+<tbody><tr><td class="mono">dense</td><td class="num">1418.5</td><td class="num">22.5%</td><td class="num">26.3%</td><td class="num">21.8%</td><td class="num strong">20.8%</td><td class="num muted">8.6%</td><td class="num">122.0</td><td class="num strong">11.6x</td></tr><tr><td class="mono">trainable &middot; keep 0.5</td><td class="num">919.8</td><td class="num">34.1%</td><td class="num">24.8%</td><td class="num">11.3%</td><td class="num strong">16.4%</td><td class="num muted">13.4%</td><td class="num">123.3</td><td class="num">11.5x</td></tr><tr><td class="mono">trainable &middot; keep 0.25</td><td class="num">663.9</td><td class="num">48.1%</td><td class="num">18.9%</td><td class="num">6.2%</td><td class="num strong">14.0%</td><td class="num muted">12.8%</td><td class="num">85.0</td><td class="num">16.7x</td></tr><tr><td class="mono">trainable &middot; keep 1/16</td><td class="num">538.8</td><td class="num">59.4%</td><td class="num">9.7%</td><td class="num">1.9%</td><td class="num strong">17.1%</td><td class="num muted">11.9%</td><td class="num">64.1</td><td class="num">22.1x</td></tr><tr><td class="mono">static FFN &middot; keep 0.25</td><td class="num">540.5</td><td class="num">59.4%</td><td class="num">-0.1%</td><td class="num">7.7%</td><td class="num strong">17.2%</td><td class="num muted">15.8%</td><td class="num">85.4</td><td class="num">16.6x</td></tr><tr><td class="mono">static FFN &middot; keep 1/16</td><td class="num">494.4</td><td class="num">64.3%</td><td class="num">0.8%</td><td class="num">3.3%</td><td class="num strong">18.8%</td><td class="num muted">12.8%</td><td class="num">63.3</td><td class="num">22.4x</td></tr></tbody></table></div>
+<p>As the levers bite, attention collapses (21.8% &rarr; 3.3%) and the FFN collapses
+(26.3% &rarr; 0.8%), but <b>GDN barely moves in absolute terms</b>: 295 ms dense &rarr; 93 ms, and
+then flat from keep=0.25 to keep=1/16 (93.0 &rarr; 92.9 ms). Compaction shortens the scan, but the
+delta rule is memory-bound at roughly 20 FLOP/byte and gets <em>less</em> efficient on shorter
+sequences, so a 4&times; shorter sequence is not 4&times; cheaper.</p>
+<div class="grid2"><figure class="panel"><figcaption><span class="tok">4B &middot; 16k &middot; plain</span><span class="vd bad">GDN 295 &rarr; 93 &rarr; 92 ms</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="component wall-clock against block-skip keep, log-log">
+<line class="grid" x1="58" y1="204.1" x2="334" y2="204.1"/>
+<text class="tick" x="51" y="207.1" text-anchor="end">2</text>
+<line class="grid" x1="58" y1="160.3" x2="334" y2="160.3"/>
+<text class="tick" x="51" y="163.3" text-anchor="end">10</text>
+<line class="grid" x1="58" y1="97.6" x2="334" y2="97.6"/>
+<text class="tick" x="51" y="100.6" text-anchor="end">100</text>
+<line class="grid" x1="58" y1="34.9" x2="334" y2="34.9"/>
+<text class="tick" x="51" y="37.9" text-anchor="end">1000</text>
+<line class="grid" x1="77.1" y1="16" x2="77.1" y2="218"/>
+<text class="tick" x="77.1" y="233" text-anchor="middle">1/16</text>
+<line class="grid" x1="136.6" y1="16" x2="136.6" y2="218"/>
+<text class="tick" x="136.6" y="233" text-anchor="middle">1/8</text>
+<line class="grid" x1="196.0" y1="16" x2="196.0" y2="218"/>
+<text class="tick" x="196.0" y="233" text-anchor="middle">1/4</text>
+<line class="grid" x1="255.4" y1="16" x2="255.4" y2="218"/>
+<text class="tick" x="255.4" y="233" text-anchor="middle">1/2</text>
+<line class="grid" x1="314.9" y1="16" x2="314.9" y2="218"/>
+<text class="tick" x="314.9" y="233" text-anchor="middle">dense</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">block-skip keep (log)</text>
+<text class="axlab" x="4" y="9">component, ms (log)</text>
+<path class="line s2" d="M314.9,61.7 L255.4,75.1 L196.0,91.4 L77.1,115.2"/>
+<circle class="dot s2" cx="314.9" cy="61.7" r="3.4"><title>FFN &mdash; FFN at dense &mdash; 373.1 ms</title></circle>
+<circle class="dot s2" cx="255.4" cy="75.1" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 0.5 &mdash; 228.1 ms</title></circle>
+<circle class="dot s2" cx="196.0" cy="91.4" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 0.25 &mdash; 125.5 ms</title></circle>
+<circle class="dot s2" cx="77.1" cy="115.2" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 1/16 &mdash; 52.3 ms</title></circle>
+<path class="line s3" d="M314.9,66.8 L255.4,96.5 L196.0,121.7 L77.1,159.6"/>
+<circle class="dot s3" cx="314.9" cy="66.8" r="3.4"><title>attention &mdash; attention at dense &mdash; 309.2 ms</title></circle>
+<circle class="dot s3" cx="255.4" cy="96.5" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 0.5 &mdash; 103.9 ms</title></circle>
+<circle class="dot s3" cx="196.0" cy="121.7" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 0.25 &mdash; 41.2 ms</title></circle>
+<circle class="dot s3" cx="77.1" cy="159.6" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 1/16 &mdash; 10.2 ms</title></circle>
+<path class="line s1" d="M314.9,68.1 L255.4,86.4 L196.0,99.6 L77.1,99.8"/>
+<circle class="dot s1" cx="314.9" cy="68.1" r="3.4"><title>GDN &mdash; GDN at dense &mdash; 295.0 ms</title></circle>
+<circle class="dot s1" cx="255.4" cy="86.4" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 0.5 &mdash; 150.8 ms</title></circle>
+<circle class="dot s1" cx="196.0" cy="99.6" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 0.25 &mdash; 92.9 ms</title></circle>
+<circle class="dot s1" cx="77.1" cy="99.8" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 1/16 &mdash; 92.1 ms</title></circle>
+<path class="line ink dashed" d="M314.9,92.2 L255.4,91.9 L196.0,102.0 L77.1,109.7"/>
+<circle class="dot hollow ink" cx="314.9" cy="92.2" r="3.4"><title>floor &mdash; floor at dense &mdash; 122.0 ms</title></circle>
+<circle class="dot hollow ink" cx="255.4" cy="91.9" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 0.5 &mdash; 123.3 ms</title></circle>
+<circle class="dot hollow ink" cx="196.0" cy="102.0" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 0.25 &mdash; 85.0 ms</title></circle>
+<circle class="dot hollow ink" cx="77.1" cy="109.7" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 1/16 &mdash; 64.1 ms</title></circle>
+<text class="vallab" x="136.6" y="88.6" text-anchor="middle">GDN flat</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s2"></span>FFN</span><span class="lg"><span class="key s3"></span>attention</span><span class="lg"><span class="key s1"></span>GDN</span><span class="lg"><span class="key dash ink"></span>un-routable floor</span></div></figure><figure class="panel"><figcaption><span class="tok">27B &middot; 8k &middot; checkpointed</span><span class="vd bad">GDN 829 &rarr; 305 &rarr; 331 ms</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="component wall-clock against block-skip keep, log-log">
+<line class="grid" x1="58" y1="204.1" x2="334" y2="204.1"/>
+<text class="tick" x="51" y="207.1" text-anchor="end">2</text>
+<line class="grid" x1="58" y1="160.3" x2="334" y2="160.3"/>
+<text class="tick" x="51" y="163.3" text-anchor="end">10</text>
+<line class="grid" x1="58" y1="97.6" x2="334" y2="97.6"/>
+<text class="tick" x="51" y="100.6" text-anchor="end">100</text>
+<line class="grid" x1="58" y1="34.9" x2="334" y2="34.9"/>
+<text class="tick" x="51" y="37.9" text-anchor="end">1000</text>
+<line class="grid" x1="77.1" y1="16" x2="77.1" y2="218"/>
+<text class="tick" x="77.1" y="233" text-anchor="middle">1/16</text>
+<line class="grid" x1="136.6" y1="16" x2="136.6" y2="218"/>
+<text class="tick" x="136.6" y="233" text-anchor="middle">1/8</text>
+<line class="grid" x1="196.0" y1="16" x2="196.0" y2="218"/>
+<text class="tick" x="196.0" y="233" text-anchor="middle">1/4</text>
+<line class="grid" x1="255.4" y1="16" x2="255.4" y2="218"/>
+<text class="tick" x="255.4" y="233" text-anchor="middle">1/2</text>
+<line class="grid" x1="314.9" y1="16" x2="314.9" y2="218"/>
+<text class="tick" x="314.9" y="233" text-anchor="middle">dense</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">block-skip keep (log)</text>
+<text class="axlab" x="4" y="9">component, ms (log)</text>
+<path class="line s2" d="M314.9,20.8 L255.4,32.5 L196.0,49.2 L77.1,79.0"/>
+<circle class="dot s2" cx="314.9" cy="20.8" r="3.4"><title>FFN &mdash; FFN at dense &mdash; 1676.8 ms</title></circle>
+<circle class="dot s2" cx="255.4" cy="32.5" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 0.5 &mdash; 1090.0 ms</title></circle>
+<circle class="dot s2" cx="196.0" cy="49.2" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 0.25 &mdash; 591.6 ms</title></circle>
+<circle class="dot s2" cx="77.1" cy="79.0" r="3.4"><title>FFN &mdash; FFN at trainable &middot; keep 1/16 &mdash; 198.0 ms</title></circle>
+<path class="line s3" d="M314.9,54.6 L255.4,80.2 L196.0,103.3 L77.1,105.7"/>
+<circle class="dot s3" cx="314.9" cy="54.6" r="3.4"><title>attention &mdash; attention at dense &mdash; 484.8 ms</title></circle>
+<circle class="dot s3" cx="255.4" cy="80.2" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 0.5 &mdash; 189.2 ms</title></circle>
+<circle class="dot s3" cx="196.0" cy="103.3" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 0.25 &mdash; 81.0 ms</title></circle>
+<circle class="dot s3" cx="77.1" cy="105.7" r="3.4"><title>attention &mdash; attention at trainable &middot; keep 1/16 &mdash; 74.2 ms</title></circle>
+<path class="line s1" d="M314.9,40.0 L255.4,58.2 L196.0,67.2 L77.1,64.9"/>
+<circle class="dot s1" cx="314.9" cy="40.0" r="3.4"><title>GDN &mdash; GDN at dense &mdash; 829.2 ms</title></circle>
+<circle class="dot s1" cx="255.4" cy="58.2" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 0.5 &mdash; 423.8 ms</title></circle>
+<circle class="dot s1" cx="196.0" cy="67.2" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 0.25 &mdash; 305.0 ms</title></circle>
+<circle class="dot s1" cx="77.1" cy="64.9" r="3.4"><title>GDN &mdash; GDN at trainable &middot; keep 1/16 &mdash; 331.4 ms</title></circle>
+<path class="line ink dashed" d="M314.9,66.8 L255.4,68.5 L196.0,78.5 L77.1,82.8"/>
+<circle class="dot hollow ink" cx="314.9" cy="66.8" r="3.4"><title>floor &mdash; floor at dense &mdash; 309.9 ms</title></circle>
+<circle class="dot hollow ink" cx="255.4" cy="68.5" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 0.5 &mdash; 291.4 ms</title></circle>
+<circle class="dot hollow ink" cx="196.0" cy="78.5" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 0.25 &mdash; 201.6 ms</title></circle>
+<circle class="dot hollow ink" cx="77.1" cy="82.8" r="3.4"><title>floor &mdash; floor at trainable &middot; keep 1/16 &mdash; 172.1 ms</title></circle>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s2"></span>FFN</span><span class="lg"><span class="key s3"></span>attention</span><span class="lg"><span class="key s1"></span>GDN</span><span class="lg"><span class="key dash ink"></span>un-routable floor</span></div></figure></div>
+<p><b>At the best 4B arm, once the head-gating waste it removes is taken out, the step is GDN 53%,
+floor 36%, attention 9%, FFN 2%.</b> 27B reproduces every part of this on a completely different
+component mix &mdash; the FFN is 46.5% of a dense 27B step against 26.3% at 4B &mdash; and lands in
+the same place: GDN goes from 23.0% of a dense step to 34.8% of the best routed one and becomes the
+largest single component, overtaking that 46.5% FFN.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>arm</th><th class="num">step ms</th><th class="num">head waste</th><th class="num">FFN</th><th class="num">attn</th><th class="num">GDN</th><th class="num">routing+shell+floor</th><th class="num">floor ms</th><th class="num">cap from dense</th></tr></thead>
+<tbody><tr><td class="mono">dense</td><td class="num">3606.0</td><td class="num">8.5%</td><td class="num">46.5%</td><td class="num">13.4%</td><td class="num strong">23.0%</td><td class="num muted">8.6%</td><td class="num">309.9</td><td class="num strong">11.6x</td></tr><tr><td class="mono">trainable &middot; keep 0.5</td><td class="num">2303.4</td><td class="num">13.4%</td><td class="num">47.3%</td><td class="num">8.2%</td><td class="num strong">18.4%</td><td class="num muted">12.6%</td><td class="num">291.4</td><td class="num">12.4x</td></tr><tr><td class="mono">trainable &middot; keep 0.25</td><td class="num">1487.8</td><td class="num">20.7%</td><td class="num">39.8%</td><td class="num">5.4%</td><td class="num strong">20.5%</td><td class="num muted">13.5%</td><td class="num">201.6</td><td class="num">17.9x</td></tr><tr><td class="mono">trainable &middot; keep 1/16</td><td class="num">1092.1</td><td class="num">29.0%</td><td class="num">18.1%</td><td class="num">6.8%</td><td class="num strong">30.3%</td><td class="num muted">15.8%</td><td class="num">172.1</td><td class="num">21.0x</td></tr><tr><td class="mono">static FFN &middot; keep 0.25</td><td class="num">904.3</td><td class="num">36.3%</td><td class="num">-1.1%</td><td class="num">7.7%</td><td class="num strong">34.8%</td><td class="num muted">22.4%</td><td class="num">202.2</td><td class="num">17.8x</td></tr></tbody></table></div></section>
+
+<section><h2>The floor, decomposed</h2>
+<p>Every block set to Identity, then token count and batch size swept with the same
+alternating-direction rounds. This is the quantity the ceiling is made of, so it is worth knowing
+exactly what is in it.</p>
+<div class="tablewrap"><table>
+<thead><tr><th class="num">B</th><th class="num">T</th><th class="num">total tok</th><th class="num">dense ms</th><th class="num">floor ms</th><th class="num">final norm</th><th class="num">gated head</th><th class="num">embed</th><th class="num">zero_grad</th><th class="num">block shell</th><th class="num">floor % of dense</th><th class="num">GPU-busy in the block shell</th><th class="num">launches</th></tr></thead>
+<tbody><tr><td class="num">1</td><td class="num">2,048</td><td class="num">2,048</td><td class="num">449.4</td><td class="num strong">37.46</td><td class="num muted">0.30</td><td class="num muted">1.55</td><td class="num muted">0.17</td><td class="num muted">-0.49</td><td class="num">35.93</td><td class="num">8.34%</td><td class="num">15.7 (44%)</td><td class="num muted">1,787</td></tr><tr><td class="num">1</td><td class="num">4,096</td><td class="num">4,096</td><td class="num">535.8</td><td class="num strong">40.03</td><td class="num muted">0.29</td><td class="num muted">0.73</td><td class="num muted">1.42</td><td class="num muted">0.07</td><td class="num">37.52</td><td class="num">7.47%</td><td class="num">32.3 (86%)</td><td class="num muted">1,787</td></tr><tr><td class="num">1</td><td class="num">8,192</td><td class="num">8,192</td><td class="num">789.3</td><td class="num strong">66.65</td><td class="num muted">0.22</td><td class="num muted">1.65</td><td class="num muted">0.80</td><td class="num muted">0.54</td><td class="num">63.45</td><td class="num">8.44%</td><td class="num">61.2 (96%)</td><td class="num muted">1,787</td></tr><tr><td class="num">1</td><td class="num">16,384</td><td class="num">16,384</td><td class="num">1414.6</td><td class="num strong">123.11</td><td class="num muted">0.27</td><td class="num muted">1.70</td><td class="num muted">1.02</td><td class="num muted">0.61</td><td class="num">119.52</td><td class="num">8.70%</td><td class="num">117.5 (98%)</td><td class="num muted">1,786</td></tr><tr><td class="num">2</td><td class="num">4,096</td><td class="num">8,192</td><td class="num">762.2</td><td class="num strong">66.65</td><td class="num muted">0.13</td><td class="num muted">1.70</td><td class="num muted">0.82</td><td class="num muted">0.56</td><td class="num">63.43</td><td class="num">8.74%</td><td class="num">61.1 (96%)</td><td class="num muted">1,785</td></tr></tbody></table></div>
+<div class="solo"><figure class="panel"><figcaption><span class="tok">4B &middot; the floor with every block replaced by Identity</span><span class="vd bad">86% per-token, 14% fixed</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="floor wall-clock against total tokens, log-log">
+<line class="grid" x1="58" y1="202.3" x2="334" y2="202.3"/>
+<text class="tick" x="51" y="205.3" text-anchor="end">15</text>
+<line class="grid" x1="58" y1="153.3" x2="334" y2="153.3"/>
+<text class="tick" x="51" y="156.3" text-anchor="end">30</text>
+<line class="grid" x1="58" y1="104.4" x2="334" y2="104.4"/>
+<text class="tick" x="51" y="107.4" text-anchor="end">60</text>
+<line class="grid" x1="58" y1="55.5" x2="334" y2="55.5"/>
+<text class="tick" x="51" y="58.5" text-anchor="end">120</text>
+<line class="grid" x1="58" y1="19.4" x2="334" y2="19.4"/>
+<text class="tick" x="51" y="22.4" text-anchor="end">200</text>
+<line class="grid" x1="78.9" y1="16" x2="78.9" y2="218"/>
+<text class="tick" x="78.9" y="233" text-anchor="middle">2k</text>
+<line class="grid" x1="156.5" y1="16" x2="156.5" y2="218"/>
+<text class="tick" x="156.5" y="233" text-anchor="middle">4k</text>
+<line class="grid" x1="234.1" y1="16" x2="234.1" y2="218"/>
+<text class="tick" x="234.1" y="233" text-anchor="middle">8k</text>
+<line class="grid" x1="311.7" y1="16" x2="311.7" y2="218"/>
+<text class="tick" x="311.7" y="233" text-anchor="middle">16k</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">total tokens in the step (log)</text>
+<text class="axlab" x="4" y="9">ms (log)</text>
+<path class="line s1" d="M78.9,137.7 L156.5,133.0 L234.1,97.0 L311.7,53.7"/>
+<circle class="dot s1" cx="78.9" cy="137.7" r="3.4"><title>floor, measured &mdash; B=1, 2,048 tokens &mdash; floor 37.46 ms (8.34% of dense)</title></circle>
+<circle class="dot s1" cx="156.5" cy="133.0" r="3.4"><title>floor, measured &mdash; B=1, 4,096 tokens &mdash; floor 40.03 ms (7.47% of dense)</title></circle>
+<circle class="dot s1" cx="234.1" cy="97.0" r="3.4"><title>floor, measured &mdash; B=1, 8,192 tokens &mdash; floor 66.65 ms (8.44% of dense)</title></circle>
+<circle class="dot s1" cx="311.7" cy="53.7" r="3.4"><title>floor, measured &mdash; B=1, 16,384 tokens &mdash; floor 123.11 ms (8.70% of dense)</title></circle>
+<path class="line s2" d="M78.9,199.0 L156.5,148.1 L234.1,103.0 L311.7,57.0"/>
+<circle class="dot s2" cx="78.9" cy="199.0" r="3.4"><title>GPU-busy in the block shell &mdash; GPU-busy inside the block shell &mdash; 15.7 ms, 44% of it</title></circle>
+<circle class="dot s2" cx="156.5" cy="148.1" r="3.4"><title>GPU-busy in the block shell &mdash; GPU-busy inside the block shell &mdash; 32.3 ms, 86% of it</title></circle>
+<circle class="dot s2" cx="234.1" cy="103.0" r="3.4"><title>GPU-busy in the block shell &mdash; GPU-busy inside the block shell &mdash; 61.2 ms, 96% of it</title></circle>
+<circle class="dot s2" cx="311.7" cy="57.0" r="3.4"><title>GPU-busy in the block shell &mdash; GPU-busy inside the block shell &mdash; 117.5 ms, 98% of it</title></circle>
+<path class="line s3 dashed" d="M78.9,152.5 L311.7,54.9"/>
+<circle class="dot s3" cx="78.9" cy="152.5" r="0"><title>least-squares fit &mdash; fit: 17.38 ms + 6.329 ms per 1k tokens</title></circle>
+<circle class="dot s3" cx="311.7" cy="54.9" r="0"><title>least-squares fit &mdash; fit: 17.38 ms + 6.329 ms per 1k tokens</title></circle>
+<circle class="dot hollow s1" cx="234.1" cy="97.0" r="5"><title>B=2, T=4096 &mdash; same 8,192 tokens, floor 66.65 ms, identical to B=1/T=8192 to three digits</title></circle>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s1"></span>floor, measured</span><span class="lg"><span class="key s2"></span>GPU-busy in the block shell</span><span class="lg"><span class="key dash s3"></span>fit a + b&middot;tokens</span><span class="lg"><span class="key hollow"></span>B=2 / T=4096</span></div></figure></div>
+<div class="answer">
+<div class="card"><div class="tagline calc">calculated from measured points</div>
+<div class="big">86% per-token</div><div class="cap">least-squares fit over the B=1 rows:
+17.38 ms fixed + 6.329 ms per 1k tokens. At 16k only 17.4 of
+123.1 ms is amortisable &mdash; <b>1.2% of the dense step</b>. A bigger
+step cannot buy back more than that.</div></div>
+<div class="card"><div class="tagline meas">measured</div><div class="big">batch does not help</div>
+<div class="cap">B=2/T=4096 and B=1/T=8192 are the same 8,192 tokens and give the same floor to three
+digits (66.65 vs 66.65 ms). The floor tracks
+<em>total tokens</em>, full stop &mdash; and 27B behaves identically.</div></div>
+<div class="card"><div class="tagline meas">measured</div><div class="big">98% GPU-busy</div>
+<div class="cap">it is real GPU work, not launch overhead. The launch count in the floor
+configuration is constant at ~1,786 regardless of token count, while GPU-busy rises linearly and
+reaches 98% of the floor's wall-clock at 16k. There is nothing here for CUDA graphs to
+recover.</div></div>
+</div>
+<p><b>The fused-CE head's fixed cost is not hiding in the floor.</b> Measured head cost against the
+number of supervised rows, 4B/16k:</p>
+<div class="tablewrap"><table><thead><tr><th>supervised rows</th><th class="num">1</th><th class="num">16</th><th class="num">128</th><th class="num">1,024</th><th class="num">4,096</th><th class="num">16,384</th></tr></thead><tbody><tr><td>gated head cost, ms</td><td class="num">2.12</td><td class="num">2.10</td><td class="num">2.28</td><td class="num">8.67</td><td class="num">33.05</td><td class="num">331.54</td></tr></tbody></table></div>
+<p>Flat at about 2.1 ms below ~128 rows, so the N-independent term exists and is <b>0.15% of the
+dense step</b>. The old worry from the isolated-head work &mdash; &ldquo;13 rows still costs
+70 ms&rdquo; &mdash; does not apply at model level, because <code>LMHead</code> drops the fused kernel
+below <span class="mono">sparse_loss_unfused_max_rows=4096</span> and never allocates its
+<span class="mono">d_model &times; vocab</span> fp32 accumulator. At our loss density (0.0064, so 104
+rows at 16k) the gated head costs 2.1 ms. Embeddings, the final norm, <code>zero_grad</code> and the
+gated head together are 3.6 ms of a 123.1 ms floor; the rest
+is the block shell.</p></section>
+
+<section><h2>Launch-bound, and why CUDA graphs cannot be cashed in yet</h2>
+<p>Measured idle fraction and launch count from the profiler. The launch-bound regime is real but
+arrives late: the <span class="mono">graph upper bound</span> column is wall divided by GPU-busy
+&mdash; what a <em>perfect</em> graph could recover, not a prediction.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>arm</th><th class="num">step ms</th><th class="num">GPU-busy ms</th><th class="num">idle</th><th class="num">launches</th><th class="num">graph upper bound</th></tr></thead>
+<tbody><tr><td class="mono">dense</td><td class="num">1420.3</td><td class="num">1405.6</td><td class="num strong">1.0%</td><td class="num">6,874</td><td class="num muted">1.01x</td></tr><tr><td class="mono">staticFFN+bskipK-0.25</td><td class="num">546.7</td><td class="num">513.5</td><td class="num strong">6.1%</td><td class="num">7,680</td><td class="num muted">1.06x</td></tr><tr><td class="mono">J-f1.00-k0.2500</td><td class="num">357.2</td><td class="num">300.2</td><td class="num strong">16.0%</td><td class="num">10,065</td><td class="num muted">1.19x</td></tr><tr><td class="mono">staticFFN+bskipK-0.25+headgate</td><td class="num">228.0</td><td class="num">191.7</td><td class="num strong">15.9%</td><td class="num">6,935</td><td class="num muted">1.19x</td></tr><tr><td class="mono">staticFFN+bskipK-0.0625+headgate</td><td class="num">169.1</td><td class="num">79.4</td><td class="num strong bad">53.0%</td><td class="num">6,740</td><td class="num muted">2.13x</td></tr></tbody></table></div>
+<p>Whether a training step can be captured at all, one case per process (a failed capture poisons
+every later capture in the same CUDA context):</p>
+<div class="tablewrap"><table>
+<thead><tr><th>case</th><th>0.8B / 2k</th><th>4B / 16k</th></tr></thead>
+<tbody><tr><td><span class='mono'>matmul</span> (sanity)</td><td class="">captured, 1.04x</td><td class="">&mdash;</td></tr><tr><td>one block, forward</td><td class="">captured, <b>3.90x</b></td><td class="">&mdash;</td></tr><tr><td>one block, fwd+bwd</td><td class="">captured, <b>4.38x</b></td><td class="">&mdash;</td></tr><tr><td>whole model forward, no head</td><td class="">captured, 3.32x</td><td class="">&mdash;</td></tr><tr><td>whole model fwd+bwd, no head</td><td class="">captured, <b>2.65x</b></td><td class="">captured, 1.003x</td></tr><tr><td>&hellip; with <span class='mono'>budget_attach</span> off</td><td class="">captured, 2.67x</td><td class="">&mdash;</td></tr><tr><td>whole step, <b>unfused</b> cross entropy</td><td class="">captured, <b>2.09x</b></td><td class="">OOM (16k &times; 248k logits)</td></tr><tr><td>whole step, <b>fused-linear</b> CE (our trainer)</td><td class="bad"><b>FAILS</b></td><td class="bad"><b>FAILS</b></td></tr><tr><td>whole step, head gating as shipped</td><td class="bad">&mdash;</td><td class="bad"><b>FAILS</b></td></tr><tr><td>whole step, <b>fixed-capacity</b> head gate (prototype)</td><td class="">&mdash;</td><td class=""><b>captured</b>, 1.006x</td></tr><tr><td>&hellip; on any routed arm</td><td class="bad">&mdash;</td><td class="bad"><b>FAILS</b></td></tr></tbody></table></div>
+<p>The blockers are host synchronisations and value-dependent shapes, and they are enumerable: the
+fused-linear CE kernel (which falls away once the head is gated below the unfused threshold); head
+gating as shipped (<code>lm_head.py:286</code> <span class="mono">bool(keep.any())</span> plus
+<span class="mono">x[keep]</span>, whose output shape depends on tensor <em>values</em> &mdash;
+replacing it with a fixed row budget chosen by <span class="mono">topk</span> makes the whole
+4B/16k step capturable and is exact for capacity &ge; supervised rows); the block-skip holder's
+bookkeeping, three host syncs in <code>block_skip.py</code>, which is what still blocks every routed
+arm; and the FFN router's <span class="mono">bincount(&hellip;).tolist()</span>. None is load-bearing
+numerics &mdash; they are budget statistics and dispatch counts that could live on device and be read
+once every N steps. <b>That is the concrete engineering item</b>, and by the idle column it is worth
+about 1.19x at the recommended operating point.</p></section>
+
+<section><h2>So: is 20x reachable?</h2>
+<p><b>Not in practice.</b> All against the same 1419.0 ms dense control, 4B at 16k, batch 1,
+one H200, in one process. Solid bars are measured; the faded, dash-outlined bars are calculated
+by subtracting a measured component from a measured step.</p>
+<div class="panel"><svg viewBox="0 0 568 230" role="img" aria-label="ladder from dense to the floor">
+<text class="tick" x="308" y="33" text-anchor="end">dense control</text>
+<rect class="bar sn" x="316.0" y="20" width="8.0" height="20" rx="2"><title>dense control (dense) &mdash; 1419.0 ms, 1.00x, measured</title></rect>
+<text class="vallab" x="330.0" y="33">1.00x &middot; 1419.0 ms</text>
+<text class="tick" x="308" y="58" text-anchor="end">best all-learned, trainable</text>
+<rect class="bar s1" x="316.0" y="45" width="51.7" height="20" rx="2"><title>best all-learned, trainable (J-f0.50-k0.0625) &mdash; 219.5 ms, 6.46x, measured</title></rect>
+<text class="vallab" x="373.7" y="58">6.46x &middot; 219.5 ms</text>
+<text class="tick" x="308" y="83" text-anchor="end">best trainable at a defensible keep</text>
+<rect class="bar s1" x="316.0" y="70" width="32.7" height="20" rx="2"><title>best trainable at a defensible keep (J-f0.50-k0.2500) &mdash; 346.8 ms, 4.09x, measured</title></rect>
+<text class="vallab" x="354.7" y="83">4.09x &middot; 346.8 ms</text>
+<text class="tick" x="308" y="108" text-anchor="end">best with static FFN deletion</text>
+<rect class="bar s2" x="316.0" y="95" width="67.1" height="20" rx="2"><title>best with static FFN deletion (staticFFN+bskipK-0.0625+headgate) &mdash; 169.1 ms, 8.39x, measured</title></rect>
+<text class="vallab" x="389.1" y="108">8.39x &middot; 169.1 ms</text>
+<text class="tick" x="308" y="133" text-anchor="end">... if GDN cost nothing</text>
+<rect class="bar s3" x="316.0" y="120" width="135.9" height="20" rx="2" opacity="0.55" stroke-dasharray="3 2"><title>... if GDN cost nothing (floor + attention + FFN at the keep-1/16 static arm) &mdash; 83.6 ms, 16.98x, calculated</title></rect>
+<text class="vallab" x="457.9" y="133">16.98x &middot; 83.6 ms</text>
+<text class="tick" x="308" y="158" text-anchor="end">... if GDN and attention both cost nothing</text>
+<rect class="bar s3" x="316.0" y="145" width="168.8" height="20" rx="2" opacity="0.55" stroke-dasharray="3 2"><title>... if GDN and attention both cost nothing (floor + FFN at the same arm) &mdash; 67.2 ms, 21.10x, calculated</title></rect>
+<text class="vallab" x="490.8" y="158">21.10x &middot; 67.2 ms</text>
+<text class="tick" x="308" y="183" text-anchor="end">the un-routable floor at that keep</text>
+<rect class="bar sn" x="316.0" y="170" width="179.4" height="20" rx="2" opacity="0.55" stroke-dasharray="3 2"><title>the un-routable floor at that keep (step - (head waste + FFN + attention + GDN)) &mdash; 63.3 ms, 22.42x, calculated</title></rect>
+<text class="vallab" x="501.4" y="183">22.42x &middot; 63.3 ms</text>
+<text class="tick" x="308" y="208" text-anchor="end">the 20x target</text>
+<rect class="bar sn" x="316.0" y="195" width="160.0" height="20" rx="2" opacity="0.55" stroke-dasharray="3 2"><title>the 20x target (for reference) &mdash; 71.0 ms, 20.00x, target</title></rect>
+<text class="vallab" x="482.0" y="208">20.00x &middot; 71.0 ms</text>
+<line class="capline" x1="476.0" y1="14" x2="476.0" y2="216"/>
+<text class="guidelab" x="473.0" y="12" text-anchor="end">20x</text>
+</svg></div>
+<div class="legend"><span class="lg"><span class="key sn"></span>dense control / floor / target</span><span class="lg"><span class="key s1"></span>measured, trainable</span><span class="lg"><span class="key s2"></span>measured, deployment only</span><span class="lg"><span class="key s3"></span>calculated</span></div>
+<p><b>What stops us is GDN.</b> It is 53% of the best arm's step at 4B and 34.8% at 27B, and it is
+flat from keep=0.25 to keep=1/16 &mdash; skipping tokens stops helping it. Every GDN lever tried in
+this study is already refuted: q/k/v fusion 1.02x, chunk size 1&ndash;2%, packing 0.91x,
+<span class="mono">expand_v</span> about 1.4% of a step, more batch and head parallelism refuted.
+Even a <em>perfect</em> GDN gives 17.0x. Reaching 20x needs GDN at zero <em>and</em> attention at
+zero, at a keep of 1/16 that is not a trainable model.</p>
+<p><b>Plan against 4&ndash;6.5x trainable and 5&ndash;8.4x with post-training FFN deletion, halved by
+packing</b> (4.22x / 5.08x measured at
+<span class="mono">--docs 32</span>). The next real 1.19x is CUDA graphs, blocked by four enumerable
+host syncs rather than by anything fundamental.</p></section>
+<footer>Measured on one H200 (sneetches), batch 1, bf16, no compile, forward+backward, with a dense control re-measured every round (drift 1.003&ndash;1.017x). Arms and profiling: <code>bench_joint_sweep.py</code> &rarr; <code>joint_sweep_4B_16384_v1.json</code> (plain), <code>joint_sweep_4B_16384_packed32.json</code> (<code>--docs 32</code>), <code>joint_sweep_27B_8192_v1.json</code> (activation-checkpointed); graph capture from <code>graph_probe.py</code> &rarr; <code>graph_probe_*.json</code>. The 4B step partition including the block-shell stage is <code>joint_sweep_4B_16384_shell.log</code> rather than a JSON &mdash; that run filled the <code>/accounts</code> quota at its final write, so its stdout is the record; only its per-component percentages are used here, and the floor and cap columns are recomputed as step &minus; (head waste + FFN + attention + GDN), because the log's own <span class="mono">floor=</span> fields predate the fix that moved the block shell into the floor sum. 27B's partition ran before that stage existed, so its residual bucket is the same recomputation. Times are measured; FLOP cuts, conversion ratios, the floor fit and the two &ldquo;if X cost nothing&rdquo; rows are calculated. Head gating is exactly loss-neutral; static FFN deletion and block skip are mechanism limits whose task quality has not been established, and static deletion is not available during training.</footer>
+</main>

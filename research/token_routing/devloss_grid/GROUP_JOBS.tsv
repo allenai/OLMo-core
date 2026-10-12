@@ -1,0 +1,10 @@
+h1	3598218	cpt80,fiqa
+h2	3598219	nq,qdmatch_hpqa,absence
+h3	3598220	outlier,oolong
+h4	3598221	rerank,msmarco,reorder
+h5	3598228	contradiction,outlier_amzn
+h6	3598223	grouping,obliq,niah
+h7	3598229	xabsence,scifact
+h8	3598225	strmatch,textgroups
+h9	3598230	cpt80 @2k redo (h1 does 8k/32k with the fixed driver)
+sync	3598249	afterany:3598218:3598219:3598220:3598221:3598228:3598223:3598229:3598225:3598230 sync_results.sh

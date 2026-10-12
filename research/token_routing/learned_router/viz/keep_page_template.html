@@ -1,0 +1,185 @@
+<title>Router Keep Masks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f4f6f8; --surface:#ffffff; --ink:#18202b; --ink2:#465163; --mute:#8b94a3; --line:#dce1e8;
+  --both-bg:#e4e9f0; --r:#0d7472; --r-bg:#cdeeea; --b:#a55f00; --b-bg:#fae3bd; --f:#5b44b0; --f-bg:#e3ddf7;
+  --gold:#8a6d00; --gold-bg:#fff3c2; --drop:#a3aab6; --chip:#eef1f5;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark; --bg:#11151b; --surface:#191f27; --ink:#e5e9ef; --ink2:#a9b2bf; --mute:#6f7987; --line:#2a323d;
+  --both-bg:#27303b; --r:#6fd3c9; --r-bg:#123f3c; --b:#f1b457; --b-bg:#46310f; --f:#b3a2f0; --f-bg:#2e2552;
+  --gold:#f0cf5a; --gold-bg:#3a3110; --drop:#58616e; --chip:#222a34;}}
+:root[data-theme="dark"]{
+  color-scheme:dark; --bg:#11151b; --surface:#191f27; --ink:#e5e9ef; --ink2:#a9b2bf; --mute:#6f7987; --line:#2a323d;
+  --both-bg:#27303b; --r:#6fd3c9; --r-bg:#123f3c; --b:#f1b457; --b-bg:#46310f; --f:#b3a2f0; --f-bg:#2e2552;
+  --gold:#f0cf5a; --gold-bg:#3a3110; --drop:#58616e; --chip:#222a34;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);margin:0}
+.wrap{max-width:1120px;margin:0 auto;padding-inline:16px;padding-block:24px 64px}
+h1{font-size:24px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--ink2);max-width:72ch;margin:0 0 18px;text-wrap:pretty}
+.label{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--mute);font-weight:600}
+.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.controls{display:grid;gap:10px;margin-bottom:16px}
+button.pill{font:500 13px var(--sans);color:var(--ink2);background:var(--surface);border:1px solid var(--line);
+  border-radius:999px;padding:5px 12px;cursor:pointer}
+button.pill[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button.pill:focus-visible{outline:2px solid var(--r);outline-offset:2px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--ink2)}
+.legend span.sw{display:inline-block;font:12px var(--mono);padding:0 5px;border-radius:3px;margin-right:6px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px}
+.summary{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;margin-bottom:16px}
+@media (max-width:760px){.summary{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);font-size:13px}
+th{font-weight:600;color:var(--ink2);font-size:12px}
+td.num{text-align:right;white-space:nowrap}
+.meter{display:inline-block;width:44px;height:6px;background:var(--chip);border-radius:3px;vertical-align:middle;margin-left:6px;overflow:hidden}
+.meter i{display:block;height:100%}
+.dec{display:grid;grid-template-columns:52px repeat(10,1fr);gap:2px;margin-top:10px;font-size:11px;align-items:center}
+.dec div.c{height:18px;border-radius:2px}
+.dec .h{color:var(--mute);text-align:center}
+.note{color:var(--ink);margin:10px 0 0;max-width:70ch;text-wrap:pretty}
+.meta{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;font-variant-numeric:tabular-nums}
+.meta dt{color:var(--mute)} .meta dd{margin:0}
+.weights{font:12px var(--mono);color:var(--ink2);margin-top:10px;overflow-wrap:anywhere}
+.qa{margin-bottom:16px}
+.qa pre{white-space:pre-wrap;font:13px/1.5 var(--mono);margin:6px 0 0;color:var(--ink2);max-height:9.5em;overflow:auto}
+.qa .ans{color:var(--ink);font:500 13px var(--mono)}
+.docs{display:grid;gap:10px}
+.doc{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.doc.gold{border-color:var(--gold);box-shadow:inset 3px 0 0 var(--gold)}
+.dh{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;font-size:12px;color:var(--mute);margin-bottom:6px;font-variant-numeric:tabular-nums}
+.dh b{color:var(--ink);font-weight:600;font-size:13px}
+.badge{font:600 11px var(--sans);letter-spacing:.06em;color:var(--gold);background:var(--gold-bg);padding:1px 6px;border-radius:3px}
+.toks{font:13px/1.75 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.t{border-radius:2px}
+.t.c-kk{background:var(--both-bg);color:var(--ink)}
+.t.c-k0{background:var(--r-bg);color:var(--ink);text-decoration:underline 2px var(--r);text-underline-offset:3px}
+.t.c-k0.f{background:var(--f-bg);text-decoration-color:var(--f)}
+.t.c-0k{background:var(--b-bg);color:var(--ink);text-decoration:underline dotted 2px var(--b);text-underline-offset:3px}
+.t.c-00{color:var(--drop);text-decoration:line-through;text-decoration-color:var(--drop)}
+.mk{font:11px var(--mono);padding:0 3px;border:1px solid var(--line);border-radius:3px;margin:0 1px}
+.el{display:inline-block;font:12px var(--sans);color:var(--mute);background:var(--chip);border-radius:999px;padding:0 8px;margin:2px 2px}
+.more{margin-top:10px}
+.foot{color:var(--mute);font-size:12px;margin-top:24px;max-width:80ch}
+</style>
+
+<div class="wrap">
+  <h1>Router Keep Masks</h1>
+  <p class="sub">Which document tokens the learned token router (recipe v5, trained end to end) keeps, next to the fixed rule
+    <code>gold_fl20p8_noslot</code>, on real test rows. Both are compared at the same compaction: each row keeps exactly the
+    fraction of the sequence the rule keeps. Prompt, question and answer are always kept and not shown.</p>
+
+  <div class="controls">
+    <div><div class="label">Task</div><div class="bar" id="tabs"></div></div>
+    <div class="bar" style="gap:18px">
+      <div><div class="label">Test row</div><div class="bar" id="rows"></div></div>
+      <div id="armbox" hidden><div class="label">Router</div><div class="bar" id="arms"></div></div>
+      <div><div class="label">Documents</div><div class="bar"><button class="pill" id="showall" aria-pressed="false">Show all</button></div></div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="summary">
+    <div class="card"><div class="label" id="stitle">Keep fractions</div><div id="stats"></div></div>
+    <div class="card"><div class="label">This row</div><dl class="meta" id="meta"></dl><p class="note" id="note"></p><div class="weights" id="weights"></div></div>
+  </div>
+
+  <div class="card qa"><div class="label">Question</div><pre id="q"></pre>
+    <div class="label" style="margin-top:8px">Answer</div><div class="ans" id="ans"></div></div>
+
+  <div class="docs" id="docs"></div>
+  <div class="more" id="more"></div>
+  <p class="foot">Test sets are 16 rows at 2k and 8 at 32k, so the keep fractions are pooled over few rows. Long documents
+    show their first 60 and last 30 tokens; the pill in between counts what each method kept in the elided middle.
+    Router masks were recomputed on CPU; ties between equal scores can break differently from the GPU run, which affects a
+    few tokens at the cutoff but not the compaction.</p>
+</div>
+
+<script>
+const DATA = /*__DATA__*/null;
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+let st = {e:0,row:0,arm:"router",all:false};
+try{const s=JSON.parse(localStorage.getItem("keepviz")||"{}"); if(DATA[s.e]) st.e=s.e;}catch(_){}
+const save=()=>{try{localStorage.setItem("keepviz",JSON.stringify({e:st.e}))}catch(_){}};
+const armIdx = () => st.arm==="f0" ? 4 : 1;
+const armName = () => st.arm==="f0" ? "F0 router" : "router";
+const pct = v => v==null ? "–" : (100*v).toFixed(0)+"%";
+
+function pills(el, items, cur, on){
+  el.innerHTML=""; items.forEach(([k,label])=>{const b=document.createElement("button");b.className="pill";
+    b.textContent=label;b.setAttribute("aria-pressed",String(k===cur));b.onclick=()=>on(k);el.appendChild(b);});
+}
+function meter(v,col){return `<span class="meter"><i style="width:${v==null?0:100*v}%;background:${col}"></i></span>`}
+
+function render(){
+  const E=DATA[st.e], R=E.rows[st.row], S=E.stats;
+  if(!E.has_f0) st.arm="router";
+  pills($("tabs"), DATA.map((x,i)=>[i,`${x.task} · ${x.rung}`]), st.e, i=>{st.e=i;st.row=0;st.all=false;save();render();});
+  pills($("rows"), E.rows.map((r,i)=>[i,`row ${r.row}`]), st.row, i=>{st.row=i;render();});
+  $("armbox").hidden=!E.has_f0;
+  if(E.has_f0) pills($("arms"), [["router","v5 (per token)"],["f0","F0 (whole docs)"]], st.arm, a=>{st.arm=a;render();});
+  $("showall").setAttribute("aria-pressed",String(st.all));
+  $("showall").onclick=()=>{st.all=!st.all;render();};
+
+  // legend with counts over this row's shown tokens
+  const ai=armIdx(); let c={kk:0,k0:0,"0k":0,"00":0};
+  R.docs.forEach(d=>d.tokens.forEach(t=>{if(Array.isArray(t)) c[`${t[ai]?"k":"0"}${t[2]?"k":"0"}`]++;}));
+  const fcls = st.arm==="f0" ? " f" : "";
+  $("legend").innerHTML =
+    `<span><span class="sw t c-kk">kept</span>kept by both (${c.kk})</span>`+
+    `<span><span class="sw t c-k0${fcls}">${armName()}</span>${armName()} only (${c.k0})</span>`+
+    `<span><span class="sw t c-0k">rule</span>rule only (${c["0k"]})</span>`+
+    `<span><span class="sw t c-00">drop</span>dropped by both (${c["00"]})</span>`;
+
+  // stats table
+  const arms=S.arms.filter(a=>a!=="f0"||E.has_f0);
+  const col={router:"var(--r)",bar:"var(--b)",f0:"var(--f)"}, nm={router:"v5 router",bar:"rule",f0:"F0"};
+  $("stitle").textContent=`Keep fractions, pooled over ${S.eval_size} test rows`;
+  let h=`<table><thead><tr><th>region</th>${arms.map(a=>`<th class="num">${nm[a]}</th>`).join("")}</tr></thead><tbody>`;
+  S.rows.forEach(r=>{h+=`<tr><td>${r.label}</td>${arms.map(a=>`<td class="num">${pct(r[a])}${meter(r[a],col[a])}</td>`).join("")}</tr>`;});
+  h+=`</tbody></table><div class="label" style="margin-top:12px">Non-gold body after the first 8 tokens, by tenth of the document</div><div class="dec"><span></span>`;
+  for(let i=0;i<10;i++) h+=`<span class="h">${i+1}</span>`;
+  arms.forEach(a=>{h+=`<span style="color:${col[a]};font-weight:600">${nm[a]}</span>`;
+    (S.deciles[a]||[]).forEach(v=>{h+=`<div class="c" title="${nm[a]}: ${pct(v)}" style="background:${col[a]};opacity:${v==null?0.05:0.08+0.92*v}"></div>`;});});
+  $("stats").innerHTML=h+"</div>";
+
+  // row meta
+  const t=R.T2T, g=R.grid_dce, rk = st.arm==="f0" ? "f0" : "router";
+  $("meta").innerHTML=`<dt>length</dt><dd>${R.T.toLocaleString()} tokens, ${R.n_docs} documents, gold: ${R.gold_docs.length?R.gold_docs.map(x=>x+1).join(", "):"none"}</dd>`+
+    `<dt>kept</dt><dd>${armName()} ${pct(st.arm==="f0"?t.f0_T2T:t.router_T2T)} · rule ${pct(t.bar_T2T)} of the row</dd>`+
+    (g? `<dt>loss vs full</dt><dd>router ${g.router>=0?"+":""}${(+g.router).toFixed(3)} · rule ${g.bar>=0?"+":""}${(+g.bar).toFixed(3)} nats${st.arm==="f0"&&g.f0!=null?` · F0 ${(+g.f0).toFixed(3)}`:""}</dd>`:"");
+  $("note").textContent=E.note;
+  const wl = st.arm==="f0" ? [S.f0_pos||[],S.f0_neg||[]] : [S.w_pos,S.w_neg];
+  $("weights").innerHTML=`largest weights (${st.arm==="f0"?"F0":S.variant}): `+
+    wl[0].map(x=>`${esc(x[0])} +${x[1].toFixed(1)}`).join(", ")+(wl[1].length?" · "+wl[1].map(x=>`${esc(x[0])} ${x[1].toFixed(1)}`).join(", "):"");
+
+  $("q").textContent=R.q.trim(); $("ans").textContent=R.answer.replace("<|im_end|>","");
+
+  // documents: gold first-class, cap at 12 unless show-all
+  let docs=R.docs; const cap=12;
+  let shown = st.all||docs.length<=cap ? docs : docs.filter((d,i)=>i<cap||d.is_gold);
+  $("docs").innerHTML=shown.map(d=>{
+    const rk2 = st.arm==="f0" ? d.f0_body_kept : d.router_body_kept;
+    let s=`<div class="doc${d.is_gold?" gold":""}"><div class="dh"><b>Document ${d.doc+1}</b>${d.is_gold?'<span class="badge">GOLD</span>':""}`+
+      `<span>${d.n_body} body tokens</span><span style="color:var(--${st.arm==="f0"?"f":"r"})">${armName()} kept ${rk2}</span><span style="color:var(--b)">rule kept ${d.bar_body_kept}</span></div><div class="toks">`;
+    d.tokens.forEach(t=>{
+      if(!Array.isArray(t)){const rkk = st.arm==="f0" ? t.f0_kept : t.router_kept;
+        s+=`<span class="el">··· ${t.elided} tokens · ${armName()} kept ${rkk} · rule kept ${t.bar_kept} ···</span>`; return;}
+      const cls=`${t[ai]?"k":"0"}${t[2]?"k":"0"}`, tip=`${armName()}: ${t[ai]?"keep":"drop"} · rule: ${t[2]?"keep":"drop"}`;
+      const txt = t[3] ? `<span class="mk">${t[0].includes("start")?"⟦":"⟧"}</span>` : esc(t[0]).replace(/\n+/g,"↵\n");
+      s+=`<span class="t c-${cls}${cls==="k0"?fcls:""}" title="${tip}">${txt}</span>`;
+    });
+    return s+"</div></div>";}).join("");
+  $("more").innerHTML = (!st.all && docs.length>shown.length) ?
+    `<button class="pill" id="more2">Show all ${docs.length} documents (${docs.length-shown.length} hidden)</button>` : "";
+  if($("more2")) $("more2").onclick=()=>{st.all=true;render();};
+}
+render();
+</script>

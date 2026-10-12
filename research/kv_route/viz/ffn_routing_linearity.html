@@ -1,0 +1,1141 @@
+<title>Does Routed FFN Compute Buy Speed?</title>
+<style>
+/* Categorical series slots validated with the dataviz skill's
+   scripts/validate_palette.js: s1..s3 pass --pairs all in BOTH modes; the
+   4th hue is only ever used in the stacked composition bar, where the
+   adjacent pairlist applies and it passes there in both modes. --sn is a
+   deliberate neutral for the residual bucket, not a categorical hue.
+   --s5 (the standard-MoE series) was validated as the 4th slot of
+   s1,s2,s3,s5 under --pairs all: light #c2429a ALL PASS; dark #e25fa0 passes
+   every band with CVD deutan 6.6 vs the green, which is the 6-8 floor band --
+   legal only with secondary encoding, so that series carries SQUARE markers
+   (filled = swept, hollow = a shipped Qwen3.5 geometry) and a direct label. */
+:root {
+  --bg:#F4F6F8; --surface:#FFFFFF; --ink:#141D26; --ink-2:#41505E; --muted:#6B7A88;
+  --rule:#D7DDE3; --rule-soft:#E8ECEF;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#c2429a; --sn:#6B7A88;
+  --o1:#86b6ef; --o2:#2a78d6; --o3:#104281;
+  --on1:#FFFFFF; --on2:#3A1400; --on3:#04301F; --on4:#3A2B00; --onn:#FFFFFF;
+  --bad:#B33A26; --ok:#1E6B4E; --chip:#EDF1F4;
+}
+@media (prefers-color-scheme:dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#11161B; --surface:#171E25; --ink:#E4EAEF; --ink-2:#B3C0CB; --muted:#8494A1;
+    --rule:#2A343D; --rule-soft:#212A32;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#e25fa0; --sn:#8494A1;
+    --o1:#9ec5f4; --o2:#3987e5; --o3:#1c5cab;
+    --on1:#FFFFFF; --on2:#FFFFFF; --on3:#04301F; --on4:#241800; --onn:#11161B;
+    --bad:#E0765C; --ok:#5FB98F; --chip:#1D262E;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#11161B; --surface:#171E25; --ink:#E4EAEF; --ink-2:#B3C0CB; --muted:#8494A1;
+  --rule:#2A343D; --rule-soft:#212A32;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#e25fa0; --sn:#8494A1;
+  --o1:#9ec5f4; --o2:#3987e5; --o3:#1c5cab;
+  --on1:#FFFFFF; --on2:#FFFFFF; --on3:#04301F; --on4:#241800; --onn:#11161B;
+  --bad:#E0765C; --ok:#5FB98F; --chip:#1D262E;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font-family:Charter,"Iowan Old Style","Source Serif Pro",Georgia,serif;font-size:16.5px;line-height:1.6}
+main{max-width:1080px;margin:0 auto;padding:56px 24px 96px;display:flex;flex-direction:column;gap:30px}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+.eyebrow{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.7rem;
+ letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+h1{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:2.05rem;font-weight:600;
+ letter-spacing:-.02em;margin:.15em 0 0;text-wrap:balance;line-height:1.15}
+h2{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1.02rem;font-weight:600;
+ letter-spacing:.01em;margin:0 0 2px;padding-bottom:8px;border-bottom:1px solid var(--rule)}
+p{margin:0;max-width:70ch;color:var(--ink-2)}
+section{display:flex;flex-direction:column;gap:14px}
+.lede{font-size:1.1rem;color:var(--ink-2);max-width:66ch}
+.answer{display:flex;flex-wrap:wrap;gap:14px}
+.card{flex:1 1 228px;background:var(--surface);border:1px solid var(--rule-soft);
+ border-radius:3px;padding:15px 17px;display:flex;flex-direction:column;gap:5px}
+.card .big{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:1.55rem;
+ font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.card .cap{font-size:.9rem;color:var(--muted);line-height:1.45}
+.card .tagline{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.62rem;
+ letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.card .tagline.meas{color:var(--ok)} .card .tagline.calc{color:var(--s3)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+/* a lone panel must not stretch to 1080px -- the SVG is authored at ~350px wide and
+   scales its type with it, which is what made the labels collide. */
+.solo{max-width:560px}
+.panel{margin:0;background:var(--surface);border:1px solid var(--rule-soft);border-radius:3px;padding:10px 10px 4px}
+figcaption{display:flex;justify-content:space-between;align-items:baseline;gap:8px;
+ padding:2px 4px 8px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.74rem}
+.tok{font-weight:600;letter-spacing:.02em}
+.vd{color:var(--ok)} .vd.bad{color:var(--bad)} .vd.neutral{color:var(--muted)}
+svg{display:block;width:100%;height:auto}
+.grid{stroke:var(--rule-soft);stroke-width:1}
+.axis{stroke:var(--rule);stroke-width:1}
+.tick,.axlab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5px;fill:var(--muted)}
+.vallab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;fill:var(--ink-2);
+ font-variant-numeric:tabular-nums}
+.line{fill:none;stroke-width:2;stroke-linejoin:round}
+.line.dashed{stroke-dasharray:5 3}
+.capline{fill:none;stroke:var(--ink-2);stroke-width:1.1;stroke-dasharray:5 3;opacity:.55}
+/* used by the retained kernel-level sections */
+.actfloor{stroke:var(--ink-2);stroke-width:1;stroke-dasharray:5 3;opacity:.5}
+.guide{stroke:var(--muted);stroke-width:1;stroke-dasharray:1 3;opacity:.75}
+.guidelab{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;fill:var(--muted);opacity:.9}
+.dot{stroke:var(--surface);stroke-width:1.6}
+.dot.hollow{fill:var(--surface);stroke-width:2}
+.s1{stroke:var(--s1)} .s2{stroke:var(--s2)} .s3{stroke:var(--s3)} .s4{stroke:var(--s4)}
+.s5{stroke:var(--s5)}
+rect.dot.s5{fill:var(--s5)}
+rect.dot.hollow.s5{fill:var(--surface);stroke:var(--s5);stroke-width:2}
+.sn{stroke:var(--sn)} .o1{stroke:var(--o1)} .o2{stroke:var(--o2)} .o3{stroke:var(--o3)}
+.ink{stroke:var(--ink-2)}
+circle.s1{fill:var(--s1)} circle.s2{fill:var(--s2)} circle.s3{fill:var(--s3)} circle.s4{fill:var(--s4)}
+circle.sn{fill:var(--sn)}
+circle.o1{fill:var(--o1)} circle.o2{fill:var(--o2)} circle.o3{fill:var(--o3)}
+circle.ink{fill:var(--ink-2)}
+circle.hollow.s1{fill:var(--surface);stroke:var(--s1)}
+circle.hollow.s2{fill:var(--surface);stroke:var(--s2)}
+circle.hollow.s3{fill:var(--surface);stroke:var(--s3)}
+circle.hollow.s4{fill:var(--surface);stroke:var(--s4)}
+circle.hollow.sn{fill:var(--surface);stroke:var(--sn)}
+circle.hollow.ink{fill:var(--surface);stroke:var(--ink-2)}
+circle.hollow.o1{fill:var(--surface);stroke:var(--o1)}
+circle.hollow.o2{fill:var(--surface);stroke:var(--o2)}
+circle.hollow.o3{fill:var(--surface);stroke:var(--o3)}
+rect.s1{fill:var(--s1)} rect.s2{fill:var(--s2)} rect.s3{fill:var(--s3)} rect.s4{fill:var(--s4)}
+rect.sn{fill:var(--sn)} rect.neutral{fill:var(--sn)}
+.onbar{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8px;
+ font-variant-numeric:tabular-nums;font-weight:600;stroke:none}
+.onbar.s1{fill:var(--on1)} .onbar.s2{fill:var(--on2)} .onbar.s3{fill:var(--on3)}
+.onbar.s4{fill:var(--on4)} .onbar.sn{fill:var(--onn)}
+.bar{stroke:var(--surface);stroke-width:2}
+.legend{display:flex;flex-wrap:wrap;gap:18px;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+ font-size:.76rem;color:var(--ink-2)}
+.panel-legend{gap:11px;font-size:.64rem;padding:7px 4px 3px;border-top:1px solid var(--rule-soft);
+ margin-top:4px;color:var(--muted)}
+.panel-legend .key{width:9px;height:9px}
+.lg{display:inline-flex;align-items:center;gap:7px}
+.key{width:11px;height:11px;border-radius:2px;display:inline-block;flex:none}
+.key.s1{background:var(--s1)} .key.s2{background:var(--s2)} .key.s3{background:var(--s3)}
+.key.s4{background:var(--s4)} .key.sn,.key.neutral{background:var(--sn)}
+.key.s5{background:var(--s5)}
+.key.sq{border-radius:1px}
+.key.sq.hollow{background:var(--surface);border:2px solid var(--s5)}
+.key.o1{background:var(--o1)} .key.o2{background:var(--o2)} .key.o3{background:var(--o3)}
+.key.dash{background:none;border-top:2px dashed var(--ink-2);height:0;border-radius:0;width:14px}
+.key.dash.s1{border-top-color:var(--s1)} .key.dash.s2{border-top-color:var(--s2)}
+.key.dash.s3{border-top-color:var(--s3)} .key.dash.s4{border-top-color:var(--s4)}
+.key.dash.o1{border-top-color:var(--o1)} .key.dash.o3{border-top-color:var(--o3)}
+.key.dash.ink{border-top-color:var(--ink-2)}
+.key.dash.s5{border-top-color:var(--s5)}
+.key.hollow{background:var(--surface);border:2px solid var(--muted)}
+.key.hollow.s1{border-color:var(--s1)} .key.hollow.s3{border-color:var(--s3)}
+.note{display:flex;gap:9px;align-items:baseline;font-size:.93rem;color:var(--ink-2);max-width:76ch}
+.note .key{position:relative;top:1px}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--rule-soft);border-radius:3px}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:7px 12px;border-bottom:1px solid var(--rule-soft);text-align:left;vertical-align:middle}
+th{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.68rem;letter-spacing:.07em;
+ text-transform:uppercase;color:var(--muted);font-weight:500;border-bottom:1px solid var(--rule)}
+td{font-family:Charter,"Iowan Old Style",Georgia,serif}
+.num{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;text-align:right;font-variant-numeric:tabular-nums}
+.num.strong{font-weight:600;color:var(--ink)}
+.num.muted{color:var(--muted)}
+.num.was{color:var(--muted);text-decoration:line-through}
+.src{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.72rem;
+ letter-spacing:.04em;text-transform:uppercase}
+.src.meas{color:var(--ok)} .src.calc{color:var(--s3)} .src.model{color:var(--muted)}
+.tok-cell{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-weight:600;
+ border-right:1px solid var(--rule-soft);vertical-align:top;padding-top:10px}
+.tok-cell .sub{font-weight:400;color:var(--muted);font-size:.78rem}
+.bad{color:var(--bad);font-weight:600}
+.pill{display:inline-block;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.62rem;
+ letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border-radius:2px;
+ border:1px solid var(--rule);color:var(--muted);white-space:nowrap}
+.pill.train{border-color:var(--ok);color:var(--ok)}
+.pill.deploy{border-color:var(--s2);color:var(--s2)}
+.callout{background:var(--chip);border-left:2px solid var(--s2);padding:13px 17px;border-radius:0 3px 3px 0;
+ font-size:.97rem;color:var(--ink-2);max-width:78ch}
+.callout.warn{border-left-color:var(--bad)}
+footer{border-top:1px solid var(--rule);padding-top:14px;color:var(--muted);font-size:.83rem;max-width:80ch}
+code{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.85em;background:var(--chip);
+ padding:1px 5px;border-radius:2px}
+</style>
+<main>
+<header>
+  <div class="eyebrow">Qwen3.5 &middot; H200 &middot; nested-ladder FFN router &middot; all 32/32 layers routed &middot; log&ndash;log</div>
+  <h1>Does Routed FFN Compute Buy Speed?</h1>
+  <p class="lede">Re-measured after a bug left twelve of thirty-two FFN layers dense. Model-level arms first, then the kernel-level curves that explain them &mdash; every one on the same x-axis, mean FFN compute <span class="mono">c</span>. Times are measured medians on one H200; FLOP and byte counts are calculated.</p>
+</header>
+
+<section><h2>Correction: a third of the FFN was never routed</h2>
+<div class="callout warn"><b>Every FFN and stacked number this page previously carried was
+understated.</b> <code>--ffn-start-layer</code> defaulted to <b>12</b>, so on Qwen3.5-4B (32 blocks)
+twelve of thirty-two FFNs stayed dense. The arm nominally called &ldquo;every token takes the null
+rung&rdquo; was in fact cutting the FFN only to 0.375 of its own share. Both defaults are now 0 and
+both benchmark scripts print the routed-layer list at startup
+(<span class="mono"># FFN routed layers (32/32)</span>), so it cannot recur silently. The dense
+control was re-measured every round; drift 1.004x at 4B and 1.009x at 27B. The kernel-level curves
+further down are unaffected &mdash; they never went through the layer selector.</div>
+<div class="answer"><div class="card"><div class="tagline meas">measured &middot; trainable</div><div class="big">1.314x</div><div class="cap">4B at 16k, every token on the null rung, <b>all 32 of 32 FFN layers routed</b>. The published page said 1.177x, measured when <code>--ffn-start-layer</code> still defaulted to 12 and a third of the FFN was never routed. 27B at 8k goes 1.524x &rarr; <b>1.748x</b>.</div></div><div class="card"><div class="tagline calc">measured &middot; deployment only</div><div class="big">1.362x</div><div class="cap">the same FLOP cut taken by <b>deleting</b> the always-null FFN layers instead of routing them. Not available during training &mdash; the router has to exist for the layers to become deletable. It wins because it carries no per-layer prologue and no host sync: 6,132 kernel launches against 8,752.</div></div><div class="card"><div class="tagline meas">measured</div><div class="big">0.946x</div><div class="cap">the router switched on with every token still taking the <em>full</em> rung: routing all 32 layers costs 5% at 4B and 10% at 27B before it saves anything. That entry fee is what the FFN axis has to earn back.</div></div><div class="card"><div class="tagline meas">measured</div><div class="big">0.65&ndash;0.72</div><div class="cap">FLOP-to-wall conversion on the FFN axis at 4B &mdash; calculated from the FLOP ledger &mdash; and it is <b>flat</b> from <span class="mono">f_null=0</span> to <span class="mono">f_null=1</span> (0.44&ndash;0.57 at 27B). The routed FFN is not where the conversion breaks down &mdash; that happens later, once block skipping is stacked on top.</div></div></div>
+<div class="callout warn"><b>These are pinned-operating-point costs, not achieved training speedups.</b> Every number on this page is what the hardware does when the token distribution is <em>forced</em> to a given sparsity. A parallel real-training run shows that a learned router under a budget hinge does <b>not</b> reach its target sparsity inside a short (31-step) SFT epoch, so a training job that merely switches these routers on will not realise these numbers. Read them as the wall-clock price of an operating point &mdash; an upper bound on what routing could pay if a router got there &mdash; and never as a measured training speedup.</div>
+<p>Both scales, one arm per row. <span class="mono">4B was</span> / <span class="mono">27B was</span>
+are the published pre-fix numbers; the bold column is the re-measurement with all layers routed.
+<b>conv</b> is FLOP cut converted to wall-clock &mdash; how much of the arithmetic saving the clock
+actually paid out. Availability distinguishes arms a model can be <em>trained</em> with from
+post-training deletion, which is a deployment lever only.</p>
+<div class="tablewrap"><table>
+<thead><tr><th>arm</th><th>availability</th><th class="num">FLOP cut (4B)</th><th class="num">4B was</th><th class="num">4B now</th><th class="num">conv</th><th class="num">27B was</th><th class="num">27B now</th><th class="num">conv</th></tr></thead>
+<tbody><tr><td class="mono">ffn-fnull0.00</td><td><span class="pill train">trainable</span></td><td class="num">1.65x</td><td class="num was">1.101x</td><td class="num strong">1.180x</td><td class="num muted">0.72</td><td class="num was">1.269x</td><td class="num strong">1.360x</td><td class="num muted">0.57</td></tr><tr><td class="mono">ffn-fnull0.50</td><td><span class="pill train">trainable</span></td><td class="num">1.79x</td><td class="num was">1.129x</td><td class="num strong">1.225x</td><td class="num muted">0.68</td><td class="num was">1.344x</td><td class="num strong">1.467x</td><td class="num muted">0.51</td></tr><tr><td class="mono">ffn-fnull0.75</td><td><span class="pill train">trainable</span></td><td class="num">1.87x</td><td class="num was">1.140x</td><td class="num strong">1.242x</td><td class="num muted">0.66</td><td class="num was">1.377x</td><td class="num strong">1.520x</td><td class="num muted">0.47</td></tr><tr><td class="mono">ffn-fnull0.90</td><td><span class="pill train">trainable</span></td><td class="num">1.92x</td><td class="num muted">&mdash;</td><td class="num strong">1.249x</td><td class="num muted">0.65</td><td class="num muted">&mdash;</td><td class="num strong">1.533x</td><td class="num muted">0.44</td></tr><tr><td class="mono">ffn-fnull1.00</td><td><span class="pill train">trainable</span></td><td class="num">1.96x</td><td class="num was">1.177x</td><td class="num strong">1.314x</td><td class="num muted">0.67</td><td class="num was">1.524x</td><td class="num strong">1.748x</td><td class="num muted">0.48</td></tr><tr><td class="mono">ffn-static</td><td><span class="pill deploy">deployment only</span></td><td class="num">1.96x</td><td class="num was">1.200x</td><td class="num strong">1.362x</td><td class="num muted">0.69</td><td class="num was">1.604x</td><td class="num strong">1.867x</td><td class="num muted">0.51</td></tr><tr><td class="mono">staticFFN+bskipK-0.25+headgate</td><td><span class="pill deploy">deployment only</span></td><td class="num">19.8x</td><td class="num was">5.650x</td><td class="num strong">6.420x</td><td class="num muted">0.32</td><td class="num was">5.720x</td><td class="num strong">6.667x</td><td class="num muted">0.28</td></tr></tbody></table></div></section>
+
+<section><h2>Does the FFN axis convert? Yes, and at a flat rate</h2>
+<p>Measured wall-clock speedup of a whole forward+backward step against the mean FFN compute the
+router leaves per token, both axes logarithmic. The curve is nearly flat because the FFN is only
+26% of a 4B step (46% at 27B): even taking <span class="mono">c</span> from 0.20 to 0.02 &mdash;
+a 10&times; further cut &mdash; buys 6%. What the panel really shows is that the conversion rate does
+not decay along this axis: it sits at 0.65&ndash;0.72 (4B) the whole way down. The two rules mark the
+<span class="mono">c=0</span> arms, which cannot be drawn on a log axis: routing every token to the
+null rung, and deleting those layers outright.</p>
+<div class="grid2"><figure class="panel"><figcaption><span class="tok">4B &middot; 16,384 tokens &middot; plain</span><span class="vd neutral">1.18x &rarr; 1.31x over the sweep</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="wall-clock speedup against mean routed FFN compute, log-log">
+<line class="grid" x1="58" y1="205.2" x2="334" y2="205.2"/>
+<text class="tick" x="51" y="208.2" text-anchor="end">0.9x</text>
+<line class="grid" x1="58" y1="181.7" x2="334" y2="181.7"/>
+<text class="tick" x="51" y="184.7" text-anchor="end">1x</text>
+<line class="grid" x1="58" y1="131.9" x2="334" y2="131.9"/>
+<text class="tick" x="51" y="134.9" text-anchor="end">1.25x</text>
+<line class="grid" x1="58" y1="91.1" x2="334" y2="91.1"/>
+<text class="tick" x="51" y="94.1" text-anchor="end">1.5x</text>
+<line class="grid" x1="58" y1="26.9" x2="334" y2="26.9"/>
+<text class="tick" x="51" y="29.9" text-anchor="end">2x</text>
+<line class="grid" x1="68.9" y1="16" x2="68.9" y2="218"/>
+<text class="tick" x="68.9" y="233" text-anchor="middle">1/64</text>
+<line class="grid" x1="110.1" y1="16" x2="110.1" y2="218"/>
+<text class="tick" x="110.1" y="233" text-anchor="middle">1/32</text>
+<line class="grid" x1="151.3" y1="16" x2="151.3" y2="218"/>
+<text class="tick" x="151.3" y="233" text-anchor="middle">1/16</text>
+<line class="grid" x1="192.5" y1="16" x2="192.5" y2="218"/>
+<text class="tick" x="192.5" y="233" text-anchor="middle">1/8</text>
+<line class="grid" x1="233.8" y1="16" x2="233.8" y2="218"/>
+<text class="tick" x="233.8" y="233" text-anchor="middle">1/4</text>
+<line class="grid" x1="275.0" y1="16" x2="275.0" y2="218"/>
+<text class="tick" x="275.0" y="233" text-anchor="middle">1/2</text>
+<line class="grid" x1="316.2" y1="16" x2="316.2" y2="218"/>
+<text class="tick" x="316.2" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">mean FFN compute c, fraction of dense (log)</text>
+<text class="axlab" x="4" y="9">step speedup</text>
+<path class="line s1" d="M316.2,194.0 L219.3,144.7 L178.1,136.3 L136.9,133.3 L82.5,132.0"/>
+<circle class="dot s1" cx="316.2" cy="194.0" r="3.4"><title>routed FFN (trainable) &mdash; ffn-overhead &mdash; c=1.0000, 0.946x measured</title></circle>
+<circle class="dot s1" cx="219.3" cy="144.7" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.00 &mdash; c=0.1962, 1.180x measured</title></circle>
+<circle class="dot s1" cx="178.1" cy="136.3" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.50 &mdash; c=0.0981, 1.225x measured</title></circle>
+<circle class="dot s1" cx="136.9" cy="133.3" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.75 &mdash; c=0.0490, 1.242x measured</title></circle>
+<circle class="dot s1" cx="82.5" cy="132.0" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.90 &mdash; c=0.0196, 1.249x measured</title></circle>
+<line class="line s2 dashed" x1="58" y1="120.7" x2="334" y2="120.7" stroke-width="1.4" opacity="0.85"/>
+<text class="guidelab" x="331" y="131.2" text-anchor="end">routed, every token null (c=0) &mdash; 1.314x</text>
+<line class="line s3 dashed" x1="58" y1="112.7" x2="334" y2="112.7" stroke-width="1.4" opacity="0.85"/>
+<text class="guidelab" x="331" y="108.7" text-anchor="end">static deletion (c=0, deployment only) &mdash; 1.362x</text>
+<text class="vallab" x="310.2" y="206.0" text-anchor="end">router on, no cut</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s1"></span>routed FFN, f_null sweep</span><span class="lg"><span class="key dash s2"></span>all-null routed (c=0)</span><span class="lg"><span class="key dash s3"></span>static deletion (c=0)</span></div></figure><figure class="panel"><figcaption><span class="tok">27B &middot; 8,192 tokens &middot; checkpointed</span><span class="vd neutral">1.36x &rarr; 1.75x over the sweep</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="wall-clock speedup against mean routed FFN compute, log-log">
+<line class="grid" x1="58" y1="205.2" x2="334" y2="205.2"/>
+<text class="tick" x="51" y="208.2" text-anchor="end">0.9x</text>
+<line class="grid" x1="58" y1="181.7" x2="334" y2="181.7"/>
+<text class="tick" x="51" y="184.7" text-anchor="end">1x</text>
+<line class="grid" x1="58" y1="131.9" x2="334" y2="131.9"/>
+<text class="tick" x="51" y="134.9" text-anchor="end">1.25x</text>
+<line class="grid" x1="58" y1="91.1" x2="334" y2="91.1"/>
+<text class="tick" x="51" y="94.1" text-anchor="end">1.5x</text>
+<line class="grid" x1="58" y1="26.9" x2="334" y2="26.9"/>
+<text class="tick" x="51" y="29.9" text-anchor="end">2x</text>
+<line class="grid" x1="68.9" y1="16" x2="68.9" y2="218"/>
+<text class="tick" x="68.9" y="233" text-anchor="middle">1/64</text>
+<line class="grid" x1="110.1" y1="16" x2="110.1" y2="218"/>
+<text class="tick" x="110.1" y="233" text-anchor="middle">1/32</text>
+<line class="grid" x1="151.3" y1="16" x2="151.3" y2="218"/>
+<text class="tick" x="151.3" y="233" text-anchor="middle">1/16</text>
+<line class="grid" x1="192.5" y1="16" x2="192.5" y2="218"/>
+<text class="tick" x="192.5" y="233" text-anchor="middle">1/8</text>
+<line class="grid" x1="233.8" y1="16" x2="233.8" y2="218"/>
+<text class="tick" x="233.8" y="233" text-anchor="middle">1/4</text>
+<line class="grid" x1="275.0" y1="16" x2="275.0" y2="218"/>
+<text class="tick" x="275.0" y="233" text-anchor="middle">1/2</text>
+<line class="grid" x1="316.2" y1="16" x2="316.2" y2="218"/>
+<text class="tick" x="316.2" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="58" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="58" y1="16" x2="58" y2="218"/>
+<text class="axlab" x="196" y="256" text-anchor="middle">mean FFN compute c, fraction of dense (log)</text>
+<text class="axlab" x="4" y="9">step speedup</text>
+<path class="line s1" d="M316.2,204.2 L219.3,113.0 L178.1,96.2 L136.9,88.2 L82.5,86.3"/>
+<circle class="dot s1" cx="316.2" cy="204.2" r="3.4"><title>routed FFN (trainable) &mdash; ffn-overhead &mdash; c=1.0000, 0.904x measured</title></circle>
+<circle class="dot s1" cx="219.3" cy="113.0" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.00 &mdash; c=0.1962, 1.360x measured</title></circle>
+<circle class="dot s1" cx="178.1" cy="96.2" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.50 &mdash; c=0.0981, 1.467x measured</title></circle>
+<circle class="dot s1" cx="136.9" cy="88.2" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.75 &mdash; c=0.0490, 1.520x measured</title></circle>
+<circle class="dot s1" cx="82.5" cy="86.3" r="3.4"><title>routed FFN (trainable) &mdash; ffn-fnull0.90 &mdash; c=0.0196, 1.533x measured</title></circle>
+<line class="line s2 dashed" x1="58" y1="57.0" x2="334" y2="57.0" stroke-width="1.4" opacity="0.85"/>
+<text class="guidelab" x="331" y="67.5" text-anchor="end">routed, every token null (c=0) &mdash; 1.748x</text>
+<line class="line s3 dashed" x1="58" y1="42.2" x2="334" y2="42.2" stroke-width="1.4" opacity="0.85"/>
+<text class="guidelab" x="331" y="38.2" text-anchor="end">static deletion (c=0, deployment only) &mdash; 1.867x</text>
+<text class="vallab" x="310.2" y="216.2" text-anchor="end">router on, no cut</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key s1"></span>routed FFN, f_null sweep</span><span class="lg"><span class="key dash s2"></span>all-null routed (c=0)</span><span class="lg"><span class="key dash s3"></span>static deletion (c=0)</span></div></figure></div>
+<p>The gap between the two rules is the whole argument for static deletion: identical FLOPs,
+3.6% more speed at 4B and
+6.8% more at 27B, because
+deletion carries no per-layer router prologue, no dispatch histogram and no host synchronisation.</p>
+</section>
+
+<section><h2>What the router actually costs: kernel launches</h2>
+<p>Measured launch count for one training step. The routed FFN issues up to
+<b>2.13&times;</b> as many kernels as dense at 4B and <b>2.28&times;</b> at 27B, for a
+fraction of the work. Static deletion sits <em>below</em> dense
+(6,132 against 6,920 at 4B). That difference
+&mdash; not FLOPs &mdash; is what separates the best trainable arm from the best deployment arm once
+the levers are stacked.</p>
+<div class="grid2"><figure class="panel"><figcaption><span class="tok">4B &middot; 16,384 tokens</span><span class="vd bad">up to 2.13x dense</span></figcaption><svg viewBox="0 0 350 200" role="img" aria-label="kernel launches per step">
+<rect class="bar sn" x="32.2" y="105.4" width="39.7" height="54.6" rx="2"><title>dense: 6,920 launches per step</title></rect>
+<text class="vallab" x="52.0" y="100.4" text-anchor="middle">6,920</text>
+<text class="tick" x="52.0" y="173" text-anchor="middle">dense</text>
+<rect class="bar s2" x="96.2" y="74.9" width="39.7" height="85.1" rx="2"><title>router on: 10,789 launches per step</title></rect>
+<text class="vallab" x="116.0" y="69.9" text-anchor="middle">10,789</text>
+<text class="tick" x="116.0" y="173" text-anchor="middle">router on</text>
+<text class="tick" x="116.0" y="185" text-anchor="middle">1.56&times;</text>
+<rect class="bar s1" x="160.2" y="43.9" width="39.7" height="116.1" rx="2"><title>f_null=0: 14,708 launches per step</title></rect>
+<text class="vallab" x="180.0" y="38.9" text-anchor="middle">14,708</text>
+<text class="tick" x="180.0" y="173" text-anchor="middle">f_null=0</text>
+<text class="tick" x="180.0" y="185" text-anchor="middle">2.13&times;</text>
+<rect class="bar s1" x="224.2" y="90.9" width="39.7" height="69.1" rx="2"><title>f_null=1: 8,752 launches per step</title></rect>
+<text class="vallab" x="244.0" y="85.9" text-anchor="middle">8,752</text>
+<text class="tick" x="244.0" y="173" text-anchor="middle">f_null=1</text>
+<text class="tick" x="244.0" y="185" text-anchor="middle">1.26&times;</text>
+<rect class="bar s3" x="288.2" y="111.6" width="39.7" height="48.4" rx="2"><title>static: 6,132 launches per step</title></rect>
+<text class="vallab" x="308.0" y="106.6" text-anchor="middle">6,132</text>
+<text class="tick" x="308.0" y="173" text-anchor="middle">static</text>
+<text class="tick" x="308.0" y="185" text-anchor="middle">0.89&times;</text>
+<line class="axis" x1="20" y1="160" x2="340" y2="160"/>
+<text class="axlab" x="10" y="18">kernel launches per training step</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key sn"></span>dense baseline</span><span class="lg"><span class="key s2"></span>router on, no FLOPs cut</span><span class="lg"><span class="key s1"></span>routed FFN (trainable)</span><span class="lg"><span class="key s3"></span>static deletion (deployment only)</span></div></figure><figure class="panel"><figcaption><span class="tok">27B &middot; 8,192 tokens</span><span class="vd bad">up to 2.28x dense</span></figcaption><svg viewBox="0 0 350 200" role="img" aria-label="kernel launches per step">
+<rect class="bar sn" x="32.2" y="109.2" width="39.7" height="50.8" rx="2"><title>dense: 16,709 launches per step</title></rect>
+<text class="vallab" x="52.0" y="104.2" text-anchor="middle">16,709</text>
+<text class="tick" x="52.0" y="173" text-anchor="middle">dense</text>
+<rect class="bar s2" x="96.2" y="81.4" width="39.7" height="78.6" rx="2"><title>router on: 25,856 launches per step</title></rect>
+<text class="vallab" x="116.0" y="76.4" text-anchor="middle">25,856</text>
+<text class="tick" x="116.0" y="173" text-anchor="middle">router on</text>
+<text class="tick" x="116.0" y="185" text-anchor="middle">1.55&times;</text>
+<rect class="bar s1" x="160.2" y="43.9" width="39.7" height="116.1" rx="2"><title>f_null=0: 38,169 launches per step</title></rect>
+<text class="vallab" x="180.0" y="38.9" text-anchor="middle">38,169</text>
+<text class="tick" x="180.0" y="173" text-anchor="middle">f_null=0</text>
+<text class="tick" x="180.0" y="185" text-anchor="middle">2.28&times;</text>
+<rect class="bar s1" x="224.2" y="89.5" width="39.7" height="70.5" rx="2"><title>f_null=1: 23,185 launches per step</title></rect>
+<text class="vallab" x="244.0" y="84.5" text-anchor="middle">23,185</text>
+<text class="tick" x="244.0" y="173" text-anchor="middle">f_null=1</text>
+<text class="tick" x="244.0" y="185" text-anchor="middle">1.39&times;</text>
+<rect class="bar s3" x="288.2" y="115.3" width="39.7" height="44.7" rx="2"><title>static: 14,687 launches per step</title></rect>
+<text class="vallab" x="308.0" y="110.3" text-anchor="middle">14,687</text>
+<text class="tick" x="308.0" y="173" text-anchor="middle">static</text>
+<text class="tick" x="308.0" y="185" text-anchor="middle">0.88&times;</text>
+<line class="axis" x1="20" y1="160" x2="340" y2="160"/>
+<text class="axlab" x="10" y="18">kernel launches per training step</text>
+</svg><div class="legend panel-legend"><span class="lg"><span class="key sn"></span>dense baseline</span><span class="lg"><span class="key s2"></span>router on, no FLOPs cut</span><span class="lg"><span class="key s1"></span>routed FFN (trainable)</span><span class="lg"><span class="key s3"></span>static deletion (deployment only)</span></div></figure></div>
+<div class="callout">On the full stack this shows up directly: at 4B/16k the best trainable
+configuration measures <b>6.46x</b> and the same operating point with the FFN layers deleted instead
+of routed measures <b>8.39x</b>. Where that ends, and why GDN rather than the FFN is what stops it,
+is the subject of the companion page.</div>
+</section>
+
+<!--KERNEL-SECTIONS--><section><h2>Does compute convert to time?</h2><p>Three token counts, 4B geometry. Where a curve tracks the grey slope-1 guide, FLOPs are converting to time; where it flattens onto a plateau, they are not. The dashed rule is the <b>activation floor</b> &mdash; an elementwise pass moving the same activations with no FFN compute at all.</p><div class="legend"><span class="lg"><span class="key s1"></span>ideal narrow FFN</span><span class="lg"><span class="key s2"></span>routed, one rung</span><span class="lg"><span class="key s3"></span>routed, mixed rungs</span></div><div class="grid3"><figure class="panel"><figcaption><span class="tok">2,048 tokens</span><span class="vd bad">no relationship</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">0.1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">10</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="125.5" y1="16" x2="125.5" y2="218"/>
+<text class="tick" x="125.5" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="195.0" y1="16" x2="195.0" y2="218"/>
+<text class="tick" x="195.0" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="264.5" y1="16" x2="264.5" y2="218"/>
+<text class="tick" x="264.5" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<line class="guide" x1="121.2" y1="218.0" x2="334.0" y2="101.0"/>
+<text class="guidelab" x="331.0" y="114.0" text-anchor="end">proportional</text>
+<path class="line s1" d="M121.2,109.2 L163.1,110.0 L208.5,114.2 L229.4,116.6 L250.3,116.7 L271.2,116.5 L292.2,120.7 L313.1,119.6 L334.0,101.0"/>
+<circle class="dot s1" cx="121.2" cy="109.2" r="3.4"><title>ideal narrow FFN — c=0.00087, 1.196 ms</title></circle>
+<circle class="dot s1" cx="163.1" cy="110.0" r="3.4"><title>ideal narrow FFN — c=0.00347, 1.173 ms</title></circle>
+<circle class="dot s1" cx="208.5" cy="114.2" r="3.4"><title>ideal narrow FFN — c=0.01562, 1.065 ms</title></circle>
+<circle class="dot s1" cx="229.4" cy="116.6" r="3.4"><title>ideal narrow FFN — c=0.03125, 1.010 ms</title></circle>
+<circle class="dot s1" cx="250.3" cy="116.7" r="3.4"><title>ideal narrow FFN — c=0.06250, 1.007 ms</title></circle>
+<circle class="dot s1" cx="271.2" cy="116.5" r="3.4"><title>ideal narrow FFN — c=0.12500, 1.011 ms</title></circle>
+<circle class="dot s1" cx="292.2" cy="120.7" r="3.4"><title>ideal narrow FFN — c=0.25000, 0.918 ms</title></circle>
+<circle class="dot s1" cx="313.1" cy="119.6" r="3.4"><title>ideal narrow FFN — c=0.50000, 0.943 ms</title></circle>
+<circle class="dot s1" cx="334.0" cy="101.0" r="3.4"><title>ideal narrow FFN — c=1.00000, 1.442 ms</title></circle>
+<path class="line s2" d="M121.2,96.5 L163.1,99.7 L208.5,104.1 L229.4,104.3 L250.3,104.5 L271.2,105.2 L292.2,109.2 L313.1,108.2 L334.0,89.1"/>
+<circle class="dot s2" cx="121.2" cy="96.5" r="3.4"><title>routed, one rung — c=0.00087, 1.597 ms</title></circle>
+<circle class="dot s2" cx="163.1" cy="99.7" r="3.4"><title>routed, one rung — c=0.00347, 1.482 ms</title></circle>
+<circle class="dot s2" cx="208.5" cy="104.1" r="3.4"><title>routed, one rung — c=0.01562, 1.343 ms</title></circle>
+<circle class="dot s2" cx="229.4" cy="104.3" r="3.4"><title>routed, one rung — c=0.03125, 1.337 ms</title></circle>
+<circle class="dot s2" cx="250.3" cy="104.5" r="3.4"><title>routed, one rung — c=0.06250, 1.330 ms</title></circle>
+<circle class="dot s2" cx="271.2" cy="105.2" r="3.4"><title>routed, one rung — c=0.12500, 1.309 ms</title></circle>
+<circle class="dot s2" cx="292.2" cy="109.2" r="3.4"><title>routed, one rung — c=0.25000, 1.195 ms</title></circle>
+<circle class="dot s2" cx="313.1" cy="108.2" r="3.4"><title>routed, one rung — c=0.50000, 1.222 ms</title></circle>
+<circle class="dot s2" cx="334.0" cy="89.1" r="3.4"><title>routed, one rung — c=1.00000, 1.889 ms</title></circle>
+<path class="line s3" d="M271.2,82.2 L292.2,83.5 L313.1,83.8 L334.0,89.0"/>
+<circle class="dot s3" cx="271.2" cy="82.2" r="3.4"><title>routed, mixed — c=0.12500, 2.213 ms</title></circle>
+<circle class="dot s3" cx="292.2" cy="83.5" r="3.4"><title>routed, mixed — c=0.25000, 2.148 ms</title></circle>
+<circle class="dot s3" cx="313.1" cy="83.8" r="3.4"><title>routed, mixed — c=0.50000, 2.130 ms</title></circle>
+<circle class="dot s3" cx="334.0" cy="89.0" r="3.4"><title>routed, mixed — c=1.00000, 1.895 ms</title></circle>
+</svg></figure><figure class="panel"><figcaption><span class="tok">8,192 tokens</span><span class="vd ">linear where compute dominates</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">0.01</text>
+<line class="grid" x1="56" y1="150.7" x2="334" y2="150.7"/>
+<text class="tick" x="49" y="153.7" text-anchor="end">0.1</text>
+<line class="grid" x1="56" y1="83.3" x2="334" y2="83.3"/>
+<text class="tick" x="49" y="86.3" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">10</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="125.5" y1="16" x2="125.5" y2="218"/>
+<text class="tick" x="125.5" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="195.0" y1="16" x2="195.0" y2="218"/>
+<text class="tick" x="195.0" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="264.5" y1="16" x2="264.5" y2="218"/>
+<text class="tick" x="264.5" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<line class="actfloor" x1="56" y1="151.7" x2="334" y2="151.7"/>
+<text class="guidelab" x="60" y="147.7">activation floor</text>
+<line class="guide" x1="124.8" y1="218.0" x2="334.0" y2="32.3"/>
+<text class="guidelab" x="331.0" y="45.3" text-anchor="end">proportional</text>
+<path class="line s1" d="M124.8,77.1 L145.7,77.6 L166.6,80.8 L187.5,81.8 L208.5,82.0 L229.4,83.7 L250.3,82.3 L271.2,79.4 L292.2,67.9 L313.1,51.1 L334.0,32.3"/>
+<circle class="dot s1" cx="124.8" cy="77.1" r="3.4"><title>ideal narrow FFN — c=0.00098, 1.238 ms</title></circle>
+<circle class="dot s1" cx="145.7" cy="77.6" r="3.4"><title>ideal narrow FFN — c=0.00195, 1.219 ms</title></circle>
+<circle class="dot s1" cx="166.6" cy="80.8" r="3.4"><title>ideal narrow FFN — c=0.00391, 1.089 ms</title></circle>
+<circle class="dot s1" cx="187.5" cy="81.8" r="3.4"><title>ideal narrow FFN — c=0.00781, 1.054 ms</title></circle>
+<circle class="dot s1" cx="208.5" cy="82.0" r="3.4"><title>ideal narrow FFN — c=0.01562, 1.048 ms</title></circle>
+<circle class="dot s1" cx="229.4" cy="83.7" r="3.4"><title>ideal narrow FFN — c=0.03125, 0.988 ms</title></circle>
+<circle class="dot s1" cx="250.3" cy="82.3" r="3.4"><title>ideal narrow FFN — c=0.06250, 1.034 ms</title></circle>
+<circle class="dot s1" cx="271.2" cy="79.4" r="3.4"><title>ideal narrow FFN — c=0.12500, 1.144 ms</title></circle>
+<circle class="dot s1" cx="292.2" cy="67.9" r="3.4"><title>ideal narrow FFN — c=0.25000, 1.694 ms</title></circle>
+<circle class="dot s1" cx="313.1" cy="51.1" r="3.4"><title>ideal narrow FFN — c=0.50000, 3.015 ms</title></circle>
+<circle class="dot s1" cx="334.0" cy="32.3" r="3.4"><title>ideal narrow FFN — c=1.00000, 5.720 ms</title></circle>
+<path class="line s2" d="M124.8,69.3 L145.7,69.4 L166.6,73.1 L187.5,74.0 L208.5,74.1 L229.4,75.8 L250.3,74.5 L271.2,72.6 L292.2,63.1 L313.1,47.3 L334.0,28.8"/>
+<circle class="dot s2" cx="124.8" cy="69.3" r="3.4"><title>routed, one rung — c=0.00098, 1.616 ms</title></circle>
+<circle class="dot s2" cx="145.7" cy="69.4" r="3.4"><title>routed, one rung — c=0.00195, 1.611 ms</title></circle>
+<circle class="dot s2" cx="166.6" cy="73.1" r="3.4"><title>routed, one rung — c=0.00391, 1.421 ms</title></circle>
+<circle class="dot s2" cx="187.5" cy="74.0" r="3.4"><title>routed, one rung — c=0.00781, 1.376 ms</title></circle>
+<circle class="dot s2" cx="208.5" cy="74.1" r="3.4"><title>routed, one rung — c=0.01562, 1.372 ms</title></circle>
+<circle class="dot s2" cx="229.4" cy="75.8" r="3.4"><title>routed, one rung — c=0.03125, 1.292 ms</title></circle>
+<circle class="dot s2" cx="250.3" cy="74.5" r="3.4"><title>routed, one rung — c=0.06250, 1.354 ms</title></circle>
+<circle class="dot s2" cx="271.2" cy="72.6" r="3.4"><title>routed, one rung — c=0.12500, 1.446 ms</title></circle>
+<circle class="dot s2" cx="292.2" cy="63.1" r="3.4"><title>routed, one rung — c=0.25000, 1.995 ms</title></circle>
+<circle class="dot s2" cx="313.1" cy="47.3" r="3.4"><title>routed, one rung — c=0.50000, 3.434 ms</title></circle>
+<circle class="dot s2" cx="334.0" cy="28.8" r="3.4"><title>routed, one rung — c=1.00000, 6.449 ms</title></circle>
+<path class="line s3" d="M124.8,53.6 L145.7,53.4 L166.6,53.5 L187.5,59.0 L208.5,58.6 L229.4,59.5 L250.3,58.5 L271.2,58.3 L292.2,52.7 L313.1,43.4 L334.0,27.7"/>
+<circle class="dot s3" cx="124.8" cy="53.6" r="3.4"><title>routed, mixed — c=0.00098, 2.768 ms</title></circle>
+<circle class="dot s3" cx="145.7" cy="53.4" r="3.4"><title>routed, mixed — c=0.00195, 2.783 ms</title></circle>
+<circle class="dot s3" cx="166.6" cy="53.5" r="3.4"><title>routed, mixed — c=0.00391, 2.770 ms</title></circle>
+<circle class="dot s3" cx="187.5" cy="59.0" r="3.4"><title>routed, mixed — c=0.00781, 2.302 ms</title></circle>
+<circle class="dot s3" cx="208.5" cy="58.6" r="3.4"><title>routed, mixed — c=0.01562, 2.327 ms</title></circle>
+<circle class="dot s3" cx="229.4" cy="59.5" r="3.4"><title>routed, mixed — c=0.03125, 2.258 ms</title></circle>
+<circle class="dot s3" cx="250.3" cy="58.5" r="3.4"><title>routed, mixed — c=0.06250, 2.339 ms</title></circle>
+<circle class="dot s3" cx="271.2" cy="58.3" r="3.4"><title>routed, mixed — c=0.12500, 2.354 ms</title></circle>
+<circle class="dot s3" cx="292.2" cy="52.7" r="3.4"><title>routed, mixed — c=0.25000, 2.854 ms</title></circle>
+<circle class="dot s3" cx="313.1" cy="43.4" r="3.4"><title>routed, mixed — c=0.50000, 3.917 ms</title></circle>
+<circle class="dot s3" cx="334.0" cy="27.7" r="3.4"><title>routed, mixed — c=1.00000, 6.712 ms</title></circle>
+</svg></figure><figure class="panel"><figcaption><span class="tok">32,768 tokens</span><span class="vd ">linear where compute dominates</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">0.1</text>
+<line class="grid" x1="56" y1="150.7" x2="334" y2="150.7"/>
+<text class="tick" x="49" y="153.7" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="83.3" x2="334" y2="83.3"/>
+<text class="tick" x="49" y="86.3" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="125.5" y1="16" x2="125.5" y2="218"/>
+<text class="tick" x="125.5" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="195.0" y1="16" x2="195.0" y2="218"/>
+<text class="tick" x="195.0" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="264.5" y1="16" x2="264.5" y2="218"/>
+<text class="tick" x="264.5" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<line class="actfloor" x1="56" y1="187.4" x2="334" y2="187.4"/>
+<text class="guidelab" x="60" y="183.4">activation floor</text>
+<line class="guide" x1="124.8" y1="218.0" x2="334.0" y2="59.4"/>
+<text class="guidelab" x="331.0" y="72.4" text-anchor="end">proportional</text>
+<path class="line s1" d="M124.8,145.9 L145.7,145.9 L166.6,145.8 L187.5,145.4 L208.5,144.1 L229.4,140.2 L250.3,130.6 L271.2,116.9 L292.2,97.7 L313.1,79.2 L334.0,59.4"/>
+<circle class="dot s1" cx="124.8" cy="145.9" r="3.4"><title>ideal narrow FFN — c=0.00098, 1.179 ms</title></circle>
+<circle class="dot s1" cx="145.7" cy="145.9" r="3.4"><title>ideal narrow FFN — c=0.00195, 1.176 ms</title></circle>
+<circle class="dot s1" cx="166.6" cy="145.8" r="3.4"><title>ideal narrow FFN — c=0.00391, 1.180 ms</title></circle>
+<circle class="dot s1" cx="187.5" cy="145.4" r="3.4"><title>ideal narrow FFN — c=0.00781, 1.197 ms</title></circle>
+<circle class="dot s1" cx="208.5" cy="144.1" r="3.4"><title>ideal narrow FFN — c=0.01562, 1.251 ms</title></circle>
+<circle class="dot s1" cx="229.4" cy="140.2" r="3.4"><title>ideal narrow FFN — c=0.03125, 1.432 ms</title></circle>
+<circle class="dot s1" cx="250.3" cy="130.6" r="3.4"><title>ideal narrow FFN — c=0.06250, 1.987 ms</title></circle>
+<circle class="dot s1" cx="271.2" cy="116.9" r="3.4"><title>ideal narrow FFN — c=0.12500, 3.178 ms</title></circle>
+<circle class="dot s1" cx="292.2" cy="97.7" r="3.4"><title>ideal narrow FFN — c=0.25000, 6.122 ms</title></circle>
+<circle class="dot s1" cx="313.1" cy="79.2" r="3.4"><title>ideal narrow FFN — c=0.50000, 11.533 ms</title></circle>
+<circle class="dot s1" cx="334.0" cy="59.4" r="3.4"><title>ideal narrow FFN — c=1.00000, 22.683 ms</title></circle>
+<path class="line s2" d="M124.8,125.5 L145.7,125.5 L166.6,127.0 L187.5,126.9 L208.5,126.6 L229.4,126.0 L250.3,121.6 L271.2,108.8 L292.2,92.4 L313.1,73.5 L334.0,54.7"/>
+<circle class="dot s2" cx="124.8" cy="125.5" r="3.4"><title>routed, one rung — c=0.00098, 2.366 ms</title></circle>
+<circle class="dot s2" cx="145.7" cy="125.5" r="3.4"><title>routed, one rung — c=0.00195, 2.361 ms</title></circle>
+<circle class="dot s2" cx="166.6" cy="127.0" r="3.4"><title>routed, one rung — c=0.00391, 2.246 ms</title></circle>
+<circle class="dot s2" cx="187.5" cy="126.9" r="3.4"><title>routed, one rung — c=0.00781, 2.258 ms</title></circle>
+<circle class="dot s2" cx="208.5" cy="126.6" r="3.4"><title>routed, one rung — c=0.01562, 2.275 ms</title></circle>
+<circle class="dot s2" cx="229.4" cy="126.0" r="3.4"><title>routed, one rung — c=0.03125, 2.323 ms</title></circle>
+<circle class="dot s2" cx="250.3" cy="121.6" r="3.4"><title>routed, one rung — c=0.06250, 2.701 ms</title></circle>
+<circle class="dot s2" cx="271.2" cy="108.8" r="3.4"><title>routed, one rung — c=0.12500, 4.182 ms</title></circle>
+<circle class="dot s2" cx="292.2" cy="92.4" r="3.4"><title>routed, one rung — c=0.25000, 7.340 ms</title></circle>
+<circle class="dot s2" cx="313.1" cy="73.5" r="3.4"><title>routed, one rung — c=0.50000, 13.983 ms</title></circle>
+<circle class="dot s2" cx="334.0" cy="54.7" r="3.4"><title>routed, one rung — c=1.00000, 26.649 ms</title></circle>
+<path class="line s3" d="M124.8,110.8 L145.7,114.8 L166.6,116.7 L187.5,118.2 L208.5,117.4 L229.4,115.5 L250.3,111.0 L271.2,101.8 L292.2,89.5 L313.1,72.6 L334.0,54.3"/>
+<circle class="dot s3" cx="124.8" cy="110.8" r="3.4"><title>routed, mixed — c=0.00098, 3.908 ms</title></circle>
+<circle class="dot s3" cx="145.7" cy="114.8" r="3.4"><title>routed, mixed — c=0.00195, 3.404 ms</title></circle>
+<circle class="dot s3" cx="166.6" cy="116.7" r="3.4"><title>routed, mixed — c=0.00391, 3.197 ms</title></circle>
+<circle class="dot s3" cx="187.5" cy="118.2" r="3.4"><title>routed, mixed — c=0.00781, 3.031 ms</title></circle>
+<circle class="dot s3" cx="208.5" cy="117.4" r="3.4"><title>routed, mixed — c=0.01562, 3.123 ms</title></circle>
+<circle class="dot s3" cx="229.4" cy="115.5" r="3.4"><title>routed, mixed — c=0.03125, 3.330 ms</title></circle>
+<circle class="dot s3" cx="250.3" cy="111.0" r="3.4"><title>routed, mixed — c=0.06250, 3.884 ms</title></circle>
+<circle class="dot s3" cx="271.2" cy="101.8" r="3.4"><title>routed, mixed — c=0.12500, 5.314 ms</title></circle>
+<circle class="dot s3" cx="292.2" cy="89.5" r="3.4"><title>routed, mixed — c=0.25000, 8.112 ms</title></circle>
+<circle class="dot s3" cx="313.1" cy="72.6" r="3.4"><title>routed, mixed — c=0.50000, 14.447 ms</title></circle>
+<circle class="dot s3" cx="334.0" cy="54.3" r="3.4"><title>routed, mixed — c=1.00000, 26.999 ms</title></circle>
+</svg></figure></div></section><section><h2>Null rungs, narrow rungs, and a standard MoE</h2><p>Same mean compute <span class='mono'>c</span> on every curve &mdash; only <em>how</em> the budget is spent differs. <b>narrow-only</b> reaches a low budget by shrinking rungs; <b>full-or-null</b> gives a few tokens the full FFN and the rest nothing; <b>ladder + null</b> keeps small mid rungs; <b>standard MoE</b> splits the same hidden units into E experts and lights top-k of them, which is what every production sparse model does. A narrow rung still reads <span class='mono'>x</span> and writes a full-width output, so it converges on the plateau; a null token skips all of it. A MoE has a third problem on top of the plateau: each of the k live experts reads the token's <span class='mono'>d_model</span> vector separately, so <b>its floor is set by k, not by c</b> &mdash; which is why top-2 runs 4&ndash;5&times; under top-8 at the same budget once both are past the plateau knee. Only one MoE point anywhere on these four panels gets under the null curve: top-2 at 0.8B, where the whole FFN is 9.4% of a step and the prize is 0.35&nbsp;ms.</p><div class="legend"><span class="lg"><span class="key s1"></span>narrow-only</span><span class="lg"><span class="key s2"></span>full-or-null</span><span class="lg"><span class="key s3"></span>ladder + null</span><span class="lg"><span class="key sq s5"></span>standard MoE, top-8 (the shipped k)</span><span class="lg"><span class="key dash s5"></span>standard MoE, top-2</span><span class="lg"><span class="key sq hollow s5"></span>shipped Qwen3.5 expert geometry</span></div><div class="grid3"><figure class="panel"><figcaption><span class="tok">0.8B</span><span class="vd">null vs MoE 2.3&times;</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">0.1</text>
+<line class="grid" x1="56" y1="150.7" x2="334" y2="150.7"/>
+<text class="tick" x="49" y="153.7" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="83.3" x2="334" y2="83.3"/>
+<text class="tick" x="49" y="86.3" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="111.6" y1="16" x2="111.6" y2="218"/>
+<text class="tick" x="111.6" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="167.2" y1="16" x2="167.2" y2="218"/>
+<text class="tick" x="167.2" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="222.8" y1="16" x2="222.8" y2="218"/>
+<text class="tick" x="222.8" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="tick" x="278.4" y="233" text-anchor="middle">1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">10</text>
+<line class="capline" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="guidelab" x="281.4" y="24">dense</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M278.4,101.5 L261.6,113.3 L244.9,118.3 L228.2,118.9 L211.1,118.2 L194.5,118.0 L179.5,115.2 L162.9,113.0 L146.1,112.0 L139.7,110.1 L135.8,110.5"/>
+<circle class="dot s1" cx="278.4" cy="101.5" r="3.4"><title>narrow-only — c=1.00000, 5.374 ms</title></circle>
+<circle class="dot s1" cx="261.6" cy="113.3" r="3.4"><title>narrow-only — c=0.49944, 3.584 ms</title></circle>
+<circle class="dot s1" cx="244.9" cy="118.3" r="3.4"><title>narrow-only — c=0.25000, 3.027 ms</title></circle>
+<circle class="dot s1" cx="228.2" cy="118.9" r="3.4"><title>narrow-only — c=0.12528, 2.959 ms</title></circle>
+<circle class="dot s1" cx="211.1" cy="118.2" r="3.4"><title>narrow-only — c=0.06152, 3.034 ms</title></circle>
+<circle class="dot s1" cx="194.5" cy="118.0" r="3.4"><title>narrow-only — c=0.03101, 3.056 ms</title></circle>
+<circle class="dot s1" cx="179.5" cy="115.2" r="3.4"><title>narrow-only — c=0.01667, 3.366 ms</title></circle>
+<circle class="dot s1" cx="162.9" cy="113.0" r="3.4"><title>narrow-only — c=0.00835, 3.623 ms</title></circle>
+<circle class="dot s1" cx="146.1" cy="112.0" r="3.4"><title>narrow-only — c=0.00418, 3.748 ms</title></circle>
+<circle class="dot s1" cx="139.7" cy="110.1" r="3.4"><title>narrow-only — c=0.00321, 4.006 ms</title></circle>
+<circle class="dot s1" cx="135.8" cy="110.5" r="3.4"><title>narrow-only — c=0.00272, 3.948 ms</title></circle>
+<path class="line s2" d="M278.4,101.0 L261.7,118.3 L244.9,135.4 L228.2,144.1 L211.5,145.6 L194.7,146.0 L178.0,144.5 L161.2,143.4 L144.5,142.1 L127.8,141.7 L111.0,142.0"/>
+<circle class="dot s2" cx="278.4" cy="101.0" r="3.4"><title>full-or-null — c=1.00000, 5.457 ms</title></circle>
+<circle class="dot s2" cx="261.7" cy="118.3" r="3.4"><title>full-or-null — c=0.50000, 3.027 ms</title></circle>
+<circle class="dot s2" cx="244.9" cy="135.4" r="3.4"><title>full-or-null — c=0.25000, 1.683 ms</title></circle>
+<circle class="dot s2" cx="228.2" cy="144.1" r="3.4"><title>full-or-null — c=0.12500, 1.250 ms</title></circle>
+<circle class="dot s2" cx="211.5" cy="145.6" r="3.4"><title>full-or-null — c=0.06250, 1.190 ms</title></circle>
+<circle class="dot s2" cx="194.7" cy="146.0" r="3.4"><title>full-or-null — c=0.03125, 1.171 ms</title></circle>
+<circle class="dot s2" cx="178.0" cy="144.5" r="3.4"><title>full-or-null — c=0.01562, 1.233 ms</title></circle>
+<circle class="dot s2" cx="161.2" cy="143.4" r="3.4"><title>full-or-null — c=0.00781, 1.281 ms</title></circle>
+<circle class="dot s2" cx="144.5" cy="142.1" r="3.4"><title>full-or-null — c=0.00391, 1.341 ms</title></circle>
+<circle class="dot s2" cx="127.8" cy="141.7" r="3.4"><title>full-or-null — c=0.00195, 1.359 ms</title></circle>
+<circle class="dot s2" cx="111.0" cy="142.0" r="3.4"><title>full-or-null — c=0.00098, 1.346 ms</title></circle>
+<path class="line s3" d="M278.4,100.6 L261.7,113.3 L244.9,118.3 L228.2,119.1 L211.5,118.4 L194.7,118.3 L178.0,118.3 L161.3,117.1 L144.5,114.0 L127.6,115.3 L111.2,115.7"/>
+<circle class="dot s3" cx="278.4" cy="100.6" r="3.4"><title>ladder + null — c=1.00000, 5.547 ms</title></circle>
+<circle class="dot s3" cx="261.7" cy="113.3" r="3.4"><title>ladder + null — c=0.49999, 3.595 ms</title></circle>
+<circle class="dot s3" cx="244.9" cy="118.3" r="3.4"><title>ladder + null — c=0.24999, 3.029 ms</title></circle>
+<circle class="dot s3" cx="228.2" cy="119.1" r="3.4"><title>ladder + null — c=0.12501, 2.944 ms</title></circle>
+<circle class="dot s3" cx="211.5" cy="118.4" r="3.4"><title>ladder + null — c=0.06251, 3.012 ms</title></circle>
+<circle class="dot s3" cx="194.7" cy="118.3" r="3.4"><title>ladder + null — c=0.03124, 3.023 ms</title></circle>
+<circle class="dot s3" cx="178.0" cy="118.3" r="3.4"><title>ladder + null — c=0.01562, 3.025 ms</title></circle>
+<circle class="dot s3" cx="161.3" cy="117.1" r="3.4"><title>ladder + null — c=0.00783, 3.153 ms</title></circle>
+<circle class="dot s3" cx="144.5" cy="114.0" r="3.4"><title>ladder + null — c=0.00391, 3.504 ms</title></circle>
+<circle class="dot s3" cx="127.6" cy="115.3" r="3.4"><title>ladder + null — c=0.00194, 3.350 ms</title></circle>
+<circle class="dot s3" cx="111.2" cy="115.7" r="3.4"><title>ladder + null — c=0.00099, 3.301 ms</title></circle>
+<path class="line s5" d="M131.0,106.9 L131.0,106.9 L147.7,105.3 L164.5,108.7 L178.0,102.2 L194.7,110.4 L211.5,109.5 L228.2,121.3 L244.9,119.8 L261.7,114.6 L278.4,102.9"/>
+<rect class="dot s5" x="128.0" y="103.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00223, 4.474 ms (with dispatch: 17.186 ms)</title></rect>
+<rect class="dot s5" x="128.0" y="103.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00223, 4.468 ms (with dispatch: 17.173 ms)</title></rect>
+<rect class="dot s5" x="144.7" y="102.3" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00446, 4.725 ms (with dispatch: 16.202 ms)</title></rect>
+<rect class="dot s5" x="161.5" y="105.7" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00893, 4.195 ms (with dispatch: 15.110 ms)</title></rect>
+<rect class="dot s5" x="175.0" y="99.2" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.01562, 5.243 ms (with dispatch: 15.920 ms)</title></rect>
+<rect class="dot s5" x="191.7" y="107.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.03125, 3.969 ms (with dispatch: 14.496 ms)</title></rect>
+<rect class="dot s5" x="208.5" y="106.5" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.06250, 4.090 ms (with dispatch: 14.319 ms)</title></rect>
+<rect class="dot s5" x="225.2" y="118.3" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.12500, 2.729 ms (with dispatch: 12.931 ms)</title></rect>
+<rect class="dot s5" x="241.9" y="116.8" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.25000, 2.872 ms (with dispatch: 13.134 ms)</title></rect>
+<rect class="dot s5" x="258.7" y="111.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.50000, 3.434 ms (with dispatch: 13.862 ms)</title></rect>
+<rect class="dot s5" x="275.4" y="99.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=1.00000, 5.121 ms (with dispatch: 15.532 ms)</title></rect>
+<path class="line s5 dashed" d="M114.3,133.0 L131.0,136.1 L144.5,134.5 L161.2,146.8 L178.0,146.3 L194.7,156.5 L211.5,155.2 L228.2,150.7 L244.9,140.8 L261.7,126.9 L278.4,109.8"/>
+<rect class="dot s5 dashed" x="111.3" y="130.0" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00112, 1.829 ms (with dispatch: 6.750 ms)</title></rect>
+<rect class="dot s5 dashed" x="128.0" y="133.1" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00223, 1.648 ms (with dispatch: 5.978 ms)</title></rect>
+<rect class="dot s5 dashed" x="141.5" y="131.5" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00391, 1.739 ms (with dispatch: 5.763 ms)</title></rect>
+<rect class="dot s5 dashed" x="158.2" y="143.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00781, 1.141 ms (with dispatch: 4.806 ms)</title></rect>
+<rect class="dot s5 dashed" x="175.0" y="143.3" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.01562, 1.161 ms (with dispatch: 4.604 ms)</title></rect>
+<rect class="dot s5 dashed" x="191.7" y="153.5" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.03125, 0.821 ms (with dispatch: 4.208 ms)</title></rect>
+<rect class="dot s5 dashed" x="208.5" y="152.2" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.06250, 0.856 ms (with dispatch: 4.256 ms)</title></rect>
+<rect class="dot s5 dashed" x="225.2" y="147.7" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.12500, 0.998 ms (with dispatch: 4.382 ms)</title></rect>
+<rect class="dot s5 dashed" x="241.9" y="137.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.25000, 1.401 ms (with dispatch: 4.815 ms)</title></rect>
+<rect class="dot s5 dashed" x="258.7" y="123.9" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.50000, 2.256 ms (with dispatch: 5.740 ms)</title></rect>
+<rect class="dot s5 dashed" x="275.4" y="106.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=1.00000, 4.039 ms (with dispatch: 7.440 ms)</title></rect>
+<rect class="dot hollow s5" x="280.5" y="90.0" width="8" height="8" rx="1"><title>Qwen3.5-35B-A3B geometry — 256x512, 9 live — c=1.286, 6.954 ms (with dispatch: 18.549 ms)</title></rect>
+<rect class="dot hollow s5" x="297.2" y="73.5" width="8" height="8" rx="1"><title>Qwen3.5-122B-A10B geometry — 256x1024, 9 live — c=2.571, 12.207 ms (with dispatch: 23.535 ms)</title></rect>
+<rect class="dot hollow s5" x="302.1" y="64.7" width="8" height="8" rx="1"><title>Qwen3.5-397B-A17B geometry — 512x1024, 11 live — c=3.143, 16.498 ms (with dispatch: 30.070 ms)</title></rect>
+</svg></figure><figure class="panel"><figcaption><span class="tok">4B</span><span class="vd">null vs MoE 4.9&times;</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="111.6" y1="16" x2="111.6" y2="218"/>
+<text class="tick" x="111.6" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="167.2" y1="16" x2="167.2" y2="218"/>
+<text class="tick" x="167.2" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="222.8" y1="16" x2="222.8" y2="218"/>
+<text class="tick" x="222.8" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="tick" x="278.4" y="233" text-anchor="middle">1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">10</text>
+<line class="capline" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="guidelab" x="281.4" y="24">dense</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M278.4,73.6 L261.7,101.3 L245.0,126.1 L228.2,144.6 L211.4,158.2 L194.5,164.8 L177.9,164.7 L162.5,164.7 L143.1,161.7 L126.4,155.9 L119.0,157.7"/>
+<circle class="dot s1" cx="278.4" cy="73.6" r="3.4"><title>narrow-only — c=1.00000, 26.884 ms</title></circle>
+<circle class="dot s1" cx="261.7" cy="101.3" r="3.4"><title>narrow-only — c=0.50000, 14.317 ms</title></circle>
+<circle class="dot s1" cx="245.0" cy="126.1" r="3.4"><title>narrow-only — c=0.25033, 8.117 ms</title></circle>
+<circle class="dot s1" cx="228.2" cy="144.6" r="3.4"><title>narrow-only — c=0.12516, 5.333 ms</title></circle>
+<circle class="dot s1" cx="211.4" cy="158.2" r="3.4"><title>narrow-only — c=0.06236, 3.913 ms</title></circle>
+<circle class="dot s1" cx="194.5" cy="164.8" r="3.4"><title>narrow-only — c=0.03101, 3.366 ms</title></circle>
+<circle class="dot s1" cx="177.9" cy="164.7" r="3.4"><title>narrow-only — c=0.01556, 3.371 ms</title></circle>
+<circle class="dot s1" cx="162.5" cy="164.7" r="3.4"><title>narrow-only — c=0.00823, 3.370 ms</title></circle>
+<circle class="dot s1" cx="143.1" cy="161.7" r="3.4"><title>narrow-only — c=0.00369, 3.613 ms</title></circle>
+<circle class="dot s1" cx="126.4" cy="155.9" r="3.4"><title>narrow-only — c=0.00184, 4.121 ms</title></circle>
+<circle class="dot s1" cx="119.0" cy="157.7" r="3.4"><title>narrow-only — c=0.00136, 3.955 ms</title></circle>
+<path class="line s2" d="M278.4,73.5 L261.7,102.8 L244.9,133.4 L228.2,160.1 L211.5,183.2 L194.7,197.3 L178.0,203.9 L161.2,204.9 L144.5,204.1 L127.8,202.6 L111.0,202.4"/>
+<circle class="dot s2" cx="278.4" cy="73.5" r="3.4"><title>full-or-null — c=1.00000, 26.937 ms</title></circle>
+<circle class="dot s2" cx="261.7" cy="102.8" r="3.4"><title>full-or-null — c=0.50000, 13.832 ms</title></circle>
+<circle class="dot s2" cx="244.9" cy="133.4" r="3.4"><title>full-or-null — c=0.25000, 6.883 ms</title></circle>
+<circle class="dot s2" cx="228.2" cy="160.1" r="3.4"><title>full-or-null — c=0.12500, 3.739 ms</title></circle>
+<circle class="dot s2" cx="211.5" cy="183.2" r="3.4"><title>full-or-null — c=0.06250, 2.212 ms</title></circle>
+<circle class="dot s2" cx="194.7" cy="197.3" r="3.4"><title>full-or-null — c=0.03125, 1.604 ms</title></circle>
+<circle class="dot s2" cx="178.0" cy="203.9" r="3.4"><title>full-or-null — c=0.01562, 1.379 ms</title></circle>
+<circle class="dot s2" cx="161.2" cy="204.9" r="3.4"><title>full-or-null — c=0.00781, 1.348 ms</title></circle>
+<circle class="dot s2" cx="144.5" cy="204.1" r="3.4"><title>full-or-null — c=0.00391, 1.372 ms</title></circle>
+<circle class="dot s2" cx="127.8" cy="202.6" r="3.4"><title>full-or-null — c=0.00195, 1.421 ms</title></circle>
+<circle class="dot s2" cx="111.0" cy="202.4" r="3.4"><title>full-or-null — c=0.00098, 1.426 ms</title></circle>
+<path class="line s3" d="M278.4,73.2 L261.7,102.8 L244.9,132.4 L228.2,157.3 L211.5,164.5 L194.7,168.6 L178.0,169.2 L161.3,167.1 L144.5,165.9 L127.6,165.4 L111.2,165.4"/>
+<circle class="dot s3" cx="278.4" cy="73.2" r="3.4"><title>ladder + null — c=1.00000, 27.172 ms</title></circle>
+<circle class="dot s3" cx="261.7" cy="102.8" r="3.4"><title>ladder + null — c=0.49999, 13.824 ms</title></circle>
+<circle class="dot s3" cx="244.9" cy="132.4" r="3.4"><title>ladder + null — c=0.24999, 7.042 ms</title></circle>
+<circle class="dot s3" cx="228.2" cy="157.3" r="3.4"><title>ladder + null — c=0.12501, 3.995 ms</title></circle>
+<circle class="dot s3" cx="211.5" cy="164.5" r="3.4"><title>ladder + null — c=0.06251, 3.386 ms</title></circle>
+<circle class="dot s3" cx="194.7" cy="168.6" r="3.4"><title>ladder + null — c=0.03124, 3.085 ms</title></circle>
+<circle class="dot s3" cx="178.0" cy="169.2" r="3.4"><title>ladder + null — c=0.01562, 3.040 ms</title></circle>
+<circle class="dot s3" cx="161.3" cy="167.1" r="3.4"><title>ladder + null — c=0.00783, 3.192 ms</title></circle>
+<circle class="dot s3" cx="144.5" cy="165.9" r="3.4"><title>ladder + null — c=0.00391, 3.277 ms</title></circle>
+<circle class="dot s3" cx="127.6" cy="165.4" r="3.4"><title>ladder + null — c=0.00194, 3.315 ms</title></circle>
+<circle class="dot s3" cx="111.2" cy="165.4" r="3.4"><title>ladder + null — c=0.00099, 3.321 ms</title></circle>
+<path class="line s5" d="M108.2,104.0 L124.9,105.9 L141.7,120.5 L161.2,105.2 L178.0,117.3 L194.7,116.4 L211.5,135.6 L228.2,132.6 L244.9,121.7 L261.7,102.0 L278.4,77.3"/>
+<rect class="dot s5" x="105.2" y="101.0" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00087, 13.445 ms (with dispatch: 46.483 ms)</title></rect>
+<rect class="dot s5" x="121.9" y="102.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00174, 12.869 ms (with dispatch: 41.266 ms)</title></rect>
+<rect class="dot s5" x="138.7" y="117.5" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00347, 9.234 ms (with dispatch: 35.355 ms)</title></rect>
+<rect class="dot s5" x="158.2" y="102.2" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00781, 13.096 ms (with dispatch: 38.086 ms)</title></rect>
+<rect class="dot s5" x="175.0" y="114.3" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.01562, 9.921 ms (with dispatch: 34.555 ms)</title></rect>
+<rect class="dot s5" x="191.7" y="113.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.03125, 10.143 ms (with dispatch: 34.516 ms)</title></rect>
+<rect class="dot s5" x="208.5" y="132.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.06250, 6.541 ms (with dispatch: 30.734 ms)</title></rect>
+<rect class="dot s5" x="225.2" y="129.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.12500, 7.009 ms (with dispatch: 31.312 ms)</title></rect>
+<rect class="dot s5" x="241.9" y="118.7" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.25000, 8.993 ms (with dispatch: 33.339 ms)</title></rect>
+<rect class="dot s5" x="258.7" y="99.0" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.50000, 14.084 ms (with dispatch: 37.928 ms)</title></rect>
+<rect class="dot s5" x="275.4" y="74.3" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=1.00000, 24.726 ms (with dispatch: 47.718 ms)</title></rect>
+<path class="line s5 dashed" d="M108.2,157.8 L127.8,156.9 L144.5,171.6 L161.2,172.9 L178.0,189.8 L194.7,187.0 L211.5,179.2 L228.2,163.0 L244.9,138.5 L261.7,111.6 L278.4,81.7"/>
+<rect class="dot s5 dashed" x="105.2" y="154.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00087, 3.942 ms (with dispatch: 13.479 ms)</title></rect>
+<rect class="dot s5 dashed" x="124.8" y="153.9" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00195, 4.026 ms (with dispatch: 12.210 ms)</title></rect>
+<rect class="dot s5 dashed" x="141.5" y="168.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00391, 2.881 ms (with dispatch: 10.579 ms)</title></rect>
+<rect class="dot s5 dashed" x="158.2" y="169.9" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00781, 2.798 ms (with dispatch: 10.096 ms)</title></rect>
+<rect class="dot s5 dashed" x="175.0" y="186.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.01562, 1.900 ms (with dispatch: 8.975 ms)</title></rect>
+<rect class="dot s5 dashed" x="191.7" y="184.0" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.03125, 2.028 ms (with dispatch: 9.036 ms)</title></rect>
+<rect class="dot s5 dashed" x="208.5" y="176.2" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.06250, 2.424 ms (with dispatch: 9.462 ms)</title></rect>
+<rect class="dot s5 dashed" x="225.2" y="160.0" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.12500, 3.506 ms (with dispatch: 10.608 ms)</title></rect>
+<rect class="dot s5 dashed" x="241.9" y="135.5" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.25000, 6.123 ms (with dispatch: 13.069 ms)</title></rect>
+<rect class="dot s5 dashed" x="258.7" y="108.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.50000, 11.303 ms (with dispatch: 17.775 ms)</title></rect>
+<rect class="dot s5 dashed" x="275.4" y="78.7" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=1.00000, 22.374 ms (with dispatch: 28.247 ms)</title></rect>
+<rect class="dot hollow s5" x="257.7" y="92.3" width="8" height="8" rx="1"><title>Qwen3.5-35B-A3B geometry — 256x512, 9 live — c=0.500, 16.022 ms (with dispatch: 42.617 ms)</title></rect>
+<rect class="dot hollow s5" x="274.4" y="67.6" width="8" height="8" rx="1"><title>Qwen3.5-122B-A10B geometry — 256x1024, 9 live — c=1.000, 28.153 ms (with dispatch: 54.200 ms)</title></rect>
+<rect class="dot hollow s5" x="279.2" y="54.4" width="8" height="8" rx="1"><title>Qwen3.5-397B-A17B geometry — 512x1024, 11 live — c=1.222, 38.025 ms (with dispatch: 70.113 ms)</title></rect>
+</svg></figure><figure class="panel"><figcaption><span class="tok">9B</span><span class="vd">null vs MoE 5.5&times;</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="111.6" y1="16" x2="111.6" y2="218"/>
+<text class="tick" x="111.6" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="167.2" y1="16" x2="167.2" y2="218"/>
+<text class="tick" x="167.2" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="222.8" y1="16" x2="222.8" y2="218"/>
+<text class="tick" x="222.8" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="tick" x="278.4" y="233" text-anchor="middle">1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">10</text>
+<line class="capline" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="guidelab" x="281.4" y="24">dense</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M278.4,44.5 L261.7,71.9 L244.9,97.6 L228.1,120.8 L211.6,135.5 L194.5,147.3 L177.9,151.4 L161.2,152.9 L144.5,153.3 L131.5,153.6 L114.7,153.4"/>
+<circle class="dot s1" cx="278.4" cy="44.5" r="3.4"><title>narrow-only — c=1.00000, 52.167 ms</title></circle>
+<circle class="dot s1" cx="261.7" cy="71.9" r="3.4"><title>narrow-only — c=0.50000, 27.983 ms</title></circle>
+<circle class="dot s1" cx="244.9" cy="97.6" r="3.4"><title>narrow-only — c=0.24976, 15.580 ms</title></circle>
+<circle class="dot s1" cx="228.1" cy="120.8" r="3.4"><title>narrow-only — c=0.12476, 9.173 ms</title></circle>
+<circle class="dot s1" cx="211.6" cy="135.5" r="3.4"><title>narrow-only — c=0.06278, 6.557 ms</title></circle>
+<circle class="dot s1" cx="194.5" cy="147.3" r="3.4"><title>narrow-only — c=0.03101, 5.013 ms</title></circle>
+<circle class="dot s1" cx="177.9" cy="151.4" r="3.4"><title>narrow-only — c=0.01556, 4.567 ms</title></circle>
+<circle class="dot s1" cx="161.2" cy="152.9" r="3.4"><title>narrow-only — c=0.00780, 4.412 ms</title></circle>
+<circle class="dot s1" cx="144.5" cy="153.3" r="3.4"><title>narrow-only — c=0.00390, 4.375 ms</title></circle>
+<circle class="dot s1" cx="131.5" cy="153.6" r="3.4"><title>narrow-only — c=0.00228, 4.343 ms</title></circle>
+<circle class="dot s1" cx="114.7" cy="153.4" r="3.4"><title>narrow-only — c=0.00114, 4.363 ms</title></circle>
+<path class="line s2" d="M278.4,44.3 L261.7,72.2 L244.9,102.4 L228.2,132.3 L211.5,157.0 L194.7,176.9 L178.0,187.2 L161.2,190.0 L144.5,191.6 L127.8,190.6 L111.0,190.3"/>
+<circle class="dot s2" cx="278.4" cy="44.3" r="3.4"><title>full-or-null — c=1.00000, 52.410 ms</title></circle>
+<circle class="dot s2" cx="261.7" cy="72.2" r="3.4"><title>full-or-null — c=0.50000, 27.786 ms</title></circle>
+<circle class="dot s2" cx="244.9" cy="102.4" r="3.4"><title>full-or-null — c=0.25000, 13.941 ms</title></circle>
+<circle class="dot s2" cx="228.2" cy="132.3" r="3.4"><title>full-or-null — c=0.12500, 7.062 ms</title></circle>
+<circle class="dot s2" cx="211.5" cy="157.0" r="3.4"><title>full-or-null — c=0.06250, 4.019 ms</title></circle>
+<circle class="dot s2" cx="194.7" cy="176.9" r="3.4"><title>full-or-null — c=0.03125, 2.552 ms</title></circle>
+<circle class="dot s2" cx="178.0" cy="187.2" r="3.4"><title>full-or-null — c=0.01562, 2.017 ms</title></circle>
+<circle class="dot s2" cx="161.2" cy="190.0" r="3.4"><title>full-or-null — c=0.00781, 1.891 ms</title></circle>
+<circle class="dot s2" cx="144.5" cy="191.6" r="3.4"><title>full-or-null — c=0.00391, 1.825 ms</title></circle>
+<circle class="dot s2" cx="127.8" cy="190.6" r="3.4"><title>full-or-null — c=0.00195, 1.869 ms</title></circle>
+<circle class="dot s2" cx="111.0" cy="190.3" r="3.4"><title>full-or-null — c=0.00098, 1.879 ms</title></circle>
+<path class="line s3" d="M278.4,43.7 L261.7,73.2 L244.9,102.8 L228.2,130.6 L211.5,153.8 L194.7,158.2 L178.0,161.2 L161.3,163.7 L144.5,159.5 L127.6,158.7 L111.2,162.2"/>
+<circle class="dot s3" cx="278.4" cy="43.7" r="3.4"><title>ladder + null — c=1.00000, 53.177 ms</title></circle>
+<circle class="dot s3" cx="261.7" cy="73.2" r="3.4"><title>ladder + null — c=0.49999, 27.147 ms</title></circle>
+<circle class="dot s3" cx="244.9" cy="102.8" r="3.4"><title>ladder + null — c=0.24999, 13.808 ms</title></circle>
+<circle class="dot s3" cx="228.2" cy="130.6" r="3.4"><title>ladder + null — c=0.12501, 7.330 ms</title></circle>
+<circle class="dot s3" cx="211.5" cy="153.8" r="3.4"><title>ladder + null — c=0.06251, 4.324 ms</title></circle>
+<circle class="dot s3" cx="194.7" cy="158.2" r="3.4"><title>ladder + null — c=0.03124, 3.912 ms</title></circle>
+<circle class="dot s3" cx="178.0" cy="161.2" r="3.4"><title>ladder + null — c=0.01562, 3.649 ms</title></circle>
+<circle class="dot s3" cx="161.3" cy="163.7" r="3.4"><title>ladder + null — c=0.00783, 3.447 ms</title></circle>
+<circle class="dot s3" cx="144.5" cy="159.5" r="3.4"><title>ladder + null — c=0.00391, 3.791 ms</title></circle>
+<circle class="dot s3" cx="127.6" cy="158.7" r="3.4"><title>ladder + null — c=0.00194, 3.866 ms</title></circle>
+<circle class="dot s3" cx="111.2" cy="162.2" r="3.4"><title>ladder + null — c=0.00099, 3.571 ms</title></circle>
+<path class="line s5" d="M118.0,75.4 L127.8,78.2 L144.5,97.9 L161.2,97.6 L178.0,116.5 L194.7,115.9 L211.5,115.7 L228.2,111.2 L244.9,95.9 L261.7,73.8 L278.4,47.9"/>
+<rect class="dot s5" x="115.0" y="72.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00130, 25.843 ms (with dispatch: 70.757 ms)</title></rect>
+<rect class="dot s5" x="124.8" y="75.2" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00195, 24.231 ms (with dispatch: 66.457 ms)</title></rect>
+<rect class="dot s5" x="141.5" y="94.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00391, 15.459 ms (with dispatch: 55.198 ms)</title></rect>
+<rect class="dot s5" x="158.2" y="94.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00781, 15.560 ms (with dispatch: 54.269 ms)</title></rect>
+<rect class="dot s5" x="175.0" y="113.5" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.01562, 10.105 ms (with dispatch: 48.190 ms)</title></rect>
+<rect class="dot s5" x="191.7" y="112.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.03125, 10.260 ms (with dispatch: 48.066 ms)</title></rect>
+<rect class="dot s5" x="208.5" y="112.7" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.06250, 10.304 ms (with dispatch: 47.989 ms)</title></rect>
+<rect class="dot s5" x="225.2" y="108.2" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.12500, 11.411 ms (with dispatch: 49.098 ms)</title></rect>
+<rect class="dot s5" x="241.9" y="92.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.25000, 16.187 ms (with dispatch: 53.667 ms)</title></rect>
+<rect class="dot s5" x="258.7" y="70.8" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.50000, 26.795 ms (with dispatch: 63.665 ms)</title></rect>
+<rect class="dot s5" x="275.4" y="44.9" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=1.00000, 48.346 ms (with dispatch: 84.128 ms)</title></rect>
+<path class="line s5 dashed" d="M111.0,140.4 L127.8,144.8 L144.5,170.6 L161.2,170.5 L178.0,170.1 L194.7,167.2 L211.5,154.6 L228.2,133.7 L244.9,108.3 L261.7,79.6 L278.4,50.8"/>
+<rect class="dot s5 dashed" x="108.0" y="137.4" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00098, 5.872 ms (with dispatch: 19.079 ms)</title></rect>
+<rect class="dot s5 dashed" x="124.8" y="141.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00195, 5.305 ms (with dispatch: 17.193 ms)</title></rect>
+<rect class="dot s5 dashed" x="141.5" y="167.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00391, 2.943 ms (with dispatch: 14.348 ms)</title></rect>
+<rect class="dot s5 dashed" x="158.2" y="167.5" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00781, 2.951 ms (with dispatch: 13.757 ms)</title></rect>
+<rect class="dot s5 dashed" x="175.0" y="167.1" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.01562, 2.977 ms (with dispatch: 13.557 ms)</title></rect>
+<rect class="dot s5 dashed" x="191.7" y="164.2" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.03125, 3.181 ms (with dispatch: 13.858 ms)</title></rect>
+<rect class="dot s5 dashed" x="208.5" y="151.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.06250, 4.242 ms (with dispatch: 14.921 ms)</title></rect>
+<rect class="dot s5 dashed" x="225.2" y="130.7" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.12500, 6.829 ms (with dispatch: 17.189 ms)</title></rect>
+<rect class="dot s5 dashed" x="241.9" y="105.3" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.25000, 12.198 ms (with dispatch: 22.186 ms)</title></rect>
+<rect class="dot s5 dashed" x="258.7" y="76.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.50000, 23.462 ms (with dispatch: 32.871 ms)</title></rect>
+<rect class="dot s5 dashed" x="275.4" y="47.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=1.00000, 45.248 ms (with dispatch: 54.648 ms)</title></rect>
+<rect class="dot hollow s5" x="250.7" y="72.9" width="8" height="8" rx="1"><title>Qwen3.5-35B-A3B geometry — 256x512, 9 live — c=0.375, 24.947 ms (with dispatch: 66.682 ms)</title></rect>
+<rect class="dot hollow s5" x="267.5" y="48.6" width="8" height="8" rx="1"><title>Qwen3.5-122B-A10B geometry — 256x1024, 9 live — c=0.750, 43.412 ms (with dispatch: 84.860 ms)</title></rect>
+<rect class="dot hollow s5" x="272.3" y="34.8" width="8" height="8" rx="1"><title>Qwen3.5-397B-A17B geometry — 512x1024, 11 live — c=0.917, 59.514 ms (with dispatch: 109.259 ms)</title></rect>
+</svg></figure><figure class="panel"><figcaption><span class="tok">27B</span><span class="vd">null vs MoE 5.1&times;</span></figcaption><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="111.6" y1="16" x2="111.6" y2="218"/>
+<text class="tick" x="111.6" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="167.2" y1="16" x2="167.2" y2="218"/>
+<text class="tick" x="167.2" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="222.8" y1="16" x2="222.8" y2="218"/>
+<text class="tick" x="222.8" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="tick" x="278.4" y="233" text-anchor="middle">1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">10</text>
+<line class="capline" x1="278.4" y1="16" x2="278.4" y2="218"/>
+<text class="guidelab" x="281.4" y="24">dense</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M278.4,19.4 L261.7,47.0 L244.9,71.9 L228.2,99.1 L211.4,119.8 L194.9,132.2 L177.9,138.6 L161.9,141.2 L143.8,142.5 L127.0,142.6 L110.3,142.6"/>
+<circle class="dot s1" cx="278.4" cy="19.4" r="3.4"><title>narrow-only — c=1.00000, 92.591 ms</title></circle>
+<circle class="dot s1" cx="261.7" cy="47.0" r="3.4"><title>narrow-only — c=0.49989, 49.301 ms</title></circle>
+<circle class="dot s1" cx="244.9" cy="71.9" r="3.4"><title>narrow-only — c=0.25006, 27.942 ms</title></circle>
+<circle class="dot s1" cx="228.2" cy="99.1" r="3.4"><title>narrow-only — c=0.12497, 15.022 ms</title></circle>
+<circle class="dot s1" cx="211.4" cy="119.8" r="3.4"><title>narrow-only — c=0.06241, 9.388 ms</title></circle>
+<circle class="dot s1" cx="194.9" cy="132.2" r="3.4"><title>narrow-only — c=0.03146, 7.068 ms</title></circle>
+<circle class="dot s1" cx="177.9" cy="138.6" r="3.4"><title>narrow-only — c=0.01556, 6.108 ms</title></circle>
+<circle class="dot s1" cx="161.9" cy="141.2" r="3.4"><title>narrow-only — c=0.00803, 5.766 ms</title></circle>
+<circle class="dot s1" cx="143.8" cy="142.5" r="3.4"><title>narrow-only — c=0.00379, 5.587 ms</title></circle>
+<circle class="dot s1" cx="127.0" cy="142.6" r="3.4"><title>narrow-only — c=0.00189, 5.578 ms</title></circle>
+<circle class="dot s1" cx="110.3" cy="142.6" r="3.4"><title>narrow-only — c=0.00095, 5.576 ms</title></circle>
+<path class="line s2" d="M278.4,18.6 L261.7,48.7 L244.9,79.4 L228.2,108.2 L211.5,133.6 L194.7,156.0 L178.0,170.1 L161.2,175.7 L144.5,177.8 L127.8,177.6 L111.0,177.7"/>
+<circle class="dot s2" cx="278.4" cy="18.6" r="3.4"><title>full-or-null — c=1.00000, 94.140 ms</title></circle>
+<circle class="dot s2" cx="261.7" cy="48.7" r="3.4"><title>full-or-null — c=0.50000, 47.456 ms</title></circle>
+<circle class="dot s2" cx="244.9" cy="79.4" r="3.4"><title>full-or-null — c=0.25000, 23.592 ms</title></circle>
+<circle class="dot s2" cx="228.2" cy="108.2" r="3.4"><title>full-or-null — c=0.12500, 12.211 ms</title></circle>
+<circle class="dot s2" cx="211.5" cy="133.6" r="3.4"><title>full-or-null — c=0.06250, 6.842 ms</title></circle>
+<circle class="dot s2" cx="194.7" cy="156.0" r="3.4"><title>full-or-null — c=0.03125, 4.113 ms</title></circle>
+<circle class="dot s2" cx="178.0" cy="170.1" r="3.4"><title>full-or-null — c=0.01562, 2.980 ms</title></circle>
+<circle class="dot s2" cx="161.2" cy="175.7" r="3.4"><title>full-or-null — c=0.00781, 2.623 ms</title></circle>
+<circle class="dot s2" cx="144.5" cy="177.8" r="3.4"><title>full-or-null — c=0.00391, 2.501 ms</title></circle>
+<circle class="dot s2" cx="127.8" cy="177.6" r="3.4"><title>full-or-null — c=0.00195, 2.510 ms</title></circle>
+<circle class="dot s2" cx="111.0" cy="177.7" r="3.4"><title>full-or-null — c=0.00098, 2.507 ms</title></circle>
+<path class="line s3" d="M278.4,18.5 L261.7,49.4 L244.9,80.2 L228.2,108.7 L211.5,132.2 L194.7,150.4 L178.0,158.3 L161.3,161.3 L144.5,158.7 L127.6,159.0 L111.2,155.6"/>
+<circle class="dot s3" cx="278.4" cy="18.5" r="3.4"><title>ladder + null — c=1.00000, 94.564 ms</title></circle>
+<circle class="dot s3" cx="261.7" cy="49.4" r="3.4"><title>ladder + null — c=0.49999, 46.681 ms</title></circle>
+<circle class="dot s3" cx="244.9" cy="80.2" r="3.4"><title>ladder + null — c=0.24999, 23.136 ms</title></circle>
+<circle class="dot s3" cx="228.2" cy="108.7" r="3.4"><title>ladder + null — c=0.12501, 12.093 ms</title></circle>
+<circle class="dot s3" cx="211.5" cy="132.2" r="3.4"><title>ladder + null — c=0.06251, 7.071 ms</title></circle>
+<circle class="dot s3" cx="194.7" cy="150.4" r="3.4"><title>ladder + null — c=0.03124, 4.666 ms</title></circle>
+<circle class="dot s3" cx="178.0" cy="158.3" r="3.4"><title>ladder + null — c=0.01562, 3.897 ms</title></circle>
+<circle class="dot s3" cx="161.3" cy="161.3" r="3.4"><title>ladder + null — c=0.00783, 3.644 ms</title></circle>
+<circle class="dot s3" cx="144.5" cy="158.7" r="3.4"><title>ladder + null — c=0.00391, 3.865 ms</title></circle>
+<circle class="dot s3" cx="127.6" cy="159.0" r="3.4"><title>ladder + null — c=0.00194, 3.837 ms</title></circle>
+<circle class="dot s3" cx="111.2" cy="155.6" r="3.4"><title>ladder + null — c=0.00099, 4.151 ms</title></circle>
+<path class="line s5" d="M109.6,70.4 L126.3,76.6 L143.0,106.4 L161.2,77.5 L178.0,85.4 L194.7,81.6 L211.5,102.1 L228.2,91.6 L244.9,73.4 L261.7,50.1 L278.4,23.6"/>
+<rect class="dot s5" x="106.6" y="67.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00092, 28.954 ms (with dispatch: 88.361 ms)</title></rect>
+<rect class="dot s5" x="123.3" y="73.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00184, 25.113 ms (with dispatch: 77.510 ms)</title></rect>
+<rect class="dot s5" x="140.0" y="103.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00368, 12.743 ms (with dispatch: 61.954 ms)</title></rect>
+<rect class="dot s5" x="158.2" y="74.5" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.00781, 24.593 ms (with dispatch: 72.331 ms)</title></rect>
+<rect class="dot s5" x="175.0" y="82.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.01562, 20.550 ms (with dispatch: 67.813 ms)</title></rect>
+<rect class="dot s5" x="191.7" y="78.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.03125, 22.410 ms (with dispatch: 69.051 ms)</title></rect>
+<rect class="dot s5" x="208.5" y="99.1" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.06250, 14.042 ms (with dispatch: 60.850 ms)</title></rect>
+<rect class="dot s5" x="225.2" y="88.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.12500, 17.836 ms (with dispatch: 64.305 ms)</title></rect>
+<rect class="dot s5" x="241.9" y="70.4" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.25000, 27.050 ms (with dispatch: 73.180 ms)</title></rect>
+<rect class="dot s5" x="258.7" y="47.1" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=0.50000, 45.980 ms (with dispatch: 91.597 ms)</title></rect>
+<rect class="dot s5" x="275.4" y="20.6" width="6" height="6" rx="1"><title>standard MoE, top-8 — c=1.00000, 84.177 ms (with dispatch: 130.778 ms)</title></rect>
+<path class="line s5 dashed" d="M109.6,145.7 L127.8,127.4 L144.5,139.6 L161.2,141.8 L178.0,156.6 L194.7,149.0 L211.5,133.4 L228.2,109.6 L244.9,83.2 L261.7,54.8 L278.4,26.0"/>
+<rect class="dot s5 dashed" x="106.6" y="142.7" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00092, 5.199 ms (with dispatch: 21.492 ms)</title></rect>
+<rect class="dot s5 dashed" x="124.8" y="124.4" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00195, 7.884 ms (with dispatch: 22.081 ms)</title></rect>
+<rect class="dot s5 dashed" x="141.5" y="136.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00391, 5.978 ms (with dispatch: 19.439 ms)</title></rect>
+<rect class="dot s5 dashed" x="158.2" y="138.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.00781, 5.678 ms (with dispatch: 18.665 ms)</title></rect>
+<rect class="dot s5 dashed" x="175.0" y="153.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.01562, 4.050 ms (with dispatch: 16.853 ms)</title></rect>
+<rect class="dot s5 dashed" x="191.7" y="146.0" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.03125, 4.825 ms (with dispatch: 17.542 ms)</title></rect>
+<rect class="dot s5 dashed" x="208.5" y="130.4" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.06250, 6.884 ms (with dispatch: 19.731 ms)</title></rect>
+<rect class="dot s5 dashed" x="225.2" y="106.6" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.12500, 11.832 ms (with dispatch: 23.777 ms)</title></rect>
+<rect class="dot s5 dashed" x="241.9" y="80.2" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.25000, 21.617 ms (with dispatch: 32.600 ms)</title></rect>
+<rect class="dot s5 dashed" x="258.7" y="51.8" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=0.50000, 41.266 ms (with dispatch: 53.103 ms)</title></rect>
+<rect class="dot s5 dashed" x="275.4" y="23.0" width="6" height="6" rx="1"><title>standard MoE, top-2 — c=1.00000, 79.611 ms (with dispatch: 92.666 ms)</title></rect>
+<rect class="dot hollow s5" x="242.3" y="63.6" width="8" height="8" rx="1"><title>Qwen3.5-35B-A3B geometry — 256x512, 9 live — c=0.265, 30.840 ms (with dispatch: 82.575 ms)</title></rect>
+<rect class="dot hollow s5" x="259.0" y="38.7" width="8" height="8" rx="1"><title>Qwen3.5-122B-A10B geometry — 256x1024, 9 live — c=0.529, 54.348 ms (with dispatch: 106.397 ms)</title></rect>
+<rect class="dot hollow s5" x="263.9" y="24.8" width="8" height="8" rx="1"><title>Qwen3.5-397B-A17B geometry — 512x1024, 11 live — c=0.647, 74.650 ms (with dispatch: 139.033 ms)</title></rect>
+</svg></figure></div>
+<div class="tablewrap"><table><thead><tr><th>scale</th><th>dense FFN</th><th>best narrow-only</th><th>best full-or-null</th><th>best MoE top-8</th><th>best MoE top-2</th><th>null vs MoE top-8</th></tr></thead><tbody>
+<tr><td class="tok-cell">0.8B</td><td class="num">5.37</td><td class="num">2.96 <span class="num muted">(1.8&times;, c=0.125)</span></td><td class="num">1.17 <span class="num muted">(4.6&times;, c=0.031)</span></td><td class="num">2.73 <span class="num muted">(2.0&times;, c=0.125)</span></td><td class="num">0.82 <span class="num muted">(6.5&times;, c=0.031)</span></td><td class="num strong">2.3&times;</td></tr>
+<tr><td class="tok-cell">4B</td><td class="num">26.88</td><td class="num">3.37 <span class="num muted">(8.0&times;, c=0.031)</span></td><td class="num">1.35 <span class="num muted">(19.9&times;, c=0.008)</span></td><td class="num">6.54 <span class="num muted">(4.1&times;, c=0.062)</span></td><td class="num">1.90 <span class="num muted">(14.1&times;, c=0.016)</span></td><td class="num strong">4.9&times;</td></tr>
+<tr><td class="tok-cell">9B</td><td class="num">52.17</td><td class="num">4.34 <span class="num muted">(12.0&times;, c=0.002)</span></td><td class="num">1.82 <span class="num muted">(28.6&times;, c=0.004)</span></td><td class="num">10.10 <span class="num muted">(5.2&times;, c=0.016)</span></td><td class="num">2.94 <span class="num muted">(17.7&times;, c=0.004)</span></td><td class="num strong">5.5&times;</td></tr>
+<tr><td class="tok-cell">27B</td><td class="num">92.59</td><td class="num">5.58 <span class="num muted">(16.6&times;, c=0.001)</span></td><td class="num">2.50 <span class="num muted">(37.0&times;, c=0.004)</span></td><td class="num">12.74 <span class="num muted">(7.3&times;, c=0.004)</span></td><td class="num">4.05 <span class="num muted">(22.9&times;, c=0.016)</span></td><td class="num strong">5.1&times;</td></tr>
+</tbody></table></div><div class='callout'><b>The MoE geometry Qwen actually ships barely cuts per-token FFN compute, and at 4B and below it raises it.</b> The hollow squares are the expert geometry of <span class='mono'>Qwen3.5-35B-A3B</span> (256&times;512, 8 routed + 1 shared), <span class='mono'>-122B-A10B</span> (256&times;1024) and <span class='mono'>-397B-A17B</span> (512&times;1024, 10 routed + 1 shared), dropped into each dense model's <span class='mono'>d_model</span>. Their live width per token is 4,608 / 9,216 / 11,264 units &mdash; against a dense Qwen3.5-4B FFN of 9,216 that is c = 0.50, <b>1.00</b> and 1.22, and even against 27B's 17,408 it is only 0.26&ndash;0.65. A MoE reads as sparse only against its own total parameter count (c&nbsp;&asymp;&nbsp;0.035 there); against the dense model it replaces it holds per-token FFN compute roughly constant and spends the sparsity on capacity instead. That is a different product from the one this page is buying.</div><p class='note'>Plotted times are the <b>balanced-capacity bmm</b> &mdash; literally <code>MoEMLP.forward</code> in this repo &mdash; with a perfectly balanced router and the permutation already done. That is a floor, and it is generous to the MoE: the tooltip's <em>with dispatch</em> figure adds gate, sort, gather, scatter and combine in plain PyTorch and costs a further 4&ndash;5&times; on top of that floor at every scale &mdash; enough to put the MoE FFN <em>above</em> the dense one at 0.8B and 4B. Production kernels fuse most of that; none of them removes the k-fold read of x.</p></section><section><h2>The trained ladder versus better ones</h2><p>The trained geometry is divisors <span class='mono'>1,16,64,256,1024,9728</span> &mdash; widths 9216/576/144/36/9/1, and <b>no null rung</b>: its cheapest option is a width-1 FFN, not &ldquo;nothing&rdquo;. Left: changes that keep the trained rungs (append a null; or swap the width-1 rung for a null). Right: restructuring (move every rung above the plateau knee; or drop intermediate rungs entirely). The trained ladder is the blue reference in both.</p><div class="grid3"><figure class="panel"><figcaption><span class="tok">Cheap fixes to the trained ladder</span><span class="vd ">best 9.0&times;</span></figcaption><div class="legend"><span class="lg"><span class="key s1"></span>trained ladder</span><span class="lg"><span class="key s2"></span>trained + null (7)</span><span class="lg"><span class="key s3"></span>trained, w1->null</span></div><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">1e-06</text>
+<line class="grid" x1="102.3" y1="16" x2="102.3" y2="218"/>
+<text class="tick" x="102.3" y="233" text-anchor="middle">1e-05</text>
+<line class="grid" x1="148.7" y1="16" x2="148.7" y2="218"/>
+<text class="tick" x="148.7" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="195.0" y1="16" x2="195.0" y2="218"/>
+<text class="tick" x="195.0" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="241.3" y1="16" x2="241.3" y2="218"/>
+<text class="tick" x="241.3" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="287.7" y1="16" x2="287.7" y2="218"/>
+<text class="tick" x="287.7" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M159.1,148.3 L164.8,139.7 L176.8,138.4 L196.6,144.3 L224.0,144.3 L254.9,139.8 L280.3,140.4 L299.6,132.6 L313.3,111.7 L321.1,97.5 L325.8,89.4"/>
+<circle class="dot s1" cx="159.1" cy="148.3" r="3.4"><title>trained ladder — c=0.00017, 4.901 ms</title></circle>
+<circle class="dot s1" cx="164.8" cy="139.7" r="3.4"><title>trained ladder — c=0.00022, 5.959 ms</title></circle>
+<circle class="dot s1" cx="176.8" cy="138.4" r="3.4"><title>trained ladder — c=0.00040, 6.134 ms</title></circle>
+<circle class="dot s1" cx="196.6" cy="144.3" r="3.4"><title>trained ladder — c=0.00108, 5.369 ms</title></circle>
+<circle class="dot s1" cx="224.0" cy="144.3" r="3.4"><title>trained ladder — c=0.00423, 5.362 ms</title></circle>
+<circle class="dot s1" cx="254.9" cy="139.8" r="3.4"><title>trained ladder — c=0.01964, 5.946 ms</title></circle>
+<circle class="dot s1" cx="280.3" cy="140.4" r="3.4"><title>trained ladder — c=0.06941, 5.865 ms</title></circle>
+<circle class="dot s1" cx="299.6" cy="132.6" r="3.4"><title>trained ladder — c=0.18051, 7.007 ms</title></circle>
+<circle class="dot s1" cx="313.3" cy="111.7" r="3.4"><title>trained ladder — c=0.35802, 11.277 ms</title></circle>
+<circle class="dot s1" cx="321.1" cy="97.5" r="3.4"><title>trained ladder — c=0.52607, 15.611 ms</title></circle>
+<circle class="dot s1" cx="325.8" cy="89.4" r="3.4"><title>trained ladder — c=0.66679, 18.763 ms</title></circle>
+<path class="line s2" d="M100.5,171.0 L116.2,157.8 L134.6,148.6 L166.1,142.9 L201.9,144.2 L240.8,140.0 L272.7,141.9 L296.4,137.2 L312.5,113.0 L320.9,97.4 L325.8,88.7"/>
+<circle class="dot s2" cx="100.5" cy="171.0" r="3.4"><title>trained + null (7) — c=0.00001, 2.919 ms</title></circle>
+<circle class="dot s2" cx="116.2" cy="157.8" r="3.4"><title>trained + null (7) — c=0.00002, 3.943 ms</title></circle>
+<circle class="dot s2" cx="134.6" cy="148.6" r="3.4"><title>trained + null (7) — c=0.00005, 4.863 ms</title></circle>
+<circle class="dot s2" cx="166.1" cy="142.9" r="3.4"><title>trained + null (7) — c=0.00024, 5.540 ms</title></circle>
+<circle class="dot s2" cx="201.9" cy="144.2" r="3.4"><title>trained + null (7) — c=0.00141, 5.381 ms</title></circle>
+<circle class="dot s2" cx="240.8" cy="140.0" r="3.4"><title>trained + null (7) — c=0.00975, 5.914 ms</title></circle>
+<circle class="dot s2" cx="272.7" cy="141.9" r="3.4"><title>trained + null (7) — c=0.04751, 5.665 ms</title></circle>
+<circle class="dot s2" cx="296.4" cy="137.2" r="3.4"><title>trained + null (7) — c=0.15473, 6.305 ms</title></circle>
+<circle class="dot s2" cx="312.5" cy="113.0" r="3.4"><title>trained + null (7) — c=0.34426, 10.950 ms</title></circle>
+<circle class="dot s2" cx="320.9" cy="97.4" r="3.4"><title>trained + null (7) — c=0.52193, 15.618 ms</title></circle>
+<circle class="dot s2" cx="325.8" cy="88.7" r="3.4"><title>trained + null (7) — c=0.66601, 19.064 ms</title></circle>
+<path class="line s3" d="M140.0,166.1 L153.0,154.9 L171.5,147.1 L195.0,146.7 L223.7,146.2 L254.9,139.6 L280.3,140.7 L299.5,135.3 L313.3,112.1 L321.1,97.3 L325.8,88.7"/>
+<circle class="dot s3" cx="140.0" cy="166.1" r="3.4"><title>trained, w1->null — c=0.00007, 3.265 ms</title></circle>
+<circle class="dot s3" cx="153.0" cy="154.9" r="3.4"><title>trained, w1->null — c=0.00012, 4.212 ms</title></circle>
+<circle class="dot s3" cx="171.5" cy="147.1" r="3.4"><title>trained, w1->null — c=0.00031, 5.036 ms</title></circle>
+<circle class="dot s3" cx="195.0" cy="146.7" r="3.4"><title>trained, w1->null — c=0.00100, 5.079 ms</title></circle>
+<circle class="dot s3" cx="223.7" cy="146.2" r="3.4"><title>trained, w1->null — c=0.00415, 5.141 ms</title></circle>
+<circle class="dot s3" cx="254.9" cy="139.6" r="3.4"><title>trained, w1->null — c=0.01959, 5.971 ms</title></circle>
+<circle class="dot s3" cx="280.3" cy="140.7" r="3.4"><title>trained, w1->null — c=0.06937, 5.826 ms</title></circle>
+<circle class="dot s3" cx="299.5" cy="135.3" r="3.4"><title>trained, w1->null — c=0.18049, 6.593 ms</title></circle>
+<circle class="dot s3" cx="313.3" cy="112.1" r="3.4"><title>trained, w1->null — c=0.35801, 11.184 ms</title></circle>
+<circle class="dot s3" cx="321.1" cy="97.3" r="3.4"><title>trained, w1->null — c=0.52607, 15.670 ms</title></circle>
+<circle class="dot s3" cx="325.8" cy="88.7" r="3.4"><title>trained, w1->null — c=0.66679, 19.049 ms</title></circle>
+</svg></figure><figure class="panel"><figcaption><span class="tok">Restructured ladders</span><span class="vd ">best 14.0&times;</span></figcaption><div class="legend"><span class="lg"><span class="key s1"></span>trained ladder</span><span class="lg"><span class="key s2"></span>above-knee + null</span><span class="lg"><span class="key s3"></span>full-or-null</span></div><svg viewBox="0 0 350 262" role="img" aria-label="log-log chart">
+<line class="grid" x1="56" y1="218.0" x2="334" y2="218.0"/>
+<text class="tick" x="49" y="221.0" text-anchor="end">1</text>
+<line class="grid" x1="56" y1="117.0" x2="334" y2="117.0"/>
+<text class="tick" x="49" y="120.0" text-anchor="end">10</text>
+<line class="grid" x1="56" y1="16.0" x2="334" y2="16.0"/>
+<text class="tick" x="49" y="19.0" text-anchor="end">100</text>
+<line class="grid" x1="56.0" y1="16" x2="56.0" y2="218"/>
+<text class="tick" x="56.0" y="233" text-anchor="middle">0.0001</text>
+<line class="grid" x1="125.5" y1="16" x2="125.5" y2="218"/>
+<text class="tick" x="125.5" y="233" text-anchor="middle">0.001</text>
+<line class="grid" x1="195.0" y1="16" x2="195.0" y2="218"/>
+<text class="tick" x="195.0" y="233" text-anchor="middle">0.01</text>
+<line class="grid" x1="264.5" y1="16" x2="264.5" y2="218"/>
+<text class="tick" x="264.5" y="233" text-anchor="middle">0.1</text>
+<line class="grid" x1="334.0" y1="16" x2="334.0" y2="218"/>
+<text class="tick" x="334.0" y="233" text-anchor="middle">1</text>
+<line class="axis" x1="56" y1="218" x2="334" y2="218"/>
+<line class="axis" x1="56" y1="16" x2="56" y2="218"/>
+<text class="axlab" x="195" y="256" text-anchor="middle">mean FFN compute c (log)</text>
+<text class="axlab" x="4" y="9">ms</text>
+<path class="line s1" d="M71.6,148.3 L80.2,139.7 L98.1,138.4 L127.9,144.3 L169.0,144.3 L215.4,139.8 L253.5,140.4 L282.3,132.6 L303.0,111.7 L314.6,97.5 L321.8,89.4"/>
+<circle class="dot s1" cx="71.6" cy="148.3" r="3.4"><title>trained ladder — c=0.00017, 4.901 ms</title></circle>
+<circle class="dot s1" cx="80.2" cy="139.7" r="3.4"><title>trained ladder — c=0.00022, 5.959 ms</title></circle>
+<circle class="dot s1" cx="98.1" cy="138.4" r="3.4"><title>trained ladder — c=0.00040, 6.134 ms</title></circle>
+<circle class="dot s1" cx="127.9" cy="144.3" r="3.4"><title>trained ladder — c=0.00108, 5.369 ms</title></circle>
+<circle class="dot s1" cx="169.0" cy="144.3" r="3.4"><title>trained ladder — c=0.00423, 5.362 ms</title></circle>
+<circle class="dot s1" cx="215.4" cy="139.8" r="3.4"><title>trained ladder — c=0.01964, 5.946 ms</title></circle>
+<circle class="dot s1" cx="253.5" cy="140.4" r="3.4"><title>trained ladder — c=0.06941, 5.865 ms</title></circle>
+<circle class="dot s1" cx="282.3" cy="132.6" r="3.4"><title>trained ladder — c=0.18051, 7.007 ms</title></circle>
+<circle class="dot s1" cx="303.0" cy="111.7" r="3.4"><title>trained ladder — c=0.35802, 11.277 ms</title></circle>
+<circle class="dot s1" cx="314.6" cy="97.5" r="3.4"><title>trained ladder — c=0.52607, 15.611 ms</title></circle>
+<circle class="dot s1" cx="321.8" cy="89.4" r="3.4"><title>trained ladder — c=0.66679, 18.763 ms</title></circle>
+<path class="line s2" d="M144.2,166.3 L161.4,157.9 L179.1,158.0 L200.1,161.0 L223.9,159.9 L251.3,150.0 L275.2,145.1 L294.3,126.6 L309.1,105.7 L318.1,93.7 L323.9,86.6"/>
+<circle class="dot s2" cx="144.2" cy="166.3" r="3.4"><title>above-knee + null — c=0.00186, 3.251 ms</title></circle>
+<circle class="dot s2" cx="161.4" cy="157.9" r="3.4"><title>above-knee + null — c=0.00328, 3.938 ms</title></circle>
+<circle class="dot s2" cx="179.1" cy="158.0" r="3.4"><title>above-knee + null — c=0.00591, 3.929 ms</title></circle>
+<circle class="dot s2" cx="200.1" cy="161.0" r="3.4"><title>above-knee + null — c=0.01183, 3.671 ms</title></circle>
+<circle class="dot s2" cx="223.9" cy="159.9" r="3.4"><title>above-knee + null — c=0.02609, 3.765 ms</title></circle>
+<circle class="dot s2" cx="251.3" cy="150.0" r="3.4"><title>above-knee + null — c=0.06451, 4.715 ms</title></circle>
+<circle class="dot s2" cx="275.2" cy="145.1" r="3.4"><title>above-knee + null — c=0.14237, 5.270 ms</title></circle>
+<circle class="dot s2" cx="294.3" cy="126.6" r="3.4"><title>above-knee + null — c=0.26877, 8.035 ms</title></circle>
+<circle class="dot s2" cx="309.1" cy="105.7" r="3.4"><title>above-knee + null — c=0.43861, 12.948 ms</title></circle>
+<circle class="dot s2" cx="318.1" cy="93.7" r="3.4"><title>above-knee + null — c=0.59074, 17.012 ms</title></circle>
+<circle class="dot s2" cx="323.9" cy="86.6" r="3.4"><title>above-knee + null — c=0.71650, 19.980 ms</title></circle>
+<path class="line s3" d="M245.1,190.5 L259.0,175.1 L271.2,161.7 L282.5,147.2 L292.2,133.6 L300.8,119.7 L307.6,110.1 L313.1,97.2 L318.0,96.0 L321.8,91.0 L324.9,86.8"/>
+<circle class="dot s3" cx="245.1" cy="190.5" r="3.4"><title>full-or-null — c=0.05264, 1.873 ms</title></circle>
+<circle class="dot s3" cx="259.0" cy="175.1" r="3.4"><title>full-or-null — c=0.08334, 2.661 ms</title></circle>
+<circle class="dot s3" cx="271.2" cy="161.7" r="3.4"><title>full-or-null — c=0.12500, 3.608 ms</title></circle>
+<circle class="dot s3" cx="282.5" cy="147.2" r="3.4"><title>full-or-null — c=0.18182, 5.026 ms</title></circle>
+<circle class="dot s3" cx="292.2" cy="133.6" r="3.4"><title>full-or-null — c=0.25000, 6.843 ms</title></circle>
+<circle class="dot s3" cx="300.8" cy="119.7" r="3.4"><title>full-or-null — c=0.33334, 9.396 ms</title></circle>
+<circle class="dot s3" cx="307.6" cy="110.1" r="3.4"><title>full-or-null — c=0.41666, 11.711 ms</title></circle>
+<circle class="dot s3" cx="313.1" cy="97.2" r="3.4"><title>full-or-null — c=0.50000, 15.716 ms</title></circle>
+<circle class="dot s3" cx="318.0" cy="96.0" r="3.4"><title>full-or-null — c=0.58823, 16.130 ms</title></circle>
+<circle class="dot s3" cx="321.8" cy="91.0" r="3.4"><title>full-or-null — c=0.66666, 18.104 ms</title></circle>
+<circle class="dot s3" cx="324.9" cy="86.8" r="3.4"><title>full-or-null — c=0.74075, 19.891 ms</title></circle>
+</svg></figure></div></section><section><h2>What the trained routers actually do</h2><p>Argmax decisions from two trained Qwen3-4B checkpoints over real contradiction prompts (5.3M token-layer decisions each; rungs <span class='mono'>9728/608/152/38/9/1/0</span>). <b>The router learned layer pruning, not per-token routing.</b> Only layer 0 stays dense; 13 of 36 layers (target .05) and 22 of 36 (target .02) switch the FFN off for essentially every token. The 608 rung is selected <b>0.0%</b> of the time in both. And 52&ndash;65% of tokens that do any work sit on width 1 or 9 &mdash; rungs costing ~1e-4 of the budget while paying the same fixed activation traffic and kernel launches as any real rung.</p><div class="legend"><span class="lg"><span class="key s1"></span>width &gt; 9 (real work)</span><span class="lg"><span class="key s2"></span>width 1 or 9 (~free, full cost)</span><span class="lg"><span class="key s3"></span>null</span></div><div class="grid3"><figure class="panel"><figcaption><span class="tok">target .05 &middot; f1 0.938</span><span class="vd ">24&times; FFN FLOP cut</span></figcaption><svg viewBox="0 0 350 210" role="img" aria-label="rung usage shares">
+<rect class="bar s1" x="68.3" y="152.3" width="26.8" height="11.7" rx="2"><title>width 9728 (cost 1.00000) — 4.1% of decisions</title></rect>
+<text class="tick" x="81.7" y="148.3" text-anchor="middle">4%</text>
+<text class="tick" x="81.7" y="177.0" text-anchor="middle">9728</text>
+<rect class="bar s1" x="107.7" y="164.0" width="26.8" height="0.6" rx="2"><title>width 608 (cost 0.06250) — 0.0% of decisions</title></rect>
+<text class="tick" x="121.1" y="160.0" text-anchor="middle">0%</text>
+<text class="tick" x="121.1" y="177.0" text-anchor="middle">608</text>
+<rect class="bar s1" x="147.2" y="151.7" width="26.8" height="12.3" rx="2"><title>width 152 (cost 0.01562) — 4.3% of decisions</title></rect>
+<text class="tick" x="160.6" y="147.7" text-anchor="middle">4%</text>
+<text class="tick" x="160.6" y="177.0" text-anchor="middle">152</text>
+<rect class="bar s1" x="186.6" y="122.2" width="26.8" height="41.8" rx="2"><title>width 38 (cost 0.00391) — 14.6% of decisions</title></rect>
+<text class="tick" x="200.0" y="118.2" text-anchor="middle">15%</text>
+<text class="tick" x="200.0" y="177.0" text-anchor="middle">38</text>
+<rect class="bar s2" x="226.0" y="145.3" width="26.8" height="18.7" rx="2"><title>width 9 (cost 0.00093) — 6.5% of decisions</title></rect>
+<text class="tick" x="239.4" y="141.3" text-anchor="middle">7%</text>
+<text class="tick" x="239.4" y="177.0" text-anchor="middle">9</text>
+<rect class="bar s2" x="265.5" y="111.9" width="26.8" height="52.1" rx="2"><title>width 1 (cost 0.00010) — 18.2% of decisions</title></rect>
+<text class="tick" x="278.9" y="107.9" text-anchor="middle">18%</text>
+<text class="tick" x="278.9" y="177.0" text-anchor="middle">1</text>
+<rect class="bar s3" x="304.9" y="14.0" width="26.8" height="150.0" rx="2"><title>width 0 (cost 0.00000) — 52.3% of decisions</title></rect>
+<text class="tick" x="318.3" y="10.0" text-anchor="middle">52%</text>
+<text class="tick" x="318.3" y="177.0" text-anchor="middle">0</text>
+<line class="axis" x1="62" y1="164" x2="338" y2="164"/>
+<text class="axlab" x="206" y="194" text-anchor="middle">rung width</text>
+<text class="axlab" x="10" y="16">share of decisions</text>
+</svg></figure><figure class="panel"><figcaption><span class="tok">per layer &middot; target .05</span><span class="vd ">13/36 layers &gt;99% null</span></figcaption><svg viewBox="0 0 350 210" role="img" aria-label="per-layer null share">
+<line class="grid" x1="62" y1="164.0" x2="338" y2="164.0"/>
+<text class="tick" x="55" y="167.0" text-anchor="end">0</text>
+<line class="grid" x1="62" y1="89.0" x2="338" y2="89.0"/>
+<text class="tick" x="55" y="92.0" text-anchor="end">50</text>
+<line class="grid" x1="62" y1="14.0" x2="338" y2="14.0"/>
+<text class="tick" x="55" y="17.0" text-anchor="end">100%</text>
+<rect class="bar s3" x="62.9" y="164.0" width="5.8" height="0.6"><title>layer 0: 0.0% null</title></rect>
+<rect class="bar s3" x="70.6" y="164.0" width="5.8" height="0.6"><title>layer 1: 0.0% null</title></rect>
+<rect class="bar s3" x="78.3" y="14.0" width="5.8" height="150.0"><title>layer 2: 100.0% null</title></rect>
+<rect class="bar s3" x="85.9" y="14.0" width="5.8" height="150.0"><title>layer 3: 100.0% null</title></rect>
+<rect class="bar s3" x="93.6" y="164.0" width="5.8" height="0.6"><title>layer 4: 0.0% null</title></rect>
+<rect class="bar s3" x="101.3" y="36.9" width="5.8" height="127.1"><title>layer 5: 84.7% null</title></rect>
+<rect class="bar s3" x="108.9" y="164.0" width="5.8" height="0.6"><title>layer 6: 0.0% null</title></rect>
+<rect class="bar s3" x="116.6" y="164.0" width="5.8" height="0.6"><title>layer 7: 0.0% null</title></rect>
+<rect class="bar s3" x="124.3" y="164.0" width="5.8" height="0.6"><title>layer 8: 0.0% null</title></rect>
+<rect class="bar s3" x="131.9" y="164.0" width="5.8" height="0.6"><title>layer 9: 0.0% null</title></rect>
+<rect class="bar s3" x="139.6" y="164.0" width="5.8" height="0.6"><title>layer 10: 0.0% null</title></rect>
+<rect class="bar s3" x="147.3" y="164.0" width="5.8" height="0.6"><title>layer 11: 0.0% null</title></rect>
+<rect class="bar s3" x="154.9" y="15.2" width="5.8" height="148.8"><title>layer 12: 99.2% null</title></rect>
+<rect class="bar s3" x="162.6" y="139.6" width="5.8" height="24.4"><title>layer 13: 16.3% null</title></rect>
+<rect class="bar s3" x="170.3" y="14.1" width="5.8" height="149.9"><title>layer 14: 99.9% null</title></rect>
+<rect class="bar s3" x="177.9" y="144.9" width="5.8" height="19.1"><title>layer 15: 12.7% null</title></rect>
+<rect class="bar s3" x="185.6" y="80.2" width="5.8" height="83.8"><title>layer 16: 55.9% null</title></rect>
+<rect class="bar s3" x="193.3" y="14.1" width="5.8" height="149.9"><title>layer 17: 99.9% null</title></rect>
+<rect class="bar s3" x="200.9" y="14.1" width="5.8" height="149.9"><title>layer 18: 99.9% null</title></rect>
+<rect class="bar s3" x="208.6" y="53.1" width="5.8" height="110.9"><title>layer 19: 73.9% null</title></rect>
+<rect class="bar s3" x="216.3" y="29.9" width="5.8" height="134.1"><title>layer 20: 89.4% null</title></rect>
+<rect class="bar s3" x="223.9" y="161.5" width="5.8" height="2.5"><title>layer 21: 1.7% null</title></rect>
+<rect class="bar s3" x="231.6" y="37.8" width="5.8" height="126.2"><title>layer 22: 84.1% null</title></rect>
+<rect class="bar s3" x="239.3" y="55.6" width="5.8" height="108.4"><title>layer 23: 72.3% null</title></rect>
+<rect class="bar s3" x="246.9" y="164.0" width="5.8" height="0.6"><title>layer 24: 0.0% null</title></rect>
+<rect class="bar s3" x="254.6" y="21.8" width="5.8" height="142.2"><title>layer 25: 94.8% null</title></rect>
+<rect class="bar s3" x="262.3" y="14.1" width="5.8" height="149.9"><title>layer 26: 99.9% null</title></rect>
+<rect class="bar s3" x="269.9" y="14.1" width="5.8" height="149.9"><title>layer 27: 99.9% null</title></rect>
+<rect class="bar s3" x="277.6" y="14.1" width="5.8" height="149.9"><title>layer 28: 99.9% null</title></rect>
+<rect class="bar s3" x="285.3" y="14.4" width="5.8" height="149.6"><title>layer 29: 99.7% null</title></rect>
+<rect class="bar s3" x="292.9" y="163.5" width="5.8" height="0.6"><title>layer 30: 0.3% null</title></rect>
+<rect class="bar s3" x="300.6" y="15.2" width="5.8" height="148.8"><title>layer 31: 99.2% null</title></rect>
+<rect class="bar s3" x="308.3" y="164.0" width="5.8" height="0.6"><title>layer 32: 0.0% null</title></rect>
+<rect class="bar s3" x="315.9" y="14.0" width="5.8" height="150.0"><title>layer 33: 100.0% null</title></rect>
+<rect class="bar s3" x="323.6" y="164.0" width="5.8" height="0.6"><title>layer 34: 0.0% null</title></rect>
+<rect class="bar s3" x="331.3" y="14.0" width="5.8" height="150.0"><title>layer 35: 100.0% null</title></rect>
+<line class="axis" x1="62" y1="164" x2="338" y2="164"/>
+<text class="axlab" x="200" y="194" text-anchor="middle">layer 0 &rarr; 35</text>
+<text class="axlab" x="10" y="16">% tokens NULL</text>
+</svg></figure><figure class="panel"><figcaption><span class="tok">target .02 &middot; f1 0.929</span><span class="vd ">40&times; FFN FLOP cut</span></figcaption><svg viewBox="0 0 350 210" role="img" aria-label="rung usage shares">
+<rect class="bar s1" x="68.3" y="158.8" width="26.8" height="5.2" rx="2"><title>width 9728 (cost 1.00000) — 2.4% of decisions</title></rect>
+<text class="tick" x="81.7" y="154.8" text-anchor="middle">2%</text>
+<text class="tick" x="81.7" y="177.0" text-anchor="middle">9728</text>
+<rect class="bar s1" x="107.7" y="163.9" width="26.8" height="0.6" rx="2"><title>width 608 (cost 0.06250) — 0.0% of decisions</title></rect>
+<text class="tick" x="121.1" y="159.9" text-anchor="middle">0%</text>
+<text class="tick" x="121.1" y="177.0" text-anchor="middle">608</text>
+<rect class="bar s1" x="147.2" y="157.7" width="26.8" height="6.3" rx="2"><title>width 152 (cost 0.01562) — 2.9% of decisions</title></rect>
+<text class="tick" x="160.6" y="153.7" text-anchor="middle">3%</text>
+<text class="tick" x="160.6" y="177.0" text-anchor="middle">152</text>
+<rect class="bar s1" x="186.6" y="152.2" width="26.8" height="11.8" rx="2"><title>width 38 (cost 0.00391) — 5.5% of decisions</title></rect>
+<text class="tick" x="200.0" y="148.2" text-anchor="middle">5%</text>
+<text class="tick" x="200.0" y="177.0" text-anchor="middle">38</text>
+<rect class="bar s2" x="226.0" y="151.2" width="26.8" height="12.8" rx="2"><title>width 9 (cost 0.00093) — 5.9% of decisions</title></rect>
+<text class="tick" x="239.4" y="147.2" text-anchor="middle">6%</text>
+<text class="tick" x="239.4" y="177.0" text-anchor="middle">9</text>
+<rect class="bar s2" x="265.5" y="134.3" width="26.8" height="29.7" rx="2"><title>width 1 (cost 0.00010) — 13.8% of decisions</title></rect>
+<text class="tick" x="278.9" y="130.3" text-anchor="middle">14%</text>
+<text class="tick" x="278.9" y="177.0" text-anchor="middle">1</text>
+<rect class="bar s3" x="304.9" y="14.0" width="26.8" height="150.0" rx="2"><title>width 0 (cost 0.00000) — 69.5% of decisions</title></rect>
+<text class="tick" x="318.3" y="10.0" text-anchor="middle">69%</text>
+<text class="tick" x="318.3" y="177.0" text-anchor="middle">0</text>
+<line class="axis" x1="62" y1="164" x2="338" y2="164"/>
+<text class="axlab" x="206" y="194" text-anchor="middle">rung width</text>
+<text class="axlab" x="10" y="16">share of decisions</text>
+</svg></figure><figure class="panel"><figcaption><span class="tok">per layer &middot; target .02</span><span class="vd ">22/36 layers &gt;99% null</span></figcaption><svg viewBox="0 0 350 210" role="img" aria-label="per-layer null share">
+<line class="grid" x1="62" y1="164.0" x2="338" y2="164.0"/>
+<text class="tick" x="55" y="167.0" text-anchor="end">0</text>
+<line class="grid" x1="62" y1="89.0" x2="338" y2="89.0"/>
+<text class="tick" x="55" y="92.0" text-anchor="end">50</text>
+<line class="grid" x1="62" y1="14.0" x2="338" y2="14.0"/>
+<text class="tick" x="55" y="17.0" text-anchor="end">100%</text>
+<rect class="bar s3" x="62.9" y="152.4" width="5.8" height="11.6"><title>layer 0: 7.8% null</title></rect>
+<rect class="bar s3" x="70.6" y="14.6" width="5.8" height="149.4"><title>layer 1: 99.6% null</title></rect>
+<rect class="bar s3" x="78.3" y="14.0" width="5.8" height="150.0"><title>layer 2: 100.0% null</title></rect>
+<rect class="bar s3" x="85.9" y="164.0" width="5.8" height="0.6"><title>layer 3: 0.0% null</title></rect>
+<rect class="bar s3" x="93.6" y="14.0" width="5.8" height="150.0"><title>layer 4: 100.0% null</title></rect>
+<rect class="bar s3" x="101.3" y="164.0" width="5.8" height="0.6"><title>layer 5: 0.0% null</title></rect>
+<rect class="bar s3" x="108.9" y="164.0" width="5.8" height="0.6"><title>layer 6: 0.0% null</title></rect>
+<rect class="bar s3" x="116.6" y="14.2" width="5.8" height="149.8"><title>layer 7: 99.9% null</title></rect>
+<rect class="bar s3" x="124.3" y="164.0" width="5.8" height="0.6"><title>layer 8: 0.0% null</title></rect>
+<rect class="bar s3" x="131.9" y="164.0" width="5.8" height="0.6"><title>layer 9: 0.0% null</title></rect>
+<rect class="bar s3" x="139.6" y="14.1" width="5.8" height="149.9"><title>layer 10: 100.0% null</title></rect>
+<rect class="bar s3" x="147.3" y="157.5" width="5.8" height="6.5"><title>layer 11: 4.3% null</title></rect>
+<rect class="bar s3" x="154.9" y="14.1" width="5.8" height="149.9"><title>layer 12: 100.0% null</title></rect>
+<rect class="bar s3" x="162.6" y="164.0" width="5.8" height="0.6"><title>layer 13: 0.0% null</title></rect>
+<rect class="bar s3" x="170.3" y="14.0" width="5.8" height="150.0"><title>layer 14: 100.0% null</title></rect>
+<rect class="bar s3" x="177.9" y="14.1" width="5.8" height="149.9"><title>layer 15: 100.0% null</title></rect>
+<rect class="bar s3" x="185.6" y="14.1" width="5.8" height="149.9"><title>layer 16: 100.0% null</title></rect>
+<rect class="bar s3" x="193.3" y="14.1" width="5.8" height="149.9"><title>layer 17: 100.0% null</title></rect>
+<rect class="bar s3" x="200.9" y="14.1" width="5.8" height="149.9"><title>layer 18: 100.0% null</title></rect>
+<rect class="bar s3" x="208.6" y="20.9" width="5.8" height="143.1"><title>layer 19: 95.4% null</title></rect>
+<rect class="bar s3" x="216.3" y="14.1" width="5.8" height="149.9"><title>layer 20: 100.0% null</title></rect>
+<rect class="bar s3" x="223.9" y="146.9" width="5.8" height="17.1"><title>layer 21: 11.4% null</title></rect>
+<rect class="bar s3" x="231.6" y="17.0" width="5.8" height="147.0"><title>layer 22: 98.0% null</title></rect>
+<rect class="bar s3" x="239.3" y="14.0" width="5.8" height="150.0"><title>layer 23: 100.0% null</title></rect>
+<rect class="bar s3" x="246.9" y="164.0" width="5.8" height="0.6"><title>layer 24: 0.0% null</title></rect>
+<rect class="bar s3" x="254.6" y="15.2" width="5.8" height="148.8"><title>layer 25: 99.2% null</title></rect>
+<rect class="bar s3" x="262.3" y="14.1" width="5.8" height="149.9"><title>layer 26: 99.9% null</title></rect>
+<rect class="bar s3" x="269.9" y="14.1" width="5.8" height="149.9"><title>layer 27: 100.0% null</title></rect>
+<rect class="bar s3" x="277.6" y="14.0" width="5.8" height="150.0"><title>layer 28: 100.0% null</title></rect>
+<rect class="bar s3" x="285.3" y="14.4" width="5.8" height="149.6"><title>layer 29: 99.8% null</title></rect>
+<rect class="bar s3" x="292.9" y="32.8" width="5.8" height="131.2"><title>layer 30: 87.4% null</title></rect>
+<rect class="bar s3" x="300.6" y="14.5" width="5.8" height="149.5"><title>layer 31: 99.6% null</title></rect>
+<rect class="bar s3" x="308.3" y="14.4" width="5.8" height="149.6"><title>layer 32: 99.7% null</title></rect>
+<rect class="bar s3" x="315.9" y="14.0" width="5.8" height="150.0"><title>layer 33: 100.0% null</title></rect>
+<rect class="bar s3" x="323.6" y="164.0" width="5.8" height="0.6"><title>layer 34: 0.0% null</title></rect>
+<rect class="bar s3" x="331.3" y="14.0" width="5.8" height="150.0"><title>layer 35: 100.0% null</title></rect>
+<line class="axis" x1="62" y1="164" x2="338" y2="164"/>
+<text class="axlab" x="200" y="194" text-anchor="middle">layer 0 &rarr; 35</text>
+<text class="axlab" x="10" y="16">% tokens NULL</text>
+</svg></figure></div></section><!--/KERNEL-SECTIONS-->
+<footer>Model-level arms: <code>bench_joint_sweep.py</code> &rarr; <code>joint_sweep_4B_16384_v1.json</code> (4B/16k, plain) and <code>joint_sweep_27B_8192_v1.json</code> (27B/8k, activation-checkpointed); p10/median/p90 over 12&ndash;15 iterations, batch 1, bf16, no compile, one H200, with a dense control re-measured every round. Kernel-level curves (below the fold) from <code>bench_ffn_linearity.py</code>, <code>ffn_floor_probe.py</code>, <code>ffn_null_rung_sweep.py</code>, <code>ffn_mass_shift.py</code>: median of 11&ndash;14 iterations after warmup, forward+backward, contiguous rung indices (the scattered-assignment penalty was measured separately at 4&ndash;6%). Times are measured; FLOP counts, conversion ratios and mean-compute values are calculated from the FLOP ledger. Static FFN deletion is a post-training lever and its task quality has not been established.</footer>
+</main>

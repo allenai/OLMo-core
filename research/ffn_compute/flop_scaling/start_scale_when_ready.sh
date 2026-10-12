@@ -1,0 +1,33 @@
+#!/bin/bash
+# Overnight watchdog: start the model-scale ladder orchestrators as soon as each repaired base
+# lands on weka (the prep jobs print PREP_DONE). Idempotent; safe to rerun.
+#   FIX_JOB=<ex> NINE_JOB=<ex> setsid nohup bash research/ffn_compute/flop_scaling/start_scale_when_ready.sh >> research/ffn_compute/flop_scaling/start_scale.log 2>&1 &
+export PATH=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin:$PATH
+REPO_ROOT=${REPO_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null || git -C "${SLURM_SUBMIT_DIR:-.}" rev-parse --show-toplevel)}
+REPO=$REPO_ROOT; cd $REPO
+PY=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python
+FIX_JOB="${FIX_JOB:?}"; NINE_JOB="${NINE_JOB:?}"
+CL="ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale,ai2/saturn-cirrascale"
+done_fix=0; done_nine=0
+start_scale() { # $1 = scale
+  tag="s$(echo $1 | tr -d .)"
+  lock=research/ffn_compute/flop_scaling/orchestrate_${tag}.started
+  if [ -f "$lock" ] || [ -f research/ffn_compute/flop_scaling/orchestrate_${tag}_state.json ]; then echo "$(date '+%m-%d %H:%M') $1 already started"; return; fi
+  date > "$lock"   # written BEFORE the launch so a second watchdog instance cannot race it (2026-09-02 23:10 double start)
+  FS_SCALE=$1 FS35_CLUSTER="$CL" setsid nohup env FS_SCALE=$1 $PY research/ffn_compute/flop_scaling/orchestrate_scale.py >> research/ffn_compute/flop_scaling/orchestrate_${tag}.log 2>&1 < /dev/null &
+  echo "$(date '+%m-%d %H:%M') started orchestrate_scale for $1"
+}
+while [ $done_fix = 0 ] || [ $done_nine = 0 ]; do
+  if [ $done_fix = 0 ]; then
+    L=$(beaker experiment logs $FIX_JOB 2>/dev/null)
+    if echo "$L" | grep -q PREP_DONE; then done_fix=1; start_scale 0.8b; start_scale 2b
+    elif echo "$L" | grep -qE "!!!|Traceback"; then echo "$(date '+%m-%d %H:%M') fix job FAILED"; done_fix=1; fi
+  fi
+  if [ $done_nine = 0 ]; then
+    L=$(beaker experiment logs $NINE_JOB 2>/dev/null)
+    if echo "$L" | grep -q PREP_DONE; then done_nine=1; start_scale 9b
+    elif echo "$L" | grep -qE "!!!|Traceback|download failed"; then echo "$(date '+%m-%d %H:%M') 9b job FAILED"; done_nine=1; fi
+  fi
+  sleep 180
+done
+echo "$(date '+%m-%d %H:%M') watchdog exit"

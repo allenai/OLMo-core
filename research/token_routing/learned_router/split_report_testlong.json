@@ -1,0 +1,194 @@
+{
+ "textgroups": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "nq": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "scifact": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "outlier": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "rerank": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "niah": {
+  "32768": {
+   "from_row": 8,
+   "kept": 52,
+   "dropped": 4
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 38,
+   "dropped": 10
+  }
+ },
+ "contradiction": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "strmatch": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "fiqa": {
+  "32768": {
+   "from_row": 8,
+   "kept": 8,
+   "dropped": 48
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 0,
+   "dropped": 48
+  }
+ },
+ "msmarco": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "oolong": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 43,
+   "dropped": 5
+  }
+ },
+ "outlier_amzn": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "reorder": {
+  "16384": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "qdmatch_hpqa": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "grouping": {
+  "32768": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ },
+ "absence": {
+  "16384": {
+   "from_row": 8,
+   "kept": 56,
+   "dropped": 0
+  },
+  "8192": {
+   "from_row": 16,
+   "kept": 48,
+   "dropped": 0
+  }
+ }
+}

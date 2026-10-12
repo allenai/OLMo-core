@@ -1,0 +1,11 @@
+launched_at	job_id	gen	arms	node	ngpu	data_arm	steps	note
+2026-09-09T16:27	3523688	smoke	dense headgate moderate aggressive aggr-nokv	cubbins	4	contradiction_sh16M_q35	3	3-step config smoke; all 5 configs ran clean; found the --block-skip-capacity CE shock
+2026-09-09T16:45	3523714	g1	dense headgate moderate aggressive aggr-nokv aggr-cap dense2	cubbins	4	contradiction_sh16M_q35	31	the ladder; dense run first AND last as a drift control
+2026-09-09T17:00	3523726	g1-eval	dense headgate moderate aggressive aggr-nokv aggr-cap	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	CANCELLED (superseded by 3523778, which also covers the keep-sweep arms)
+2026-09-09T10:10	3523777	g1	nokv-k50 nokv-k25	cubbins	4	contradiction_sh16M_q35	31	block-skip keep sweep at fixed FFN/no-KV; chained after 3523714
+2026-09-09T10:10	3523778	g1-eval	all 8 arms	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	replaces cancelled 3523726; chained after 3523777
+2026-09-09T10:30	3523800	g1	capbase cap50 cap25 cap125	cubbins	4	contradiction_sh16M_q35	31	fixed-capacity block-skip sweep (the budget hinge proved to be a no-op at 31 steps); replaces the cancelled 3523777
+2026-09-09T10:30	3523801	g1-eval	all 10 arms	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	CANCELLED: resubmitted as 3523841 with an explicit RUNS list and the /data log mirror (/scratch hit 100%% quota)
+2026-09-09T10:45	3523841	g1-eval	all 10 arms	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	NO-OP in 17s: (a) --export splits on commas so RUNGS became '2k'; (b) the ckpt glob only looked for step*/ but the model-only export lands in the save folder itself. Both fixed
+2026-09-09T11:16	3523878	g1-eval	all 10 arms	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	replaces 3523841; RUNGS passed with '+' separators
+2026-09-09T11:45	3523927	g1-eval	the 8 routed arms	cubbins	4	contradiction_iid rungs 2k,8k eval_size=500	-	3523878 got dense+headgate then died on every routed arm in kv_route._compacted_block_mask; relaunched with KV_ROUTE_BLOCKMASK=dense
