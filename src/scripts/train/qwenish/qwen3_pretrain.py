@@ -57,19 +57,21 @@ DATA_GLOB = "/weka/oe-adapt-default/victoriag/burglar/pretrain_data/tokenized/do
 SAVE_ROOT = "/weka/oe-adapt-default/victoriag/burglar/pretrain_ckpts"
 
 # Per-size settings. Untied embeddings; tokens = 20 x total params (incl. untied lm_head).
+# Micro-batches are small because Qwen3's ~152k vocab makes the logits large (8 x 4096 tokens of
+# bf16 logits alone is 9.3 GiB per GPU, which OOMed on H100s).
 SIZES: Dict[str, Dict] = {
     "0.6B": dict(
         model=TransformerConfig.qwen3_0_6B,
         total_params=0.752e9,
         global_batch_seqs=256,  # ~1M tokens/step
-        rank_microbatch_seqs=16,
+        rank_microbatch_seqs=4,
         lr=6e-4,
     ),
     "1.7B": dict(
         model=TransformerConfig.qwen3_1_7B,
         total_params=2.032e9,
         global_batch_seqs=512,  # ~2M tokens/step
-        rank_microbatch_seqs=8,
+        rank_microbatch_seqs=4,
         lr=4e-4,
     ),
 }
