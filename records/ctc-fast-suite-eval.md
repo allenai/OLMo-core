@@ -420,7 +420,16 @@ decoys: the eval's construction is shortcut-solvable (overlap_pair_is_gold 1.000
 **Eval speed.** The native slowness was FLA re-autotuning per prompt length (see
 [[fla-autotune-per-length-eval-slowdown]]); fixed in 57ad361b9 + follow-up, results bit-identical.
 
-**Eval path.** `launch_ctc_evals.py --backend olmo-eval`: olmo-eval's data + graders, native olmo_core
+**Current eval path (2026-10): olmo-eval `scripts/ctc_suite/launch_ctc_suite.py`** (branch
+`prasann/ctc-suite-launcher`), which supersedes the `launch_ctc_evals.py --backend olmo-eval`
+route described next. It keeps the default `Qwen/Qwen3.5-0.8B` tokenizer, whose chat template is a
+token prefix of the SFT sequences; the 4B template is not. It takes `--doc-markers` for
+marker-trained checkpoints and runs a per-job `preflight.py`. **r256k runs with YaRN x2 + 131,072-token
+chunked prefill by default.** Its prompts run to ~272k tokens, and the base window left-truncated 43-100%
+of rows (a fake 256k collapse). `--fit-window` (shorten distractor docs) is the alternative and agreed
+within noise on the setA pair. Chunked prefill is on `prasann/landmark` from `d28e458b2`.
+
+**Eval path (earlier).** `launch_ctc_evals.py --backend olmo-eval`: olmo-eval's data + graders, native olmo_core
 provider, `CTC_SUITE_PROMPT_FORMAT=chat` (IID with setA). Validated outlier@8k: 0.597 (olmo-eval, 500)
 vs 0.587 (native driver, 500). Measured 0.73–0.83 s/example at 8k single GPU; the planner's model
 (prefill/rung + 30 ms/decoded token × measured answer length) is ~35% conservative there.

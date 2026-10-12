@@ -21,7 +21,30 @@ explicitly overrides one for that launch.
 4. **Always write a launch ledger entry** recording every results-hub column value
    except the metric itself, before/at submission time — not after results land.
 
-## The launcher
+## CTC-suite evals: use the olmo-eval launcher (current, 2026-10)
+
+For the CTC suite (the 22-row roster + OOD rows, 2k-256k) the current path is **olmo-eval's
+`scripts/ctc_suite/launch_ctc_suite.py`** (branch `prasann/ctc-suite-launcher`; README in that
+folder). It packs single-GPU Beaker jobs on jupiter and runs a per-job `preflight.py`. Its defaults
+already apply rule 2 at the r256k rung: **YaRN factor 2 + 131,072-token chunked prefill**, in jobs of
+their own, with every other rung untouched. You need no `_yarn2` copy; the model runs from the step
+dir. That rung's prompts run to ~272k tokens, and without YaRN 43-100% of rows are left-truncated
+(chat header + instruction cut).
+
+```bash
+uv run python scripts/ctc_suite/launch_ctc_suite.py --ckpt <weka step dir> --arm full \
+    --doc-markers --rows <list> --run-name <name>        # --dry-run first
+```
+
+- **Tokenizer:** keep the default `Qwen/Qwen3.5-0.8B`. The 4B tokenizer's chat template opens a
+  `<think>` block for the generation prompt, which is out of format for every CTC SFT checkpoint.
+- **`--doc-markers`:** pass it for checkpoints trained on marker-wrapped shards (e.g. setA).
+- **`--fit-window`:** the r256k alternative to YaRN. It shortens distractor documents and agreed
+  with YaRN within noise on the setA pair.
+
+The multirung launcher below remains the path for the singletask/xlong ladders it was written for.
+
+## The launcher (singletask / xlong ladders)
 
 Everything below goes through the Beaker launcher:
 
