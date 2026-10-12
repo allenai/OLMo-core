@@ -1,4 +1,4 @@
-"""Scoped 100B cosine MT from the 12T + 400B EMO fixed PT decay endpoint, EMO kept on."""
+"""Scoped 100B cosine MT from the non-decayed 12.4T 128-GPU EMO hero checkpoint, EMO kept on."""
 
 import concurrent.futures
 import hashlib
@@ -12,8 +12,8 @@ from olmoe3_lr_sweep_plan import checkpoint_complete
 from olmoe3_lr_sweep_watch import atomic_json, log
 from olmoe3_small_hero_plan import BATCH, BUCKET, CONTROL, MOUNT
 
-CAMPAIGN = "olmo35-small-12t400b-mt20-20261011"
-BRANCH = "tanushy/hero-12t400b-mt20-20261011"
+CAMPAIGN = "olmo35-small-12p4t-mt20-20261012"
+BRANCH = "tanushy/hero-12p4t-mt20-20261012"
 ROOT = MOUNT / "production-hero-small-midtrain" / CAMPAIGN
 AUTOMATION = MOUNT / "uploader/automation" / CAMPAIGN
 EVAL_ROOT = MOUNT / "scratch" / CAMPAIGN
@@ -21,9 +21,10 @@ CORE_REF = "b1fd2c9746e88baeb20e372bdca340d788d0f7e5"
 HELPER_REF = "3542d99ebeb6d156887ed1eaf2871cff5f07666d"
 DATA_WORK = ROOT / "data-work"
 METADATA_CACHE = DATA_WORK / "cached-path-metadata"
-PARENT = "olmo35-small-12t-plus400bdecay-20261006-emo"
-PT_STEP = 739342
-SOURCE = MOUNT / "production-fixed-pt-decays" / PARENT / f"step{PT_STEP}"
+PARENT = "olmo35-small-hero-20260907-emo"
+PT_STEP = 739000
+SOURCE = MOUNT / "protected/olmo35-small-hero-20260907/emo" / f"step{PT_STEP}" / "olmo-core"
+SOURCE_GPUS = 128
 LR = 1.1e-3 * 0.2
 WARMUP = 2000
 REQUESTED_TOKENS = 100_000_000_000
@@ -31,7 +32,7 @@ END = (REQUESTED_TOKENS + BATCH - 1) // BATCH
 SMOKE_END = 2
 SEED = 103_117_110_100_105 % (2**31 - 1)
 MIX_SHA256 = "1ed52c81c3f33fb864157f8e01ed0d0aff24548149c2ca4376182578181c25ba"
-DECAY_JOBS = {"emo": "01M4AKS3VR0DH01X2JB9A2903X"}
+ARMS = ("emo",)
 
 
 def inventory(root):
@@ -49,12 +50,17 @@ def inventory(root):
     return result
 
 
-def validate_checkpoint(root, step):
-    """Require full-state metadata and immutable per-rank save audits for all 64 ranks."""
+def validate_checkpoint(root, step, gpus=64):
+    """Require full-state metadata and immutable per-rank save audits for all saved ranks."""
     inventory(root)
-    for rank in range(64):
+    for rank in range(gpus):
         row = json.loads((root / "resume_audit" / f"rank{rank}.json").read_text())
-        if (row["step"], row["tokens"], row["rank"], row["gpus"]) != (step, step * BATCH, rank, 64):
+        if (row["step"], row["tokens"], row["rank"], row["gpus"]) != (
+            step,
+            step * BATCH,
+            rank,
+            gpus,
+        ):
             raise ValueError(f"Wrong checkpoint audit: {root}, rank {rank}")
         if not (root / "train" / f"rank{rank}.pt").is_file():
             raise ValueError(f"Missing trainer state: rank{rank}")
@@ -162,7 +168,7 @@ class MTRun:
     smoke: bool = False
 
     def __post_init__(self):
-        assert self.arm in DECAY_JOBS and not self.smoke
+        assert self.arm in ARMS and not self.smoke
 
     @property
     def emo(self):
@@ -190,7 +196,7 @@ class MTRun:
 
     @property
     def prefix(self):
-        return f"mt20-after-12t400b/{self.arm}"
+        return f"mt20-after-12p4t/{self.arm}"
 
     def registration(self):
         """Fields for the uploader Registration of this isolated child lineage."""
@@ -211,10 +217,11 @@ class MTRun:
             arm=self.arm,
             checkpoint_root=str(self.root),
             parent=self.parent,
-            parent_experiment=DECAY_JOBS[self.arm],
             parent_step=PT_STEP,
             parent_tokens=PT_STEP * BATCH,
             source=str(self.source),
+            source_gpus=SOURCE_GPUS,
+            source_stage="non-decayed pretraining",
             bucket_id=self.bucket,
             remote_prefix=self.prefix,
             batch_tokens=BATCH,
@@ -234,7 +241,7 @@ class MTRun:
 
 
 def runs():
-    return [MTRun(arm) for arm in DECAY_JOBS]
+    return [MTRun(arm) for arm in ARMS]
 
 
 def find_run(name):

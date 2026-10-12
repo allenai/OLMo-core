@@ -114,3 +114,43 @@ def verify_halved_dp(trainer, path, actual):
         "resharded_optimizer_tensors_verified": verified,
         "rng_policy": "native reseed when world size changes",
     }
+
+
+def verify_halved_transfer(trainer, path, actual, keys):
+    """Weights-only variant of verify_halved_dp: a fresh run has no step or loss history."""
+    rank = dist.get_rank()
+    assert dist.get_world_size() == 64
+    sources = (2 * rank, 2 * rank + 1)
+    saved = [
+        json.loads((Path(path) / "resume_audit" / f"rank{source}.json").read_text())
+        for source in sources
+    ]
+    for source, row in zip(sources, saved):
+        assert row["gpus"] == 128 and row["rank"] == source, source
+        assert row["tensors"].keys() == actual["tensors"].keys(), source
+    assert keys and set(keys) <= actual["tensors"].keys()
+    replicated = resharded = 0
+    for name in sorted(keys):
+        observed = actual["tensors"][name]
+        first, second = (row["tensors"][name] for row in saved)
+        if first[0] == observed[0]:
+            assert first == observed and second == observed, name
+            replicated += 1
+            continue
+        tensor = trainer.train_module.optim.states[name]
+        assert len(tensor.placements) == 1 and tensor.placements[0].is_shard(0), name
+        local = tensor.to_local().detach().reshape(-1)
+        width = first[0]
+        assert second[0] == width and local.numel() == 2 * width, name
+        assert first[1] == second[1] == str(local.dtype), name
+        assert sample_digest(local, 0, width) == first[2], name
+        assert sample_digest(local, width, width) == second[2], name
+        resharded += 1
+    assert resharded > 0
+    return {
+        "source_gpus": 128,
+        "gpus": 64,
+        "source_ranks": list(sources),
+        "replicated_tensors_verified": replicated,
+        "resharded_tensors_verified": resharded,
+    }

@@ -13,6 +13,7 @@ from olmoe3_hero_mt_plan import (
     END,
     PT_STEP,
     SMOKE_END,
+    SOURCE_GPUS,
     find_run,
     validate_checkpoint,
 )
@@ -57,7 +58,10 @@ def main():
                 choices.append((int(p.name[4:]), p))
         start, source = max(choices, key=lambda x: x[0])
         assert 0 <= start <= END
-        validate_checkpoint(source, PT_STEP if source == r.source else start)
+        if source == r.source:
+            validate_checkpoint(source, PT_STEP, SOURCE_GPUS)
+        else:
+            validate_checkpoint(source, start)
         atomic_json(selection, dict(step=start, source=str(source)))
     deadline = time.monotonic() + 900
     while not selection.is_file():
@@ -74,6 +78,8 @@ def main():
                 row[k]
                 for k in ("weights_and_buffers_sampled_exact", "optimizer_reset", "data_reset")
             )
+            assert row["source_gpus"] == SOURCE_GPUS
+            assert row["source_ranks"] == [2 * gpu, 2 * gpu + 1]
         atomic_json(smoke, dict(step=SMOKE_END, reconciled=True, all_64_ranks_verified=True))
     stages = ([SMOKE_END] if start < SMOKE_END else []) + ([END] if start < END else [])
     port = 29000 + int(hashlib.sha256(exp.encode()).hexdigest()[:8], 16) % 900

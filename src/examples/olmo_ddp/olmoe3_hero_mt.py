@@ -25,6 +25,7 @@ from olmoe3_hero_mt_plan import (
     find_run,
     runs,
 )
+from olmoe3_hero_reshard_audit import verify_halved_transfer
 from olmoe3_lr_sweep_watch import atomic_json
 
 import olmo_core
@@ -101,13 +102,12 @@ class MTAudit(hero.HeroAudit):
         if Path(path) == r.source:
             assert self.step == self.trainer.global_train_tokens_seen == 0
             assert self.trainer.data_loader.tokens_processed == 0
-            saved = json.loads((r.source / "resume_audit" / f"rank{get_rank()}.json").read_text())
             current = hero.state_sample(self.trainer)
             keys = {
-                k for k in saved["tensors"] if k.startswith("model_param/") or k.endswith(".main")
+                k for k in current["tensors"] if k.startswith("model_param/") or k.endswith(".main")
             }
             keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
-            assert keys and all(current["tensors"][k] == saved["tensors"][k] for k in keys)
+            halved = verify_halved_transfer(self.trainer, r.source, current, keys)
             optim = self.trainer.train_module.optim
             assert not optim._losses and not optim._grad_norms
             moments = 0
@@ -122,6 +122,7 @@ class MTAudit(hero.HeroAudit):
                 optimizer_reset=True,
                 data_reset=True,
                 source_step=PT_STEP,
+                **halved,
             )
             atomic_json(Path(self.output_dir) / f"initial-mt-transfer-rank{get_rank()}.json", proof)
         else:
@@ -208,7 +209,8 @@ def trainer_config(common):
     wb.tags = [
         r.arm,
         "midtraining",
-        "decayed-12t400b-source",
+        "constant-lr-12p4t-source",
+        "128to64-source",
         "mt20",
         "cosine",
         "64g",

@@ -148,3 +148,100 @@ def test_halved_optimizer_samples_reject(monkeypatch, case):
         live[0] = 2.0
     with pytest.raises(AssertionError):
         check_halved(monkeypatch, 0, shards, local, replicated, live)
+
+
+def check_transfer(monkeypatch, rank, shards, local, replicated, live_replicated, extra=None):
+    import olmoe3_hero_reshard_audit as audit
+
+    monkeypatch.setattr(
+        audit, "dist", SimpleNamespace(get_rank=lambda: rank, get_world_size=lambda: 64)
+    )
+    state = SimpleNamespace(
+        placements=[SimpleNamespace(is_shard=lambda dim: dim == 0)], to_local=lambda: local
+    )
+    trainer = SimpleNamespace(
+        train_module=SimpleNamespace(optim=SimpleNamespace(states={"w.main": state}))
+    )
+    moments = torch.zeros(local.numel())
+    actual = dict(
+        rank=rank,
+        gpus=64,
+        step=0,
+        tokens=0,
+        loss_history=[],
+        norm_history=[],
+        tensors={
+            "w.main": fingerprint(local),
+            "w.exp_avg": fingerprint(moments),
+            "model_param/w": fingerprint(live_replicated),
+        },
+    )
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder)
+        (path / "resume_audit").mkdir()
+        for half, shard in enumerate(shards):
+            source = 2 * rank + half
+            tensors = {
+                "w.main": fingerprint(shard),
+                "w.exp_avg": fingerprint(torch.ones(shard.numel())),
+                "model_param/w": fingerprint(replicated),
+                **(extra or {}),
+            }
+            row = dict(
+                rank=source,
+                gpus=128,
+                step=739000,
+                tokens=739000 * 16777216,
+                loss_history=[2.0],
+                norm_history=[0.5],
+                tensors=tensors,
+            )
+            (path / "resume_audit" / f"rank{source}.json").write_text(json.dumps(row))
+        return audit.verify_halved_transfer(trainer, path, actual, {"w.main", "model_param/w"})
+
+
+@pytest.mark.parametrize("width", [300, 100])
+@pytest.mark.parametrize("rank", [0, 37, 63])
+def test_halved_weight_transfer(monkeypatch, rank, width):
+    original = torch.arange(2 * width, dtype=torch.float32) - width
+    original[width + 2] = -0.0
+    replicated = torch.linspace(-1, 1, 257)
+    proof = check_transfer(monkeypatch, rank, original.chunk(2), original, replicated, replicated)
+    assert proof["source_ranks"] == [2 * rank, 2 * rank + 1]
+    assert (proof["replicated_tensors_verified"], proof["resharded_tensors_verified"]) == (1, 1)
+    assert (proof["source_gpus"], proof["gpus"]) == (128, 64)
+
+
+@pytest.mark.parametrize(
+    "case", ["swapped", "uneven", "signed-zero", "replicated-mismatch", "extra-key"]
+)
+def test_halved_weight_transfer_reject(monkeypatch, case):
+    original = torch.arange(600, dtype=torch.float32) - 250
+    original[302] = -0.0
+    shards = original.chunk(2)
+    replicated = torch.linspace(-1, 1, 257)
+    live, local, extra = replicated, original, None
+    if case == "swapped":
+        local = torch.cat([shards[1], shards[0]])
+    elif case == "uneven":
+        shards = (original[:290], original[290:])
+    elif case == "signed-zero":
+        local = original.clone()
+        local[302] = 0.0
+    elif case == "replicated-mismatch":
+        live = replicated.clone()
+        live[0] = 2.0
+    elif case == "extra-key":
+        extra = {"v.main": fingerprint(replicated)}
+    with pytest.raises(AssertionError):
+        check_transfer(monkeypatch, 0, shards, local, replicated, live, extra)
+
+
+def test_halved_transfer_requires_64_ranks(monkeypatch):
+    import olmoe3_hero_reshard_audit as audit
+
+    monkeypatch.setattr(
+        audit, "dist", SimpleNamespace(get_rank=lambda: 0, get_world_size=lambda: 128)
+    )
+    with pytest.raises(AssertionError):
+        audit.verify_halved_transfer(None, Path("/nonexistent"), {}, {"w.main"})
