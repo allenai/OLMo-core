@@ -304,6 +304,12 @@ class BeakerLaunchConfig(Config):
     min_runtime: str | None = None
     """Minimum guaranteed runtime before the job can be preempted, e.g. ``"15m"``."""
 
+    auto_resume: bool | None = None
+    """
+    If ``True``, Beaker automatically requeues the job after it's preempted. Combined with checkpointing
+    to a fixed ``save_folder``, the trainer then resumes from the latest checkpoint.
+    """
+
     retries: int | None = None
     """
     The number of times to retry the experiment if it fails.
@@ -638,8 +644,11 @@ class BeakerLaunchConfig(Config):
             workspace=self.workspace,
             budget=self.budget,
             priority=self.priority,
-            preemptible=self.preemptible if self.min_runtime is None else None,
+            preemptible=(
+                self.preemptible if self.min_runtime is None and self.auto_resume is None else None
+            ),
             min_runtime=self.min_runtime,
+            auto_resume=self.auto_resume,
             # Inputs.
             beaker_image=self._resolve_beaker_image(),
             env_vars=self._get_env_vars(),
