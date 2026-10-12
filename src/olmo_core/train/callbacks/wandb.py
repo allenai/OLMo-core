@@ -119,7 +119,10 @@ class WandBCallback(Callback):
                 log.warning("Finalizing failed W&B run...")
             else:
                 log.info("Finalizing successful W&B run...")
-            self.wandb.finish(exit_code=exit_code, quiet=True)
+            try:
+                self.wandb.finish(exit_code=exit_code, quiet=True)
+            except TypeError:  # wandb>=0.30 removed the `quiet` argument
+                self.wandb.finish(exit_code=exit_code)
             self._finalized = True
 
     def pre_train(self):
@@ -175,7 +178,7 @@ class WandBCallback(Callback):
                 # I guess it return cached run data.
                 api = self.wandb.Api(api_key=os.environ[WANDB_API_KEY_ENV_VAR], timeout=5)
                 run = api.run(self.run_path)  # type: ignore
-                for tag in run.tags or []:
+                for tag in getattr(run, "tags", None) or []:
                     if tag.lower() in self.cancel_tags:
                         self.trainer.cancel_run("canceled from W&B tag")
                         return
