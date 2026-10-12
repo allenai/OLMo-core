@@ -406,6 +406,30 @@ def test_dataset_mixture_preserves_balanced_sources_when_rounding_to_batch(tmp_p
     assert token_counts == {"left": 50, "right": 50}
 
 
+@pytest.mark.parametrize("sizes", [(510, 500), (500, 510)])
+def test_dataset_mixture_breaks_equal_source_remainders_by_capacity(tmp_path: Path, sizes):
+    sources = []
+    for idx, size in enumerate(sizes):
+        path = tmp_path / f"source_{idx}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        sources.append(
+            SourceMixtureConfig(source_name=str(idx), target_ratio=0.5, paths=[str(path)])
+        )
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=1000,
+        source_list=SourceMixtureList(sources),
+        global_batch_size=1010,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert [sum(item.tokens for item in source.path_tokens) for source in mixture.sources] == list(
+        sizes
+    )
+
+
 def test_dataset_mixture_preserves_source_ratios_when_paths_hit_capacity(tmp_path: Path, caplog):
     caplog.set_level(logging.INFO, logger="olmo_core.data.source_mixture")
     source_paths = []

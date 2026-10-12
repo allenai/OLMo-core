@@ -333,9 +333,25 @@ class SourceMixtureDatasetConfig(Config):
             requested_instances * source.target_ratio / total_ratio - instances
             for source, instances in zip(self.source_list.sources, source_instances)
         ]
+        source_caps = [
+            int(
+                available_tokens_by_source[source.source_name]
+                * source.max_source_fraction
+                * source.max_repetition_ratio
+            )
+            for source in self.source_list.sources
+        ]
         remaining_instances = requested_instances - sum(source_instances)
-        for _, idx in sorted(
-            ((source_remainders[idx], idx) for idx in range(len(source_instances))), reverse=True
+        for _, _, idx in sorted(
+            (
+                (
+                    source_remainders[idx],
+                    (source_instances[idx] + 1) * sequence_length <= source_caps[idx],
+                    idx,
+                )
+                for idx in range(len(source_instances))
+            ),
+            reverse=True,
         )[:remaining_instances]:
             source_instances[idx] += 1
 
@@ -345,10 +361,7 @@ class SourceMixtureDatasetConfig(Config):
         for idx, source_config in enumerate(self.source_list.sources):
             num_for_source = available_tokens_by_source[source_config.source_name]
             needed_for_source = source_instances[idx] * sequence_length
-            max_for_source = int(
-                (num_for_source * source_config.max_source_fraction)
-                * source_config.max_repetition_ratio
-            )
+            max_for_source = source_caps[idx]
 
             # Ensure that each source can meet its batch-rounded target.
             if max_for_source < needed_for_source:
