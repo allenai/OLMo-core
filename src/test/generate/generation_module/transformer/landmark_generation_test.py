@@ -301,9 +301,10 @@ def test_sparse_landmark_ragged_batch_matches_per_row_bs1():
         assert _trim_eos(comp) == _trim_eos(ref[0].tolist()), f"row of length {len(row)}"
 
 
-def test_landmark_generation_rejects_multi_landmark_prompts():
-    # ``_insert_landmark_tokens`` places exactly one landmark per block, so a num_landmarks > 1
-    # mixer would silently see landmarks at the wrong positions.
+def test_landmark_generation_multi_landmark_prompts():
+    # ``_insert_landmark_tokens`` is num_landmarks-aware (the last ``num_landmarks`` slots of each
+    # block are landmarks), so a num_landmarks > 1 mixer generates; the block-size check now
+    # requires ``block_size == mem_freq + num_landmarks`` instead of rejecting the model.
     os.environ["LM_SPARSE_KERNEL"] = "0"
     seed_all(0)
     cfg = TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
@@ -330,5 +331,8 @@ def test_landmark_generation_rejects_multi_landmark_prompts():
         ),
         device=torch.device("cpu"),
     )
-    with pytest.raises(OLMoConfigurationError, match="num_landmarks=1"):
-        gm.generate_batch(torch.randint(2, 400, (1, 14)), log_timing=False)
+    assert gm._landmark_block_size(gm._landmark_attention_layers()) == MEM_FREQ + 2
+    out, _, _ = gm.generate_batch(
+        torch.randint(2, 400, (1, 14)), log_timing=False, completions_only=True
+    )
+    assert out.shape[0] == 1 and out.shape[1] >= 1
