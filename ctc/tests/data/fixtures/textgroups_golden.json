@@ -1,0 +1,792 @@
+{
+ "seed": 1234,
+ "source": "pre-migration-source",
+ "cases": [
+  {
+   "name": "n15_g3_k2_t70_mixed",
+   "config": {
+    "num_docs": 15,
+    "num_groups": 2,
+    "group_size": 3,
+    "target": 70,
+    "tolerance": 0,
+    "separation": 0,
+    "feature": "mixed",
+    "cmin": 4,
+    "cmax": 40,
+    "filler_max": null
+   },
+   "examples": [
+    {
+     "documents": [
+      {
+       "text": "The canyon trembled. The blacksmith and the windmill and the captain studied. The fountain and the windmill argued. The harvester and the farmer sketched. The glacier and the desert and the drummer watched. The forest and the telescope and the innkeeper and the musician stumbled. The voyage and the market and the harvest lingered. The harbor and the farmer and the castle and the chapel circled. The castle and the shepherd soared. The canyon and the drummer and the farmer faltered. The mountain and the bridge returned. The chapel and the lantern and the teacher and the engine faltered. The violin and the forest and the blacksmith and the tavern traveled. The drummer and the violin and the miner labored. The fisherman and the desert drifted. The shepherd and the windmill and the river crumbled. The chapel and the chapel crumbled. The innkeeper and the cottage and the miner and the forest harvested. The painter collapsed. The cottage and the innkeeper and the harvester and the farmer harvested. The telescope and the chapel and the telescope waited. The scholar and the harvester and the blacksmith studied. The meadow and the market and the gardener knelt. The windmill and the compass and the desert labored. The cathedral and the forest echoed. The cottage and the captain and the bridge and the bridge waited."
+      },
+      {
+       "text": "The anchor departed. The cottage and the chapel and the wagon argued. The weaver and the valley and the scholar and the merchant faltered. The tower and the potter and the engine and the innkeeper sketched. The harvest and the carriage and the chapel rushed."
+      },
+      {
+       "text": "The farmer and the scholar arrived. The engine and the shepherd and the beacon and the harvest traveled. The innkeeper and the sailor and the cottage marched. The painter and the shepherd and the tavern rushed. The courtyard and the drummer and the chapel faltered. The orchard and the forest argued. The telescope and the gardener and the forest whispered. The sailor drifted. The weaver and the palace and the saddle faltered."
+      },
+      {
+       "text": "The courtyard and the violin and the baker whispered. The musician stumbled. The cottage and the cottage and the cathedral paused."
+      },
+      {
+       "text": "The fisherman and the forest and the quarry soared. The soldier and the voyage and the chapel gathered. The watchman shattered. The voyage and the beacon and the quarry rushed."
+      },
+      {
+       "text": "The canyon guarded. The merchant and the sailor trembled. The tower and the tower and the blacksmith and the weaver harvested. The glacier and the compass and the harvester and the watchman trembled. The harbor and the innkeeper sketched. The telescope and the baker and the wagon and the gardener wandered. The fountain and the teacher and the quarry and the wagon shattered. The lantern and the market listened. The canyon and the saddle and the castle labored. The teacher and the meadow and the scholar traveled. The palace and the windmill scattered. The quarry and the wagon and the teacher and the island labored. The tower and the blacksmith celebrated. The blacksmith and the potter and the anchor and the garden studied. The baker and the painter and the drummer stumbled. The baker and the tavern and the mountain and the harbor lingered. The mountain and the cottage scattered. The saddle and the wagon hesitated. The wagon and the desert and the sailor knelt. The wagon and the baker and the mountain rested. The harvest and the garden and the anchor and the garden hesitated. The tower and the blacksmith and the fountain and the shepherd hesitated. The canyon and the lantern and the mountain marched. The merchant and the telescope and the fountain and the miner marched. The lantern and the engine and the meadow labored. The bridge gathered. The wagon and the blacksmith argued. The wagon and the cathedral sketched. The garden and the scholar and the library and the hunter knelt. The desert and the carriage and the cottage shouted. The courtyard and the innkeeper and the forest departed. The voyage and the bridge and the wagon and the harvester labored."
+      },
+      {
+       "text": "The wagon and the tavern echoed. The captain and the bridge collapsed. The chapel traveled. The potter and the harvest and the engine faltered. The courtyard rushed. The watchman and the engine and the innkeeper and the fountain wandered. The scholar and the teacher and the farmer harvested. The tavern and the farmer and the glacier and the palace paused. The tower and the gardener and the desert and the desert crumbled. The forest and the drummer and the saddle and the innkeeper paused. The courtyard and the meadow listened. The tower and the musician and the engine sketched. The sailor and the wagon and the blacksmith faltered."
+      },
+      {
+       "text": "The lantern and the windmill and the market and the windmill rushed. The miner and the blacksmith and the harvester and the lantern soared. The miner and the miner and the farmer sketched. The cottage and the drummer and the voyage and the gardener marched. The hunter and the gardener and the tower and the fountain rushed. The meadow and the gardener and the scholar rebuilt. The teacher and the musician watched. The drummer and the teacher and the violin shouted. The farmer and the soldier and the tower and the fisherman scattered. The castle and the compass and the musician knelt. The market and the chapel and the palace and the palace drifted. The captain and the cathedral and the baker and the harbor guarded. The harvester and the harbor and the palace departed. The blacksmith and the harvest stumbled. The harvest and the quarry and the soldier explored. The island and the cathedral and the windmill crumbled. The captain and the harbor and the courtyard and the orchard gathered. The musician and the musician and the scholar scattered. The tower and the gardener and the library and the valley explored. The compass and the cathedral and the canyon studied. The drummer and the forest and the painter and the painter listened. The musician and the voyage and the drummer and the lantern rested. The cottage and the soldier and the garden and the innkeeper departed. The engine and the island and the quarry paused. The tavern and the painter and the windmill and the fisherman arrived. The market and the weaver and the farmer departed. The merchant and the painter and the drummer whispered. The canyon and the watchman wandered."
+      },
+      {
+       "text": "The valley and the miner and the glacier and the island paused. The bridge vanished. The harbor and the quarry and the cathedral and the bridge trembled. The saddle shattered. The valley and the mountain hesitated. The baker and the soldier and the musician and the valley scattered. The harvest and the teacher waited. The meadow and the island gathered. The castle and the meadow and the valley and the tavern collapsed. The baker and the cottage and the harvest gathered. The beacon and the shepherd hesitated. The cathedral and the blacksmith and the quarry and the palace watched. The glacier and the teacher and the library rebuilt. The watchman and the palace and the chapel and the gardener drifted. The telescope and the weaver studied."
+      },
+      {
+       "text": "The windmill and the farmer and the miner watched. The scholar and the painter and the palace rushed. The drummer and the harvester and the anchor and the scholar waited. The castle and the quarry shattered. The tavern and the engine and the palace and the fountain celebrated. The valley and the cathedral and the innkeeper and the baker argued. The glacier and the blacksmith marched. The merchant and the engine and the wagon and the bridge collapsed. The cottage and the voyage and the harbor and the miner returned. The bridge and the river and the island vanished. The sailor and the garden collapsed. The innkeeper and the anchor gathered. The violin and the windmill returned. The anchor and the palace and the desert paused. The drummer and the watchman soared. The voyage and the sailor and the innkeeper and the tavern knelt. The forest and the desert and the beacon collapsed. The cottage and the voyage and the garden and the hunter faltered. The meadow and the courtyard and the windmill labored."
+      },
+      {
+       "text": "The tower and the chapel and the fountain shattered. The bridge and the musician labored. The harvest and the market and the island and the glacier shouted. The market and the library and the weaver and the harvest stumbled. The mountain and the carriage and the library rebuilt. The harbor and the innkeeper and the merchant and the gardener traveled. The blacksmith and the fountain crumbled. The tavern and the desert traveled. The blacksmith and the beacon and the captain labored. The farmer and the scholar soared. The harbor and the voyage sketched. The anchor and the blacksmith and the scholar circled. The innkeeper and the forest and the harvest and the meadow lingered. The hunter and the musician and the quarry traveled. The saddle and the soldier and the palace echoed. The compass and the carriage and the merchant shouted."
+      },
+      {
+       "text": "The telescope and the painter and the hunter trembled. The meadow and the palace collapsed. The palace and the sailor argued. The meadow and the valley and the windmill and the anchor departed. The saddle and the musician collapsed. The innkeeper and the anchor circled. The weaver and the desert and the wagon waited. The desert and the river and the musician and the fountain departed. The tower and the orchard and the cottage and the saddle shouted. The mountain and the gardener rushed. The palace and the telescope echoed. The desert and the hunter wandered. The courtyard and the violin and the cathedral and the courtyard circled. The innkeeper and the tower and the quarry and the musician echoed. The hunter and the quarry labored. The baker and the weaver and the beacon and the cathedral scattered. The glacier and the quarry and the mountain and the mountain crumbled. The canyon and the beacon and the soldier listened. The beacon and the harvester and the hunter echoed. The windmill and the courtyard and the anchor and the teacher knelt. The windmill and the soldier and the courtyard arrived. The harvester and the castle and the wagon trembled. The innkeeper and the library and the weaver and the carriage drifted. The potter and the hunter and the orchard trembled. The scholar paused. The teacher and the merchant and the meadow guarded. The mountain and the fountain and the scholar and the engine soared. The weaver and the musician and the mountain and the innkeeper gathered. The courtyard and the glacier shouted. The miner and the hunter and the captain arrived. The orchard and the harvester harvested. The cathedral and the beacon vanished. The fisherman and the captain and the painter and the telescope watched."
+      },
+      {
+       "text": "The sailor and the courtyard studied. The palace and the lantern returned. The merchant and the drummer and the windmill soared. The glacier and the teacher paused. The river and the courtyard and the harvester shouted. The sailor and the orchard studied. The beacon and the saddle trembled. The quarry and the harbor studied. The carriage and the carriage and the miner and the gardener explored. The teacher and the tower vanished. The river and the desert shouted. The wagon and the voyage glimmered. The watchman and the quarry and the market and the hunter whispered. The shepherd and the meadow and the scholar argued. The hunter and the orchard and the compass and the tavern trembled. The harbor and the potter and the wagon crumbled. The blacksmith and the island circled. The violin and the glacier gathered. The harvest and the courtyard and the voyage returned. The potter and the watchman shattered. The anchor and the weaver and the farmer soared. The river and the tower and the fisherman and the courtyard studied. The tower and the mountain and the harvest wandered. The meadow and the violin wandered. The gardener traveled. The watchman and the engine and the chapel and the chapel waited. The violin and the bridge lingered. The telescope and the gardener and the painter traveled. The teacher and the orchard and the sailor stumbled. The compass and the river shattered. The sailor and the chapel rested. The innkeeper and the shepherd and the market and the saddle shouted. The farmer and the tower and the valley stumbled. The blacksmith and the lantern and the drummer and the voyage lingered. The garden and the soldier and the gardener listened. The watchman and the teacher departed. The windmill and the tower rested. The hunter and the palace and the innkeeper and the hunter departed. The weaver and the blacksmith traveled. The palace and the drummer and the blacksmith vanished. The engine and the fisherman waited."
+      },
+      {
+       "text": "The valley and the voyage echoed. The canyon and the bridge and the innkeeper and the scholar guarded. The canyon and the baker and the windmill and the harvester returned. The merchant and the miner argued. The beacon and the voyage and the wagon sketched. The harvester listened. The teacher and the carriage trembled. The drummer and the carriage waited. The gardener and the teacher and the chapel harvested. The harbor and the forest and the orchard harvested. The market and the farmer and the fountain studied. The canyon and the baker and the shepherd traveled. The cathedral and the engine shouted. The telescope and the market and the garden and the cottage crumbled. The violin and the drummer and the blacksmith and the valley explored. The desert and the hunter and the tower echoed. The canyon shouted."
+      },
+      {
+       "text": "The bridge studied. The harvest and the harvester explored. The gardener and the island and the canyon vanished. The engine and the sailor and the tavern shattered."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of times the word \"and\" appears. Find every group of 3 passages whose values add up to 70 (exactly 70)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       2,
+       11,
+       14
+      ],
+      [
+       4,
+       9,
+       10
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "connector",
+      "word": "and",
+      "target": 70,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 2,
+      "filler_max": 70,
+      "separation": 0,
+      "counts": [
+       48,
+       10,
+       15,
+       4,
+       6,
+       63,
+       23,
+       66,
+       27,
+       39,
+       31,
+       65,
+       68,
+       29,
+       5
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "The shepherd beyond the musician lingered. The bridge beyond the farmer beyond the courtyard arrived. The market beyond the hunter beyond the harvester beyond the gardener vanished. The sailor beyond the forest beyond the canyon gathered. The telescope beyond the violin beyond the tavern beyond the canyon drifted. The glacier beyond the cottage beyond the painter lingered. The library beyond the valley beyond the library studied. The carriage beyond the orchard celebrated. The quarry beyond the market beyond the weaver beyond the sailor paused. The merchant beyond the forest beyond the lantern beyond the cathedral shattered. The desert beyond the tavern beyond the voyage hesitated. The sailor beyond the castle beyond the quarry beyond the teacher sketched. The tower beyond the teacher beyond the baker stumbled. The soldier beyond the castle beyond the carriage glimmered. The tower beyond the carriage arrived. The saddle beyond the library beyond the baker beyond the blacksmith trembled. The musician beyond the saddle beyond the merchant circled. The scholar beyond the merchant beyond the canyon argued. The palace beyond the tavern beyond the engine watched. The musician beyond the chapel traveled. The forest beyond the carriage beyond the palace shouted. The gardener beyond the compass beyond the courtyard gathered. The meadow beyond the quarry scattered. The saddle beyond the merchant beyond the quarry beyond the island rebuilt. The merchant beyond the mountain beyond the lantern beyond the quarry whispered. The cottage beyond the hunter beyond the sailor faltered. The watchman beyond the painter waited. The meadow beyond the saddle beyond the sailor beyond the sailor stumbled. The canyon beyond the anchor shouted. The merchant beyond the mountain beyond the violin beyond the anchor scattered. The teacher beyond the musician beyond the anchor waited."
+      },
+      {
+       "text": "The glacier beyond the fisherman beyond the gardener arrived. The library beyond the tower waited. The farmer beyond the merchant watched. The soldier beyond the chapel returned. The castle beyond the fountain trembled. The palace beyond the saddle beyond the courtyard shouted. The castle beyond the tavern vanished. The voyage watched. The courtyard beyond the anchor beyond the wagon trembled. The tower beyond the canyon harvested. The farmer beyond the market beyond the gardener gathered. The innkeeper beyond the canyon beyond the fisherman celebrated. The violin beyond the wagon beyond the hunter beyond the saddle collapsed. The watchman beyond the harvester beyond the library wandered. The baker beyond the library beyond the telescope beyond the cathedral labored. The glacier beyond the lantern beyond the harbor beyond the windmill traveled. The forest beyond the voyage sketched. The island beyond the wagon beyond the miner beyond the island listened. The tavern beyond the fountain explored. The mountain beyond the glacier beyond the cottage gathered. The garden beyond the tower traveled. The carriage beyond the canyon whispered. The garden beyond the library paused. The miner beyond the baker beyond the fisherman beyond the voyage rested. The drummer beyond the voyage beyond the violin circled. The palace beyond the fountain beyond the windmill guarded. The saddle beyond the quarry beyond the cottage argued. The musician beyond the potter traveled. The courtyard beyond the harvest paused. The bridge beyond the telescope beyond the garden stumbled."
+      },
+      {
+       "text": "The fisherman beyond the scholar beyond the beacon echoed. The engine beyond the innkeeper beyond the island beyond the castle collapsed. The cathedral beyond the lantern beyond the drummer scattered. The musician beyond the baker beyond the compass arrived. The shepherd beyond the fountain celebrated. The meadow beyond the glacier beyond the potter beyond the quarry listened. The musician beyond the shepherd beyond the merchant knelt. The scholar beyond the telescope beyond the harbor wandered. The hunter beyond the market beyond the watchman beyond the harvest celebrated. The teacher beyond the forest beyond the valley whispered. The library beyond the wagon drifted. The tavern beyond the market beyond the courtyard beyond the fisherman watched. The forest echoed. The lantern beyond the scholar beyond the voyage waited. The library beyond the quarry labored. The shepherd beyond the watchman beyond the compass beyond the potter returned. The telescope beyond the beacon beyond the engine echoed. The fountain beyond the desert rebuilt. The engine beyond the forest beyond the bridge vanished. The gardener beyond the tower beyond the valley marched. The baker beyond the musician harvested. The gardener beyond the watchman beyond the castle glimmered. The engine beyond the tower rested. The innkeeper beyond the gardener beyond the beacon listened. The baker beyond the glacier beyond the beacon beyond the saddle listened. The watchman beyond the sailor beyond the miner wandered. The lantern beyond the teacher collapsed. The fountain beyond the cottage beyond the canyon beyond the sailor arrived."
+      },
+      {
+       "text": "The harbor beyond the meadow beyond the desert scattered. The watchman beyond the compass beyond the anchor wandered. The weaver beyond the musician stumbled. The cottage beyond the orchard beyond the garden vanished. The telescope beyond the shepherd vanished. The watchman beyond the teacher beyond the blacksmith beyond the chapel trembled. The bridge beyond the chapel beyond the blacksmith whispered. The windmill beyond the sailor beyond the chapel arrived. The farmer beyond the harvester returned. The fisherman beyond the anchor harvested. The mountain beyond the gardener beyond the lantern waited. The desert beyond the farmer beyond the blacksmith beyond the watchman gathered. The river beyond the innkeeper beyond the bridge beyond the market traveled. The merchant beyond the cathedral beyond the cathedral beyond the desert paused. The engine beyond the painter guarded. The carriage beyond the carriage faltered."
+      },
+      {
+       "text": "The cathedral beyond the soldier beyond the courtyard beyond the lantern soared. The beacon beyond the hunter beyond the potter harvested. The library beyond the merchant beyond the soldier marched. The library beyond the scholar beyond the baker studied. The compass beyond the shepherd beyond the island beyond the blacksmith guarded. The farmer beyond the shepherd gathered. The garden beyond the palace gathered. The tower beyond the drummer beyond the garden beyond the harvest paused. The violin beyond the meadow beyond the courtyard beyond the innkeeper soared. The baker beyond the quarry beyond the tavern arrived. The bridge crumbled. The tavern shattered. The musician beyond the scholar beyond the innkeeper echoed. The wagon beyond the blacksmith beyond the lantern beyond the soldier labored. The compass beyond the harvest returned. The windmill beyond the tavern beyond the violin vanished."
+      },
+      {
+       "text": "The windmill beyond the fisherman beyond the quarry beyond the drummer studied. The fisherman beyond the wagon stumbled. The soldier beyond the canyon beyond the telescope collapsed. The mountain beyond the musician listened. The scholar beyond the miner beyond the bridge soared. The telescope beyond the meadow beyond the scholar beyond the sailor crumbled. The weaver beyond the river beyond the innkeeper departed. The carriage beyond the carriage beyond the palace beyond the lantern celebrated. The palace beyond the canyon argued. The windmill beyond the shepherd vanished. The painter beyond the telescope beyond the scholar wandered. The river beyond the fisherman departed. The quarry beyond the shepherd beyond the orchard beyond the courtyard whispered. The garden beyond the engine beyond the cottage stumbled. The library beyond the innkeeper scattered. The harvester argued. The engine beyond the farmer beyond the musician beyond the harvest celebrated. The chapel beyond the courtyard arrived. The merchant beyond the lantern beyond the carriage echoed. The blacksmith beyond the valley whispered. The saddle beyond the meadow beyond the valley glimmered. The miner beyond the island beyond the fisherman beyond the shepherd labored. The mountain beyond the painter stumbled. The orchard beyond the sailor beyond the river rebuilt. The beacon beyond the baker drifted. The saddle beyond the potter beyond the harvest beyond the quarry scattered. The desert beyond the baker beyond the captain beyond the library labored."
+      },
+      {
+       "text": "The sailor beyond the miner beyond the compass beyond the drummer shattered. The musician beyond the baker beyond the beacon paused. The voyage beyond the cottage beyond the cottage vanished. The cathedral beyond the carriage beyond the voyage guarded. The musician beyond the soldier beyond the bridge waited. The blacksmith beyond the market marched. The harbor beyond the saddle beyond the island beyond the sailor trembled. The lantern beyond the baker beyond the chapel argued. The saddle beyond the desert beyond the telescope beyond the fountain explored. The hunter marched. The innkeeper beyond the voyage beyond the farmer wandered. The captain faltered. The orchard beyond the bridge beyond the merchant marched. The tower beyond the scholar beyond the gardener beyond the harbor argued. The weaver beyond the mountain explored. The cottage beyond the violin beyond the canyon beyond the painter drifted. The compass beyond the violin beyond the courtyard trembled."
+      },
+      {
+       "text": "The shepherd hesitated. The harvester beyond the blacksmith beyond the teacher beyond the fountain traveled. The weaver beyond the meadow beyond the sailor beyond the miner watched. The orchard beyond the harvest beyond the gardener beyond the mountain gathered. The cathedral beyond the lantern beyond the gardener beyond the drummer traveled."
+      },
+      {
+       "text": "The blacksmith beyond the harvester beyond the musician crumbled. The island beyond the cottage hesitated. The island beyond the carriage beyond the painter argued. The wagon beyond the hunter beyond the saddle beyond the musician drifted. The desert beyond the compass beyond the engine labored. The market beyond the forest beyond the lantern soared. The beacon beyond the island marched. The lantern beyond the mountain gathered. The fountain beyond the orchard marched. The mountain beyond the mountain beyond the courtyard explored. The blacksmith beyond the tower beyond the fountain collapsed. The palace beyond the cathedral collapsed. The canyon beyond the harvest beyond the compass hesitated. The voyage hesitated. The cathedral beyond the miner beyond the desert beyond the library soared. The soldier beyond the innkeeper watched. The island beyond the meadow beyond the mountain beyond the orchard watched."
+      },
+      {
+       "text": "The soldier beyond the hunter explored. The carriage beyond the miner beyond the anchor arrived. The forest beyond the island beyond the valley beyond the teacher vanished. The glacier beyond the lantern beyond the voyage glimmered. The soldier beyond the meadow crumbled. The market beyond the bridge beyond the market beyond the captain shouted. The mountain beyond the harvest beyond the fisherman beyond the canyon trembled. The merchant beyond the anchor beyond the canyon trembled. The cathedral beyond the hunter beyond the harvester beyond the mountain explored. The tower beyond the harvest beyond the courtyard circled. The farmer beyond the beacon drifted. The farmer beyond the island beyond the forest beyond the quarry lingered. The valley beyond the tavern beyond the miner hesitated. The glacier beyond the courtyard beyond the musician beyond the tavern crumbled. The windmill beyond the garden beyond the valley beyond the tavern labored. The beacon crumbled. The tower beyond the quarry beyond the courtyard departed. The island echoed. The courtyard beyond the quarry shattered."
+      },
+      {
+       "text": "The scholar beyond the weaver beyond the windmill beyond the castle scattered. The quarry beyond the canyon studied. The bridge beyond the watchman stumbled. The merchant beyond the gardener beyond the mountain trembled. The blacksmith returned. The quarry beyond the musician beyond the musician beyond the mountain stumbled. The captain beyond the innkeeper harvested. The cathedral beyond the voyage circled. The palace beyond the glacier knelt. The painter beyond the library beyond the engine marched. The courtyard beyond the windmill beyond the library celebrated. The courtyard beyond the cottage beyond the canyon faltered. The fisherman sketched. The palace beyond the blacksmith beyond the cottage beyond the musician whispered. The violin beyond the castle beyond the mountain beyond the market crumbled. The windmill beyond the baker beyond the river argued. The market beyond the wagon beyond the weaver beyond the watchman rebuilt. The harbor beyond the gardener beyond the meadow beyond the fisherman drifted. The cathedral beyond the meadow beyond the watchman arrived."
+      },
+      {
+       "text": "The carriage beyond the market stumbled. The lantern beyond the harvester beyond the teacher beyond the beacon listened. The forest beyond the captain knelt. The quarry beyond the miner beyond the chapel traveled. The watchman beyond the anchor beyond the baker harvested. The desert beyond the mountain marched. The merchant beyond the scholar beyond the watchman beyond the violin soared. The river beyond the scholar beyond the quarry beyond the scholar shattered. The lantern circled. The violin echoed. The harvester beyond the voyage beyond the watchman waited."
+      },
+      {
+       "text": "The teacher beyond the sailor beyond the harvester beyond the blacksmith returned. The engine beyond the captain hesitated. The orchard beyond the soldier beyond the windmill traveled. The scholar harvested. The valley sketched."
+      },
+      {
+       "text": "The quarry beyond the mountain beyond the carriage beyond the tavern marched. The harvest beyond the telescope beyond the beacon stumbled. The baker beyond the violin listened. The soldier beyond the glacier beyond the bridge listened. The potter beyond the musician marched. The fountain beyond the musician argued. The mountain beyond the market beyond the drummer shattered. The gardener beyond the canyon guarded. The baker beyond the painter beyond the wagon shouted. The merchant beyond the fountain beyond the fountain drifted. The river beyond the harvester echoed. The teacher beyond the valley beyond the island shattered. The library beyond the hunter beyond the garden scattered. The harvester beyond the blacksmith beyond the potter rested. The carriage beyond the harbor faltered. The meadow beyond the desert beyond the sailor hesitated. The shepherd beyond the market beyond the merchant lingered. The teacher beyond the painter beyond the cottage beyond the painter celebrated. The innkeeper beyond the teacher harvested. The valley beyond the lantern beyond the violin beyond the baker watched. The musician beyond the miner beyond the fisherman hesitated."
+      },
+      {
+       "text": "The musician beyond the watchman beyond the innkeeper knelt. The telescope beyond the drummer beyond the chapel celebrated. The hunter beyond the desert beyond the painter beyond the potter whispered. The market beyond the musician beyond the anchor rested. The telescope beyond the chapel beyond the palace soared. The compass beyond the soldier scattered. The palace beyond the gardener beyond the drummer beyond the courtyard rushed. The fisherman beyond the lantern beyond the compass watched. The carriage beyond the fisherman beyond the tavern beyond the cottage stumbled. The telescope whispered. The wagon crumbled."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of times the word \"beyond\" appears. Find every group of 3 passages whose values add up to 70 (exactly 70)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       8,
+       14,
+       15
+      ],
+      [
+       9,
+       11,
+       13
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "connector",
+      "word": "beyond",
+      "target": 70,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 2,
+      "filler_max": 70,
+      "separation": 0,
+      "counts": [
+       65,
+       50,
+       54,
+       30,
+       30,
+       50,
+       33,
+       12,
+       29,
+       37,
+       35,
+       18,
+       6,
+       38,
+       20
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "It faltered and traveled and sketched. They glimmered and lingered and celebrated. It argued. They scattered and wandered and glimmered. He trembled and marched. The compass stood calmly. We hesitated. She shattered and lingered and gathered. She traveled. He echoed and traveled and celebrated. He scattered and rebuilt. He shattered. We drifted. She echoed and studied and glimmered. The painter stood eagerly. We knelt and lingered and shouted. She whispered. She rebuilt and trembled."
+      },
+      {
+       "text": "They glimmered. She shouted and departed. The harvester stood suddenly. She marched and knelt and waited. We rushed and labored and traveled."
+      },
+      {
+       "text": "It drifted and rushed and sketched. She vanished. They gathered and studied. She rested. The courtyard stood suddenly. We listened and rested and guarded. They watched and traveled. We watched and watched. It echoed and rushed. He collapsed. He wandered and arrived. She whispered. She shouted and arrived. He knelt. They hesitated. She marched and traveled. They watched and listened and stumbled. It arrived and arrived. She explored. She waited. We traveled and departed and stumbled. She argued. We arrived. It paused. They soared. She arrived and paused and lingered. She collapsed. We marched. She scattered and crumbled. We echoed. They waited and crumbled. She returned. They stumbled. She harvested and whispered. It hesitated and drifted. They labored and rested and marched. It labored. They rebuilt and shouted. They gathered and marched. We waited. We traveled and lingered."
+      },
+      {
+       "text": "She circled and vanished. She departed. He rushed and returned and argued. We rested and stumbled. He guarded and returned. They argued and stumbled and stumbled. They traveled and scattered. They harvested and wandered and returned. They lingered and whispered and watched. He gathered and waited. It rushed. They drifted and waited. They rebuilt and stumbled. He whispered. He watched and labored. We collapsed. It collapsed and marched and shattered. We faltered and wandered and studied. It argued and traveled and studied. She knelt and departed. We watched and hesitated and collapsed. She watched."
+      },
+      {
+       "text": "They scattered and knelt. She rested. They rebuilt. She arrived and watched and studied. It gathered and shattered and hesitated. He listened and argued. They glimmered and knelt. She echoed. She paused and circled. He sketched and returned and traveled. The shepherd stood abruptly. He arrived and marched. It harvested and lingered. We celebrated and knelt. He trembled and faltered. They trembled and listened and glimmered. He returned. We rebuilt. We argued and waited and lingered. They paused."
+      },
+      {
+       "text": "She listened and trembled and soared. She drifted. They waited and whispered. She guarded. It soared and lingered and vanished. He rebuilt and listened and marched. They traveled and trembled. We scattered and marched. He rested and rushed. They knelt and echoed and argued. They echoed and trembled. She traveled. The desert stood bravely. We celebrated and glimmered and glimmered. She faltered and lingered. He departed and studied and explored. They departed and traveled and guarded."
+      },
+      {
+       "text": "We arrived and shouted and stumbled. She trembled. She marched and sketched and sketched. They rushed and shouted and glimmered. She labored and trembled. The harvester stood bravely. She rebuilt. He glimmered and soared and vanished. It labored and soared and wandered. She glimmered. We arrived. He studied. It scattered and scattered. They returned and traveled. We returned and collapsed. It lingered. It explored and vanished. It departed and rushed. He argued. He faltered and celebrated. The anchor stood suddenly. It argued and shouted and rebuilt. It watched. It trembled and departed. She returned. He arrived and circled and rushed. It paused. He rushed and collapsed and shouted. We scattered. They rested."
+      },
+      {
+       "text": "He whispered and arrived. It echoed. We studied. He drifted and circled and sketched. They faltered and marched. He trembled and echoed. We returned and whispered and harvested. The soldier stood quietly. It stumbled and echoed. They departed. She gathered. The merchant stood suddenly."
+      },
+      {
+       "text": "He faltered. He explored. He celebrated and traveled and shouted. She stumbled and argued. It watched and traveled and departed. He marched and lingered. She faltered and vanished and scattered. They harvested and hesitated and departed. She argued and explored and labored. It rested. The baker stood eagerly."
+      },
+      {
+       "text": "It hesitated. We waited and faltered. They glimmered. The saddle stood calmly. It rushed and departed. It labored and rested and scattered. They rebuilt. They arrived. The anchor stood restlessly."
+      },
+      {
+       "text": "It celebrated. We argued and scattered and traveled. It rebuilt and harvested and studied. She marched and rebuilt. She knelt and shattered and celebrated. They studied and returned and wandered. It rushed and labored. We faltered and sketched. We crumbled. The carriage stood softly. The cathedral stood wearily. She stumbled and drifted. They rebuilt and collapsed and marched."
+      },
+      {
+       "text": "We knelt and whispered and gathered. It explored. He paused and celebrated. It watched. It waited and faltered. He argued and glimmered and shouted. She trembled. They shouted. She stumbled and scattered and collapsed. She whispered and gathered. She trembled. She shouted and paused. She studied. She traveled and returned and lingered. He soared and vanished. We stumbled. We hesitated. The compass stood abruptly. We vanished and rebuilt. He drifted and vanished and lingered."
+      },
+      {
+       "text": "It explored and glimmered. They vanished and harvested and lingered. The potter stood softly. It marched and guarded and sketched. They listened and arrived. She crumbled. They labored. The fountain stood quietly. It glimmered and labored and gathered. He soared and stumbled. They knelt. They marched and paused."
+      },
+      {
+       "text": "She drifted and whispered and echoed. They rested. It vanished and marched and labored. We lingered and returned. She trembled. He traveled. We waited. We shouted and returned and echoed. He argued. They argued. It watched and lingered. We soared and watched and arrived. It labored and soared. It shouted. The forest stood calmly. He faltered and whispered and drifted. It faltered and scattered and lingered. He hesitated and knelt and shattered. He drifted and rushed and waited. They arrived and wandered and trembled. We wandered and sketched and trembled. We waited and soared and wandered. We departed and collapsed and echoed. She arrived and listened. He labored and faltered. We wandered and celebrated. We shouted and departed and labored. He arrived. She hesitated. They rebuilt. He wandered and studied and returned. They departed. She crumbled. We explored. It labored and harvested and scattered."
+      },
+      {
+       "text": "We circled and guarded. She harvested. We marched and marched and shouted. We departed and rebuilt. She studied and hesitated and wandered. We drifted. The forest stood quietly. He knelt and echoed. He watched. It hesitated. They hesitated. It studied and waited and studied. She rested and celebrated. It watched. She rushed and whispered and rebuilt. They explored and lingered. He crumbled and rested and marched. She marched and traveled. She gathered and drifted and collapsed. The voyage stood abruptly. She harvested. We knelt and rebuilt and drifted."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of verbs. Find every group of 3 passages whose values add up to 70 (exactly 70)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       2,
+       6,
+       11
+      ],
+      [
+       5,
+       9,
+       10
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "verbs",
+      "word": null,
+      "target": 70,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 2,
+      "filler_max": 70,
+      "separation": 0,
+      "counts": [
+       33,
+       9,
+       67,
+       47,
+       37,
+       36,
+       52,
+       18,
+       22,
+       11,
+       25,
+       35,
+       20,
+       70,
+       40
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "n12_g3_k1_t55_adjectives",
+   "config": {
+    "num_docs": 12,
+    "num_groups": 1,
+    "group_size": 3,
+    "target": 55,
+    "tolerance": 0,
+    "separation": 0,
+    "feature": "adjectives",
+    "cmin": 4,
+    "cmax": 40,
+    "filler_max": null
+   },
+   "examples": [
+    {
+     "documents": [
+      {
+       "text": "He sketched softly. They knelt slowly. The narrow, vivid, gentle wagon crumbled. The brisk lantern lingered. The mournful beacon waited."
+      },
+      {
+       "text": "The endless, silent, radiant saddle marched. He echoed suddenly. The gentle, luminous, hollow miner studied. The ragged windmill argued. She sketched softly. The humble, somber, humble drummer watched."
+      },
+      {
+       "text": "The ragged, tranquil quarry waited. The bitter, endless, scarlet chapel traveled. The endless, mournful, endless scholar listened. The tranquil weaver rushed."
+      },
+      {
+       "text": "The crimson desert labored. The endless, gentle, distant cottage crumbled. The fragile, fragile fisherman waited. The fragile teacher glimmered. The crooked voyage hesitated. The vivid, radiant anchor knelt. The somber, frozen, ancient saddle rested. The scarlet harbor trembled. The golden palace echoed. The mournful, vivid shepherd explored. The luminous, scarlet, rugged painter scattered. The mournful, bitter forest studied. The bitter telescope trembled. The hollow, rugged, scarlet mountain guarded. The fragile, restless, restless shepherd knelt. The fragile musician marched. He stumbled softly. The radiant market circled. The solemn, restless meadow knelt. The brisk, tranquil glacier soared. The brisk forest drifted. The golden library listened. The distant, frozen painter trembled. The crimson, mournful valley argued. The crimson, restless windmill shattered. The stormy, radiant, bitter valley shattered. The gentle, tranquil desert harvested. The narrow desert wandered. The bitter fountain departed. The vivid, distant, mournful saddle shouted."
+      },
+      {
+       "text": "The restless miner rebuilt. The humble, luminous, fragile engine trembled. The crooked, endless bridge trembled. The radiant, stormy valley shouted. The somber, ragged baker whispered. The bitter, restless island scattered. The frozen teacher waited. The crimson, humble, rugged teacher arrived."
+      },
+      {
+       "text": "The ragged, silent canyon drifted. The crooked, somber meadow collapsed. The brisk, mournful weaver returned. The rugged, rugged, frozen weaver trembled. The golden windmill shattered. The weary fisherman crumbled. The rugged, weary orchard guarded. The mournful, golden library returned. The hollow, frozen harbor traveled. The crimson, brisk harbor knelt. The stormy, silent, luminous farmer watched. The bitter, distant palace rushed. The somber harvester shattered. The bitter, lavish canyon waited. The fragile, crooked anchor scattered. The weary, mournful fountain celebrated. The restless cathedral argued."
+      },
+      {
+       "text": "The lavish, weary, solemn wagon trembled. The gentle, distant, solemn market departed. The ragged musician paused. The crooked, endless engine shouted. It lingered eagerly. The narrow, somber, gentle valley explored. The humble hunter echoed. The fierce library shouted. The brisk, tranquil fountain traveled. The ragged courtyard arrived. The golden, vivid mountain shattered. The scarlet, stormy cottage sketched. The solemn, radiant weaver collapsed. We marched eagerly. The vivid potter vanished. The somber, solemn harvest rushed. The solemn, tranquil, ragged captain rested. The narrow baker rushed. The distant captain wandered. The lavish, gentle, crooked meadow whispered. The radiant, solemn, weary watchman shattered. The radiant, crooked quarry rushed. The radiant castle returned. The hollow, ragged, mournful drummer soared. The fierce, fierce tower arrived. The frozen, somber, fragile gardener wandered."
+      },
+      {
+       "text": "The lavish cottage listened. The distant, scarlet, endless bridge paused. The hollow, ancient harbor rebuilt. The luminous tavern knelt. The mournful desert rebuilt. The fragile, luminous sailor rebuilt. The fragile captain traveled. The ragged, vivid, solemn fountain shattered. The fragile, bitter drummer labored. The frozen, rugged, humble glacier shouted. The rugged, rugged, tranquil harvest stumbled. The ancient, ragged library rebuilt. The golden innkeeper marched. The lavish fisherman traveled. The gentle, ragged hunter crumbled. The hollow, humble desert traveled. The gentle beacon crumbled. The crooked farmer guarded. The mournful, tranquil, crimson harbor celebrated. The fierce chapel shattered. The gentle scholar circled. The somber forest watched. The crimson, golden, scarlet musician traveled. The crooked, radiant, silent palace echoed. The crimson carriage marched. The brisk mountain rested."
+      },
+      {
+       "text": "The ancient, golden garden shouted. The mournful, hollow, radiant wagon hesitated. The solemn desert knelt. The solemn, scarlet, ancient windmill watched. The golden, stormy, golden fountain circled. The ragged, luminous, ragged canyon stumbled. The ancient merchant marched. The frozen, ragged, fierce potter marched. The silent engine soared. The crooked bridge gathered. The solemn, gentle saddle harvested. The endless, solemn garden guarded. The rugged, scarlet violin rushed. The mournful, ancient, narrow innkeeper returned. The stormy, radiant, fragile wagon labored. The distant, fierce, narrow bridge knelt. The fierce cathedral marched. The luminous, bitter, humble glacier labored. The luminous tavern labored. The crimson, crimson valley hesitated. The restless canyon faltered. The solemn, hollow, distant captain drifted. The restless, solemn sailor traveled. The tranquil, frozen engine faltered. The narrow, ragged, brisk engine hesitated."
+      },
+      {
+       "text": "The somber, frozen beacon echoed. The luminous, narrow anchor gathered. It rested suddenly. The narrow, fragile harvester arrived. The solemn harbor rushed. The rugged bridge glimmered. The rugged, golden scholar paused. The weary, restless meadow guarded. The ancient, ragged, bitter engine soared. The tranquil, bitter mountain gathered. The narrow, endless, ancient miner crumbled. She glimmered restlessly. The endless, crooked engine crumbled. The distant, frozen, frozen castle faltered. The fragile courtyard scattered."
+      },
+      {
+       "text": "The fragile, fierce soldier wandered. The bitter, endless, lavish painter trembled. The humble voyage watched. The golden chapel lingered. We traveled quietly."
+      },
+      {
+       "text": "It studied slowly. The luminous, silent saddle studied. He traveled bravely. The radiant, stormy, vivid musician stumbled."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of adjectives. Find every group of 3 passages whose values add up to 55 (exactly 55)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       5,
+       6,
+       11
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "adjectives",
+      "word": null,
+      "target": 55,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 55,
+      "separation": 0,
+      "counts": [
+       5,
+       10,
+       9,
+       53,
+       16,
+       32,
+       48,
+       46,
+       54,
+       26,
+       7,
+       5
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "The tranquil sailor rested. The ragged, golden, crimson meadow hesitated. It marched suddenly. The weary, distant cottage echoed. The radiant, somber, weary wagon collapsed. The silent violin watched. The bitter, fierce, lavish fountain traveled. He labored abruptly. The crooked, weary violin scattered. The gentle desert harvested. The tranquil, fierce weaver traveled. The fragile, golden saddle hesitated. The solemn telescope lingered. The brisk, hollow, bitter watchman knelt. The frozen drummer sketched. The radiant, scarlet desert echoed. The tranquil, silent market studied. The stormy, luminous telescope sketched. The mournful island soared. The crimson, silent, hollow palace waited. The ragged, lavish lantern faltered. The lavish harvest rushed. The lavish, hollow cottage stumbled. The frozen, tranquil soldier harvested."
+      },
+      {
+       "text": "The fierce, gentle merchant rested. The crimson, endless teacher paused. The ancient, narrow, brisk mountain glimmered. The fierce tower studied. The crooked, radiant, rugged gardener trembled. The crooked harbor studied. The ragged, ragged miner explored."
+      },
+      {
+       "text": "The fierce, luminous quarry hesitated. The crimson cathedral faltered. The somber, stormy, bitter baker labored. The rugged, luminous voyage vanished. The endless, ragged voyage guarded. The bitter, silent bridge waited. The gentle, rugged merchant trembled. The radiant, humble, vivid harbor stumbled. The scarlet, solemn, radiant saddle listened. The ragged, endless hunter marched. The somber, radiant, stormy river crumbled."
+      },
+      {
+       "text": "The crooked, somber sailor marched. The distant, luminous tavern rushed. The narrow, somber chapel faltered. The distant forest argued. The frozen, lavish forest whispered. She argued eagerly. The fragile, luminous telescope faltered. The scarlet, crimson telescope lingered. The fragile, bitter harvest explored. The lavish island vanished. The weary, vivid tavern shattered. The luminous merchant waited. The solemn, crooked, golden farmer collapsed."
+      },
+      {
+       "text": "The frozen courtyard celebrated. The lavish forest shattered. The stormy, tranquil, stormy library soared. The ancient tower waited. The bitter tower shouted. The frozen river soared. The narrow, tranquil, ancient gardener traveled. The brisk engine sketched. The solemn, narrow, narrow bridge lingered. The frozen gardener echoed. The lavish, crooked, weary orchard stumbled. The crimson, ancient anchor sketched. The luminous, somber shepherd argued. The ancient, stormy, vivid valley stumbled. The gentle, silent, somber voyage lingered. The golden, silent, lavish telescope gathered."
+      },
+      {
+       "text": "The silent glacier rushed. They argued quietly. The golden baker shattered. She returned abruptly. The crimson, solemn, somber weaver knelt. The humble, rugged captain rushed. The frozen, distant, golden forest vanished. The stormy, fierce tavern rested. The bitter, ragged island studied. The endless, tranquil tavern faltered. The rugged, humble bridge arrived. The gentle chapel shouted."
+      },
+      {
+       "text": "The frozen, frozen palace traveled. The fragile teacher rested. The rugged, brisk harbor listened. The restless, golden, humble compass glimmered. The vivid windmill traveled. The lavish painter knelt. The gentle, ancient voyage shattered. The scarlet, restless, stormy blacksmith studied. The hollow, humble, mournful fountain rushed. The distant, radiant, solemn hunter argued. The bitter bridge faltered. The weary, crooked, rugged forest stumbled. The crimson beacon marched. The silent, ancient, weary fountain glimmered. The restless, ancient, ancient courtyard explored. The gentle, vivid, ragged valley explored. The restless, fierce harvest faltered. He celebrated calmly. The endless miner soared. The silent, somber harvest soared. They glimmered softly. The bitter, frozen, crimson engine scattered."
+      },
+      {
+       "text": "The distant, somber, silent canyon wandered. The scarlet, hollow meadow studied. The stormy, restless, weary beacon harvested. The hollow, luminous, gentle weaver listened. The vivid, distant bridge collapsed. The radiant gardener knelt. The endless, restless sailor returned. The fragile merchant explored. The rugged telescope circled. The ragged, fragile orchard shattered. The silent, crimson, bitter carriage rebuilt. The vivid, brisk captain shattered. The solemn voyage rested. The golden, ragged windmill rested. The luminous, distant, stormy cottage hesitated. The brisk compass drifted. The restless, crooked merchant knelt. The crimson, brisk, radiant harvest soared."
+      },
+      {
+       "text": "The tranquil, solemn tower vanished. The weary, silent canyon shouted. The golden glacier faltered. The distant, crimson castle stumbled."
+      },
+      {
+       "text": "The brisk, hollow innkeeper watched. The bitter, crooked, crooked meadow soared. The golden, radiant, crooked saddle gathered. The endless, tranquil forest listened. The bitter, scarlet lantern celebrated. The weary, distant teacher shattered. The golden lantern rested. The rugged, luminous, scarlet carriage circled. The brisk lantern soared. The fierce, fierce, stormy chapel celebrated. The lavish, restless, scarlet gardener hesitated. The ragged meadow guarded. The lavish, vivid, endless teacher studied. The frozen, somber, weary violin shouted. The stormy, silent tower scattered. The fragile, crimson musician knelt. The rugged, solemn palace drifted. The hollow cathedral trembled. The bitter, brisk harbor departed. He watched suddenly. The frozen quarry whispered. The endless, humble, endless windmill crumbled."
+      },
+      {
+       "text": "The crimson, scarlet, radiant valley rushed. The narrow, weary, humble market crumbled. The brisk scholar celebrated. The somber garden studied. The ancient, humble, radiant library collapsed. The humble, narrow farmer scattered. The luminous library collapsed. We stumbled softly. The solemn orchard explored. The silent courtyard stumbled. The crimson beacon harvested. The rugged, restless, silent desert marched."
+      },
+      {
+       "text": "The tranquil, solemn baker faltered. The ragged, bitter windmill listened. The gentle, distant, fragile drummer waited. The rugged river soared. The endless, hollow, bitter tavern labored. The crooked, gentle scholar soared. The radiant watchman rushed. The bitter weaver rested. The fragile, scarlet, hollow quarry studied. The fragile, brisk, fierce lantern marched. The lavish, ancient, somber baker trembled. The gentle, gentle quarry studied. The bitter, ancient, silent captain harvested. The endless, radiant sailor circled. The mournful, endless, narrow painter vanished. The restless, narrow, luminous library celebrated. The narrow, mournful canyon faltered. The lavish, humble palace sketched. The mournful blacksmith studied. The lavish, silent violin arrived. They crumbled abruptly."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of adjectives. Find every group of 3 passages whose values add up to 55 (exactly 55)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       2,
+       4,
+       6
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "adjectives",
+      "word": null,
+      "target": 55,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 55,
+      "separation": 0,
+      "counts": [
+       42,
+       14,
+       25,
+       22,
+       32,
+       19,
+       43,
+       37,
+       7,
+       45,
+       20,
+       44
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "The rugged blacksmith crumbled. The tranquil baker faltered. The restless, vivid, fragile baker gathered. The fierce sailor vanished. We gathered quietly. The somber, crimson fountain explored. The fragile compass hesitated."
+      },
+      {
+       "text": "The somber, fragile, brisk glacier crumbled. The crooked, crimson bridge rushed. The distant, tranquil cottage lingered. The endless, tranquil, rugged sailor lingered. The hollow, restless chapel harvested. The bitter, mournful painter paused. The hollow, golden, crooked captain celebrated. The humble, bitter, radiant blacksmith echoed. The endless, solemn, radiant shepherd vanished. The distant, weary soldier harvested. She marched restlessly. The silent, solemn, frozen desert paused. The humble, radiant blacksmith stumbled. The crimson, radiant, crimson fountain soared. The gentle, humble, tranquil blacksmith soared."
+      },
+      {
+       "text": "The silent, scarlet cathedral rushed. The fierce, stormy, fragile forest collapsed. The weary, weary glacier stumbled. The radiant, distant soldier soared. The hollow, rugged bridge crumbled. The ancient, ancient, frozen fisherman trembled. The restless, stormy canyon trembled. The endless hunter shouted. The rugged, endless tower watched. The narrow, gentle, stormy beacon drifted. The stormy island returned. The crooked, vivid, golden valley scattered. He rebuilt abruptly. The bitter, hollow, hollow windmill lingered. She scattered restlessly. The crooked, somber, rugged captain traveled. The narrow, stormy, humble fisherman echoed."
+      },
+      {
+       "text": "The golden, mournful, ragged engine collapsed. The crooked, rugged tavern returned. She shattered wearily. The ragged, frozen, gentle innkeeper rushed. The scarlet, luminous, distant miner vanished. The luminous fisherman traveled. The somber musician harvested. The lavish hunter stumbled. The silent, fierce telescope collapsed. The ancient musician listened. We drifted eagerly. The frozen, crimson scholar crumbled. The tranquil, ancient innkeeper departed. The ragged, ragged palace stumbled. The mournful, radiant, mournful canyon argued. The luminous, luminous engine echoed. The frozen scholar wandered. The ancient fisherman departed."
+      },
+      {
+       "text": "The ragged, mournful, fierce sailor arrived. The radiant valley trembled. The endless carriage knelt. The fragile lantern knelt. The crooked, solemn, stormy lantern shattered. The weary, hollow, narrow castle scattered. The ragged, humble castle gathered. It faltered wearily. The somber, stormy, scarlet tower rushed."
+      },
+      {
+       "text": "The restless, restless, bitter watchman knelt. The crimson, ancient scholar traveled. The bitter, stormy, silent tower circled. The narrow tower echoed. The brisk voyage waited. It rebuilt quietly. The golden canyon stumbled."
+      },
+      {
+       "text": "She vanished calmly. The fierce, rugged, weary telescope knelt. The hollow canyon drifted. The endless, mournful, distant sailor lingered. The rugged valley studied. The ragged, distant, tranquil voyage traveled. The rugged, tranquil sailor paused. The restless, gentle lantern explored. The fierce anchor scattered. The radiant tower hesitated. The vivid castle traveled. The weary, solemn tower gathered. The scarlet, silent soldier arrived. The ragged, distant tower rushed. The fragile, radiant, rugged baker circled. The golden, bitter, radiant merchant circled. The bitter merchant argued. The mournful, hollow engine watched. The bitter, solemn gardener traveled. The gentle, ragged, mournful potter shouted. The lavish compass waited. The scarlet, rugged teacher soared. The crooked, rugged fisherman scattered. The radiant, restless, crooked island rebuilt. She shouted suddenly. The crooked, tranquil soldier faltered. The brisk, distant fisherman waited. The crimson saddle stumbled. The fierce, stormy mountain marched."
+      },
+      {
+       "text": "The stormy, restless harvest whispered. The solemn, gentle castle hesitated. They argued abruptly. The lavish, fierce, mournful mountain arrived. The hollow, weary voyage watched. The narrow, stormy, solemn harbor harvested. The stormy, rugged gardener gathered. The somber canyon celebrated. The narrow, solemn, scarlet saddle collapsed. The brisk, brisk library wandered. The scarlet, rugged telescope explored. The crooked glacier stumbled. The golden, luminous, crooked forest celebrated. The solemn island harvested. The fierce island listened. The hollow, ragged, endless mountain rebuilt. The mournful, weary, golden tower traveled. He whispered suddenly. The rugged, luminous, fierce baker celebrated."
+      },
+      {
+       "text": "The scarlet, rugged watchman watched. The radiant, weary forest collapsed. The silent library harvested. The fragile, hollow, rugged courtyard watched. The gentle, distant, silent scholar celebrated. The narrow, rugged, crooked beacon paused. The brisk, crimson potter returned. The frozen, crooked, weary painter hesitated. The humble, endless, weary forest drifted. They collapsed slowly."
+      },
+      {
+       "text": "The gentle valley whispered. The radiant meadow collapsed. The distant miner paused. The crooked, ancient, distant lantern glimmered. The vivid, ancient, endless beacon drifted. The radiant, tranquil harvest traveled. The hollow desert crumbled. The rugged beacon traveled. The solemn, distant cottage soared. The gentle, crooked, scarlet river lingered. The narrow sailor soared. The narrow, scarlet captain sketched."
+      },
+      {
+       "text": "The tranquil, bitter lantern glimmered. The golden, humble engine listened. The luminous island vanished. The brisk, weary blacksmith sketched. The golden bridge sketched. The gentle soldier rested. The vivid chapel arrived. The stormy harvester returned. The lavish, stormy wagon shouted. The lavish, silent, humble market waited. The humble, stormy, gentle watchman gathered. The ancient innkeeper drifted. We marched softly. The endless desert paused. The weary, distant scholar rushed. The ragged, crimson soldier listened. The hollow miner guarded. The golden, brisk, narrow painter knelt. The fragile tavern hesitated. The radiant, mournful glacier waited. The tranquil, solemn, distant fisherman whispered. The narrow, humble, ragged forest guarded. The hollow, narrow harbor rested. The tranquil captain gathered."
+      },
+      {
+       "text": "The weary, vivid harvester listened. The fierce, ancient, frozen cottage celebrated. The weary fisherman whispered. It harvested restlessly. The rugged, luminous, lavish scholar labored. The distant, weary, somber island arrived. The restless cathedral stumbled. The somber, hollow musician faltered."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of adjectives. Find every group of 3 passages whose values add up to 55 (exactly 55)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       1,
+       3,
+       6
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "adjectives",
+      "word": null,
+      "target": 55,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 55,
+      "separation": 0,
+      "counts": [
+       9,
+       36,
+       35,
+       30,
+       17,
+       11,
+       53,
+       37,
+       22,
+       21,
+       41,
+       15
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "n12_g3_k1_t60_nouns_sep5",
+   "config": {
+    "num_docs": 12,
+    "num_groups": 1,
+    "group_size": 3,
+    "target": 60,
+    "tolerance": 0,
+    "separation": 5,
+    "feature": "nouns",
+    "cmin": 4,
+    "cmax": 40,
+    "filler_max": null
+   },
+   "examples": [
+    {
+     "documents": [
+      {
+       "text": "The tower sketched calmly. The anchor and the bridge studied restlessly. The harvest and the market rebuilt quietly. The market and the library watched suddenly. The mountain and the carriage rebuilt suddenly. The innkeeper and the merchant and the gardener traveled calmly. The fountain and the hunter crumbled eagerly."
+      },
+      {
+       "text": "The cottage and the canyon faltered restlessly. The palace and the blacksmith and the cottage studied suddenly. The violin and the castle shouted eagerly. The windmill and the baker and the river argued restlessly. The weaver and the watchman rebuilt suddenly. The gardener and the meadow and the fisherman drifted softly. The meadow and the watchman and the canyon arrived quietly. The library paused abruptly. The tower and the baker and the engine gathered calmly. The forest vanished eagerly. The weaver and the fountain glimmered suddenly. The windmill traveled bravely. The wagon and the valley sketched abruptly. The tower and the farmer and the violin harvested softly. The compass and the teacher and the harvest watched restlessly. The castle and the teacher rested suddenly. The canyon and the telescope and the valley trembled eagerly. The orchard rested restlessly. The gardener and the painter knelt calmly. The mountain and the voyage shattered slowly. The farmer and the blacksmith and the harvester studied eagerly. The island and the cottage and the fountain rushed wearily. The saddle and the wagon argued bravely. The bridge and the desert faltered quietly. The beacon and the market returned suddenly. The meadow and the beacon marched suddenly. The mountain and the teacher hesitated wearily. The merchant and the mountain shouted abruptly. The harvester and the desert and the cathedral circled calmly. The valley and the palace and the cathedral collapsed softly."
+      },
+      {
+       "text": "The harvester and the valley watched quietly. The beacon and the shepherd and the hunter hesitated softly. The blacksmith traveled softly. The glacier and the teacher and the library rebuilt restlessly. The gardener drifted softly. The weaver studied softly. The captain soared suddenly. The baker arrived abruptly. The violin and the baker and the soldier studied suddenly. The cottage explored abruptly. The palace faltered wearily. The fountain stumbled slowly. The quarry and the innkeeper soared slowly."
+      },
+      {
+       "text": "The meadow argued suddenly. He rebuilt calmly. The meadow echoed wearily. It studied quietly. The scholar and the harbor wandered calmly. The valley and the miner and the glacier paused slowly."
+      },
+      {
+       "text": "The tavern vanished calmly. The voyage and the valley explored bravely. The glacier and the blacksmith and the merchant marched quietly. The wagon and the bridge collapsed bravely. The harbor returned slowly. The river and the island vanished suddenly. The hunter and the library and the valley shattered quietly. The violin rested calmly. The anchor paused eagerly. The voyage scattered abruptly. The forest labored slowly. The cottage and the voyage and the garden faltered eagerly. The courtyard and the windmill labored eagerly. The musician and the soldier paused eagerly. The anchor and the tavern and the miner traveled abruptly. The engine hesitated softly. The orchard and the baker explored slowly. The shepherd scattered quietly."
+      },
+      {
+       "text": "The shepherd and the violin arrived bravely. The merchant and the drummer scattered suddenly. The cathedral and the voyage circled restlessly. The merchant and the meadow knelt softly. The meadow and the watchman and the forest drifted suddenly. The library listened wearily. The telescope and the painter trembled eagerly. The palace collapsed bravely. The meadow collapsed abruptly. The anchor and the farmer and the saddle studied slowly. The innkeeper shattered calmly. The weaver and the desert harvested abruptly. The desert and the river and the musician hesitated wearily. The tower and the orchard argued quietly. The mountain and the gardener and the carriage listened wearily. The desert and the hunter and the river waited abruptly. The cathedral and the courtyard circled restlessly. The musician and the painter traveled restlessly. The baker and the weaver and the beacon explored eagerly. The glacier and the quarry shouted quietly. The captain and the canyon and the beacon whispered softly. We echoed abruptly. The courtyard and the anchor gathered abruptly. The windmill and the soldier and the courtyard arrived slowly. The wagon and the harbor and the innkeeper rushed slowly. The potter glimmered suddenly. The scholar and the shepherd and the teacher marched eagerly. The desert guarded quietly. The fountain and the scholar vanished eagerly. The weaver and the musician shouted quietly. It rebuilt quietly. The miner and the hunter crumbled slowly. The orchard and the harvester harvested softly. The beacon and the engine and the fisherman crumbled wearily. The telescope and the harvest arrived eagerly. The bridge waited eagerly. The musician and the fisherman wandered eagerly. The cottage and the tower and the forest sketched wearily. The innkeeper and the castle and the canyon gathered eagerly. The sailor and the potter sketched softly. The innkeeper and the mountain knelt slowly. The violin and the tower circled restlessly."
+      },
+      {
+       "text": "The saddle and the quarry and the saddle gathered softly. The potter and the forest listened bravely. The baker and the lantern celebrated quietly. The painter gathered wearily. The garden and the lantern rested abruptly. The baker and the carriage circled suddenly. The market and the meadow and the miner departed restlessly. The cottage and the drummer and the voyage marched calmly. The carriage and the meadow and the gardener guarded softly. The teacher and the musician watched quietly. The violin and the mountain and the farmer whispered eagerly. The castle and the compass and the musician knelt restlessly. The palace and the palace drifted eagerly. The cathedral trembled bravely. The harvester and the harbor and the palace departed calmly. The harvest stumbled softly. The quarry whispered softly. The island and the cathedral rested eagerly. The captain and the harbor and the courtyard glimmered quietly. The musician and the musician guarded eagerly. The tower collapsed softly. The compass and the cathedral studied calmly. The painter echoed softly. The musician and the voyage and the drummer stumbled abruptly. The cottage whispered suddenly. The innkeeper departed quietly. The island traveled abruptly. The tavern echoed abruptly. The fisherman arrived wearily. The farmer marched wearily. The drummer whispered quietly. The hunter and the tavern and the meadow studied wearily. The merchant and the engine labored restlessly. The captain and the shepherd and the forest listened wearily. The bridge and the hunter and the valley celebrated abruptly. The cathedral marched calmly. The bridge marched softly. The market listened calmly. The fountain and the castle and the orchard shattered suddenly. The compass studied calmly. The desert rebuilt eagerly. The anchor harvested bravely. The windmill lingered calmly. The windmill and the island rested abruptly. The orchard departed calmly."
+      },
+      {
+       "text": "The mountain trembled suddenly. The mountain and the cottage scattered bravely. The wagon and the fountain and the wagon knelt restlessly. The baker and the mountain and the windmill watched suddenly. The anchor lingered calmly. The tower and the blacksmith and the fountain paused calmly. The canyon and the lantern shouted slowly. The merchant and the telescope and the fountain marched suddenly. The engine soared restlessly. The bridge and the teacher and the wagon circled bravely. The wagon and the cathedral and the chapel lingered bravely. The library and the hunter and the violin rushed quietly. The courtyard and the innkeeper returned wearily. The voyage and the bridge and the wagon labored wearily. The miner and the violin drifted abruptly. The canyon and the cathedral and the tower marched abruptly. The scholar and the island and the glacier labored abruptly. The tavern and the beacon and the meadow faltered slowly. The fountain and the merchant faltered restlessly. The tavern and the painter crumbled slowly. The valley and the chapel traveled softly. The engine and the compass and the courtyard rushed quietly. The innkeeper and the fountain and the sailor wandered bravely. The teacher departed restlessly. The tavern departed softly. The palace paused eagerly. The forest argued abruptly. The courtyard and the meadow listened bravely. The engine sketched restlessly. The blacksmith and the compass and the farmer returned suddenly. The windmill and the wagon and the carriage rushed abruptly. The captain and the shepherd and the palace waited eagerly. The compass and the miner and the drummer sketched slowly. The harvest and the beacon and the fountain departed bravely. The canyon arrived quietly. The shepherd and the beacon watched restlessly. The innkeeper and the sailor marched wearily."
+      },
+      {
+       "text": "The valley and the island shattered suddenly. The tavern and the harvester and the blacksmith rested calmly. The harbor and the compass soared calmly. The shepherd and the market marched suddenly. The teacher echoed wearily. The voyage and the innkeeper gathered restlessly. She stumbled abruptly. The baker watched bravely. The miner and the fisherman hesitated restlessly. The blacksmith and the cottage labored abruptly. The quarry vanished abruptly. The tavern and the forest harvested restlessly. The castle and the garden argued calmly. The chapel listened suddenly. The watchman and the captain studied abruptly. The telescope and the drummer sketched bravely. The hunter echoed suddenly. The market studied wearily. The windmill and the telescope sketched eagerly. The compass whispered eagerly. The palace and the gardener waited calmly. The fisherman stumbled eagerly. The fisherman watched calmly. The fisherman and the tavern and the cottage stumbled softly. The weaver and the soldier harvested eagerly. The chapel and the sailor and the desert harvested calmly. The cathedral and the bridge and the hunter departed restlessly. The harvester and the saddle and the engine paused calmly. The harvester and the blacksmith gathered calmly. The harvester traveled eagerly. It glimmered softly. The gardener and the mountain and the miner gathered softly. The lantern traveled calmly. The soldier shattered eagerly. The fountain argued abruptly. The farmer and the teacher and the canyon celebrated eagerly. The potter sketched eagerly."
+      },
+      {
+       "text": "The valley marched suddenly. The glacier and the carriage stumbled bravely. The mountain and the garden and the baker shattered slowly. The forest and the shepherd faltered restlessly. The innkeeper and the weaver knelt eagerly. The sailor and the carriage listened wearily. The harbor and the forest vanished wearily. The canyon scattered abruptly. The musician and the carriage and the island studied softly. He faltered slowly. The castle and the forest sketched quietly. The teacher and the market circled bravely. The blacksmith and the wagon and the carriage watched suddenly. The violin and the garden and the hunter crumbled abruptly. The musician and the palace and the lantern returned slowly. The drummer and the windmill soared softly. The teacher and the shepherd wandered abruptly. The harvester and the mountain and the sailor glimmered bravely. The beacon and the saddle trembled restlessly. The harbor studied calmly. The carriage and the miner and the gardener explored quietly. The tower and the engine wandered quietly. The wagon and the voyage glimmered restlessly. The market whispered abruptly. The meadow and the scholar and the saddle glimmered eagerly. The tavern and the island and the library trembled suddenly. The potter harvested eagerly. The blacksmith circled abruptly. The glacier and the sailor gathered softly. The courtyard and the voyage returned wearily. The anchor and the weaver departed eagerly. They waited bravely. The tower and the mountain watched quietly."
+      },
+      {
+       "text": "The harvest and the innkeeper and the bridge wandered bravely. The canyon and the courtyard echoed wearily. The telescope and the meadow and the cottage arrived calmly. The potter and the quarry and the palace waited bravely. The cathedral and the hunter sketched restlessly. The glacier and the palace and the glacier guarded softly. The weaver and the weaver rushed restlessly. The lantern and the miner and the desert studied abruptly. The cottage and the quarry marched suddenly. The library rebuilt softly. The lantern and the voyage and the saddle marched eagerly. The painter trembled calmly. The windmill and the captain studied calmly. The windmill and the saddle departed restlessly. The glacier and the desert watched calmly. The telescope and the innkeeper and the musician stumbled bravely. The market watched suddenly. The harbor and the farmer and the castle sketched calmly. The castle paused eagerly. The canyon and the drummer and the farmer faltered quietly. The bridge and the island and the forest sketched suddenly."
+      },
+      {
+       "text": "The harvester scattered eagerly. The canyon and the cathedral and the innkeeper traveled wearily. The fountain and the scholar lingered quietly. The desert and the quarry and the blacksmith labored wearily. The bridge and the glacier and the cathedral marched bravely. The wagon and the wagon and the harbor collapsed bravely. The cottage and the painter and the canyon drifted bravely. The hunter guarded abruptly. The harvester and the cottage and the forest marched bravely. The beacon celebrated restlessly. The chapel and the harvester and the telescope gathered calmly. The harbor and the drummer and the carriage waited quietly. We harvested suddenly. The forest and the orchard harvested wearily. The fountain and the musician and the canyon paused restlessly. The cathedral vanished quietly. The telescope and the market lingered eagerly. The violin and the drummer and the blacksmith collapsed softly. The desert and the hunter echoed quietly. The watchman and the potter hesitated restlessly. The carriage and the courtyard arrived suddenly. The sailor and the mountain and the anchor departed restlessly."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 60 (exactly 60)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       3,
+       4,
+       5
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "nouns",
+      "word": null,
+      "target": 60,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 87,
+      "separation": 5,
+      "counts": [
+       14,
+       68,
+       21,
+       7,
+       32,
+       86,
+       82,
+       83,
+       63,
+       65,
+       48,
+       49
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "The quarry lingered slowly. The tavern and the miner hesitated softly. The courtyard studied eagerly. The captain and the windmill lingered slowly. The tavern labored restlessly. The drummer crumbled restlessly. The courtyard and the farmer and the island echoed abruptly. The quarry shattered eagerly. The musician and the blacksmith and the carriage echoed slowly. He soared wearily. The scholar and the farmer and the captain labored suddenly. The baker and the drummer and the drummer harvested restlessly. The cathedral and the palace and the mountain trembled wearily. It shouted restlessly. The forest and the fountain and the merchant waited bravely. The beacon and the sailor and the lantern crumbled suddenly. The cottage and the carriage vanished slowly. The beacon and the market scattered calmly. The merchant and the anchor and the canyon echoed calmly. The harvest returned calmly. The baker and the windmill and the orchard vanished abruptly. The fisherman traveled bravely. The fisherman and the wagon stumbled suddenly. The canyon listened slowly. The mountain and the musician listened bravely. The miner and the bridge soared softly. The meadow and the scholar and the sailor crumbled quietly. The innkeeper departed calmly. The carriage and the palace and the lantern celebrated bravely. The windmill and the shepherd vanished wearily. The telescope guarded quietly. The river and the fisherman departed restlessly. The shepherd and the orchard waited suddenly. The garden and the engine and the cottage stumbled eagerly. The harvester argued quietly. The farmer and the musician and the harvest celebrated restlessly. The courtyard and the canyon arrived slowly. The lantern and the carriage and the painter circled slowly."
+      },
+      {
+       "text": "The drummer and the quarry and the cathedral shouted abruptly. The courtyard and the lantern and the voyage faltered restlessly. The baker and the baker and the engine drifted suddenly. It returned calmly. The musician sketched abruptly. The island and the river and the harvester sketched softly. The tower departed bravely. The library and the palace traveled abruptly. The library and the beacon gathered bravely. The courtyard and the weaver collapsed bravely. The drummer and the blacksmith and the meadow echoed eagerly. The violin and the mountain rested wearily. The glacier wandered slowly. The harvest and the gardener studied wearily. The teacher and the island shattered calmly. The harvest and the canyon listened bravely. The baker and the tavern glimmered abruptly. The potter and the engine echoed slowly. The shepherd and the blacksmith and the painter sketched calmly. We returned abruptly. The market and the windmill and the baker arrived slowly. The miner and the forest and the wagon lingered softly. The voyage and the violin and the saddle trembled eagerly. The compass trembled softly. The library and the library glimmered quietly. The forest and the captain rebuilt bravely. The saddle waited suddenly. The weaver labored abruptly. The mountain and the engine celebrated slowly. The carriage and the hunter rested suddenly. The blacksmith and the miner and the wagon listened abruptly. The soldier and the orchard and the voyage vanished softly. The palace and the valley hesitated abruptly. The courtyard faltered bravely."
+      },
+      {
+       "text": "The miner paused restlessly. He faltered softly. The sailor and the miner and the compass shattered bravely. We paused bravely. The cottage vanished softly."
+      },
+      {
+       "text": "She scattered softly. The carriage and the fountain watched calmly. The harbor and the tower and the musician waited bravely. The shepherd and the windmill celebrated slowly. The baker watched abruptly. The palace and the carriage whispered softly. The merchant explored suddenly. The harbor and the potter and the captain rested slowly. The tavern marched restlessly. The weaver and the orchard gathered slowly. The valley and the sailor and the canyon marched bravely. The sailor and the windmill harvested slowly. The violin and the sailor and the glacier drifted restlessly. The voyage and the drummer gathered suddenly. The potter and the potter circled eagerly. The meadow and the bridge and the cathedral trembled softly. The palace studied quietly. The miner shattered suddenly. The voyage and the sailor and the chapel knelt bravely. The fisherman departed suddenly. The river traveled slowly. The watchman and the voyage and the palace lingered bravely. The library scattered suddenly. The wagon and the saddle and the teacher gathered abruptly. The courtyard and the potter guarded abruptly. The captain rested slowly. The windmill and the captain and the quarry rested abruptly. The glacier and the potter and the shepherd wandered eagerly. The compass knelt slowly. It scattered abruptly. The wagon sketched calmly. The gardener and the painter echoed slowly. The compass and the saddle studied restlessly. The farmer and the bridge and the harvester whispered wearily. The castle rested quietly. The engine and the market and the merchant labored softly. The garden and the forest harvested suddenly. The orchard traveled calmly. The courtyard and the wagon shouted calmly. The painter traveled bravely. The carriage and the saddle and the canyon wandered softly. The drummer lingered abruptly."
+      },
+      {
+       "text": "The scholar and the quarry and the scholar shattered suddenly. The tower and the market and the blacksmith knelt wearily. The harvester celebrated abruptly. The harvest and the glacier and the baker vanished suddenly. The canyon stumbled suddenly."
+      },
+      {
+       "text": "The fountain and the cathedral and the hunter marched bravely. The farmer and the river and the captain faltered wearily. The bridge and the merchant and the merchant guarded suddenly. The saddle shouted softly. The cottage and the violin echoed slowly. He knelt abruptly. The harbor and the musician and the valley hesitated bravely. The blacksmith and the compass and the baker celebrated slowly. The carriage and the violin and the engine crumbled bravely. The voyage lingered bravely."
+      },
+      {
+       "text": "The bridge and the meadow and the voyage harvested eagerly. The fisherman glimmered suddenly. The innkeeper and the lantern and the beacon listened wearily. They listened quietly. The telescope celebrated quietly. The fisherman and the harvester and the soldier watched restlessly. The beacon and the library rested bravely. The beacon and the painter and the engine arrived slowly. The cathedral stumbled eagerly. The musician and the baker faltered slowly. The shepherd hesitated bravely. The meadow rebuilt restlessly. The telescope and the musician paused slowly. The violin guarded softly. The harbor wandered softly. The voyage gathered calmly. The valley whispered restlessly. The bridge scattered abruptly. The fisherman and the harvest and the forest echoed suddenly. The scholar celebrated abruptly. The library and the quarry labored abruptly. The watchman and the compass returned softly. The beacon vanished wearily. The fountain and the desert rebuilt quietly. The forest and the bridge and the engine collapsed slowly. The baker studied restlessly. The gardener arrived wearily. The engine and the tower rested restlessly. The telescope and the baker and the glacier labored bravely. The telescope and the watchman and the sailor wandered suddenly. The teacher and the potter and the watchman collapsed calmly. The cottage arrived bravely. The valley and the market and the harbor explored calmly. The violin and the bridge stumbled abruptly. The beacon and the wagon and the anchor stumbled wearily. The teacher scattered abruptly."
+      },
+      {
+       "text": "The fountain collapsed softly. The river and the potter wandered bravely. The forest and the tower rushed wearily. The soldier and the captain marched softly. The musician and the beacon harvested eagerly. The drummer and the cathedral drifted softly. The soldier and the saddle and the miner waited eagerly. The saddle and the river and the compass explored bravely. The tavern and the compass explored quietly. The miner and the cottage knelt quietly. The chapel lingered wearily. The scholar waited wearily. The fountain and the tavern stumbled slowly. The potter rebuilt quietly. The sailor and the telescope collapsed wearily. The drummer and the castle crumbled eagerly. The gardener and the mountain and the island hesitated calmly. The engine departed wearily. The library and the miner and the potter marched calmly. The forest and the saddle rushed abruptly. The harvester and the lantern traveled bravely. The forest and the tavern and the saddle stumbled suddenly. The garden and the palace and the quarry scattered quietly. The wagon and the river and the forest trembled suddenly. The soldier and the palace and the harvest lingered quietly. The courtyard and the carriage rushed softly. The bridge waited quietly. The glacier and the lantern trembled suddenly. The carriage and the potter watched restlessly. The captain and the valley sketched slowly. The merchant shattered abruptly. The compass wandered bravely. The chapel and the saddle and the quarry studied abruptly. The violin and the cottage departed wearily."
+      },
+      {
+       "text": "The river and the mountain and the carriage labored softly. The hunter and the compass sketched restlessly. The island crumbled bravely. The carriage and the harvest and the cathedral echoed suddenly. The bridge glimmered softly. The palace collapsed slowly. The innkeeper and the mountain rested restlessly. The meadow and the hunter knelt eagerly. The garden and the saddle and the meadow glimmered suddenly. The mountain and the weaver departed wearily. The harvester and the baker stumbled slowly. The violin and the harvester and the courtyard shattered calmly. The beacon and the quarry and the voyage traveled calmly. The courtyard listened restlessly. The engine and the tower and the cottage knelt quietly. The bridge and the fountain and the desert harvested eagerly. The tower gathered quietly. The forest and the gardener celebrated suddenly. The tower and the bridge and the musician shouted quietly. The telescope traveled eagerly. The harvester and the fisherman and the blacksmith trembled softly. The harbor and the meadow marched slowly. The valley and the courtyard whispered suddenly. The market guarded slowly. The miner and the meadow and the garden vanished softly. The glacier listened slowly. The blacksmith and the fisherman and the miner traveled suddenly. The river and the tavern and the harvester marched restlessly. The windmill and the carriage and the tavern knelt wearily. The saddle trembled wearily. The baker and the canyon and the harvester trembled quietly. The harvester traveled slowly. The desert celebrated bravely. The orchard and the hunter and the weaver glimmered bravely. The desert and the compass lingered slowly. She studied softly."
+      },
+      {
+       "text": "The tower and the drummer lingered softly. The gardener and the shepherd and the violin soared abruptly. The innkeeper soared restlessly. The tavern arrived slowly. The captain and the tavern shattered bravely. The scholar and the innkeeper and the baker echoed restlessly. The blacksmith stumbled suddenly. The beacon and the compass watched calmly. The windmill scattered abruptly. The baker vanished calmly. The captain faltered slowly. The tower arrived quietly. The miner and the sailor vanished restlessly. The teacher and the mountain and the drummer soared calmly. The cathedral and the castle and the compass hesitated calmly. The market stumbled suddenly. The harvester and the teacher and the beacon listened calmly. The captain and the violin traveled restlessly."
+      },
+      {
+       "text": "The fountain and the harvest and the innkeeper lingered abruptly. The drummer and the innkeeper and the harvester celebrated slowly. The shepherd and the musician lingered slowly. The farmer and the courtyard and the desert arrived quietly. The sailor returned quietly. The telescope and the violin and the tavern drifted softly. The cottage and the painter lingered slowly. We rushed wearily. The potter and the voyage traveled abruptly. The merchant and the forest and the lantern explored wearily. The desert and the tavern celebrated calmly. The sailor and the castle traveled quietly. The chapel and the tower and the teacher stumbled suddenly. The castle and the carriage glimmered calmly. The castle and the saddle and the library circled suddenly. The musician argued slowly. The innkeeper circled bravely. The merchant and the canyon argued eagerly. The engine watched bravely. The chapel and the gardener and the quarry returned calmly. The palace shouted eagerly. The courtyard gathered eagerly. The quarry and the market and the fisherman scattered bravely. The merchant and the quarry rebuilt slowly. The mountain and the lantern traveled suddenly. The cottage and the hunter and the sailor faltered wearily. It soared bravely. The sailor and the sailor stumbled wearily. The mountain and the merchant shouted abruptly. The anchor and the tower scattered quietly. The musician shattered abruptly. The cottage collapsed suddenly. The garden and the merchant and the teacher paused abruptly. The violin and the violin and the painter waited bravely. The potter listened restlessly. The merchant and the valley and the anchor faltered eagerly. The sailor stumbled quietly. The hunter and the teacher vanished restlessly. The drummer collapsed abruptly. The canyon and the compass and the harbor soared eagerly. The watchman and the compass and the anchor wandered bravely. The lantern glimmered suddenly."
+      },
+      {
+       "text": "The soldier and the chapel returned slowly. The fountain and the harbor and the palace argued abruptly. The gardener shouted slowly. The tavern vanished bravely. The harvest waited wearily. The wagon and the harbor harvested wearily. The market and the gardener gathered bravely. The violin and the wagon and the hunter argued slowly. The watchman wandered softly. It labored softly. The lantern and the harbor and the windmill traveled calmly. The voyage and the chapel and the island harvested softly. The tavern and the fountain explored quietly. The glacier gathered suddenly. The tower and the quarry rushed suddenly. The garden and the library and the shepherd celebrated abruptly. The drummer and the voyage and the violin circled calmly. The windmill guarded bravely. The quarry and the cottage argued bravely. The potter and the quarry and the courtyard watched abruptly. The bridge and the telescope and the garden stumbled suddenly. The teacher and the drummer crumbled bravely. The farmer traveled calmly. The innkeeper arrived softly. The captain and the quarry and the meadow drifted calmly. The painter and the potter lingered softly. The weaver lingered eagerly. She sketched restlessly."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 60 (exactly 60)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       3,
+       6,
+       10
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "nouns",
+      "word": null,
+      "target": 60,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 87,
+      "separation": 5,
+      "counts": [
+       75,
+       68,
+       5,
+       78,
+       11,
+       22,
+       65,
+       69,
+       74,
+       33,
+       83,
+       52
+      ]
+     }
+    },
+    {
+     "documents": [
+      {
+       "text": "The fountain rushed eagerly. The courtyard explored calmly. The meadow and the cottage and the beacon collapsed wearily. The harvest and the desert gathered wearily. The painter traveled abruptly. The market and the weaver paused slowly. The beacon and the scholar and the soldier paused softly. The farmer and the meadow paused wearily. The fisherman and the compass and the shepherd collapsed bravely. The desert and the chapel and the musician explored bravely. The teacher and the castle returned wearily. The windmill and the cathedral studied calmly. The bridge glimmered bravely. The blacksmith shouted eagerly. The library and the cottage and the market faltered suddenly. The desert shouted wearily. The miner and the lantern returned bravely. The fisherman explored eagerly. The river watched slowly. The musician and the potter and the tower trembled abruptly. The weaver and the glacier argued softly. The palace wandered calmly. The carriage echoed softly. The lantern and the painter rested calmly. The harvest vanished slowly."
+      },
+      {
+       "text": "The drummer trembled restlessly. The beacon returned eagerly. The tower and the cathedral shouted bravely. The potter and the desert traveled abruptly. The carriage and the island listened quietly. The shepherd and the canyon and the garden traveled softly. The courtyard and the farmer and the baker rested abruptly. The courtyard and the painter sketched suddenly. The violin traveled wearily. The palace collapsed abruptly. The merchant explored bravely. The potter and the wagon lingered eagerly. The soldier and the teacher traveled slowly. The compass and the saddle scattered abruptly. The glacier and the tower studied suddenly. The canyon guarded slowly. The innkeeper hesitated bravely. The violin and the wagon shattered bravely. The soldier and the cottage soared suddenly. The palace trembled softly. The beacon and the market rebuilt bravely. The market sketched calmly. The meadow and the palace and the hunter gathered wearily. It departed wearily. The library and the harvest stumbled softly. The soldier and the telescope marched calmly. The sailor gathered suddenly. The island whispered wearily. The garden and the sailor rebuilt wearily. The courtyard studied restlessly. The forest and the harvester studied calmly. The teacher and the hunter explored bravely."
+      },
+      {
+       "text": "The telescope and the beacon rested slowly. The teacher labored abruptly. The glacier and the potter and the mountain shouted quietly. The merchant stumbled abruptly. The canyon and the fisherman and the quarry traveled suddenly. The scholar and the blacksmith and the engine stumbled quietly. The harvest waited quietly. The river and the voyage and the orchard collapsed quietly. The watchman and the miner argued quietly. The fountain vanished slowly. The drummer and the canyon soared bravely. The carriage listened calmly. The fisherman and the chapel and the island soared suddenly. The telescope traveled suddenly. The voyage rushed calmly. The soldier and the potter argued bravely. The scholar and the hunter and the library marched slowly. The valley hesitated slowly. The fountain hesitated wearily. The violin and the valley and the courtyard gathered restlessly. The teacher collapsed abruptly. The market and the castle shouted suddenly. The watchman labored suddenly. The watchman and the cottage collapsed slowly. The watchman sketched restlessly. The fisherman and the orchard and the carriage shouted wearily. The river and the palace and the beacon trembled slowly. The harvester and the voyage rebuilt slowly. The orchard and the meadow vanished eagerly. The beacon and the meadow wandered abruptly. The orchard glimmered slowly. The sailor and the voyage studied eagerly. The miner scattered eagerly. The market waited calmly. The quarry and the mountain returned slowly. The fisherman traveled suddenly. It explored quietly. The violin and the miner and the farmer rushed abruptly. The saddle and the compass faltered bravely. The carriage shattered suddenly. The saddle shouted softly."
+      },
+      {
+       "text": "The desert and the library and the carriage watched slowly. The musician departed suddenly. The blacksmith and the palace and the mountain arrived restlessly. The bridge and the palace and the tavern lingered restlessly. The violin and the tavern lingered abruptly. The harbor and the orchard and the cottage traveled calmly. The watchman and the island drifted calmly. The innkeeper sketched abruptly. The engine and the anchor and the teacher studied quietly. The windmill arrived abruptly. They listened abruptly. The palace and the market guarded restlessly."
+      },
+      {
+       "text": "The violin and the soldier gathered restlessly. The cathedral and the innkeeper watched abruptly. The innkeeper and the voyage and the captain watched softly. The watchman and the courtyard faltered softly. The saddle and the orchard shouted calmly. The library and the watchman trembled slowly. They lingered suddenly. The tavern and the valley collapsed suddenly. The teacher and the valley and the harbor departed quietly. The shepherd arrived bravely. The market drifted restlessly. He lingered wearily."
+      },
+      {
+       "text": "The castle trembled abruptly. The scholar and the orchard and the mountain glimmered quietly. The quarry rebuilt quietly. The cottage listened restlessly. The glacier and the garden shouted abruptly. The courtyard soared eagerly. The saddle and the beacon soared quietly. The weaver sketched bravely. The harbor stumbled abruptly. The weaver and the river and the drummer crumbled eagerly. It gathered restlessly. The orchard and the cottage labored bravely. The wagon and the beacon faltered bravely. The miner and the voyage sketched eagerly. The sailor and the meadow traveled eagerly. The miner and the canyon harvested bravely. He waited wearily. The compass and the orchard returned softly. The baker and the forest and the drummer harvested wearily. The island lingered quietly. The hunter gathered quietly. The beacon and the compass lingered quietly. The harvester and the telescope labored eagerly. The fisherman and the fisherman drifted eagerly. The canyon scattered softly. The windmill and the sailor paused restlessly. The baker waited calmly."
+      },
+      {
+       "text": "The sailor and the compass wandered suddenly. The sailor glimmered calmly. The carriage and the scholar and the potter stumbled wearily. The beacon and the tavern and the garden soared wearily. The garden and the soldier and the soldier explored wearily. The canyon knelt quietly. The wagon and the garden and the watchman shouted softly. The harvester marched bravely. The chapel and the harvest and the tower listened slowly. The garden crumbled slowly. The beacon and the harbor and the fountain wandered wearily. The beacon and the island gathered softly. The sailor and the fisherman soared suddenly. He knelt quietly. The merchant and the island and the shepherd vanished abruptly. The drummer listened abruptly. The quarry vanished calmly. The anchor and the sailor and the cathedral circled bravely. The courtyard and the merchant and the courtyard stumbled bravely. The orchard and the harbor rushed suddenly. The teacher and the blacksmith and the harvester gathered slowly. The tower explored eagerly. The beacon and the wagon and the violin glimmered bravely. The beacon paused eagerly. The harbor and the cottage rebuilt abruptly. The captain and the farmer and the telescope trembled bravely. The musician and the compass sketched calmly. The market and the innkeeper soared calmly. She glimmered slowly. The watchman and the chapel gathered suddenly. The mountain listened eagerly. The harbor guarded abruptly."
+      },
+      {
+       "text": "The gardener and the painter circled softly. The musician vanished slowly. She soared slowly. The innkeeper guarded quietly. The chapel departed bravely. We faltered softly. The harvest and the merchant and the garden departed suddenly. The blacksmith and the blacksmith whispered eagerly. The soldier and the cathedral and the gardener explored wearily. The harvester and the painter and the lantern rebuilt eagerly."
+      },
+      {
+       "text": "The shepherd and the desert and the bridge studied slowly. The sailor and the bridge and the shepherd waited slowly. The lantern explored suddenly. The mountain and the forest and the quarry faltered abruptly. The painter and the watchman and the sailor waited calmly. The merchant and the lantern and the orchard guarded abruptly. The sailor and the meadow circled eagerly. The harvester arrived slowly. The orchard and the canyon explored suddenly. The quarry celebrated restlessly. The harvest and the scholar and the voyage arrived slowly. The tavern watched slowly. The garden and the lantern and the fisherman drifted slowly. The orchard and the gardener marched abruptly. The orchard and the violin drifted suddenly. The glacier and the forest watched bravely. The market and the hunter and the anchor circled softly. The island and the island crumbled bravely. The gardener and the weaver and the harvester crumbled eagerly. The potter and the harbor marched wearily. He returned eagerly. The harvest and the chapel collapsed restlessly. The valley and the island and the garden vanished restlessly. The drummer and the quarry traveled quietly. The harvest and the cottage and the anchor guarded suddenly. The canyon and the anchor waited abruptly. The cathedral and the lantern and the engine argued suddenly. He collapsed suddenly. The courtyard and the chapel and the carriage stumbled softly. The beacon and the harbor marched suddenly. The cottage and the scholar and the gardener circled calmly. The forest and the harvester and the merchant glimmered abruptly. The carriage guarded softly. The valley studied suddenly. The farmer and the telescope and the mountain crumbled quietly. The lantern collapsed eagerly. The voyage drifted restlessly. The cathedral and the desert paused restlessly."
+      },
+      {
+       "text": "The windmill and the meadow listened wearily. The river and the fisherman paused eagerly. The cathedral crumbled wearily. The harvester faltered restlessly. The chapel and the harvest glimmered suddenly. The voyage and the garden argued abruptly. The sailor and the tavern wandered wearily. The lantern and the island trembled slowly. The compass and the compass circled calmly. The quarry and the canyon shattered suddenly. The teacher and the castle traveled slowly. The island echoed restlessly. We rushed eagerly. The market rebuilt eagerly. The anchor and the blacksmith drifted restlessly. The library and the painter studied wearily. The merchant and the painter crumbled abruptly. The garden shouted bravely. The miner whispered slowly. The glacier and the harbor marched softly. The musician and the harvester stumbled calmly."
+      },
+      {
+       "text": "The potter echoed bravely. The miner and the miner and the painter returned restlessly. The drummer glimmered quietly. The violin and the teacher argued eagerly. The voyage watched slowly. The cottage lingered wearily. The baker lingered calmly. The mountain shattered eagerly. The saddle faltered eagerly. The market and the weaver sketched slowly. The fountain glimmered quietly. The weaver and the blacksmith crumbled quietly. The blacksmith collapsed calmly. The potter and the baker and the tower rested restlessly. The river rebuilt wearily. The glacier and the saddle and the sailor shattered eagerly. The musician lingered wearily. The musician and the engine returned abruptly. The gardener and the captain scattered bravely. The voyage and the farmer and the valley circled wearily. The harvest and the river and the drummer shattered slowly. The beacon shouted softly. She sketched calmly. The saddle and the glacier trembled wearily. The canyon and the harbor watched eagerly. The chapel and the compass and the glacier glimmered wearily. The harvester and the soldier hesitated quietly."
+      },
+      {
+       "text": "The beacon faltered wearily. The shepherd and the blacksmith sketched suddenly. The harbor and the shepherd waited suddenly. The island and the saddle faltered quietly. The weaver and the shepherd and the mountain wandered calmly. The harbor and the bridge and the lantern shouted calmly. The tavern wandered suddenly. The painter and the shepherd hesitated wearily. The watchman paused quietly. The weaver departed bravely. The painter and the miner watched softly. The carriage and the baker labored wearily. The compass argued bravely. The voyage and the fisherman and the baker lingered slowly. The carriage and the fisherman and the weaver paused eagerly. The drummer and the desert waited softly. The harvester shouted softly. The garden and the teacher and the castle soared wearily. The anchor returned restlessly. The violin and the market and the quarry trembled bravely. The weaver lingered restlessly. The saddle and the baker and the weaver rested restlessly. The telescope faltered slowly. The market and the musician and the glacier circled abruptly. The desert and the telescope and the canyon rested restlessly. The merchant and the orchard and the painter guarded restlessly. The wagon and the musician lingered suddenly. The palace and the desert wandered softly. The river and the forest and the fountain knelt bravely. The windmill and the telescope departed softly. The forest and the harbor soared bravely. The fountain soared softly. The market labored softly. The carriage and the drummer paused suddenly. The harvest and the chapel and the violin glimmered suddenly. The chapel and the cottage gathered wearily. The quarry and the canyon trembled calmly. The hunter and the mountain marched softly. The quarry and the windmill departed eagerly. The harvester and the harvester and the garden paused restlessly. The palace and the beacon traveled suddenly. The wagon marched restlessly. The hunter rested softly. The engine marched restlessly. We argued restlessly."
+      }
+     ],
+     "queries": [
+      "Each passage has a value: the number of nouns. Find every group of 3 passages whose values add up to 60 (exactly 60)."
+     ],
+     "answers": [],
+     "gold_doc_indices": [
+      [
+       4,
+       5,
+       8
+      ]
+     ],
+     "source": "textgroups",
+     "_meta": {
+      "feature": "nouns",
+      "word": null,
+      "target": 60,
+      "tolerance": 0,
+      "group_size": 3,
+      "num_groups": 1,
+      "filler_max": 87,
+      "separation": 5,
+      "counts": [
+       45,
+       53,
+       72,
+       24,
+       20,
+       43,
+       62,
+       16,
+       80,
+       34,
+       46,
+       87
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

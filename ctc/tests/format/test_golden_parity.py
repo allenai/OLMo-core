@@ -1,0 +1,419 @@
+"""
+Byte-parity between :mod:`ctc.format` and the pre-migration implementation.
+
+``fixtures/golden_format.json`` was produced by running the old ``corpus_reasoning.lib`` code -- see
+``fixtures/generate_golden.py``. It is the contract these modules must not break, because the same
+functions both build training shards and grade checkpoints: a formatting change makes new data
+incompatible with old checkpoints, and a parser change silently reprices published results.
+
+A failure here means the port changed behaviour. Fix the port. Regenerating the fixture would
+delete the evidence instead of the bug.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from fixtures.generate_golden import DOC_CASES  # made importable by tests/conftest.py
+
+from ctc.format import documents, metrics, parsing, prompts
+
+GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "golden_format.json").read_text())
+
+
+# ── Prompt constants ────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN["prompt_constants"]))
+def test_prompt_constants_are_unchanged(name):
+    """Every template and instruction string is byte-identical to the pre-migration one."""
+    if not hasattr(prompts, name):
+        pytest.skip(f"{name} intentionally not ported (see documents.py)")
+    assert getattr(prompts, name) == GOLDEN["prompt_constants"][name]
+
+
+def test_no_prompt_constant_was_dropped_silently():
+    """Only the two doc-formatting helpers moved out; every string constant stayed."""
+    moved = {"format_doc", "format_doc_dict"}
+    missing = {n for n in GOLDEN["prompt_constants"] if not hasattr(prompts, n)} - moved
+    assert not missing, f"prompt constants lost in the port: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("top_k", sorted(GOLDEN["rerank_instruction"]))
+def test_rerank_instruction(top_k):
+    assert prompts.rerank_instruction(int(top_k)) == GOLDEN["rerank_instruction"][top_k]
+
+
+# ── Document serialization ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["documents"]))
+def test_format_documents_matches_golden(key):
+    """The if-chain became a dispatch table; the bytes it emits did not move."""
+    task, titles = key.split("|")
+    use_titles = titles == "use_titles=True"
+    assert (
+        documents.format_documents(DOC_CASES[task], task, use_titles=use_titles)
+        == GOLDEN["documents"][key]
+    )
+
+
+def test_every_task_branch_is_covered():
+    """The fixture must exercise every serializer, or the table could lose one unnoticed."""
+    uncovered = set(documents._SERIALIZERS) - set(DOC_CASES)
+    assert not uncovered, f"serializers with no golden case: {sorted(uncovered)}"
+
+
+def test_items_are_blank_line_separated():
+    """The chunked/landmark masks split on a blank line; single newlines put items in the wrong chunk."""
+    docs = [{"text": "one"}, {"text": "two"}, {"text": "three"}]
+    for task in list(documents._SERIALIZERS) + ["retrieval", "unknown"]:
+        if task in ("qdmatch", "xabsence", "grouping", "grouping_labeled"):
+            continue  # need extra keys; covered by the golden cases
+        out = documents.format_documents(docs, task)
+        assert out.count("\n\n") == 2, f"{task} did not separate 3 items with blank lines: {out!r}"
+
+
+def test_reorder_collapses_internal_blank_lines():
+    """A passage's own paragraph break would otherwise split it across two chunks."""
+    out = documents.format_documents([{"text": "a\n\nb"}, {"text": "c"}], "reorder")
+    assert out == "Passage [1]: a\nb\n\nPassage [2]: c"
+
+
+def test_default_serializer_numbers_only_id_tasks():
+    docs = [{"title": "T", "text": "x"}]
+    assert "[1]" in documents.format_documents(docs, "retrieval")
+    assert "[1]" not in documents.format_documents(docs, "qa")
+
+
+# ── Parsers ─────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_doc_ids"]))
+def test_parse_doc_ids(text):
+    assert sorted(parsing.parse_doc_ids(text)) == GOLDEN["parse_doc_ids"][text]
+
+
+def test_parse_doc_ids_accepts_a_primed_continuation():
+    """The regression that scored niah 0.16 while msmarco scored 0.96 on the same ability."""
+    assert parsing.parse_doc_ids("8]") == {8}
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["parse_outlier_ids"]))
+def test_parse_outlier_ids(key):
+    text, n = key.rsplit("|", 1)
+    assert parsing.parse_outlier_ids(text, int(n)) == GOLDEN["parse_outlier_ids"][key]
+
+
+def test_parse_outlier_ids_stays_strict_about_brackets():
+    """Outlier targets emit a full 'Outliers: [1]' line, so a bare int is prose, not an answer.
+
+    Relaxing this the way parse_doc_ids is relaxed would start matching the star rating in the
+    preceding reasoning sentence.
+    """
+    assert parsing.parse_outlier_ids("Most are 5 star. Outliers: 3", 10) is None
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_pairs"]))
+def test_parse_pairs(text):
+    assert parsing.parse_pairs(text) == GOLDEN["parse_pairs"][text]
+
+
+def test_parse_pairs_recovers_a_dropped_primer():
+    """Contradiction EM read ~0.60 against a true >0.9 because the first pair was dropped."""
+    assert parsing.parse_pairs("1, 37], [6, 60], [35, 71]]") == [[1, 37], [6, 60], [35, 71]]
+
+
+def test_parse_pairs_sorts_each_pair():
+    """'1 contradicts 4' and '4 contradicts 1' are the same claim."""
+    assert parsing.parse_pairs("[[4, 1]]") == [[1, 4]]
+
+
+def test_parse_pairs_distinguishes_empty_from_unparseable():
+    """'there are none' and 'produced nothing usable' score alike but mean opposite things."""
+    assert parsing.parse_pairs("[]") == []
+    assert parsing.parse_pairs("not a pair anywhere") is None
+
+
+def test_parse_pairs_does_not_raise_on_a_non_integer_pair():
+    """A pair whose elements are not int-convertible is not a pair -- it must be disqualified,
+
+    not crash the function. int(p[0])/int(p[1]) used to live OUTSIDE the surrounding try, so
+    ["Doc 1", "Doc 3"] raised ValueError and [1, None] raised TypeError straight out of parse_pairs.
+    """
+    assert parsing.parse_pairs('[["Doc 1", "Doc 3"]]') is None
+    assert parsing.parse_pairs("[[1, null]]") is None
+
+
+def test_parse_pairs_falls_back_to_the_regex_scrape_on_a_mixed_bad_pair():
+    """A non-integer pair disqualifies the WHOLE json.loads candidate it came from (matching how
+    parse_qd_pairs treats a bad candidate), so the good [1, 2] pair here is recovered by the
+    digit-pair regex fallback rather than by the json.loads path -- this must not raise either way.
+    """
+    assert parsing.parse_pairs('[[1, 2], ["Doc 1", "Doc 3"]]') == [[1, 2]]
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_qd_pairs"]))
+def test_parse_qd_pairs(text):
+    assert parsing.parse_qd_pairs(text) == GOLDEN["parse_qd_pairs"][text]
+
+
+def test_qd_pairs_preserve_order():
+    """(query_id, doc_id) over one shared index -- swapping them is a different claim."""
+    assert parsing.parse_qd_pairs("[[8, 1]]") == [[8, 1]]
+    assert parsing.parse_pairs("[[8, 1]]") == [[1, 8]]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["pair_metrics"]))
+def test_pair_metrics(key):
+    pred, gold = key.split("|")
+    got = metrics.pair_metrics(json.loads(pred), json.loads(gold))
+    for k, want in GOLDEN["pair_metrics"][key].items():
+        assert got[k] == pytest.approx(want), k
+
+
+def test_pair_metrics_perfect_on_mutual_empty():
+    assert metrics.pair_metrics([], [])["f1"] == 1.0
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["parse_id_set"]))
+def test_parse_id_set(key):
+    text, n = key.rsplit("|", 1)
+    got = parsing.parse_id_set(text, int(n))
+    want = GOLDEN["parse_id_set"][key]
+    assert (sorted(got) if got is not None else None) == want
+
+
+def test_id_set_anchor_takes_the_last_occurrence():
+    """A model that reasons aloud and revises itself is scored on its final answer."""
+    assert parsing.parse_id_set("Missing: [1]\nactually no\nMissing: [4]", 10) == {4}
+
+
+def test_id_set_filters_out_of_range_ids():
+    """This parser scrapes bare integers as a fallback, so without the range check it would pick
+    up any number in the surrounding prose. parse_pairs deliberately does NOT filter."""
+    assert parsing.parse_id_set("Missing: [99]", 10) == set()
+
+
+def test_id_set_distinguishes_empty_from_unparseable():
+    """'nothing is missing' is a real answer and can be correct."""
+    assert parsing.parse_id_set("Missing:", 10) == set()
+    assert parsing.parse_id_set("no anchor and no ids", 10) is None
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_snippet_list"]))
+def test_parse_snippet_list(text):
+    assert parsing.parse_snippet_list(text) == GOLDEN["parse_snippet_list"][text]
+
+
+def test_snippet_list_recovers_a_dropped_opening_bracket():
+    """absence_gutenberg under chunked attention read parse_rate ~0.01 because of this, while the
+    snippets it emitted were coherent and correct."""
+    got = parsing.parse_snippet_list('Bob was not happy", "Jane felt sad that"]')
+    assert got == ["Bob was not happy", "Jane felt sad that"]
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["norm_snippet"]))
+def test_normalize_snippet(text):
+    assert parsing.normalize_snippet(text) == GOLDEN["norm_snippet"][text]
+
+
+def test_snippet_normalization_keeps_four_tokens():
+    """The task asks for the first four words; a model quoting more still matches."""
+    assert parsing.normalize_snippet("Bob was not happy indeed and more") == "bob was not happy"
+
+
+def test_set_metrics_empty_both_sides_is_perfect():
+    assert metrics.set_metrics(set(), set())["f1"] == 1.0
+
+
+def test_set_metrics_partial_overlap():
+    got = metrics.set_metrics({1, 2, 3}, {2, 3, 4})
+    assert got["precision"] == pytest.approx(2 / 3)
+    assert got["recall"] == pytest.approx(2 / 3)
+    assert got["exact_match"] == 0.0
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["parse_cycles"]))
+def test_parse_cycles(text):
+    assert parsing.parse_cycles(text) == GOLDEN["parse_cycles"][text]
+
+
+def test_cycles_are_normalized_to_sorted_sets():
+    """A cycle is a set; the order the model walked it in carries no information."""
+    assert parsing.parse_cycles("[[8, 3, 12]]") == [[3, 8, 12]]
+    assert parsing.parse_cycles("[[3, 3, 8]]") == [[3, 8]]
+
+
+def test_singleton_groups_are_dropped():
+    """One item cannot form a cycle; admitting them lets a model score by listing every id."""
+    assert parsing.parse_cycles("[[5]]") == []
+
+
+def test_a_flat_list_is_read_as_one_cycle():
+    assert parsing.parse_cycles("[3, 8, 12]") == [[3, 8, 12]]
+
+
+def test_a_flat_list_cycle_deduplicates_too():
+    """Regression check for the sorted({int(x) for x in parsed}) rewrite (a `ty` type-narrowing
+
+    fix, not meant to change behaviour): a flat cycle with a repeated id must still dedup exactly
+    as sorted(set(parsed)) did.
+    """
+    assert parsing.parse_cycles("[3, 3, 8]") == [[3, 8]]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["cycle_metrics"]))
+def test_cycle_metrics(key):
+    pred, gold = key.split("|")
+    got = metrics.cycle_metrics(json.loads(pred), json.loads(gold))
+    for k, want in GOLDEN["cycle_metrics"][key].items():
+        assert got[k] == pytest.approx(want), k
+
+
+def test_partial_cycle_scores_zero_at_cycle_level_but_earns_claim_credit():
+    """The two numbers answer different questions: found the right items vs grouped them right."""
+    got = metrics.cycle_metrics([[3, 8]], [[3, 8, 12]])
+    assert got["f1"] == 0.0
+    assert got["claim_f1"] > 0.0
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["parse_partition"]))
+def test_parse_partition(key):
+    text, n = key.rsplit("|", 1)
+    assert parsing.parse_partition(text, int(n)) == GOLDEN["parse_partition"][key]
+
+
+def test_parse_partition_ignores_trailing_ramble():
+    """The greedy-regex bug that roughly halved pairwise F1."""
+    out = parsing.parse_partition('{"groups": [{"doc_ids": [1, 2]}]} then it kept talking {', 2)
+    assert out == [[1, 2]]
+
+
+def test_parse_partition_recovers_a_mid_array_start():
+    """Chunked grouping @2k measured 0.44 without this recovery and 0.82 with it."""
+    assert parsing.parse_partition('2, 3, 4]}, {"doc_ids": [1, 6]}]}', 6) == [[2, 3, 4], [1, 6]]
+
+
+def test_parse_partition_does_not_raise_on_a_non_iterable_groups_value():
+    """{"groups": 5} decodes as valid JSON but "groups" is not a sequence of group objects --
+
+    iterating it used to raise TypeError straight out of _first_groups_object. It must instead be
+    treated as "not a grouping object after all" and let parse_partition fall through to its later
+    fallbacks (here, the per-line digit scrape finds nothing in-range and returns None).
+    """
+    assert parsing.parse_partition('{"groups": 5}', 3) is None
+
+
+def test_parse_partition_drops_a_group_with_non_numeric_ids_but_keeps_the_rest():
+    """One group with ids that are not int-convertible must not blank out every group this JSON
+
+    object did decode -- only that group is dropped.
+    """
+    text = '{"groups": [{"doc_ids": ["a", "b"]}, {"doc_ids": [1, 2]}]}'
+    assert parsing.parse_partition(text, 3) == [[1, 2]]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["partition_to_labels"]))
+def test_partition_to_labels(key):
+    text, n = key.rsplit("|", 1)
+    n = int(n)
+    clusters = parsing.parse_partition(text, n) or []
+    assert parsing.partition_to_labels(clusters, n) == GOLDEN["partition_to_labels"][key]
+
+
+def test_partition_to_labels_gives_omitted_docs_their_own_cluster():
+    assert parsing.partition_to_labels([[1, 2]], 4) == [0, 0, 1, 2]
+
+
+def test_partition_to_labels_accepts_any_sequence_of_sequences():
+    """The signature widened from List[List[int]] to Sequence[Sequence[int]] -- ctc.tasks._grouping
+
+    calls this with list(parsed), a list of whatever sequence type parse_partition returned, which
+    a type checker sees as Sequence[Sequence[int]]. The body only iterates, so tuples must work too.
+    """
+    assert parsing.partition_to_labels(((1, 2), (3,)), 4) == [0, 0, 1, 2]
+
+
+def test_pairwise_metrics_all_singletons_is_a_perfect_match():
+    """A gold partition with k == n (every document its own cluster) has no co-clustered pairs at
+
+    all, and neither does a prediction that also puts every document alone -- both pred_pairs and
+    gold_pairs are empty. That is an EXACT match, not a divide-by-zero 0.0: 48 of 500 grouping
+    examples at r2k had exactly this all-singleton gold shape and scored 0.0 before this fix.
+    """
+    labels = list(range(10))
+    assert metrics.pairwise_metrics(labels, labels) == {
+        "pairwise_precision": 1.0,
+        "pairwise_recall": 1.0,
+        "pairwise_f1": 1.0,
+    }
+
+
+def test_pairwise_metrics_one_sided_empty_is_still_zero():
+    """When only ONE side has no co-clustered pairs, the partitions genuinely disagree on every
+
+    pair the other side has -- that must stay 0.0, not be swept into the all-singleton exemption.
+    """
+    all_together = [0, 0, 0]
+    all_singleton = [0, 1, 2]
+    got = metrics.pairwise_metrics(all_together, all_singleton)
+    assert got == {"pairwise_precision": 0.0, "pairwise_recall": 0.0, "pairwise_f1": 0.0}
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["parse_permutation"]))
+def test_parse_permutation(key):
+    text, n = key.rsplit("|", 1)
+    assert parsing.parse_permutation(text, int(n)) == GOLDEN["parse_permutation"][key]
+
+
+def test_parse_permutation_rejects_a_near_miss():
+    assert parsing.parse_permutation("[1, 1, 2]", 3) is None
+
+
+# ── Metrics ─────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("text", sorted(GOLDEN["normalize_answer"]))
+def test_normalize_answer(text):
+    assert metrics.normalize_answer(text) == GOLDEN["normalize_answer"][text]
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["qa_metrics"]))
+def test_qa_metrics(key):
+    pred, gold = key.rsplit("|", 1)
+    want = GOLDEN["qa_metrics"][key]
+    assert metrics.exact_match(pred, gold) == want["exact_match"]
+    assert metrics.substring_match(pred, gold) == want["substring_match"]
+    assert metrics.token_f1(pred, gold) == pytest.approx(want["token_f1"])
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["max_over_answers"]))
+def test_max_over_answers(key):
+    pred, answers = key.rsplit("|", 1)
+    got = metrics.max_over_answers(metrics.token_f1, pred, json.loads(answers))
+    assert got == pytest.approx(GOLDEN["max_over_answers"][key])
+
+
+@pytest.mark.parametrize("key", sorted(GOLDEN["retrieval_metrics"]))
+def test_retrieval_metrics(key):
+    pred, gold = key.split("|")
+    p, g = set(json.loads(pred)), set(json.loads(gold))
+    want = GOLDEN["retrieval_metrics"][key]
+    assert metrics.retrieval_exact_match(p, g) == want["exact_match"]
+    assert metrics.retrieval_recall(p, g) == pytest.approx(want["recall"])
+    assert metrics.retrieval_precision(p, g) == pytest.approx(want["precision"])
+    assert metrics.retrieval_f1(p, g) == pytest.approx(want["f1"])
+
+
+def test_empty_prediction_scores_zero_precision():
+    """Abstaining must not be a way to score well."""
+    assert metrics.retrieval_precision(set(), {1}) == 0.0
+
+
+def test_aggregate_raises_on_a_missing_key():
+    """Averaging over a subset would misreport eval_size."""
+    with pytest.raises(KeyError):
+        metrics.aggregate([{"f1": 1.0}, {}], ["f1"])

@@ -139,10 +139,19 @@ exclude = '''
     | scratch/
 )
 '''
+# Excluded because its string literals ARE the training data; see the long note in
+# ctc/pyproject.toml, which repeats this exclusion for when black is invoked inside ctc/.
+force-exclude = 'ctc/src/ctc/format/prompts\.py'
 
 [tool.isort]
 profile = "black"
 multi_line_output = 3
+# Must match [tool.black]'s line-length. Without it isort defaults to 79 and splits imports that
+# black then leaves alone at 100, so the two rewrite each other forever and which one "wins"
+# depends on whether you ran `make style` (this config) or `isort ctc/` (ctc/pyproject.toml).
+line_length = 100
+# See the note above [tool.black]'s force-exclude.
+skip_glob = ["*/ctc/src/ctc/format/prompts.py"]
 
 [tool.ruff]
 line-length = 100
