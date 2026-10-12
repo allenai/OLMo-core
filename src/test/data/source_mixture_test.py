@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from olmo_core.data import NumpyFSLDatasetConfig, TokenizerConfig
 from olmo_core.data.source_mixture import (
     SourceMixtureConfig,
     SourceMixtureDataset,
@@ -14,6 +15,7 @@ from olmo_core.data.source_mixture import (
     SourceMixtureOutcome,
     SourcePathTokens,
 )
+from olmo_core.data.types import NumpyDatasetDType
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .utils import mk_mmaps
@@ -402,6 +404,222 @@ def test_dataset_mixture_preserves_balanced_sources_when_rounding_to_batch(tmp_p
         for outcome in mixture.sources
     }
     assert token_counts == {"left": 50, "right": 50}
+
+
+def test_dataset_mixture_preserves_source_ratios_when_paths_hit_capacity(tmp_path: Path, caplog):
+    caplog.set_level(logging.INFO, logger="olmo_core.data.source_mixture")
+    source_paths = []
+    for name, size in (
+        ("large.bin", 100),
+        ("small_a.bin", 10),
+        ("small_b.bin", 10),
+        ("other.bin", 100),
+    ):
+        path = tmp_path / name
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        source_paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=30,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(source_name="left", target_ratio=0.5, paths=source_paths[:1]),
+                SourceMixtureConfig(source_name="right", target_ratio=0.5, paths=source_paths[1:]),
+            ]
+        ),
+        global_batch_size=200,
+        quiet=True,
+        render_tables=True,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    selected_by_source = {
+        outcome.name: [item.tokens for item in outcome.path_tokens] for outcome in mixture.sources
+    }
+    assert selected_by_source == {"left": [100], "right": [10, 10, 80]}
+    assert caplog.text.count("0.5000") >= 2
+
+
+def test_dataset_mixture_rejects_batch_padding_over_source_fraction_cap(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((10, 10, 100)):
+        path = tmp_path / f"source_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=30,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_source_fraction=0.6,
+                )
+            ]
+        ),
+        global_batch_size=100,
+        quiet=True,
+        render_tables=False,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="Insufficient tokens for source"):
+        config.build(npdtype=np.uint32, sequence_length=10)
+
+
+def test_dataset_mixture_materializes_repetitions_for_batch_padding(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(100, dtype=np.uint32).tofile(path)
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=90,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=2.0,
+                )
+            ]
+        ),
+        global_batch_size=200,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    path_tokens = mixture.sources[0].path_tokens
+    assert [item.tokens for item in path_tokens] == [100, 100]
+    assert sum(item.tokens for item in path_tokens) == 200
+
+
+@pytest.mark.parametrize(("max_repetition_ratio", "should_fill"), [(1.0, False), (2.0, True)])
+def test_dataset_mixture_materializes_repetitions_for_fragmented_paths(
+    tmp_path: Path, max_repetition_ratio: float, should_fill: bool
+):
+    paths = []
+    for index, size in enumerate((9, 91)):
+        path = tmp_path / f"fragment_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=100,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_repetition_ratio=max_repetition_ratio,
+                )
+            ]
+        ),
+        global_batch_size=100,
+        quiet=True,
+        render_tables=False,
+    )
+
+    if not should_fill:
+        with pytest.raises(OLMoConfigurationError, match="Insufficient source capacity"):
+            config.build(npdtype=np.uint32, sequence_length=10)
+        return
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert sum(item.tokens for item in mixture.sources[0].path_tokens) == 100
+    assert sum(item.tokens // 10 for item in mixture.sources[0].path_tokens) == 10
+
+
+def test_dataset_mixture_rejects_fragmented_paths_without_repetition(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((9, 9)):
+        path = tmp_path / f"fragment_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=10,
+        source_list=SourceMixtureList(
+            [SourceMixtureConfig(source_name="source", target_ratio=1.0, paths=paths)]
+        ),
+        global_batch_size=10,
+        quiet=True,
+        render_tables=False,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="Insufficient source capacity"):
+        config.build(npdtype=np.uint32, sequence_length=10)
+
+
+@pytest.mark.parametrize("render_tables", [True, False])
+def test_dataset_mixture_zero_assigned_empty_source_keeps_zero_path(
+    tmp_path: Path, render_tables: bool
+):
+    empty_path = tmp_path / "empty.bin"
+    empty_path.write_bytes(b"")
+    full_path = tmp_path / "full.bin"
+    np.zeros(100, dtype=np.uint32).tofile(full_path)
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=10,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(source_name="empty", target_ratio=0.2, paths=[str(empty_path)]),
+                SourceMixtureConfig(source_name="full", target_ratio=0.8, paths=[str(full_path)]),
+            ]
+        ),
+        global_batch_size=10,
+        quiet=True,
+        render_tables=render_tables,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert [[item.tokens for item in source.path_tokens] for source in mixture.sources] == [
+        [0],
+        [10],
+    ]
+
+    dataset = NumpyFSLDatasetConfig(
+        source_mixture_config=config,
+        sequence_length=10,
+        tokenizer=TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1),
+        dtype=NumpyDatasetDType.uint32,
+        include_instance_metadata=False,
+    ).build()
+    dataset.prepare()
+    assert len(dataset) == 1
+    assert dataset[0]["input_ids"].shape == (10,)
+
+
+def test_dataset_mixture_trims_per_path_rounding_to_source_target(tmp_path: Path):
+    paths = []
+    for index in range(101):
+        path = tmp_path / f"source_{index}.bin"
+        np.zeros(10, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=1000,
+        source_list=SourceMixtureList(
+            [SourceMixtureConfig(source_name="source", target_ratio=1.0, paths=paths)]
+        ),
+        global_batch_size=1000,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    selected = [item.tokens for item in mixture.sources[0].path_tokens]
+    assert sum(selected) == 1000
+    assert sum(token // 10 for token in selected) == 100
+    assert all(token <= 10 for token in selected)
 
 
 def test_dataset_mixture_build_duplicate_paths(tmp_path: Path):
