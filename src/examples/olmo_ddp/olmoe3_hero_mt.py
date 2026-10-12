@@ -208,7 +208,7 @@ def trainer_config(common):
     wb.tags = [
         r.arm,
         "midtraining",
-        "decayed-12t400b-source",
+        "decayed-14t400b-source",
         "mt20",
         "cosine",
         "64g",
