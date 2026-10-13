@@ -652,6 +652,81 @@ def test_dataset_mixture_does_not_round_fractional_repetition_capacity_up(tmp_pa
         config.build(npdtype=np.uint32, sequence_length=10)
 
 
+def test_dataset_mixture_accepts_exact_decimal_repetition_capacity(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(1000, dtype=np.uint32).tofile(path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=1130,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=1.13,
+                )
+            ]
+        ),
+        global_batch_size=1130,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert sum(item.tokens for item in mixture.sources[0].path_tokens) == 1130
+
+
+def test_dataset_mixture_rejects_just_below_decimal_repetition_capacity(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(1000, dtype=np.uint32).tofile(path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=1130,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=math.nextafter(1.13, 0.0),
+                )
+            ]
+        ),
+        global_batch_size=1130,
+        quiet=True,
+        render_tables=False,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="Insufficient"):
+        config.build(npdtype=np.uint32, sequence_length=10)
+
+
+def test_dataset_mixture_does_not_undercount_decimal_source_fraction_cap(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(100, dtype=np.uint32).tofile(path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=116,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=2.0,
+                    max_source_fraction=0.58,
+                )
+            ]
+        ),
+        global_batch_size=116,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=1)
+
+    assert sum(item.tokens for item in mixture.sources[0].path_tokens) == 116
+
+
 def test_dataset_mixture_caps_fractional_repetitions_per_path(tmp_path: Path):
     paths = []
     for index, size in enumerate((81, 19)):

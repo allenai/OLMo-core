@@ -32,7 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Allocate batch-rounded source mixtures across configured source ratios before path-capacity refill,
   and reject mixes that lack enough per-source complete sequences for the requested training steps.
-  Honor fractional repetition limits when apportioning and materializing complete sequences.
+  Honor fractional repetition limits when apportioning and materializing complete sequences,
+  without undercounting exact decimal repetition or source-fraction boundaries.
   Mixtures whose requested token count rounds up to full batches can have different allocations,
   fingerprints, and resumed data order.
 - Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/Olmo-core/pull/843).

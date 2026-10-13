@@ -2,6 +2,7 @@ import logging
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from fractions import Fraction
 from itertools import chain
 from typing import Dict, List, Optional, Tuple, cast
 
@@ -193,11 +194,12 @@ def _fractional_repetition_capacity_by_path(
 ) -> Tuple[int, List[int]]:
     """Return full copies and the final fractional copy's per-path sequence capacities."""
     path_instances = [tokens // sequence_length for tokens in token_counts_by_path]
-    full_repetitions = math.floor(max_repetition_ratio)
-    fractional_ratio = max_repetition_ratio - full_repetitions
+    repetition_ratio = Fraction(str(max_repetition_ratio))
+    full_repetitions = math.floor(repetition_ratio)
+    fractional_ratio = repetition_ratio - full_repetitions
     total_instances = sum(path_instances)
     fractional_total = (
-        math.floor(total_instances * max_repetition_ratio) - full_repetitions * total_instances
+        math.floor(total_instances * repetition_ratio) - full_repetitions * total_instances
     )
     fractional_exact = [instances * fractional_ratio for instances in path_instances]
     fractional_by_path = [math.floor(instances) for instances in fractional_exact]
@@ -363,8 +365,8 @@ class SourceMixtureDatasetConfig(Config):
         source_caps = [
             int(
                 available_tokens_by_source[source.source_name]
-                * source.max_source_fraction
-                * source.max_repetition_ratio
+                * Fraction(str(source.max_source_fraction))
+                * Fraction(str(source.max_repetition_ratio))
             )
             for source in self.source_list.sources
         ]
