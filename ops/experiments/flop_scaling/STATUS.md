@@ -4,21 +4,21 @@ title: FLOP-scaling study — dense vs routed FFN (ffnmoe) vs KV soft tokens (kv
 status: done
 updated: 2026-09-08
 branch: prasann/landmark
-launcher: debug/flop_scaling/launch_grid35.py
+launcher: research/ffn_compute/flop_scaling/launch_grid35.py
 records:
   - records/flop-scaling-ffn-kv-plan.md
   - records/flop-scaling-report-2026-09-02.md
   - records/kv-route-attention-allocation.md
   - records/ds64-handoff.md
 results:
-  - results/flop_scaling/results35.csv
-  - results/flop_scaling/fits35.md
-  - results/flop_scaling/scale_report.md
-  - results/flop_scaling/results_scale.csv
-  - results/flop_scaling/results_scale_s27b.csv
-  - results/flop_scaling/ffn_speed_h100.md
-  - results/flop_scaling/walltime.csv
-  - debug/flop_scaling/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results35.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/fits35.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/scale_report.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_scale.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_scale_s27b.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/ffn_speed_h100.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/walltime.csv
+  - research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv
 wandb_group:
 next_step: None for this grid — KV follow-up lives in ds64, FFN follow-up in ffndrop; only open item is the unrun breadth-matched KV / 9B frozen-tail NaN, deprioritised.
 ---

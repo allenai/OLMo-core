@@ -1,3 +1,14 @@
+---
+title: Can a REAL-TOKEN subset per document reach frozen-model parity on outlier?
+date: 2026-09-15
+updated: 2026-09-15
+experiment: ds64
+area: token_routing
+kind: result
+status: complete
+superseded_by: 
+summary: Whether a real-token subset per document reaches frozen-model parity on outlier.
+---
 # Can a REAL-TOKEN subset per document reach frozen-model parity on outlier?
 
 **Date** 2026-09-15 · **Status** COMPLETE — canonical 2k / 8k / 32k all in (§5); 32k category-rule job still running · **Branch** `prasann/landmark`

@@ -172,14 +172,17 @@ Berkeley repo is **not** visible from Lambda. Everything must be rsync'd in over
 L=/accounts/projects/sewonm/prasann/ctc_suite
 
 # code — after ANY local edit, or the run trains stale logic
-rsync -a --delete --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
-  src/ lambda:$L/OLMo-core/src/
+# (the launcher runs recipes/train/research_trainer/train_ctc_suite.py with PYTHONPATH=src)
+for d in src recipes; do
+  rsync -a --delete --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
+    $d/ lambda:$L/OLMo-core/$d/
+done
 
 # tokenized shards (the dir name becomes DATA_SRC)
-rsync -a debug/<...>/shards_<x>/ lambda:$L/data/<name>/
+rsync -a <shard dir>/shards_<x>/ lambda:$L/data/<name>/
 
 # eval ladders
-rsync -a debug/<...>/eval_rungs/ lambda:$L/eval_rungs/<task>/
+rsync -a <eval dir>/eval_rungs/ lambda:$L/eval_rungs/<task>/
 ```
 
 There is **zero internet** on the head node and every compute node — `curl huggingface.co` fails
@@ -212,6 +215,13 @@ NGPU=2,SEQ_LEN=<n>,EPOCHS=1,BASE_SRC=$LROOT/bases/q35-4b-base-modelonly \
          run_ctc_lambda.sbatch'
 ```
 
+**Register the job** right after `sbatch` prints its id:
+`ops register --run-id <RUN> --experiment <E> --cluster lambda --kind train --job-id <id> --expected-minutes N`
+(`ops` = `/accounts/projects/berkeleynlp/prasann/bin/ops`, run on the Berkeley login node). `ops status`
+then queries Lambda over `ssh lambda` alongside Beaker and Berkeley slurm, and `ops stall <id>` digs
+into one job — use those instead of polling `squeue` over ssh. Its FAILED is the same SLURM state as
+below: verify by loss curve + checkpoint before believing it.
+
 Key knobs: `TASK DATA_SRC VARIANT(full|chunked|chunked-mix) SCALE(0.8b|4b) RUN EPOCHS SEQ_LEN LR
 GLOBAL_BATCH MICRO_BATCH BASE_SRC NGPU SEED MAX_STEPS ACT_CKPT SHARD_DEGREE ATTN_BACKEND`
 plus `SAVE_ROOT`/`WORK_ROOT` (see above).
@@ -226,7 +236,7 @@ Measured 4B throughput: **MFU ~36%, ~3,300-3,900 tokens/s/device** at `SEQ_LEN` 
 ## Eval on Lambda
 
 Historically Lambda was a **train-only** pool and results were harvested as loss curves
-(`src/scripts/eval/ctc_suite/harvest_lambda_pilot.py`). The reason was a latent bug, now fixed:
+(`harvest_lambda_pilot.py`, formerly `src/scripts/eval/ctc_suite/`; not ported to this branch). The reason was a latent bug, now fixed:
 
 > `run_ctc_lambda.sbatch` exported `HF_HOME=$LROOT/hf-cache`, **a path that never existed**. Training
 > never noticed because shards are pre-tokenized and no tokenizer is ever loaded. Eval *does* load a

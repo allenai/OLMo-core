@@ -1,3 +1,14 @@
+---
+title: Dev-loss grid — audit of every underperforming cell (2026-09-21)
+date: 2026-09-21
+updated: 2026-09-21
+experiment: devloss_grid
+area: token_routing
+kind: audit
+status: audit 2026-09-21
+superseded_by: 
+summary: Every dev-loss-grid cell where a keep-scheme trails full by ΔCE > 0.05, with paired SE.
+---
 # Dev-loss grid — audit of every underperforming cell (2026-09-21)
 
 Grid: `research/token_routing/devloss_grid/` (driver `ctc_devloss_grid.py`, artifact "Dev-Loss Scheme Grid"). Frozen dense

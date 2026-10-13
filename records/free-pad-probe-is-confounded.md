@@ -1,3 +1,14 @@
+---
+title: The `free_pad_repeat` probe is confounded — it does not measure FREE-position capacity
+date: 2026-07-14
+updated: 2026-07-14
+experiment: 
+area: landmark
+kind: diagnosis
+status: void
+superseded_by: 
+summary: The `free_pad_repeat` probe does not measure FREE-position capacity.
+---
 # The `free_pad_repeat` probe is confounded — it does not measure FREE-position capacity
 
 **Status:** found 2026-07-14, while re-running the n=100 analysis experiments on the repaired base.

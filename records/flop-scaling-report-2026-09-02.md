@@ -1,3 +1,14 @@
+---
+title: FLOP-scaling study: FFN routing and KV soft tokens vs dense (Qwen3.5-4B)
+date: 2026-09-02
+updated: 2026-09-02
+experiment: flop_scaling
+area: ffn_compute
+kind: result
+status: complete
+superseded_by: 
+summary: 93-run FLOP-scaling results: FFN routing and KV soft tokens vs dense, fitted laws.
+---
 # FLOP-scaling study: FFN routing and KV soft tokens vs dense (Qwen3.5-4B)
 
 Generated 2026-09-02 22:42 from `results/flop_scaling/results35.csv`. Plan: `records/flop-scaling-ffn-kv-plan.md`. Ledger: `research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv`.

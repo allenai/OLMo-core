@@ -1,3 +1,14 @@
+---
+title: CTC figures: settings audit and unification options
+date: 2026-08-19
+updated: 2026-08-19
+experiment: 
+area: pipeline
+kind: audit
+status: complete
+superseded_by: 
+summary: Settings each CTC paper figure selects, and what unifying them on one task set would cost.
+---
 # CTC figures: settings audit and unification options
 
 Written 2026-08-19. Covers every CTC figure currently in `paperdraft2` plus the two tables, what

@@ -1,3 +1,14 @@
+---
+title: ds64 data-scaling campaign — handoff (state as of 2026-09-09 ~09:00 PDT)
+date: 2026-09-09
+updated: 2026-09-14
+experiment: ds64
+area: token_routing
+kind: handoff
+status: superseded
+superseded_by: ops/experiments/ds64/STATUS.md
+summary: "Read me first" for the ds64 campaign: state, commands, open items.
+---
 # ds64 data-scaling campaign — handoff (state as of 2026-09-09 ~09:00 PDT)
 
 Soft-token (pooled-document) training vs dense, on short-heavy 2k–64k mixes, Qwen3.5-4B, all on

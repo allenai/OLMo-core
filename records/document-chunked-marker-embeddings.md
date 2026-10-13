@@ -1,3 +1,14 @@
+---
+title: Document-chunk marker embeddings: a base-checkpoint bug that silently zeroes results
+date: 2026-07-13
+updated: 2026-07-14
+experiment: 
+area: pipeline
+kind: diagnosis
+status: load-bearing (must-read)
+superseded_by: 
+summary: Qwen marker rows are bit-identical; run `recipes/data/fix_marker_embeddings.py` on every new base.
+---
 # Document-chunk marker embeddings: a base-checkpoint bug that silently zeroes results
 
 **TL;DR — before running any document-chunked / landmark training from a fresh Qwen3 base, repair the

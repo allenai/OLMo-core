@@ -4,19 +4,19 @@ title: Nested-width FFN mixture — learned per-token router over full/…/1-uni
 status: done
 updated: 2026-09-21
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/ffnmoe/run_q4b_ffnmoe.sbatch
+launcher: research/ffn_compute/ffnmoe_train/run_q4b_ffnmoe.sbatch
 records:
   - records/flop-scaling-ffn-kv-plan.md
   - records/flop-scaling-report-2026-09-02.md
   - records/ffndrop-cpt-plan.md
 results:
-  - src/scripts/train/memexpress/ffnmoe/LAUNCH_LEDGER.tsv
-  - src/scripts/train/memexpress/ffnmoe/README.md
-  - debug/ffnmoe
-  - results/flop_scaling/ffn_speed_h100.md
-  - results/flop_scaling/scale_report.md
-  - debug/flexcompute_40x/README.md
-  - debug/flexcompute_40x/ffn_moe_arm_4B_32768.json
+  - research/ffn_compute/ffnmoe_train/LAUNCH_LEDGER.tsv
+  - research/ffn_compute/ffnmoe_train/README.md
+  - research/ffn_compute/ffnmoe_bench
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/ffn_speed_h100.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/scale_report.md
+  - research/kv_route/flexcompute_40x/README.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/flexcompute_40x/ffn_moe_arm_4B_32768.json
 wandb_group:
 next_step: None in this family — the open FFN-routing question moved to ffndrop (drop-CPT base, then routed SFT); untried here: importance-permuting FFN units before nesting, 9B frozen-tail NaN.
 ---

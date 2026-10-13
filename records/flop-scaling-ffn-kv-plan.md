@@ -1,3 +1,14 @@
+---
+title: FLOP-scaling study: are the FFN-routing and pooled-KV methods compute-optimal vs dense?
+date: 2026-09-01
+updated: 2026-09-03
+experiment: flop_scaling
+area: ffn_compute
+kind: plan
+status: current
+superseded_by: 
+summary: Are FFN routing and pooled-KV compute-optimal vs dense? Grid design (`research/ffn_compute/flop_scaling/`).
+---
 # FLOP-scaling study: are the FFN-routing and pooled-KV methods compute-optimal vs dense?
 
 Brief (Prasann, 2026-09-02): "now that we have a decent approach with v12 (FFN routing) and the

@@ -4,16 +4,16 @@ title: Soft-detached pooling for CPT (sd20 = random 20% of 512-token blocks whol
 status: done
 updated: 2026-09-22
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/cpt/softdetach/launch_softdetach_cpt.py
+launcher: research/token_routing/softdetach/launch_softdetach_cpt.py
 records:
   - records/softdetach-cpt-plan.md
   - records/softdetach-cpt-crossover.md
-  - records/eval_launches/2026-09-21_sdcpt-q35-4b_ctcbench.yaml
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/eval_launches/2026-09-21_sdcpt-q35-4b_ctcbench.yaml
 results:
-  - src/scripts/train/memexpress/cpt/softdetach/softdetach_devloss.csv
-  - src/scripts/train/memexpress/cpt/softdetach/ctc_eval_results.json
-  - src/scripts/train/memexpress/cpt/softdetach/LAUNCH_LEDGER.tsv
-  - src/scripts/train/memexpress/cpt/softdetach/EVAL_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/train/memexpress/cpt/softdetach/softdetach_devloss.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/src/scripts/train/memexpress/cpt/softdetach/ctc_eval_results.json
+  - research/token_routing/softdetach/LAUNCH_LEDGER.tsv
+  - research/token_routing/softdetach/EVAL_LEDGER.tsv
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/sdcpt-q35-4b
 next_step: None queued. Verdict reached (cheap-end only); the drop-CPT experiment (ffndrop) reuses its cpt_u1B shard and dev-loss evaluator
 ---

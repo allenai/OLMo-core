@@ -1,3 +1,14 @@
+---
+title: Why `sd20` stops being Pareto-optimal at high FLOPs — diagnosis + tweaks (2026-09-22)
+date: 2026-09-22
+updated: 2026-09-22
+experiment: softdetach
+area: token_routing
+kind: diagnosis
+status: current
+superseded_by: 
+summary: Why `sd20` stops being Pareto-optimal at high FLOPs, and candidate tweaks.
+---
 # Why `sd20` stops being Pareto-optimal at high FLOPs — diagnosis + tweaks (2026-09-22)
 
 Companion to `records/softdetach-cpt-plan.md` (the campaign: soft-detached CPT of Qwen3.5-4B on

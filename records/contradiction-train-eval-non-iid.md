@@ -1,3 +1,14 @@
+---
+title: Contradiction: the eval was never IID with the training data — and that is most of the gap to the paper
+date: 2026-08-11
+updated: 2026-08-12
+experiment: ctc_data_fixes
+area: pipeline
+kind: diagnosis
+status: load-bearing
+superseded_by: 
+summary: The contradiction eval was never IID with training data — most of the gap to the paper.
+---
 # Contradiction: the eval was never IID with the training data — and that is most of the gap to the paper
 
 Opened 2026-08-11. Companion to `records/paper-v2-todo-status.md` §1 (the FEVER filler rebuild) and

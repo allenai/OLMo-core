@@ -4,16 +4,16 @@ title: Drop-CPT — CPT with random per-token null FFNs, then routed-FFN (ffnmoe
 status: active
 updated: 2026-10-03
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/cpt/ffndrop/launch_ffndrop_cpt.py
+launcher: research/ffn_compute/ffndrop/launch_ffndrop_cpt.py
 records:
   - records/ffndrop-cpt-plan.md
   - records/flop-scaling-report-2026-09-02.md
 results:
-  - debug/ffndrop_cpt/pipeline_state.json
-  - debug/ffndrop_cpt/pipeline.log
-  - src/scripts/train/memexpress/cpt/ffndrop/LAUNCH_LEDGER.tsv
-  - debug/flop_scaling/LAUNCH_LEDGER.tsv
-  - results/flop_scaling/results35.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ffndrop_cpt/pipeline_state.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ffndrop_cpt/pipeline.log
+  - research/ffn_compute/ffndrop/LAUNCH_LEDGER.tsv
+  - research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results35.csv
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/fdcpt-q35-4b
 next_step: Launch dense SFT from the drop-CPT base on contra 28M / nq 32M (FS35_BASE=<export> FS35_BASE_TAG=-bfdrop launch_grid35.py --arms dense) to separate the drop effect from the CPT data
 ---
@@ -53,7 +53,7 @@ Reading: nq sits ~0.017 below log-interpolated dense at ~586 PF; base-routed was
 ## Next step
 Dense SFT from the drop-CPT base on the same two settings. If dense SFT also gains at 16k/32k, the effect
 is the CPT data and not drop-robustness. Not launched: no `dense ... -bfdrop` row exists in
-`debug/flop_scaling/LAUNCH_LEDGER.tsv`, which was last written 2026-10-03 04:27. The `ffndrop` variant has been
+`research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv`, which was last written 2026-10-03 04:27. The `ffndrop` variant has been
 ported into the setA recipes on `prasann/flopdrop_clean` (`recipes/train/setA/README.md`,
 `--variant ffndrop`). That branch is local only.
 

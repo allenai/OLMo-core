@@ -5,8 +5,8 @@ description: >
   in this repo — "run evals on <run>", "eval this checkpoint", "score the ladder",
   "launch the xlong rungs", "kick off the eval sweep", or when a
   training run finishes and needs to be scored. It enforces the four standing rules
-  (xlong always, YaRN by rung, OOD always, ledger every launch) and produces the
-  results-hub column values for every job it submits.
+  (xlong always, YaRN by rung, OOD always, register every launch) and registers every
+  eval job with `ops register --kind eval --parent-run <train run>`.
 ---
 
 # Running evals
@@ -18,8 +18,9 @@ explicitly overrides one for that launch.
 1. **Always run the xlong variants**, not just the base 2k–32k ladder.
 2. **YaRN by rung**: `factor=2` for 256k and 512k, `factor=4` for 1M, `factor=8` for 2M.
 3. **Always run the OOD ladders** (`fiqa`, `scifact`, `outlier_review`, `contra_fever`).
-4. **Always write a launch ledger entry** recording every results-hub column value
-   except the metric itself, before/at submission time — not after results land.
+4. **Always register the launch** at submission time, not after results land:
+   `ops register --kind eval --parent-run <train run> --job-id <beaker id> --expected-minutes N --log-path ...`
+   (see Rule 4 below). The YAML ledger in `records/eval_launches/` is optional history.
 
 ## CTC-suite evals: use the olmo-eval launcher (current, 2026-10)
 
@@ -57,8 +58,8 @@ which submits one job per `(run, task)` and drives the on-node runner
 `recipes/eval/legacy_native/ctc_eval/eval/eval_lc_native.py`). Launch from the `olmo-core` conda
 env, with the branch pushed (gantry checks out a remote ref).
 
-`--priority urgent` is the default and must stay urgent — except on `ai2/holmes`,
-which rejects urgent (use `high` there).
+`--priority urgent` is the default and must stay exactly `urgent` (never lower, never
+`immediate`). `ai2/holmes` rejects urgent, so don't launch there — use jupiter.
 
 **The eval set is standardized.** Every launch reads the clean v2 bundle:
 
@@ -68,7 +69,7 @@ which rejects urgent (use `high` there).
 
 That is the runner's default for `EVAL500` — leave it alone. Do not set `EVAL500` to
 the older `_eval_bundle_eval500_v2` unless you are deliberately reproducing a
-pre-2026-07-29 number, and say so in the ledger when you do. The two bundles are
+pre-2026-07-29 number, and say so in the `--notes` of `ops register` when you do. The two bundles are
 byte-identical at ≤32k, but contra at 64k and above is a different, harder task in the
 clean bundle (the old one has 28–31% FEVER/wiki distractors, a domain shortcut, and
 eval_size=300 at 64k/128k/256k for the doc-pool tasks). Contra numbers must not be
@@ -85,9 +86,9 @@ flag, not a property of the eval set:
 
 Evaluating a query-after model with `both` hands it a second copy of the task ask it
 never saw in training; that reads as a capability gap, not a prompt mismatch. The flag
-lands in the inner `eval_command`, so the ledger records it with no extra step — but
+lands in the inner `eval_command`, so put it in the `ops register --notes` too — but
 numbers are **not comparable across the two settings**, so say which one you used in
-`other_notes`. RULER is exempt (never from the 5-task mix; always rendered query-after).
+the `--notes`. RULER is exempt (never from the 5-task mix; always rendered query-after).
 
 `--ladder-version v2` likewise: v2 is the only supported ladder. v1 resampled questions
 per rung, so every rung-to-rung delta carried eval-set noise; the runner rejects it.
@@ -163,81 +164,43 @@ same submission as a yarn2 rung; a submission has exactly one checkpoint.
 (`ai2/jupiter-cirrascale-2`) and the runner sets `PREFILL_CHUNK_SIZE=32768` itself for
 256k and above. Do not remove that — one-shot prefill OOMs past ~256k.
 
-## Rule 4: the launch ledger
+## Rule 4: register every launch
 
-**Every launch writes a ledger entry before you report the launch as done.**
+**Every eval job is registered with `ops` before you report the launch as done**
+(`OPS=/accounts/projects/berkeleynlp/prasann/bin/ops`; details in the `launch-run` skill):
 
-Location (consistent, one file per checkpoint being evaluated):
-
+```bash
+$OPS register --run-id ev-<task>-<run>-<tag> --experiment <E> --cluster beaker --kind eval \
+  --parent-run <train run_id> --task <task> --job-id <beaker experiment id> \
+  --ckpt-path <--ckpt as passed, incl. _yarn2> --expected-minutes N --git <repo> \
+  --notes "eval-tag=<tag> yarn_factor=<f|none> query_position=<both|after> bs=<what ran>"
 ```
-records/eval_launches/<YYYY-MM-DD>_<run-name>[_<tag>].yaml
-```
 
-and one row appended to `records/eval_launches/README.md` (date, run, checkpoint,
-passes launched, link to the YAML).
-
-**The ledger stays out of git.** It is local working bookkeeping, not a repo artifact —
-`records/eval_launches/` is gitignored, so don't commit it and don't `git add -f` it.
-Share it freely by other means if it's useful to someone; it just doesn't belong in the
-history.
-
-The **shared view of any eval is its row in `../results-hub`** — that is the artifact
-other people read. The ledger's whole job is to make those rows correct and to track
-which ones still need writing.
-
-The YAML records **every results-hub column except `metric_value` / `extra_metrics`**,
-so that when the jobs land, ingestion is a mechanical join instead of an archaeology
-exercise. See `ledger_template.yaml` in this skill directory for the exact shape.
-
-**Record the Beaker experiment ID for every job.** The launcher prints one line per
-task:
+**Record the Beaker experiment ID for every job.** The launcher prints one line per task:
 
 ```
 --- [contra] ev-contra-<run>-<tag>-<hash> ---
     submitted: 01KZQ58X21CM4GPW9R70YK0W5D
 ```
 
-Both go in the ledger (`beaker_job_name`, `beaker_experiment_id`). The experiment ID is
-the load-bearing one: it is how `pull-evals` fetches results and job state directly,
-instead of globbing weka and inferring which job wrote which file. A ledger job without
-one is barely better than no entry at all.
+That ID is `--job-id`: it is how `ops status` / `ops stall` find the job and how the
+`pull-evals` / `record-results` skills match results to it, instead of globbing weka and
+inferring which job wrote which file. Check on the jobs with the `job-status` skill
+(`ops status --experiment E`), never a sleep loop.
 
-Every job goes in with `status: submitted`. The `pull-evals` skill is what flips it to
-`done` — this skill never marks a job complete.
+The YAML ledger (`records/eval_launches/<YYYY-MM-DD>_<run-name>[_<tag>].yaml`, shape in
+`ledger_template.yaml`, gitignored — never `git add -f` it) is optional history now; write
+it only if you want the extra launch detail. results-hub is retired (2026-10-12): numbers
+are recorded with `ops result add --check` (the `record-results` skill), not ingested there.
 
-Column values, and where each one comes from:
-
-| results-hub column | value for this launch |
-|---|---|
-| `date_eval_ran` | submission date (YYYY-MM-DD) |
-| `who_ran` | whoever launched it — results-hub auto-fills from the git user / `$USER`; don't hardcode a name |
-| `eval_name` | the task: `contra`/`nq`/`rerank`/`outlier`/`oolong`/`fiqa`/`scifact`/`outlier_review`/`contra_fever` |
-| `eval_version` | `v2` (the only supported ladder; v1 is rejected by the runner) |
-| `eval_context_length` | the rung — one row per rung, not one per job |
-| `eval_data_quantity` | realized `eval_size` per rung (from the result JSON; **not** `--max-test`) |
-| `eval_set_weka_pointer` | always the standard bundle (below) unless you deliberately overrode `EVAL500` |
-| `metric_name` | `f1` for contra/nq/fiqa/scifact/contra_fever, `ndcg@10` for rerank, task-native for oolong/outlier |
-| `model_type` | dense / landmark / compressive / docchunk (matches the inferred `VARIANT`) |
-| `model_subtype` | architecture detail, e.g. `block64`, `4lm_mean` |
-| `attention_type` | e.g. `full`, `compressive_landmark`, `doc_chunked` |
-| `pipeline_stage` | `SFT` / `CPT` / `base` |
-| `weka_model_location` | the `--ckpt` **as passed** — i.e. the `_yarn2` / `_yarn4` path when one was used |
-| `model_train_data_hparams` | a **short model slug**, e.g. `q35-landmark-256K-partialrope` — one per ledger file, shared by the native *and* YaRN passes (same weights). `pull-evals` derives it and records it as `checkpoint.model_slug`. The full training description (data mix, steps, GBS, lr, parallelism, base init) goes in the ledger's `training_description` and ends up in `other_notes` |
-| `landmark_top_k_fixed_val` / `landmark_top_k_percentage` / `landmark_nonselected_percentage` | the decode knobs actually passed; blank = checkpoint default (10%-of-prompt top-k, trained mass) |
-| `decoding_hparams_other` | temp/top_p/`max_length` (the **realized** cap, after the 10% raise), `batch_size`, `ngpu`, **and the YaRN factor** |
-| `chat_template` | `chat` for SFT checkpoints, `raw` for BASE/CPT |
-| `git_commit` | repo HEAD at submission |
-| `eval_command` | the full `RUN=... TASK=... bash run_beaker_multirung_eval.sh` inner command the launcher prints |
-| `other_notes` | Beaker job id + job name, the full training description, YaRN factor and why, and anything that makes the row non-comparable |
-
-Two traps to honor when filling this in:
+Two traps that belong in `--notes` (and in the result row later):
 
 - **`batch_size` in `eval_command` is not what ran.** The runner forces `BATCH_SIZE=1`
   for `landmark`/`compressive`, and the xlong path forces bs=1 for everyone. Record what
-  actually ran in `decoding_hparams_other`.
-- **Any run at ≥256k must be labeled RoPE-extended** in `other_notes`
-  (`yarn_factor=2`, etc.). A ≥256k number without that label is unusable — nobody can
-  tell later whether it was an in-ceiling measurement.
+  actually ran.
+- **Any run at ≥256k must be labeled RoPE-extended** (`yarn_factor=2`, etc.). A ≥256k
+  number without that label is unusable — nobody can tell later whether it was an
+  in-ceiling measurement.
 
 ## Scope
 
@@ -248,8 +211,8 @@ launch them from this skill, and do not treat the rules above as applying to the
 ## After the jobs land
 
 Not this skill's job. Use **`pull-evals`**, which cross-references the finished jobs
-against the ledger, checks the generations before anything is believed, ingests into
-`../results-hub`, and marks each job `done` in the ledger.
+against the registry (`ops runs`), checks the generations before anything is believed,
+and records the numbers via the **`record-results`** skill (`ops result add --check`).
 
 ## Checklist before reporting a launch complete
 
@@ -257,8 +220,8 @@ against the ledger, checks the generations before anything is believed, ingests 
 - [ ] Pass B submitted with `--xlong --xlong-only`, split by YaRN group
 - [ ] YaRN copies built for every rung ≥256k: factor 2 (256k/512k) / 4 (1M) / 8 (2M)
 - [ ] Distinct `--eval-tag` per pass and per YaRN group (no result-file collisions)
-- [ ] `--priority urgent` (or `high` on holmes)
+- [ ] `--priority urgent` (exactly urgent; never holmes)
 - [ ] Tokenizer matches the model family (Qwen3.5 → `Qwen/Qwen3.5-0.8B`)
 - [ ] Eval set is the standard `_eval_bundle_eval500_v2_clean` bundle at ladder `v2`
-- [ ] Ledger YAML written under `records/eval_launches/` + README row appended, every
-      job carrying its `beaker_experiment_id`, job name and `status: submitted`
+- [ ] Every job registered (`ops register --kind eval --parent-run ... --job-id <beaker id>`);
+      `ops status --experiment E` shows them

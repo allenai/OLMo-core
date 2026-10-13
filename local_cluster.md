@@ -148,7 +148,9 @@ Background on the settings it applies:
 
 For one-off Python on the head node, call the interpreter by absolute path (skips the 1.4 s
 `conda activate`): `/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python`.
-CPU tests: `PYTHONPATH=$PWD/src $PY -m pytest src/test/...` (GPU tests auto-skip on hermione).
+CPU tests: `PYTHONPATH=$PWD/src $PY -m pytest src/test/...` with the node-local `$PY`, **on a compute
+node** (`srun` / `sbatch`), never on the login node — the PreToolUse hook denies login-node test runs
+(`ops/tests` is the one exception). GPU tests auto-skip without a GPU.
 
 ## Training pipeline (the weka-free recipe)
 
@@ -189,8 +191,18 @@ error bars) are in CLAUDE.md.
 
 ## Monitoring and hygiene
 
-- Watch: `squeue -u prasann`; who's on my nodes + QOS:
+- **Register every sbatch launch** (`ops register --cluster slurm --job-id <jobid> --log-path
+  /data/... --expected-minutes N ...`; `ops` = `/accounts/projects/berkeleynlp/prasann/bin/ops`), or
+  prefix the payload with the shared wrapper `bash "$REPO/recipes/env/ops_job.sh" CMD ...` — it
+  registers at start (`OPS_RUN_ID`, `OPS_EXPERIMENT`, ... knobs in its header), runs CMD under
+  `ops guard`, and records the final state from the exit code. See `ops/README.md`.
+- **Status: `ops status`** (one cached snapshot of slurm + Beaker + Lambda; flags OVERRUN / stalled /
+  silent runs). **A job that looks hung: `ops stall <jobid|run>`** — log freshness and tail, process
+  state, GPU use, verdict first. Never `while ...; squeue; sleep` loops (the hook denies them).
+- One-off look at who's on my nodes + QOS:
   `squeue -w mooney,cubbins,sneetches -o '%.10i %.10u %.16q %.8T %b %N'`.
+- Long local commands outside slurm: `ops guard --first-output 120 --stall 300 -- CMD` flags (or
+  `--kill`s) a zero-output or silent run.
 - Cancel with `scancel <jobid>`.
 - From inside an existing srun allocation, a nested `srun --nodelist=<other-node>` fails (inherits
   `SLURM_*`). **Always `sbatch`** for work on other nodes.
@@ -207,3 +219,6 @@ error bars) are in CLAUDE.md.
 | Unrepaired marker embeddings | Docchunk/landmark runs train to chance | `fix_marker_embeddings.py` the base first |
 | HF hub access from compute node | Silent multi-minute dataloader stalls | `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` |
 | Nested `srun` inside an allocation | `Unable to create step ...` | Use `sbatch` |
+| Job looks hung (no new log lines) | Can't tell NFS stall / compile / dead GPU apart | `ops stall <jobid>` — `D` + `nfs_wait_bit_killable` + ~0% CPU = NFS interpreter/log trap |
+| Bare `torchrun` | Resolves to the NFS system miniforge → long silent import stall | `$PY -m torch.distributed.run` with node-local `$PY` |
+| `--max-tokens` below one step's tokens | "Smoke test" is a 1-step run; a fake point scores best | Size smoke runs to ≥2 optimizer steps |

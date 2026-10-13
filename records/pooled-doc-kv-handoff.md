@@ -1,3 +1,14 @@
+---
+title: Pooled-doc-KV: agent handoff (state as of 2026-08-31)
+date: 2026-08-31
+updated: 2026-08-31
+experiment: pooled_kv
+area: token_routing
+kind: handoff
+status: superseded
+superseded_by: ops/experiments/pooled_kv/STATUS.md
+summary: Operational pick-up doc for pooled-doc-KV: what is proven, what is dead, exact commands.
+---
 # Pooled-doc-KV: agent handoff (state as of 2026-08-31)
 
 This is the **pick-up-here doc** for the pooled-doc-KV / compressed-training effort. The full

@@ -80,6 +80,9 @@ Writers hold an `flock`, so concurrent sessions can register safely.
   command and flag (or kill) it if it prints nothing within the first-output window or goes
   silent for the stall window.
 - Lambda reports FAILED for runs that fully succeeded; verify by loss curve and checkpoint.
+- Berkeley sbatch payloads: `bash "$REPO/recipes/env/ops_job.sh" CMD ...` = register + `ops guard` +
+  final state from the exit code (knobs in its header). Lambda jobs can't reach the registry; register
+  them from the login side.
 - Claude Code hooks for these checks live in `hooks/` (see `INCORPORATE.d/` for how they are wired).
 
 ### Results — `state/results.jsonl`
@@ -99,8 +102,11 @@ eval task actually graded.
 - `ops exp index` — regenerate `experiments/INDEX.md` (tables by status, newest first, with next step).
 - `ops exp show NAME [--json]`, `ops exp stale [--days 7]` (active pages not updated in N days),
   `ops exp check` (front-matter validation; exits 1 on problems).
-- `ops exp records [--write]` — regenerate `records/README.md` from each record's header (falls
+- `ops exp records [--write] [--records-dir D]` — regenerate `records/README.md` from each record's
+  front-matter header (`title/date/updated/experiment/area/kind/status/superseded_by/summary`; falls
   back to the old README description, then the first paragraph; date from the last git commit).
+  Default dir: `$OPS_REPO_ROOT/records`, else the `records/` next to this `ops/` checkout. Every
+  record on `prasann/flopdrop_clean` carries a header; new ones copy the template the README prints.
 
 STATUS.md front matter is deliberately simple (`key: value` lines and `- item` lists):
 
@@ -111,7 +117,7 @@ title: one line
 status: active              # active | paused | done | abandoned
 updated: 2026-10-12
 branch: prasann/landmark
-launcher: debug/ds64/launch_ds64.py
+launcher: research/token_routing/ds64/launch_ds64.py
 records:
   - records/ds64-handoff.md
 results:
@@ -121,13 +127,20 @@ next_step: one line
 ---
 ```
 
+Paths: repo-relative = this checkout (`prasann/flopdrop_clean` layout: `recipes/`, `research/`);
+an absolute `/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/...` path = something that
+exists only in the main checkout (old `debug/`, `results/`, unported records) and was not moved.
+
 Body sections: **Question · Decisions** (dated, who decided) **· Current best numbers** (with
 eval_size, ±SE, cot label, source path) **· Next step · Open issues / traps · Verified vs
 unverified**. STATUS.md is the canonical current state; memory files and `records/` are history.
 
 ## Skills (`skills/`)
 
-Claude Code skills that make agents use the toolkit; each calls the stable `ops` path.
+Claude Code skills that make agents use the toolkit; each calls the stable `ops` path. `skills/` is
+their single source: the repo exposes them to project-skill discovery through relative symlinks
+`.claude/skills/<name> -> ../../ops/skills/<name>`, and `~/.claude/skills/<name>` points at the same
+dirs for every session.
 
 | skill | triggers on | does |
 |---|---|---|

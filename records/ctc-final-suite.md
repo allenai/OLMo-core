@@ -1,3 +1,14 @@
+---
+title: The FINAL CTC suite — 22 tasks
+date: 2026-08-12
+updated: 2026-08-12
+experiment: ctc_suite_eval
+area: pipeline
+kind: result
+status: load-bearing (frozen 2026-08-12)
+superseded_by: 
+summary: The frozen 22-row CTC-suite roster; contradiction scores on `contradiction_iid` only.
+---
 # The FINAL CTC suite — 22 tasks
 
 **Frozen 2026-08-12 by prasann; amended 2026-08-13** to settle the open question below — PubMed

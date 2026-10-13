@@ -1,3 +1,14 @@
+---
+title: Task: make landmark top-k decode *sparse* (O(k·block) instead of O(context) per token)
+date: 2026-07-13
+updated: 2026-07-13
+experiment: 
+area: landmark
+kind: task-brief
+status: open
+superseded_by: 
+summary: Make top-k landmark decode computationally sparse, not just masked.
+---
 # Task: make landmark top-k decode *sparse* (O(k·block) instead of O(context) per token)
 
 ## Summary

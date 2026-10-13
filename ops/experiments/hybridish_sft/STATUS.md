@@ -6,12 +6,12 @@ updated: 2026-09-19
 branch: prasann/ctc-sft-hybridish
 launcher: src/scripts/train/hybrid-small-suite/launch_sft.sh
 records:
-  - records/hybridish-ctc-sft.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/hybridish-ctc-sft.md
 results:
-  - debug/hybridish_sft/results/ctc_suite_sweep.json
-  - debug/hybridish_sft/results/sft4to1_fixed.json
-  - debug/hybridish_sft/results/sft7to1_fixed.json
-  - debug/hybridish_sft/sweep_ids.txt
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/hybridish_sft/results/ctc_suite_sweep.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/hybridish_sft/results/sft4to1_fixed.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/hybridish_sft/results/sft7to1_fixed.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/hybridish_sft/sweep_ids.txt
 wandb_group:
 next_step: Find a parameter-matched pair, or quote non-embedding params beside every number. 7:1 (2.1B) has +62% non-embedding params over 4:1 (1.4B), so the 7:1 win is not attributable to the attention ratio yet.
 ---

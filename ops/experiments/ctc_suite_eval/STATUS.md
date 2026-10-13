@@ -10,9 +10,9 @@ records:
   - records/ctc-final-suite.md
   - records/ctc-suite-olmo-eval-handoff.md
 results:
-  - debug/ctc_fast_suite/results/bench_2k32k.json
-  - debug/ctc_fast_suite/results/bench_xlong.json
-  - debug/ctc_final_suite/suite_table.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_fast_suite/results/bench_2k32k.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_fast_suite/results/bench_xlong.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_final_suite/suite_table.json
 wandb_group:
 next_step: Prasann to pick the canonical olmo-eval branch. Either merge PR #400's grader commits (origin/prasann/ctc-absence-low-ctc @8d7dec9b) into prasann/ctc-suite-launcher, or declare the launcher branch canonical and drop the divergent ones.
 ---

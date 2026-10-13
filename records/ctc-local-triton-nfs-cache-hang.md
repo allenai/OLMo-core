@@ -1,3 +1,14 @@
+---
+title: CTC local trainer "hang" at the dry-run forward = Triton FLA cache on NFS
+date: 2026-08-10
+updated: 2026-08-10
+experiment: 
+area: pipeline
+kind: diagnosis
+status: fixed
+superseded_by: 
+summary: Local trainer "hang" at the dry-run forward = FLA/Triton JIT cache on NFS; keep it on `/data`.
+---
 # CTC local trainer "hang" at the dry-run forward = Triton FLA cache on NFS
 
 **Symptom.** `run_ctc_local.sbatch` -> `train_ctc_suite.py` appears to hang forever right after

@@ -1,3 +1,14 @@
+---
+title: Drop-CPT: random null-FFN continued pretraining before routed-FFN SFT
+date: 2026-09-29
+updated: 2026-10-03
+experiment: ffndrop
+area: ffn_compute
+kind: plan
+status: active
+superseded_by: 
+summary: Random null-FFN CPT before routed-FFN SFT (`research/ffn_compute/ffndrop/`).
+---
 # Drop-CPT: random null-FFN continued pretraining before routed-FFN SFT
 
 Started 2026-09-29 (Prasann). Code: `src/olmo_core/nn/ffn_token_drop.py`, launcher

@@ -1,3 +1,14 @@
+---
+title: Multi-hop gold routing: can a model use two documents that never attend to each other?
+date: 2026-07-19
+updated: 2026-07-19
+experiment: 
+area: landmark
+kind: plan
+status: proposal
+superseded_by: 
+summary: Can a model use two documents that never attend to each other?
+---
 # Multi-hop gold routing: can a model use two documents that never attend to each other?
 
 **Status:** proposal, awaiting refinement. Nothing trained yet.

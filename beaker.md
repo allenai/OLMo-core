@@ -28,7 +28,7 @@ Training scripts built on `ExperimentConfig` (the `research/<family>/` Beaker la
 `launch` pattern (the setA SFT instead goes through `recipes/train/setA/launch_setA_sft.py`):
 
 ```bash
-cd $REPO && git push origin prasann/landmark            # rule 1
+cd $REPO && git push origin <branch>                    # rule 1
 python -u research/<family>/<script>-SFT.py \
     launch <run-name> ai2/jupiter-cirrascale-2 --launch.priority=urgent
 ```
@@ -40,6 +40,11 @@ python -u research/<family>/<script>-SFT.py \
   independently. (`--launch.follow=false` does NOT work: soft-timeout requires follow.)
 - Dry-run first when touching config: `SCRIPT.py dry_run <run-name> ai2/jupiter-cirrascale-2`.
 - Surface the **wandb group link** as soon as the run starts.
+- **Register it** once you have the ID: `ops register --run-id <run-name> --experiment <E>
+  --cluster beaker --kind train --job-id <EXP-id> --expected-minutes N --wandb-url ... --git $REPO`
+  (`ops` = `/accounts/projects/berkeleynlp/prasann/bin/ops`; `launch-run` skill). The shared
+  Beaker launcher (`recipes/train/research_trainer/beaker_ctc_suite.py`) is being wired to register
+  automatically — check `ops runs --experiment E` before registering twice.
 - The auto-resume trap applies on Beaker too: relaunching a run name whose `--save-folder` already
   has a `stepN` checkpoint silently RESUMES it. Fresh experiment ⇒ fresh run name.
 
@@ -65,6 +70,11 @@ gantry run --name <job-name> -w ai2/flex2 -b ai2/oe-other \
 - AWS creds on-node come from the beaker secrets as above (`AWS_PROFILE=S3` = real AWS).
 
 ## Monitoring, canceling, priorities
+
+**Check status with `ops status` (all registered runs, Beaker + slurm + Lambda, one cached call) and
+`ops stall <EXP-id|run-id>` for anything flagged** — not hand-rolled `beaker experiment get` loops
+(the PreToolUse hook denies foreground poll loops). `ops` reads the same JSON field as below
+(`jobs[-1].status`, plus CANCELLED/PREEMPTED). The raw commands, for cancels and one-off digging:
 
 ```bash
 beaker experiment get <EXP-id> --format json   # jobs[-1].status is the ONLY truth:
@@ -94,14 +104,18 @@ beaker job update-priority <JOB-id> urgent
   successful.
 - Checkpoints weka→here: gantry job does a model-only resave (drop optimizer) + `aws s3 sync` to
   S3, then pull from S3 locally. See the `weka-s3-checkpoint-transfer` pattern
-  (`deprecated/scratch_transfer_cptmix32k.sh` is a worked example to adapt).
+  (`/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/deprecated/scratch_transfer_cptmix32k.sh`
+  in the main checkout is a worked example to adapt; not ported to this branch).
 
 ## Interactive + agent sessions
 
-- `scripts/interactive_gpu_session.sh` — live dev shell on an AI2 GPU with weka (GPUS=N, LOCAL=1).
-- `scripts/launch_remote_control_agent.sh` — Claude Code agent on a Beaker GPU, steerable from
+These live in the main checkout's `scripts/` (`/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/scripts/`;
+not ported to this branch):
+
+- `interactive_gpu_session.sh` — live dev shell on an AI2 GPU with weka (GPUS=N, LOCAL=1).
+- `launch_remote_control_agent.sh` — Claude Code agent on a Beaker GPU, steerable from
   your phone; OAuth token via masked beaker secret.
-- `scripts/setup_dev_env.sh` — bootstrap the toolchain + sibling repos on a new machine.
+- `setup_dev_env.sh` — bootstrap the toolchain + sibling repos on a new machine.
 
 ## Lessons index (each burned real time)
 
@@ -113,6 +127,7 @@ beaker job update-priority <JOB-id> urgent
 | Multi-cluster for CPU | 0-GPU job unscheduled 10+ min on jupiter (1007/1008 slots) |
 | Baked image + `--install true` / `--no-python` | ~3 min image pull + pip per job, dominating short jobs |
 | JSON status, `job cancel` | Canceled jobs look "running"; `experiment stop` no-ops; wrong-base jobs kept running |
+| `ops register` + `ops status`, no poll loops | Untracked jobs re-launched or forgotten; sleep loops burn the session |
 | S3→weka gantry sync + grep `MISSING` | Eval exits 0 with zero results |
 | Fresh run name per config | Silent auto-resume from a stale checkpoint (chimera runs, garbage timings) |
 | zsh loops via `bash -c` | Cancel/status loops silently operate on one blob argument |

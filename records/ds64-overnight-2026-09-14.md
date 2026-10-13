@@ -1,3 +1,14 @@
+---
+title: ds64 overnight loop — 2026-09-14 → 09-15
+date: 2026-09-15
+updated: 2026-09-15
+experiment: ds64
+area: token_routing
+kind: log
+status: history
+superseded_by: 
+summary: Overnight orchestrator log for the ds64 wave, 09-14 → 09-15.
+---
 # ds64 overnight loop — 2026-09-14 → 09-15
 
 Autonomous iteration on soft-token training, run by the orchestrating session. Read this first after any

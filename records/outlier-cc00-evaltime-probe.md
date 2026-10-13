@@ -1,3 +1,14 @@
+---
+title: Does the ds64 `cc00` checkpoint have EVAL-TIME loss parity? (trained-arm probe)
+date: 2026-09-15
+updated: 2026-09-15
+experiment: ds64
+area: token_routing
+kind: result
+status: answered
+superseded_by: 
+summary: Eval-time loss parity of the ds64 `cc00` trained checkpoint.
+---
 # Does the ds64 `cc00` checkpoint have EVAL-TIME loss parity? (trained-arm probe)
 
 **Date** 2026-09-15 · **Status** ANSWERED — all 5 jobs complete (cc00 at 128M and 32M, rungs 2k/8k/16k/32k) · **Branch** `prasann/landmark`

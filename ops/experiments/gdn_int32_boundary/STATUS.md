@@ -4,12 +4,12 @@ title: Debug — r256k Qwen3.5 evals crash past 262,144 tokens (Triton illegal m
 status: done
 updated: 2026-10-12
 branch: prasann/landmark
-launcher: debug/gdn_int32_boundary/run_beaker.sh
+launcher: /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/gdn_int32_boundary/run_beaker.sh
 records:
   - records/ctc-fast-suite-eval.md
 results:
-  - debug/gdn_int32_boundary/probe.py
-  - debug/gdn_int32_boundary/chunk4_diag.py
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/gdn_int32_boundary/probe.py
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/gdn_int32_boundary/chunk4_diag.py
 wandb_group:
 next_step: None required — r256k runs with chunked prefill (131,072-token chunks) + YaRN x2 by default; optional: find the real cause of the one-shot >262,144-token crash.
 ---

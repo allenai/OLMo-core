@@ -1,3 +1,14 @@
+---
+title: Contradiction data & base-checkpoint hygiene — what is poisoned, and what to use instead
+date: 2026-07-19
+updated: 2026-10-12
+experiment: ctc_data_fixes
+area: pipeline
+kind: diagnosis
+status: load-bearing (running list)
+superseded_by: 
+summary: Silently-wrong data/base artifacts that load and train fine but give garbage; what to use instead.
+---
 # Contradiction data & base-checkpoint hygiene — what is poisoned, and what to use instead
 
 **Why this exists.** Several artifacts in `/scratch` and a few defaults in the tree are *silently*
@@ -123,7 +134,7 @@ is clean, which is why existing results are safe — the contamination only bite
 ⚠ Do not confuse the **root** `/scratch/users/prasann/corpus-reasoning/` clone with the in-tree code —
 the clone is stale (see the corpus-reasoning-submodule memory); only its `data/` is live.
 
-## 4b. ⚠ FEVER / wiki_mix fillers leaking into PubMed contradiction evals (2026-07-29)
+## 4b. FEVER / wiki_mix fillers leaking into PubMed contradiction evals (2026-07-29; FIXED 2026-08-04/05)
 
 **The defect.** Contradiction distractors are harvested by `harvest_fillers`, which globs a *mutable*
 directory. `build_xlong_rungs.py` used `contradiction_*_k3.jsonl` — which also matches the **FEVER**
@@ -144,10 +155,12 @@ Measured (exact-text fingerprint match, `debug/xlong_5task/audit_contra_fever_le
 |---|---|---|
 | `eval500_v2` contra base 2k/8k/16k/32k | **0.00%** | ✅ clean (pubmed-only glob) |
 | `_eval_bundle_eval500_v2` contra 64k…2M | **28–31%** | ❌ contaminated → rebuilt |
-| **CTC suite** `contradiction/rung_2048…32768` | **92–99.6%** — *all* fillers, gold 100% PubMed | ❌ **OPEN** |
+| **CTC suite** `contradiction/rung_2048…32768` | **92–99.6%** — *all* fillers, gold 100% PubMed | ✅ **FIXED 2026-08-04/05** (rebuilt as `contradiction_clean`, 0.00%) |
 | CTC suite `contradiction/rung_131072` | 30% (mixed pool, built later) | ⚠ different task than the rungs below it |
 
-⚠ **The CTC-suite contradiction ladder is the worst instance and is NOT fixed.** At 8k/32k, *every*
+✅ **FIXED 2026-08-04/05.** The CTC-suite ladder (table above) was rebuilt as `contradiction_clean` (0.00% FEVER/wiki; every arm re-scored — the leak had *depressed* dense 32k, 0.335 → 0.559), and since 2026-08-13 the suite row scores on `contradiction_iid` (FEVER-free by construction; see `ops/experiments/ctc_data_fixes/STATUS.md`). The xlong 64k…2M rungs were fixed earlier (see "Fixed / mitigations" below). The paragraph that follows is the original 2026-07-29 diagnosis, kept as history.
+
+~~The CTC-suite contradiction ladder is the worst instance and is NOT fixed.~~ At 8k/32k, *every*
 filler is FEVER/wiki and *every* gold doc is PubMed — e.g. `'A Floppy disk is a type of storage.'`
 against gold `'In S clones, the ratio of dihydroxylysinonorleucine (DHLNL) to …'`. Recorded numbers
 rest on it (`results/ctc_suite/all_results.jsonl` contradiction 2k f1 .958/.865/.843, 8k .219,

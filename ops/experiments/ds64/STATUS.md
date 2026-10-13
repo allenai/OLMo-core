@@ -4,7 +4,7 @@ title: ds64 — soft-token (pooled-doc, detached slot) vs dense retrained, short
 status: done
 updated: 2026-09-22
 branch: prasann/landmark
-launcher: debug/ds64/launch_ds64.py
+launcher: research/token_routing/ds64/launch_ds64.py
 records:
   - records/ds64-handoff.md
   - records/ds64-scaling-plan.md
@@ -13,12 +13,12 @@ records:
   - records/outlier-realtoken-parity-probe.md
   - records/outlier-cc00-evaltime-probe.md
 results:
-  - results/ds64/results.csv
-  - results/ds64/pareto.html
-  - debug/ds64/LAUNCH_LEDGER.tsv
-  - debug/ds64/ns_evals.tsv
-  - debug/ds64_fast2k/
-  - debug/ds64_fast8k/results.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ds64/results.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ds64/pareto.html
+  - research/token_routing/ds64/LAUNCH_LEDGER.tsv
+  - research/token_routing/ds64/ns_evals.tsv
+  - research/token_routing/ds64_fast2k/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ds64_fast8k/results.csv
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/ds64-q35-4b
 next_step: Resolve wall-clock before any new arm. Implement compact-then-pack (cu_seqlens, zero intra-micro-batch padding) for softtoken training; every Pareto claim is FLOPs-only until then
 ---
@@ -81,7 +81,7 @@ SE is pooled over rungs (approximate).
   - every frontier row and dense anchor above;
   - the outlier 4-rung means (recomputed);
   - train_seconds, gpus and gpu_hours for the wall-clock row.
-- Verified: `debug/ds64/ns_evals.tsv` lists 4 slot-less evals (flk64ns 16M/32M, chk32ns 16M/32M), all submitted 2026-09-22, with `ALL_DONE` in `launch_ns_evals.log`.
+- Verified: `research/token_routing/ds64/ns_evals.tsv` lists 4 slot-less evals (flk64ns 16M/32M, chk32ns 16M/32M), all submitted 2026-09-22, with `ALL_DONE` in `launch_ns_evals.log`.
 - UNVERIFIED: the slot-less results. Memory says outlier ns ≈ slot twin (16M .327 vs .344, 32M .503 vs .491). The contradiction ns scores are recorded nowhere in the repo, and `results.csv` predates them.
 - UNVERIFIED (cot label): the ladder eval drivers do not state a cot mode.
 - Caveat: train_seconds compares jobs on different GPU counts. Cross-job drift is up to 1.9x (`memory:gpu-benchmark-intra-process-drift`), so treat the GPU-hour ratios as order-of-magnitude.

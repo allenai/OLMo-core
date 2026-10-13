@@ -2,21 +2,21 @@
 experiment: ctc_data_fixes
 title: CTC eval/data hygiene since mid-Aug — contradiction IID + FEVER rebuild, outlier IID (M-axis) rebuild, unsorted gold pairs, gold-sidecar index base
 status: paused
-updated: 2026-09-21
+updated: 2026-10-12
 branch: prasann/landmark
-launcher: debug/ctc_contra_iid_eval/gen_iid_eval.sbatch
+launcher: /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_contra_iid_eval/gen_iid_eval.sbatch
 records:
   - records/contradiction-train-eval-non-iid.md
   - records/contradiction-data-and-base-hygiene.md
-  - records/paper-v2-todo-status.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/paper-v2-todo-status.md
   - records/ctc-fast-suite-eval.md
 results:
-  - debug/ctc_contra_iid_eval/
-  - debug/outlier_iid_rebuild/
-  - debug/ctc_fast_suite/sort_gold_pairs.py
-  - debug/ctc_modelscale/expand_ctc_rung.py
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_contra_iid_eval/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/outlier_iid_rebuild/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_fast_suite/sort_gold_pairs.py
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/expand_ctc_rung.py
 wandb_group:
-next_step: Fix the stale "FEVER leak still OPEN for the CTC suite" lines in records/README.md and records/contradiction-data-and-base-hygiene.md §4b. Then re-score every pre-2026-09-21 contradiction number at ≥64k under canonicalised gold.
+next_step: Re-score every pre-2026-09-21 contradiction number at ≥64k under canonicalised gold.
 ---
 
 # ctc_data_fixes
@@ -50,7 +50,7 @@ Effect sizes of the fixes. These are not model results.
 | outlier IID rebuild | K per rung | train 3/7/13/24 vs eval 3/7/13/25 | 20k train | — | — | records/contradiction-train-eval-non-iid.md |
 
 ## Next step
-1. Correct the stale records. `records/README.md` (line 11) and `records/contradiction-data-and-base-hygiene.md` §4b (written 2026-07-29) still say "FEVER leak … still OPEN for the CTC suite ladder". The ladder was rebuilt 2026-08-04/05 and the row has scored on `contradiction_iid` since 2026-08-13.
+1. ~~Correct the stale FEVER records~~ — done 2026-10-12 on `prasann/flopdrop_clean`: `records/contradiction-data-and-base-hygiene.md` §4b now reads FIXED 2026-08-04/05 and the regenerated `records/README.md` has no OPEN line.
 2. Re-score contradiction numbers at ≥64k that were graded by an evaluator without gold canonicalisation. That covers the OLMo-core native and vLLM graders, and olmo-eval before `5f165a65`. The known instance is the CTC-LENGTHGEN contradiction cells (see `ctc_modelscale`).
 3. Upstream the grader canonicalisation to the `ctc` package (vendored-copy rule).
 

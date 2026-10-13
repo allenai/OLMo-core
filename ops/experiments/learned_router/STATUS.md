@@ -4,18 +4,18 @@ title: End-to-end learned token-drop router (+ per-(token,layer) skip router) on
 status: active
 updated: 2026-10-02
 branch: prasann/landmark
-launcher: debug/learned_router/train_e2e_router.py
+launcher: research/token_routing/learned_router/train_e2e_router.py
 records:
   - records/learned-token-router.md
   - records/devloss-grid-underperformers.md
 results:
-  - debug/learned_router/layerskip/frontier_summary.txt
-  - debug/learned_router/layerskip/frontier.json
-  - debug/learned_router/layerskip/runs/nq/
-  - debug/learned_router/headline_shared.json
-  - debug/learned_router/split_report_test64.json
-  - debug/devloss_grid/results_router_t64/
-  - debug/devloss_grid/results_router_long/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/learned_router/layerskip/frontier_summary.txt
+  - research/token_routing/learned_router/layerskip/frontier.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/learned_router/layerskip/runs/nq/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/learned_router/headline_shared.json
+  - research/token_routing/learned_router/split_report_test64.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/results_router_t64/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/results_router_long/
 wandb_group: https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e
 next_step: Fix 2k->32k length transfer (calibrate the layer cutoff on long val rows or train on mixed lengths), then take the routed construction from eval-side CE to a trained/generation-graded check
 ---

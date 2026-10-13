@@ -1,3 +1,14 @@
+---
+title: Soft-KV slot-construction study — handoff (state as of 2026-09-08 ~14:30 PDT)
+date: 2026-09-08
+updated: 2026-09-08
+experiment: pooled_kv
+area: token_routing
+kind: handoff
+status: superseded
+superseded_by: ops/experiments/pooled_kv/STATUS.md
+summary: Eval-side slot-construction study; header-real slots reach parity, next = training arms.
+---
 # Soft-KV slot-construction study — handoff (state as of 2026-09-08 ~14:30 PDT)
 
 **UPDATE 15:30 — Beaker-confirmed on the eval-bundle rows; cheaper headers tested.** Header-real

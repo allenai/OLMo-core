@@ -1,3 +1,14 @@
+---
+title: Soft-detached pooling for continued pretraining — plan (2026-09-21)
+date: 2026-09-21
+updated: 2026-09-21
+experiment: softdetach
+area: token_routing
+kind: plan
+status: screening done, CPT arms run
+superseded_by: 
+summary: Soft-detached pooling for continued pretraining (`research/token_routing/softdetach/`).
+---
 # Soft-detached pooling for continued pretraining — plan (2026-09-21)
 
 **Ask (Prasann):** CPT runs "similar to one of amandab's" that use soft-detaching with ≥4×

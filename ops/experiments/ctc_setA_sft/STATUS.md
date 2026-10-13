@@ -4,11 +4,11 @@ title: setA dense SFT pair — Qwen3.5-4B on the 11-task CTC setA mix, 32k vs 25
 status: active
 updated: 2026-10-12
 branch: prasann/ctc-setA-sft
-launcher: src/scripts/train/memexpress/sft_ctc_setA/launch_setA_sft.py
+launcher: recipes/train/setA/launch_setA_sft.py
 records:
   - records/ctc-fast-suite-eval.md
 results:
-  - debug/ctc_sft_setA/
+  - recipes/eval/setA_audit/
 wandb_group:
 next_step: Pull the per-cell eval JSONs from the weka results root, record the 32k-vs-256k table with `ops result add --check` (results-hub is retired), then use this recipe as the base for flopdrop_clean
 ---

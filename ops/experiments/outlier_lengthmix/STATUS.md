@@ -4,15 +4,15 @@ title: Length-mix data-scaling laws, dense vs sparse-landmark Qwen3.5-4B — out
 status: paused
 updated: 2026-09-09
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py
+launcher: recipes/train/research_trainer/beaker_ctc_suite.py
 records:
-  - debug/outlier_lengthmix_scaling/PLAN.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/outlier_lengthmix_scaling/PLAN.md
 results:
-  - debug/outlier_lengthmix_scaling/RESULTS_SNAPSHOT.md
-  - debug/taskscale_lengthmix/RESULTS.md
-  - debug/taskscale_lengthmix/fits.txt
-  - debug/taskscale_lengthmix/points.json
-  - debug/length_mix_scaling/STATUS.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/outlier_lengthmix_scaling/RESULTS_SNAPSHOT.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/RESULTS.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/fits.txt
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/taskscale_lengthmix/points.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/length_mix_scaling/STATUS.md
 wandb_group:
 next_step: Decide whether to run the built-but-unscored 128k ρ-range transfer test (n=880 arms, debug/outlier_lengthmix_scaling/build_128k.sbatch) or close the campaign at its 2026-09-09 verdict
 ---

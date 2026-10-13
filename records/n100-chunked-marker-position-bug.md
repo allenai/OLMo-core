@@ -1,3 +1,14 @@
+---
+title: The n=100 chunked collapse is a MARKER-EMBEDDING × MARKER-POSITION bug, not a mask result
+date: 2026-07-14
+updated: 2026-07-14
+experiment: 
+area: pipeline
+kind: diagnosis
+status: load-bearing (root-caused 2026-07-14)
+superseded_by: 
+summary: The n=100 chunked collapse was marker embedding × position (incl. the NORM bug), not a mask result.
+---
 # The n=100 chunked collapse is a MARKER-EMBEDDING × MARKER-POSITION bug, not a mask result
 
 **Status:** root-caused 2026-07-14. Supersedes the "only dense works at n=100" conclusion, which was

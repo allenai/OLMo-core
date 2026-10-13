@@ -1,3 +1,14 @@
+---
+title: Data-scaling campaign, short-heavy 2k–64k: soft tokens vs dense (Qwen3.5-4B, then 27B)
+date: 2026-09-08
+updated: 2026-09-09
+experiment: ds64
+area: token_routing
+kind: plan
+status: done 2026-09-16
+superseded_by: 
+summary: Short-heavy 2k–64k data-scaling campaign, soft tokens vs dense; plan + status log.
+---
 # Data-scaling campaign, short-heavy 2k–64k: soft tokens vs dense (Qwen3.5-4B, then 27B)
 
 Brief (Prasann 2026-09-08 evening): for the best soft-token construction per task, get data-scaling

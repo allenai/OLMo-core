@@ -1,3 +1,14 @@
+---
+title: Learned KV-cache allocation ("KV routing") — design, brainstorm, and experiment plan
+date: 2026-09-04
+updated: 2026-09-08
+experiment: kv_route
+area: kv_route
+kind: task-brief
+status: partly run
+superseded_by: 
+summary: Learned KV-cache allocation: KV keep, block skip, joint budget; trainer variants `kvroute`/`flexcompute`.
+---
 # Learned KV-cache allocation ("KV routing") — design, brainstorm, and experiment plan
 
 *Started 2026-09-04. Code: `src/olmo_core/nn/attention/kv_route.py`, `src/olmo_core/nn/joint_budget.py`,

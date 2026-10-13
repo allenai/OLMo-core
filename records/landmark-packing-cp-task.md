@@ -1,3 +1,14 @@
+---
+title: Task: implement Context Parallelism for landmark attention with sequence packing
+date: 2026-07-13
+updated: 2026-07-13
+experiment: 
+area: landmark
+kind: task-brief
+status: open
+superseded_by: 
+summary: Context parallelism + sequence packing together for landmark attention.
+---
 # Task: implement Context Parallelism for landmark attention with sequence packing
 
 ## Summary

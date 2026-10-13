@@ -1,3 +1,14 @@
+---
+title: Can a cheaper-than-training richer slot make a pooled outlier readable? (eval-side)
+date: 2026-09-14
+updated: 2026-09-15
+experiment: pooled_kv
+area: token_routing
+kind: result
+status: answered
+superseded_by: 
+summary: Cheaper-than-training richer slots for pooled outlier: none make it readable.
+---
 # Can a cheaper-than-training richer slot make a pooled outlier readable? (eval-side)
 
 **Date** 2026-09-14/15 · **Status** ANSWERED (all 4 model-readout + 4 oracle runs complete) — no

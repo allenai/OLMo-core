@@ -4,14 +4,14 @@ title: INFRA — weka / S3 / node-local checkpoint storage cleanup (redundant st
 status: active
 updated: 2026-10-12
 branch: prasann/landmark
-launcher: debug/weka_cleanup/plan_deletions.sh
+launcher: /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/weka_cleanup/plan_deletions.sh
 records:
-  - records/weka-checkpoint-cleanup.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/weka-checkpoint-cleanup.md
 results:
-  - debug/storage_cleanup/DELETION_LOG.tsv
-  - debug/storage_cleanup/CLEANUP_PLAN.md
-  - debug/weka_cleanup/manifest_relaydup_20261012.tsv
-  - debug/storage_cleanup/weka_stepn_audit.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/storage_cleanup/DELETION_LOG.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/storage_cleanup/CLEANUP_PLAN.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/weka_cleanup/manifest_relaydup_20261012.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/storage_cleanup/weka_stepn_audit.tsv
 wandb_group:
 next_step: Prasann to decide on long-term weka growth (~22 TB, mostly fp32 model-only finals) — S3 offload (blocked on AI2 S3 policy check) vs bf16 re-save (declined for now); optimizer-strip of the old top-level keepfinal stepN finals still open.
 ---

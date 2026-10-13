@@ -1,3 +1,14 @@
+---
+title: Saliency-selected real tokens, and the one-layer preview — can either reach FULL parity on outlier?
+date: 2026-09-15
+updated: 2026-09-15
+experiment: devloss_grid
+area: token_routing
+kind: result
+status: answered
+superseded_by: 
+summary: Saliency-selected real tokens and a one-layer preview vs full parity on outlier.
+---
 # Saliency-selected real tokens, and the one-layer preview — can either reach FULL parity on outlier?
 
 **Date** 2026-09-15 · **Status** ANSWERED — all 6 parity runs and all 3 outlier diagnostics complete; contradiction counterfactual complete at 8k/32k (2k relaunched) · **Branch** `prasann/landmark`

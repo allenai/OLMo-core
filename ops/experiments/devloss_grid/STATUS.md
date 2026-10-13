@@ -4,17 +4,17 @@ title: Dev-loss (answer-CE) grid of task-general soft-token keep schemes x the C
 status: done
 updated: 2026-10-01
 branch: prasann/landmark
-launcher: debug/devloss_grid/ctc_devloss_grid.py
+launcher: research/token_routing/devloss_grid/ctc_devloss_grid.py
 records:
   - records/devloss-grid-underperformers.md
   - records/learned-token-router.md
   - records/outlier-saliency-preview-probe.md
   - records/trained-parity-winning-arms.md
 results:
-  - debug/devloss_grid/grid.csv
-  - debug/devloss_grid/grid.json
-  - debug/devloss_grid/results_skip/
-  - debug/devloss_grid/results_rand20p8/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/grid.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/grid.json
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/results_skip/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/devloss_grid/results_rand20p8/
 wandb_group:
 next_step: None for the grid itself. It is now the scoring harness for learned_router; any new keep scheme is added as a grid row
 ---
@@ -64,7 +64,7 @@ is the `learned_router` experiment. The CPT column's training follow-up is `soft
 - `gold_fl64` does not compress on short-document columns (compaction 0.94-1.00 on niah, strmatch, contradiction, absence, obliq, oolong), so its "parity" there is trivial.
 - The niah 8-token prefix is the header ids, not the fragment layout. Every construction that hides neighbour ids fails.
 - Wrong-checkpoint cells: xabsence uses the PARAPHRASE checkpoint (`memory:xabsence-exact-vs-paraphrase-split`), and obliq is retrieval-graded.
-- Grid artifact: https://claude.ai/code/artifact/5f22d13d-544b-4907-b31d-6be6afb537af. The older f1 grid is artifact 7f8d198f (`debug/ds64/scheme_grid/`).
+- Grid artifact: https://claude.ai/code/artifact/5f22d13d-544b-4907-b31d-6be6afb537af. The older f1 grid is artifact 7f8d198f (`research/token_routing/ds64/scheme_grid/`).
 
 ## Verified vs unverified
 - Verified 2026-10-12 by recomputing from `debug/devloss_grid/grid.csv`, excluding xabsence and cpt80:

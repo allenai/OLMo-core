@@ -4,15 +4,15 @@ title: OLMo-3-7B (noswa-CPT, full attention) vs Olmo-Hybrid-7B (3:1 GDN:full) â€
 status: done
 updated: 2026-08-31
 branch: prasann/landmark
-launcher: debug/ctc_olmo_hybrid/launch_wave2_runs.sh
+launcher: /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_olmo_hybrid/launch_wave2_runs.sh
 records:
   - records/ctc-final-suite.md
 results:
-  - results/ctc_suite/olmo3_vs_hybrid.md
-  - results/ctc_suite/_crossfamily_pull/
-  - debug/ctc_olmo_hybrid/LAUNCH_LEDGER.tsv
-  - debug/ctc_olmo_hybrid/hybrid_vllm/results/
-  - paperdraft/figures/data/ctc_hybrid_pertask_data.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/olmo3_vs_hybrid.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite/_crossfamily_pull/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_olmo_hybrid/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_olmo_hybrid/hybrid_vllm/results/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/paperdraft/figures/data/ctc_hybrid_pertask_data.csv
 wandb_group:
 next_step: None required for the verdict. Optional â€” re-run the oolong full arm with a stop condition and natively re-grade the hotpotqa 32k full arm before quoting either cell as final
 ---

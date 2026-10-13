@@ -1,3 +1,14 @@
+---
+title: n=100 document-chunked: clean results after fixing the marker-embedding bug
+date: 2026-07-14
+updated: 2026-07-14
+experiment: 
+area: landmark
+kind: result
+status: complete
+superseded_by: 
+summary: n=100 document-chunked after the marker fix: chunked .441, hier K50 .831, full .934.
+---
 # n=100 document-chunked: clean results after fixing the marker-embedding bug
 
 **Date:** 2026-07-14. **Model:** Qwen3-0.6B. **Task:** contradiction, n=100 claims, no-CoT.

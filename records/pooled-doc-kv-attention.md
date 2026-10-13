@@ -1,3 +1,14 @@
+---
+title: Pooled-doc-KV attention: train-time KV compression, full-attention inference
+date: 2026-08-31
+updated: 2026-09-08
+experiment: pooled_kv
+area: token_routing
+kind: result
+status: research log
+superseded_by: 
+summary: Train-time pooled-document KV, full-attention inference: mechanisms, probes, dead ends.
+---
 # Pooled-doc-KV attention: train-time KV compression, full-attention inference
 
 **Status (2026-08-29): first 4B experiment DONE (contradiction n100, local mooney; family folder

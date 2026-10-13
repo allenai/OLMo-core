@@ -1,3 +1,14 @@
+---
+title: Landmark tokens as the soft-token slot — eval-only probe (2026-09-14)
+date: 2026-09-14
+updated: 2026-09-14
+experiment: pooled_kv
+area: token_routing
+kind: result
+status: no-go
+superseded_by: 
+summary: Landmark tokens as the soft-token slot: control already far from FULL, so the probe is void.
+---
 # Landmark tokens as the soft-token slot — eval-only probe (2026-09-14)
 
 **Verdict: NO-GO.** Both stopping conditions from the brief fire at once.

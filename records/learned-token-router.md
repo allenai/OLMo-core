@@ -1,3 +1,14 @@
+---
+title: Learned linear token router for slot-less compaction (2026-09-23)
+date: 2026-10-02
+updated: 2026-10-02
+experiment: learned_router
+area: token_routing
+kind: result
+status: active
+superseded_by: 
+summary: Learned linear token router for slot-less compaction (small eval sizes, flagged inline).
+---
 # Learned linear token router for slot-less compaction (2026-09-23)
 
 **Question.** Can a *learned* per-token keep/drop decision replace the dev-loss grid's fixed

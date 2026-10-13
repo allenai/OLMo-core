@@ -1,3 +1,14 @@
+---
+title: Eval-time CE parity on the ds64 campaign's WINNING arms
+date: 2026-09-15
+updated: 2026-09-15
+experiment: ds64
+area: token_routing
+kind: result
+status: complete
+superseded_by: 
+summary: Eval-time CE parity on the ds64 campaign's winning arms.
+---
 # Eval-time CE parity on the ds64 campaign's WINNING arms
 
 **Date** 2026-09-15/16 · **Status** COMPLETE, all 4 arms · **Branch** `prasann/landmark`

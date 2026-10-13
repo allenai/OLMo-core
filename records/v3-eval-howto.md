@@ -1,3 +1,14 @@
+---
+title: Running the v2 and v3 eval ladders
+date: 2026-08-12
+updated: 2026-08-12
+experiment: ctc_suite_eval
+area: pipeline
+kind: howto
+status: legacy
+superseded_by: 
+summary: Running the v2/v3 eval ladders through the native launcher (v3 only for contra + outlier).
+---
 # Running the v2 and v3 eval ladders
 
 **Short version:** same launcher, add `--ladder-version v3`. Run v2 for everything, and v3 for

@@ -69,7 +69,7 @@ Refresh when the index is stale or before acting on a candidate. Re-running the 
 
 It only names candidates. To actually delete, follow the user's two-stage process: build an
 explicit manifest of absolute paths, have Prasann approve it, then apply with re-validation. The
-OLMo-core tooling for that lives in `debug/storage_cleanup/` (`nodelocal_cleanup.sh`,
+OLMo-core tooling for that lives in `/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/storage_cleanup/` (main checkout, not ported to `prasann/flopdrop_clean`; `nodelocal_cleanup.sh`,
 `s3_cleanup.sh`, the weka plan/apply flow in the `weka-ckpt-cleanup` memory). Never `rm` straight
 from this report, never glob.
 

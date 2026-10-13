@@ -1,3 +1,14 @@
+---
+title: CTC suite → olmo-eval handoff (2026-08-14, refreshed 2026-09-08)
+date: 2026-08-14
+updated: 2026-08-14
+experiment: ctc_suite_eval
+area: pipeline
+kind: handoff
+status: superseded
+superseded_by: ops/experiments/ctc_suite_eval/STATUS.md
+summary: The 22-task suite on olmo-eval `prasann/ctc-suite`, HF dataset, ready-to-post PR body.
+---
 # CTC suite → olmo-eval handoff (2026-08-14, refreshed 2026-09-08)
 
 The 22-task suite lives on the `prasann/ctc-suite` branch of allenai/olmo-eval (head `a31c9ce`);

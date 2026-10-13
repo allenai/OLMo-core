@@ -6,8 +6,8 @@ updated: 2026-10-12
 branch: prasann/flopdrop_clean
 launcher: recipes/README.md
 records:
-  - records/clean-repo-target-structure.md
-  - records/clean-repo-migration-plan.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/clean-repo-target-structure.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/clean-repo-migration-plan.md
 results:
 wandb_group:
 next_step: Land the env_flags commit (b11ff1ff8, tmp/flopdrop-envflags) on prasann/flopdrop_clean, then path pass + central recipe flags, owed GPU validation, and only then the v3.0.0 upgrade — never push without asking.

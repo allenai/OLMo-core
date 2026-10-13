@@ -1,3 +1,14 @@
+---
+title: CTC Suite Scaling Plan — Figure-4 at ~25 tasks, 2k–32k token ladders
+date: 2026-07-19
+updated: 2026-08-10
+experiment: 
+area: pipeline
+kind: plan
+status: superseded roster
+superseded_by: 
+summary: Figure-4 plan (~25 tasks, 2k–32k, full vs chunked) behind `recipes/train/research_trainer/`.
+---
 # CTC Suite Scaling Plan — Figure-4 at ~25 tasks, 2k–32k token ladders
 
 **Status: CONFIRMED 2026-07-18** — decisions Q1–Q4 resolved (see §11); executing.

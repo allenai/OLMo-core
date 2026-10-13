@@ -1,3 +1,14 @@
+---
+title: Can a dense model read a POOLED outlier out of its soft-token slot? (eval-side probe)
+date: 2026-09-14
+updated: 2026-09-14
+experiment: pooled_kv
+area: token_routing
+kind: result
+status: answered
+superseded_by: 
+summary: Can a dense model read a pooled outlier from its soft-token slot? (eval-side).
+---
 # Can a dense model read a POOLED outlier out of its soft-token slot? (eval-side probe)
 
 **Date** 2026-09-14 · **Status** ANSWERED — canonical ds64 2k run complete, replicated on a second checkpoint + corpus (§4) · **Branch** `prasann/landmark`

@@ -4,19 +4,19 @@ title: Model scale x family x CTC class (Qwen3.5 0.8B/2B/4B, OLMo-3-7B, Llama) +
 status: paused
 updated: 2026-09-14
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/ctc_suite/beaker_ctc_suite.py
+launcher: recipes/train/research_trainer/beaker_ctc_suite.py
 records:
-  - records/ctc-model-scale-plan.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/records/ctc-model-scale-plan.md
 results:
-  - debug/ctc_modelscale/LAUNCH_LEDGER.tsv
-  - debug/ctc_modelscale/scalefam_grid_status.md
-  - debug/ctc_modelscale/results/
-  - debug/ctc_crossfamily/launches/
-  - debug/ctc_crossfamily/results/
-  - debug/ctc_llama8b/LAUNCH_LEDGER.tsv
-  - results/ctc_suite_llama_iid/all_results.jsonl
-  - paperdraft/figures/data/ctc_scale_data.csv
-  - paperdraft/figures/data/ctc_length_generalization_data.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/scalefam_grid_status.md
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/results/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_crossfamily/launches/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_crossfamily/results/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_llama8b/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama_iid/all_results.jsonl
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/paperdraft/figures/data/ctc_scale_data.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/paperdraft/figures/data/ctc_length_generalization_data.csv
 wandb_group:
 next_step: Re-grade the contradiction length-gen rungs (rung_65674/rung_131342) with gold pairs canonicalised. ~53% of their gold pairs are unsorted, so the paper's high-CTC retention numbers for contradiction are depressed by construction.
 ---

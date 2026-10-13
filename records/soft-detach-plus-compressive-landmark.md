@@ -1,3 +1,14 @@
+---
+title: Soft detaching + compressive landmark — can they be combined?
+date: 2026-09-12
+updated: 2026-09-12
+experiment: 
+area: landmark
+kind: plan
+status: design note
+superseded_by: 
+summary: Whether soft-detached pooling and compressive landmark can be combined.
+---
 # Soft detaching + compressive landmark — can they be combined?
 
 Design note, 2026-09-12 (Prasann's idea, raised while the ds64 wave was blocked on Beaker capacity).

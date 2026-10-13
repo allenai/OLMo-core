@@ -4,19 +4,19 @@ title: Learned compute allocation — per-layer KV keep router, FFN-width router
 status: done
 updated: 2026-09-09
 branch: prasann/landmark
-launcher: debug/flop_scaling/orchestrate_scale.py
+launcher: research/ffn_compute/flop_scaling/orchestrate_scale.py
 records:
   - records/kv-route-attention-allocation.md
 results:
-  - results/flop_scaling/results_scale_s4battn.csv
-  - results/flop_scaling/results_scale_s4bflex.csv
-  - results/flop_scaling/results_q3s4bdense2.csv
-  - results/flop_scaling/results_q3s4bflex2.csv
-  - results/flop_scaling/results_q3s4bflexs2.csv
-  - results/flop_scaling/results_scale_s4bflexs.csv
-  - debug/flexcompute_40x/README.md
-  - debug/flexcompute_train/README.md
-  - debug/flexcompute_train/LAUNCH_LEDGER.tsv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_scale_s4battn.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_scale_s4bflex.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_q3s4bdense2.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_q3s4bflex2.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_q3s4bflexs2.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results_scale_s4bflexs.csv
+  - research/kv_route/flexcompute_40x/README.md
+  - research/kv_route/flexcompute_train/README.md
+  - research/kv_route/flexcompute_train/LAUNCH_LEDGER.tsv
 wandb_group: https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/flexcompute-train-g1
 next_step: None queued; only untested lever is a long (>>31-step) trained run with a lower-bias gate init so block skip / KV keep can reach their targets — needs Prasann's go.
 ---
@@ -36,7 +36,7 @@ and/or a real wall-clock training speedup?
 - 2026-09-05 (agent, ablation-proven): routers live on the model root and run on the block input OUTSIDE the AC region (`router_fn.RouterOnInput`) — anything inside a checkpointed block feeding the graph outside pins every block's activations (61–72 GB vs 27 GB).
 - 2026-09-06 (agent): Stage D — block skip extended to GatedDeltaNet blocks (identity state update for skipped tokens).
 - 2026-09-09 (agent): wall-clock recipe = head gating → static deletion of always-null FFN layers → COMPACTED (gather) block skip; KV router dropped as redundant once skip is compacted.
-- 2026-09-09 (agent): trained-router ladder on real contradiction SFT (`debug/flexcompute_train`) — verdict: trained routers do not reach the pinned operating points in 31 steps, and forced ones break the task.
+- 2026-09-09 (agent): trained-router ladder on real contradiction SFT (`research/kv_route/flexcompute_train`) — verdict: trained routers do not reach the pinned operating points in 31 steps, and forced ones break the task.
 
 ## Current best numbers
 Mean f1 over 2k/8k/16k/32k, eval_size 500/rung (contradiction) / 500–600 (oolong) → ≈2000 per mean; no-cot; mult = dense FLOPs for same f1 ÷ arm FLOPs (>1 = compute-optimal).

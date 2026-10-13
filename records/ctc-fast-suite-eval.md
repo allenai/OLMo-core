@@ -1,3 +1,14 @@
+---
+title: A one-hour CTC suite: what it costs, and what has to change
+date: 2026-09-21
+updated: 2026-10-12
+experiment: ctc_suite_eval
+area: pipeline
+kind: howto
+status: current
+superseded_by: 
+summary: What a full CTC-suite eval costs; current path = olmo-eval `launch_ctc_suite.py` (r256k YaRN x2 + chunked prefill); setA IID build status.
+---
 # A one-hour CTC suite: what it costs, and what has to change
 
 **Goal** (prasann, 2026-09-21): a full CTC-suite evaluation up to the **256k** rung that finishes in

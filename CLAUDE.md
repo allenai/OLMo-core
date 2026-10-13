@@ -1,105 +1,68 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repo: AI2's OLMo-core training library plus our long-context
+research (CTC suite, attention / routing experiments). **Upstream OLMo-core architecture, commands,
+code style, docstrings, test conventions and Docker/Beaker image mechanics:
+[`docs/claude/upstream-olmo-core.md`](docs/claude/upstream-olmo-core.md)** — read it before changing
+`src/olmo_core/`. Everything below is project rules.
 
-## Overview
+## Research ops (runs, results, experiment state)
 
-OLMo-core is AI2's training library for the Open Language Model (OLMo) series. It provides modular components for transformer architectures, distributed training, data loading, and evaluation.
+`/accounts/projects/berkeleynlp/prasann/bin/ops` (stdlib, login-node safe, a few seconds; toolkit at
+`/accounts/projects/berkeleynlp/prasann/ops`, docs in `ops/README.md`):
 
-## Commands
+- **Register every launch** (Beaker, slurm, Lambda, local): `ops register --run-id ... --experiment ...
+  --cluster ... --job-id ... --expected-minutes N --git <repo>`. Skill: `launch-run`.
+- **Job state:** `ops status` (all clusters, one call) and `ops stall <job|run>` for anything flagged.
+  No sleep/poll loops — use the Monitor tool for a specific condition. Skill: `job-status`.
+- **Numbers:** `ops result add --check` before any number is quoted; investigate every warning.
+  **results-hub is retired** (2026-10-12) — nothing is ingested or pushed there. Skill: `record-results`.
+- **Experiment state:** the canonical current state of each experiment is its STATUS.md — index at
+  `/accounts/projects/berkeleynlp/prasann/ops/experiments/INDEX.md`, one page via `ops exp show NAME`.
+  Read it before touching an experiment; update it (skill `close-out-experiment`) before ending a
+  session. Memory files and `records/` are history.
+- **Hooks:** PreToolUse hooks (`ops/hooks/`) deny foreground poll loops, test runs on the login node,
+  NFS interpreters and `/net` paths in jobs, bare `torchrun`, and subagents without a sonnet/opus
+  model. A denial is a rule, not a glitch — fix the command.
 
-```bash
-# Install (development)
-pip install -e '.[all]'
+**CTC evals:** the current path is olmo-eval `scripts/ctc_suite/launch_ctc_suite.py` (tokenizer
+`Qwen/Qwen3.5-0.8B`; `--doc-markers` for marker-trained checkpoints; r256k = YaRN x2 + 131,072-token
+chunked prefill **by default**, else left-truncated) — see `records/ctc-fast-suite-eval.md` and the
+`run-evals` skill. The script exists only on olmo-eval branch `prasann/ctc-suite-launcher`, and PR #400
+(`prasann/ctc-absence-low-ctc`) carries grader commits not in it: **which olmo-eval branch is
+canonical is still to be confirmed by Prasann** (`ops exp show ctc_suite_eval`). OLMo-core's legacy
+native launcher (`recipes/eval/legacy_native/`) remains only for the singletask/xlong ladders.
 
-# Run all tests (GPU tests auto-skip without GPU)
-pytest -v src/
+## Repo layout
 
-# Run a specific test file
-pytest -v src/test/path/to/test_file.py
+| Path | What |
+|---|---|
+| `src/olmo_core/` (+ `src/test/`) | The library: upstream OLMo-core plus our attention / routing / data extensions. Upstream scripts stay in `src/scripts/` and `src/examples/`. |
+| `ctc/` | Vendored CTC task package (generators, seed pools, prompts, graders). `pip install -e ctc/`; provenance in `ctc/VENDORED.md`. Change it upstream and re-vendor. |
+| `recipes/` | The canonical, reproducible pipeline — start at `recipes/README.md`. `data/` (setA builder, converter, marker repair), `train/setA/` (dense Qwen3.5-4B setA SFT), `train/research_trainer/` (the task-agnostic torchrun trainer research arms drive), `eval/` (setA audit, legacy native eval, YaRN copies), `env/local_env.sh`. |
+| `research/<family>/` | Experiment code by family: `token_routing/`, `ffn_compute/`, `kv_route/`, `landmark/`, plus `common/` (shared helpers, incl. the vendored `corpus_reasoning` package — put `research/common` on the path). Each folder's README names its record. |
+| `records/` | Standalone writeups (diagnoses, plans, handoffs, how-tos); index in `records/README.md`. |
+| `ops/` | Research-ops toolkit: run registry, job status, results log, `experiments/<name>/STATUS.md` (see **Research ops**). |
+| `.claude/skills/` | `run-evals`, `pull-evals`, `storage-audit`, `where-to-run`, `training-smoke-test`, plus `launch-run`, `job-status`, `record-results`, `close-out-experiment` (symlinks into `ops/skills/`, their single source). |
 
-# Filter to specific tests by keywords
-pytest -v src/test/path/to/test_file.py -k 'keyword'
+Where new things go:
 
-# Auto-format code
-make style
-
-# Check formatting, lint, and types
-make checks          # all three at once
-make style-check     # isort + black
-make lint-check      # ruff
-make type-check      # mypy
-```
-
-## Code Style
-
-- Line length: 100
-- Formatting: `isort` (profile=black) + `black`
-- Linting: `ruff` (ignores F403, F405, E501; F401 ignored in `__init__.py`)
-- Type checking: `mypy` with `ignore_missing_imports = true`
-
-## Docstrings
-
-- Docstrings should be included on all public classes, methods, and functions.
-- We use Sphinx to automatically build API docs by pulling from those docstrings.
-- The syntax of the docstrings is a superset of reStructuredText with additional Sphinx-specific syntax for things like:
-  - Cross-document links, e.g.:
-    ```
-    :class:`foo.Foo`  <- links to the class named 'Foo' in the module 'foo'
-    :mod:`foo`        <- links to the module named 'foo'
-    :func:`foo.bar`   <- links to the function named 'bar' in the module named 'foo'
-    ```
-  - Documenting parameters (`:param ...:`), return values (`:returns:`), or expected exceptions (`:raises ...:`).
-
-Here's a toy example for a function:
-
-```python
-def read_file(path: str) -> str:
-    """
-    Read a file from disk.
-
-    :param path: The path to the file.
-
-    :returns: The contents of the file.
-
-    :raises FileNotFoundError: If the file doesn't exist.
-    """
-    pass
-```
-
-## Architecture
-
-### Configuration System (`src/olmo_core/config.py`)
-
-Everything is configured via `@dataclass` classes inheriting from `Config`. This is the central design pattern:
-- Configs support YAML/JSON serialization, command-line overrides via dot notation (`--train_module.optim.lr=6e-3`), and `merge()` with dotlists.
-- The `Registrable` mixin (from `dataclass-extensions`) enables polymorphic config fields — a base config class can resolve to different subclasses at runtime based on a `type` field. Used in optimizers, schedulers, attention backends, and data loaders.
-- Nested configs compose modularly: `TrainerConfig` contains `CheckpointerConfig`, `OptimConfig`, etc.
-
-### Training Pipeline (`src/olmo_core/train/`)
-
-- `Trainer` / `TrainerConfig`: Core training loop with checkpointing, evaluation, and an extensible callback system (`callbacks/`).
-- `TrainModule`: Wraps the model with forward/backward logic and optimizer. The main concrete implementation is `TransformerTrainModule` / `TransformerTrainModuleConfig`, which handles parallelism setup (DP, TP, PP, CP, EP configs all live here).
-
-### Model Architecture (`src/olmo_core/nn/`)
-
-- `transformer/`: Core transformer with configurable blocks. `TransformerConfig` has factory methods like `olmo2_32B()` for predefined architectures.
-- `attention/`: Multi-head attention with backends (flash attention, ring attention, etc.).
-- `moe/`: Mixture of Experts with expert parallelism.
-- `feed_forward.py`, `layer_norm.py`, `rope.py`, `lm_head.py`: Standard components.
-
-### Data Loading (`src/olmo_core/data/`)
-
-- `NumpyDataset` variants: Memory-mapped numpy datasets for pre-tokenized data (`.npy` files).
-- `composable/`: The preferred data loading API, built on a pipeline of `TokenSource` -> `InstanceSource` -> `ComposableDataLoader`. Sources can be sliced, sampled, mixed with ratios, and split for curriculum learning. Use `InstanceSource.visualize()` to inspect the source tree. See the module docstring in `src/olmo_core/data/composable/__init__.py` for detailed examples.
-- `mixes/`: Predefined data mixture configs (dolma17, OLMoE-mix-0824, etc.) with paths to tokenized data by source and tokenizer.
-- Training data is stored on AI2 infrastructure (Weka filesystem, GCS). For local development, use small validation sets or synthetic data.
-- **Our data-generation pipeline** (task JSONL → tokenized SFT shards → weka/local staging) lives
+- **New experiment code goes in `research/<family>/`** — the matching family, or a new family folder
+  with a README. Never in a `debug/` directory, and never loose in `src/scripts/` (upstream-only).
+- Results, run dirs and weights stay out of git (`research/**/results*/`, `runs/`, `weights/` are
+  gitignored): keep them on node-local `/data` or weka and say where in the folder's README.
+- Changes to the canonical data → train → eval path go in `recipes/`, and must keep it working end to end.
+- New writeups go in `records/`. Every new record starts with the front-matter header documented in
+  `records/README.md` (its `summary:` becomes the index row); regenerate the index with
+  `ops exp records --write`, never by hand. Current experiment *state* goes in the experiment's
+  STATUS.md, not in a record. The repo root keeps only
+  README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/lambda_cluster.md/beaker.md.
+- **Data-generation pipeline** (task JSONL → tokenized SFT shards → weka/local staging) lives
   in `recipes/data/` (see `recipes/README.md`): task rows come from the vendored `ctc/` package
   (`ctc-data`) plus two in-repo generators (`recipes/data/generators/`), `ctc_sft/build_ctc_sft.py`
   drives the build, and `convert_unified_to_document_landmark.py` tokenizes to shards.
 
-### Document-chunked / landmark attention: REPAIR THE BASE CHECKPOINT FIRST
+## Document-chunked / landmark attention: REPAIR THE BASE CHECKPOINT FIRST
 
 Qwen3 never trains the embedding rows for the reserved marker tokens that the document-chunked and
 landmark data paths are built on (`<|box_start|>`/`<|box_end|>`, plus the landmark/pad ids past the
@@ -121,62 +84,6 @@ is not. The script now seeds each marker from a real trained delimiter row (`«`
 norm is in-distribution. Any base repaired before 2026-07-14 is affected: re-run the script.
 See `records/n100-chunked-marker-position-bug.md`.
 
-### Distributed Training (`src/olmo_core/distributed/`)
-
-- `parallel/`: Implementations of data (FSDP/HSDP/DDP), tensor, pipeline, context (ring attention), and expert parallelism. These can be combined for multi-dimensional parallelism.
-- `checkpoint/`: Distributed checkpointing with various filesystem backends.
-
-### Optimization (`src/olmo_core/optim/`)
-
-- Optimizer configs (`AdamWConfig`, `SkipStepAdamWConfig`, `LionConfig`) and LR schedulers (`CosWithWarmup`, etc.).
-- `SkipStepOptimizer`: Wrapper for gradient clipping with loss spike detection.
-
-### Examples (src/examples)
-
-Runnable, self-contained examples and reference scripts.
-
-### Training Scripts
-
-Two patterns exist:
-
-**Official scripts** (`src/scripts/official/`): Use `ExperimentConfig` + `main()` from `src/olmo_core/script_utils.py`. Launched with `torchrun` or Beaker. These reproduce published model runs.
-
-```bash
-torchrun --nproc-per-node=8 src/scripts/official/OLMo2/OLMo-2-0325-32B-train.py \
-  --save-folder=/path/to/checkpoints
-```
-
-**Internal scripts** (`src/scripts/train/`): Use `prepare_cli_environment()` with commands (`launch`, `train`, `train_single`, `prep`, `dry_run`). See `template.py` for the starting point.
-
-Both of these are upstream's. Our own training code is NOT under `src/scripts/` — see
-**Repo layout** below.
-
-```bash
-python src/scripts/train/OLMo2-1B.py dry_run test-run ai2/titan-cirrascale
-python src/scripts/train/OLMo2-1B.py launch olmo2-1b-test ai2/jupiter-cirrascale-2 --launch.num_nodes=4
-```
-
-## Repo layout
-
-| Path | What |
-|---|---|
-| `src/olmo_core/` (+ `src/test/`) | The library: upstream OLMo-core plus our attention / routing / data extensions. Upstream scripts stay in `src/scripts/` and `src/examples/`. |
-| `ctc/` | Vendored CTC task package (generators, seed pools, prompts, graders). `pip install -e ctc/`; provenance in `ctc/VENDORED.md`. Change it upstream and re-vendor. |
-| `recipes/` | The canonical, reproducible pipeline — start at `recipes/README.md`. `data/` (setA builder, converter, marker repair), `train/setA/` (dense Qwen3.5-4B setA SFT), `train/research_trainer/` (the task-agnostic torchrun trainer research arms drive), `eval/` (setA audit, legacy native eval, YaRN copies), `env/local_env.sh`. |
-| `research/<family>/` | Experiment code by family: `token_routing/`, `ffn_compute/`, `kv_route/`, `landmark/`, plus `common/` (shared helpers, incl. the vendored `corpus_reasoning` package — put `research/common` on the path). Each folder's README names its record. |
-| `records/` | Standalone writeups (diagnoses, plans, handoffs, how-tos); index in `records/README.md`. |
-| `.claude/skills/` | `run-evals`, `pull-evals`, `storage-audit`, `where-to-run`, `training-smoke-test`. |
-
-Where new things go:
-
-- **New experiment code goes in `research/<family>/`** — the matching family, or a new family folder
-  with a README. Never in a `debug/` directory, and never loose in `src/scripts/` (upstream-only).
-- Results, run dirs and weights stay out of git (`research/**/results*/`, `runs/`, `weights/` are
-  gitignored): keep them on node-local `/data` or weka and say where in the folder's README.
-- Changes to the canonical data → train → eval path go in `recipes/`, and must keep it working end to end.
-- New writeups go in `records/` with a row in its README — the repo root keeps only
-  README/CHANGELOG/CONTRIBUTING/CLAUDE.md/local_cluster.md/lambda_cluster.md/beaker.md.
-
 ## Local (Berkeley) cluster
 
 We also train/eval on Berkeley slurm H200 nodes without AI2 infra (no weka, no Beaker). The full
@@ -192,33 +99,36 @@ problem — it is the same class of storage, and it will still deadlock concurre
 `nfs_wait_bit_killable`. Job logs, work dirs, JIT/index caches (triton, flashinfer, pyserini) and
 checkpoints all belong on `/data`; `/scratch` is fine for code and small artifacts you read once.
 
-**`/net/<node>/...` reads any node's local disk from anywhere — for INSPECTION ONLY.** Every
-compute node is exported at `/net/<hostname>`, so `/net/horton/data/prasann/...` reads horton's
-node-local `/data` from the login node or from another node. Nodes today: `balrog`, `cubbins`,
-`feanor`, `horton`, `lorax`, `mcfuzz`, `mooney`, `rainbowquartz`, `saruman`, `shadowfax`, `smaug`,
-`smokyquartz`, `sneetches`, `sunstone`, `thidwick`.
-
-This is genuinely useful for auditing — checking what data or checkpoints exist on a node, reading a
-job log, confirming a file's schema — without an `srun`. Use it that way and keep it light.
-
-**It does NOT make `/data` remotely fast, and it is not a way to share data between nodes.** `/net`
-*is* the NFS layer this section is about: a `/net` path has every property that makes `/scratch`
-slow, so pointing job I/O, an interpreter, a checkpoint read or a cache directory at one recreates
-exactly the `nfs_wait_bit_killable` deadlock described above. A job running on horton must use
-`/data/...`, never `/net/horton/data/...` — the same bytes, one over the local disk and one over a
-~5 MB/s link. Recursive `find` across `/net` is also slow enough to hit command timeouts; go
-straight to the directory you want.
+**`/net/<node>/...` is for INSPECTION ONLY.** Every compute node's disk is exported at
+`/net/<hostname>` (e.g. `/net/horton/data/prasann/...`; nodes: `balrog`, `cubbins`, `feanor`, `horton`,
+`lorax`, `mcfuzz`, `mooney`, `rainbowquartz`, `saruman`, `shadowfax`, `smaug`, `smokyquartz`,
+`sneetches`, `sunstone`, `thidwick`) — handy for checking what data or checkpoints exist, reading a job
+log or confirming a schema without an `srun`; keep it light. But `/net` *is* the NFS layer: pointing
+job I/O, an interpreter, a checkpoint read or a cache directory at it recreates the
+`nfs_wait_bit_killable` deadlock. A job on horton uses `/data/...`, never `/net/horton/data/...`.
+Recursive `find` across `/net` hits command timeouts; go straight to the directory you want.
 
 **The INTERPRETER itself must be node-local for any torch/vLLM job.** The "~5–60 s import tax"
-above is the *best* case (small scripts). A vLLM or torch job launched with
-`/scratch/users/prasann/conda/envs/corpus-reasoning-eval/bin/python` has to page multiple GB of
+above is the *best* case (small scripts). A vLLM or torch job launched with an NFS interpreter (e.g.
+the former `/scratch/.../corpus-reasoning-eval/bin/python`) has to page multiple GB of
 shared objects over a ~5 MB/s link and parks in `D` state / `nfs_wait_bit_killable` at ~0% CPU for
 many minutes — it looks like a hung GPU or a slow model load, and it is neither. Use the
 node-local venv **`/data/prasann/ctc_vllm_venv/bin/python`** (vllm 0.25.1 / torch 2.11.0+cu130)
 for vLLM work, together with `export CUDA_HOME=/usr/local/cuda-12.8` and
 `export PATH=$CUDA_HOME/bin:$PATH` for the GDN JIT. Diagnose with
 `ps -o stat,wchan,%cpu` — `Dl` + `nfs_wait_bit_killabl` + ~0% CPU is this bug, not a compile.
-(that env now lives at /data/prasann/conda/envs/corpus-reasoning-eval on horton; /scratch copy removed 2026-09-23)
+The old NFS env (`/scratch/users/prasann/conda/envs/corpus-reasoning-eval`) no longer exists (removed
+2026-09-23); its node-local copy is `/data/prasann/conda/envs/corpus-reasoning-eval` on horton, but for
+vLLM use `/data/prasann/ctc_vllm_venv/bin/python` as above. For training/tests use
+`/data/prasann/conda/envs/corpus-reasoning-olmo/bin/python`, launched as `$PY -m torch.distributed.run`
+(bare `torchrun` resolves to the NFS system miniforge).
+
+**Checking on local jobs:** `ops status` (one cached snapshot of slurm + Beaker + Lambda — never poll
+`squeue`/`beaker` in loops), `ops stall <job|run>` (verdict first: NFS stall, GPU idle, hung, no
+output for N min), and `ops guard -- CMD` for long local commands outside slurm. Register sbatch
+launches with `ops register`, or run the payload through the shared wrapper
+`recipes/env/ops_job.sh` (registers, runs under `ops guard`, records the final state; header has the
+knobs; see `ops/README.md`).
 
 ### Loading an olmo-exported Qwen3.5 in vLLM: use the serving copy
 
@@ -270,41 +180,18 @@ this is what guarantees both of you can always get 2 nodes. Do NOT carry over th
 
 **`lambda_cluster.md` (repo root)** documents access, the QOS table and that policy, the per-user
 1.30T `/accounts` quota (the usual blocker) vs. node-local disk, the rsync staging recipe,
-`run_ctc_lambda.sbatch` (`recipes/train/research_trainer/`) knobs, and the trap index. Read it before touching any `*lambda*.sbatch`
-launcher. Two traps worth knowing up front: the launcher header hardcodes
-`--gres=gpu:A100:8` so a direct execution eats your whole GPU quota, and **`sbatch` routinely
+`run_ctc_lambda.sbatch` (`recipes/train/research_trainer/`) knobs, and the trap index. Read it
+before touching any `*lambda*.sbatch` launcher. Two traps worth knowing up front: the launcher
+header hardcodes `--gres=gpu:A100:8` so a direct execution eats your whole GPU quota, and **`sbatch` routinely
 reports `FAILED` on runs that fully succeeded** — verify via the loss curve and checkpoint, never
 the exit code.
 
-## Docker and Beaker Launch
+## Beaker launches
 
-**Practical how-to + hard-won lessons for launching anything on Beaker from this machine live in
-`beaker.md` (repo root)** — launch/gantry templates, monitoring/cancel commands that actually
-work, the weka-vs-S3 staging two-step, and the traps index. This section covers the underlying
-mechanics.
-
-The Docker image (`src/Dockerfile`) is a two-stage build: a `build` stage compiles GPU-specific dependencies (flash-attn, TransformerEngine, grouped_gemm, ring-flash-attn, etc.) on an NVIDIA CUDA devel image, and a `release` stage copies the conda environment into a lighter Ubuntu base with AWS CLI, Google Cloud SDK, and MLNX OFED drivers. The image contains all dependencies but *not* the OLMo-core package itself — source code is cloned at runtime.
-
-```bash
-# Build locally (versions configured in Makefile)
-make docker-image
-
-# Push to GHCR
-make ghcr-image
-
-# Create Beaker image
-make beaker-image
-```
-
-**How launch works**: When a training script uses the `launch` command (or `BeakerLaunchConfig.launch()`), it creates a Gantry recipe that:
-1. Starts a container from a pre-built Beaker image (default: `OLMoCoreBeakerImage.stable` in `src/olmo_core/launch/beaker.py`)
-2. Clones the git repo at the current commit into the container (requires clean working tree unless `allow_dirty=True`)
-3. Installs the package from source (`pip install -e .`)
-4. Runs the training command, optionally wrapped with `torchrun` for multi-GPU/multi-node
-
-Pre-built images are listed in the `OLMoCoreBeakerImage` enum in `src/olmo_core/launch/beaker.py`, tagged by torch version and CUDA version (e.g., `tch2100cu128`). The `stable` image tracks the default torch/CUDA versions. When updating default images, also update `.github/workflows/main.yml`.
-
-`BeakerLaunchConfig` also supports `pre_setup` and `post_setup` hooks for running commands before/after the package install step, Weka bucket mounts, and multi-node settings (replicas, leader selection, host networking).
+**`beaker.md` (repo root)** is the practical how-to: launch/gantry templates, monitoring/cancel
+commands that actually work, the weka-vs-S3 staging two-step, and the traps index. Image and gantry
+mechanics: `docs/claude/upstream-olmo-core.md`. Gantry runs the **pushed** commit. Register every
+job (`ops register --cluster beaker --job-id <id>`) and check it with `ops status` / `ops stall <id>`.
 
 **Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` — exactly `urgent`: never `normal`/`high`/`low`, and not `immediate` either. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
 
@@ -320,10 +207,9 @@ There is no per-job flag; the workspace decides. Verify with
 
 ## Testing
 
-- Tests in `src/test/` mirror the source structure.
-- Name individual test functions `test_*` and prefer `pytest.mark.parametrize` to cover multiple inputs or configurations without duplicating code.
-- GPU tests use `@pytest.mark.gpu` and are skipped without a GPU.
-- Distributed tests use helpers in `src/olmo_core/testing/distributed.py`.
+Conventions are in `docs/claude/upstream-olmo-core.md` (`src/test/` mirrors the source; GPU tests use
+`@pytest.mark.gpu`). Run pytest / `make checks` on a compute node with the node-local env, never on the
+login node; `ops/tests` (stdlib, < 10 s) is the exception.
 
 ## Reporting experimental results
 
@@ -336,7 +222,7 @@ caused real confusion, so:
 - New eval scripts must emit the field `eval_size` in their result JSON. Older results wrote this as
   `n`, which is exactly the collision being retired — when reading them, translate to `eval_size`
   rather than propagating the old name.
-- The same applies in prose, tables, run names, and anything ingested into results-hub.
+- The same applies in prose, tables, run names, and anything recorded with `ops result add`.
 
 **Eval sets should have at least 500 examples, and a smaller one must be flagged.** If a number came
 from fewer than 500 eval examples, say so *inline, next to the number* — give the size and its error

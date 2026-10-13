@@ -141,7 +141,10 @@ class RecordsIndexTest(unittest.TestCase):
             (r / "old.md").write_text("# Old doc\n\nFirst para.\n")
             (r / "listed.md").write_text("# Listed\n\nPara.\n")
             (r / "new.md").write_text("---\ntitle: New\nupdated: 2026-10-01\nkind: plan\n"
+                                      "area: landmark\nsuperseded_by:\n"
                                       "summary: the summary\n---\n# New\n")
+            (r / "sub").mkdir()
+            (r / "sub" / "README.md").write_text("# sub\n")
             (r / "bare.md").write_text("# Bare\n\nOnly a paragraph here.\n")
             rows = {x["name"]: x for x in ex.record_rows(r)}
             self.assertEqual(rows["old.md"]["summary"], "hand-written desc")
@@ -153,7 +156,12 @@ class RecordsIndexTest(unittest.TestCase):
             self.assertIn("3 docs still lack", text)
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(main(["exp", "records", "--records-dir", d, "--write"]), 0)
-            self.assertIn("bare.md", (r / "README.md").read_text())
+            written = (r / "README.md").read_text()
+            self.assertIn("bare.md", written)
+            self.assertIn("| doc | area |", written)
+            self.assertIn("| landmark |", written)
+            self.assertNotIn("[]", written)
+            self.assertIn("[`sub/`](sub/README.md)", written)
 
 
 if __name__ == "__main__":

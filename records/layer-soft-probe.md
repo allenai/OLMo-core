@@ -1,3 +1,14 @@
+---
+title: Soft LAYERS — does the pooled-doc soft token have to be applied at every layer? (eval only)
+date: 2026-09-14
+updated: 2026-09-14
+experiment: pooled_kv
+area: token_routing
+kind: result
+status: eval-only probe
+superseded_by: 
+summary: Does the pooled soft token need to be applied at every layer?
+---
 # Soft LAYERS — does the pooled-doc soft token have to be applied at every layer? (eval only)
 
 Date: 2026-09-14. Eval only, no training. Probe:

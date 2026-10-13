@@ -4,7 +4,7 @@ title: Pooled-doc-KV / soft-token compressed training with full-attention infere
 status: done
 updated: 2026-09-15
 branch: prasann/landmark
-launcher: src/scripts/train/memexpress/pooledkv/run_q4b_pooledkv_horton.sbatch
+launcher: research/token_routing/pooledkv_train/run_q4b_pooledkv_horton.sbatch
 records:
   - records/pooled-doc-kv-handoff.md
   - records/pooled-doc-kv-attention.md
@@ -17,9 +17,9 @@ records:
   - records/outlier-realtoken-parity-probe.md
   - records/outlier-saliency-preview-probe.md
 results:
-  - results/pooled_kv/slot_probe_results.csv
-  - results/pooled_kv/slot_tracker.html
-  - debug/pooled_kv/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/pooled_kv/slot_probe_results.csv
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/pooled_kv/slot_tracker.html
+  - research/token_routing/pooled_kv/
 wandb_group:
 next_step: None here. Superseded by ds64 (trained soft-token arms on 2k-64k ladders); the 64k/128k pooled-KV length campaign and the learned null-expert FFN router were never run in this form
 ---
