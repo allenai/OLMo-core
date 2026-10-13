@@ -1,7 +1,7 @@
 """Regression test for the reorder document-wrapping bug (Stage-2 build log, 2026-07-19,
 ``src/scripts/data/ctc_suite/BUILD_MATRIX.md``): converted reorder shards wrapped only ~11% of
 their documents (9.5 avg docs/ex vs 89.2 expected) because the reorder prompt renderer
-(``_format_documents`` in ``corpus_reasoning/lib/data_format.py``) collapses each passage's
+(``_format_documents`` in ``olmo_core/data/corpus_reasoning_prompts/data_format.py``) collapses each passage's
 internal ``"\\n\\n"`` (Gutenberg's own paragraph breaks) to ``"\\n"`` before embedding it, but
 ``_wrap_documents`` (``olmo_core/data/document_chunk_landmark.py``) searched for the RAW
 (un-collapsed) text -- a verbatim match that silently fails whenever a passage has an internal
@@ -11,7 +11,7 @@ Does not require a tokenizer: exercises ``_wrap_documents`` directly against the
 string and counts ``<|box_start|>`` occurrences.
 """
 
-from corpus_reasoning.lib.data_format import build_prompt
+from olmo_core.data.corpus_reasoning_prompts import build_prompt
 
 from olmo_core.data.document_chunk_landmark import DOC_END_STR, DOC_START_STR, _wrap_documents
 

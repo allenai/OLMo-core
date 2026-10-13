@@ -99,27 +99,13 @@ LANDMARK_TOKEN_ID = 151860  # reserved id inserted later by LandmarkInstanceSour
 TOKEN_DTYPE = np.uint32
 MASK_DTYPE = np.bool_
 
-# ---------------------------------------------------------------------------
-# Prompt strings mirrored VERBATIM from corpus-reasoning scripts/lib/prompts.py
-# (task-suite-expansion branch).
-# ---------------------------------------------------------------------------
-
-GENERIC_INSTRUCTION = "You will be asked to do a long-context processing task for a context."
-
-CONTRADICTION_INSTRUCTION = (
-    "Given the following corpus of numbered claims, identify all pairs of claims "
-    "that contradict each other. A pair of claims is contradictory if they cannot "
-    "both be true at the same time.\n\n"
-    "Output your answer as a JSON list of pairs, where each pair is a list of two "
-    "claim IDs. For example: [[1, 4], [3, 7]]\n"
-    "If there are no contradicting pairs, output: []"
-)
-
-CLAIM_TEMPLATE = "Claim {id}: {text}"
-
-OOLONG_INSTRUCTION = (
-    "Read the data below and answer the question. Compute the exact answer by "
-    "analyzing every item; do not guess or approximate."
+# Prompt strings: the canonical copies (byte-identical to corpus-reasoning scripts/lib/prompts.py,
+# task-suite-expansion branch), imported rather than re-stated so they cannot drift.
+from olmo_core.data.corpus_reasoning_prompts.prompts import (  # noqa: E402
+    CLAIM_TEMPLATE,
+    CONTRADICTION_INSTRUCTION,
+    GENERIC_INSTRUCTION,
+    OOLONG_INSTRUCTION,
 )
 
 # Special-token strings stripped from body text so they can't be re-parsed as control tokens.

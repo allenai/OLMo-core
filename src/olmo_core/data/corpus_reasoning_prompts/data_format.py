@@ -39,8 +39,8 @@ import json as _json
 import random as _random
 import re
 
-from ._io import format_alpaca_prompt, insert_dummy_tokens
-from ._prompts import (
+from .io import format_alpaca_prompt, insert_dummy_tokens
+from .prompts import (
     ABSENCE_GUTENBERG_INSTRUCTION,
     ABSENCE_INSTRUCTION,
     CLAIM_TEMPLATE,
@@ -790,14 +790,16 @@ def _build_rerank_score_cot(example) -> str:
     return "Reasoning: assessing each candidate's relevance to the question:\n" + ", ".join(parts)
 
 
-def _rerank_reference_order(example):
+def _rerank_reference_order(example, allow_binary_rerank=False):
     """Reference relevance order as 1-indexed doc IDs, most → least relevant.
 
     If the example carries per-document cross-encoder scores (`ce_scores`, as
     emitted by generate_msmarco_trainhn_data.py), the CE score is treated as the
     relevance truth: scored docs are sorted by CE descending, then the unscored
-    random-fill docs follow in their displayed order. Without CE scores we fall
-    back to the binary scheme — gold docs first, then the rest in displayed order.
+    random-fill docs follow in their displayed order. Without CE scores the old
+    binary scheme (gold docs first, then the rest in displayed order) is only used
+    when ``allow_binary_rerank`` is set -- the eval harness passes it so legacy
+    binary rerank eval files still render; training data refuses that format.
     """
     n = len(example["documents"])
     ce = example.get("ce_scores")
@@ -805,6 +807,10 @@ def _rerank_reference_order(example):
         scored = sorted((i for i in range(n) if ce[i] is not None), key=lambda i: -ce[i])
         rest = [i for i in range(n) if ce[i] is None]
         order = scored + rest
+    elif allow_binary_rerank:
+        gold = sorted(example["gold_doc_indices"])
+        gset = set(gold)
+        order = gold + [i for i in range(n) if i not in gset]
     else:
         raise NotImplementedError(
             "DEPRECATED binary rerank format: example has no `ce_scores`, so the "
@@ -858,7 +864,7 @@ def build_helmet_rerank(example, top_k=HELMET_RERANK_TOP_K):
     return prompt, " " + " > ".join(ordered_ids)
 
 
-def _build_output(example, task, cot_mode="label", output_top_k=-1):
+def _build_output(example, task, cot_mode="label", output_top_k=-1, allow_binary_rerank=False):
     """Build the expected output string from the structured example.
 
     cot_mode applies to the outlier task only:
@@ -997,7 +1003,7 @@ def _build_output(example, task, cot_mode="label", output_top_k=-1):
     if task == "rerank":
         # Target ranking: most → least relevant, 1-indexed. Uses CE scores as the
         # relevance order when present, else gold-first (see _rerank_reference_order).
-        order = _rerank_reference_order(example)
+        order = _rerank_reference_order(example, allow_binary_rerank=allow_binary_rerank)
         if output_top_k and output_top_k > 0:
             order = order[:output_top_k]
         answer = "Ranking: " + ", ".join(f"[{i}]" for i in order)
@@ -1249,6 +1255,7 @@ def build_prompt(
     unified_prompt=False,
     cot_mode="label",
     output_top_k=-1,
+    allow_binary_rerank=False,
 ):
     """Build a formatted prompt + output from a unified example.
 
@@ -1269,6 +1276,9 @@ def build_prompt(
             prefill should be textually identical across tasks. Breaks
             backward compatibility with models trained under the old per-task
             instruction headers, so defaults to False.
+        allow_binary_rerank: Render a ``rerank`` example that has no ``ce_scores``
+            with the deprecated gold-first target instead of raising. Eval-only:
+            the eval harness sets it so legacy binary rerank eval files still load.
 
     Returns:
         (prompt, output) tuple of strings.
@@ -1295,7 +1305,13 @@ def build_prompt(
             GENERIC_INSTRUCTION if unified_prompt else _get_instruction(example, task, output_top_k)
         )
         questions = _build_questions_block(queries)
-        output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
+        output = _build_output(
+            example,
+            task,
+            cot_mode=cot_mode,
+            output_top_k=output_top_k,
+            allow_binary_rerank=allow_binary_rerank,
+        )
         if use_alpaca:
             prompt = format_alpaca_prompt(instruction, questions)
         else:
@@ -1324,7 +1340,13 @@ def build_prompt(
         return prompt, output
 
     context = _format_documents(docs, task, use_titles=use_titles)
-    output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
+    output = _build_output(
+        example,
+        task,
+        cot_mode=cot_mode,
+        output_top_k=output_top_k,
+        allow_binary_rerank=allow_binary_rerank,
+    )
 
     # Contradiction and reorder always use the unified-style prompt: there is
     # no per-example query, so the task instruction itself plays the role of
@@ -1408,6 +1430,7 @@ def build_prompt_parts(
     after_dummy=0,
     cot_mode="label",
     output_top_k=-1,
+    allow_binary_rerank=False,
 ):
     """Like build_prompt, but returns (instruction, input_text, output) separately.
 
@@ -1429,7 +1452,13 @@ def build_prompt_parts(
 
     docs = example["documents"]
     queries = example["queries"]
-    output = _build_output(example, task, cot_mode=cot_mode, output_top_k=output_top_k)
+    output = _build_output(
+        example,
+        task,
+        cot_mode=cot_mode,
+        output_top_k=output_top_k,
+        allow_binary_rerank=allow_binary_rerank,
+    )
 
     # Contradiction/reorder use unified-style: generic header + task
     # instruction placed in the positioned query slot.

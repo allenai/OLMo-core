@@ -313,7 +313,7 @@ def summary_span_text(cell_idx: int, k: int, n_docs: int) -> str:
 
 
 #: Per-task text normalizations applied by the prompt renderer (``_format_documents`` in
-#: ``corpus_reasoning/lib/data_format.py``) BEFORE a document's text is embedded in the rendered
+#: ``olmo_core/data/corpus_reasoning_prompts/data_format.py``) BEFORE a document's text is embedded in the rendered
 #: prompt. ``_wrap_documents`` does a verbatim substring search against the ORIGINAL
 #: ``documents[i]["text"]``, so any renderer-side transform must be mirrored here or the search
 #: fails and the document silently stays FREE (unisolated) -- see the reorder wrapping bug

@@ -68,17 +68,10 @@ from ctc_eval.lib.chunked_attention import (
     setup_tokenizer,
     wrap_documents,
 )
-from ctc_eval.lib.data_format import build_prompt
 from ctc_eval.lib.eval_tasks import parse_outlier_ids as _parse_outlier_ids
 from ctc_eval.lib.eval_tasks import parse_partition as _parse_partition
 from ctc_eval.lib.eval_tasks import parse_permutation as _parse_permutation
 from ctc_eval.lib.eval_tasks import partition_to_labels as _partition_to_labels
-from ctc_eval.lib.io import (
-    format_alpaca_prompt,
-    insert_dummy_tokens,
-    load_jsonl,
-    save_results,
-)
 from ctc_eval.lib.metrics import (
     aggregate,
     exact_match,
@@ -91,7 +84,14 @@ from ctc_eval.lib.metrics import (
     substring_match,
     token_f1,
 )
-from ctc_eval.lib.prompts import (
+from olmo_core.data.corpus_reasoning_prompts.data_format import build_prompt
+from olmo_core.data.corpus_reasoning_prompts.io import (
+    format_alpaca_prompt,
+    insert_dummy_tokens,
+    load_jsonl,
+    save_results,
+)
+from olmo_core.data.corpus_reasoning_prompts.prompts import (
     DEMO_TEMPLATE,
     HELMET_TEMPLATE,
     HELMET_TEMPLATE_QUERY_BEFORE,
@@ -821,7 +821,7 @@ def load_unified_examples(
                 demo_records, shots, ex["query"], ex.get("qid", ex["query"])
             )
             prompt, output = build_prompt(
-                ex, task=task, use_alpaca=False, output_top_k=output_top_k
+                ex, task=task, use_alpaca=False, output_top_k=output_top_k, allow_binary_rerank=True
             )
             if wrap_docs:
                 prompt = wrap_documents(prompt)
@@ -848,6 +848,9 @@ def load_unified_examples(
             after_dummy=after_dummy,
             use_alpaca=use_alpaca,
             output_top_k=output_top_k,
+            # Legacy binary (no ce_scores) rerank eval files still render here; the library
+            # default refuses that format for training data.
+            allow_binary_rerank=True,
         )
         if wrap_docs:
             prompt = wrap_documents(prompt)

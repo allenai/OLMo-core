@@ -58,7 +58,7 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-from cr_io import print_dataset_stats, save_jsonl
+from olmo_core.data.corpus_reasoning_prompts.io import print_dataset_stats, save_jsonl
 
 # ---------- Level configuration ----------
 

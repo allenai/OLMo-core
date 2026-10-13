@@ -18,8 +18,11 @@ if TYPE_CHECKING:
     from vllm import LLM, SamplingParams
     from vllm.lora.request import LoRARequest
 
-from ctc_eval.lib.io import ALPACA_TEMPLATE, format_alpaca_prompt  # noqa: F401 — re-exported
 from ctc_eval.lib.adapter_save import prepare_adapter_for_backend
+from olmo_core.data.corpus_reasoning_prompts.io import (  # noqa: F401 — re-exported
+    ALPACA_TEMPLATE,
+    format_alpaca_prompt,
+)
 
 
 def add_vllm_args(parser: argparse.ArgumentParser) -> None:
