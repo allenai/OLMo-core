@@ -40,7 +40,7 @@ def run(ckpt: str, out: str, seq_len: int, gen_tokens: int) -> None:
         {
             "logits": logits,
             "greedy": gen[0, 64:].cpu(),
-            "torch": torch.__version__,
+            "torch": str(torch.__version__),
             "state_keys": sorted(model.state_dict().keys()),
         },
         out,
@@ -51,7 +51,7 @@ def run(ckpt: str, out: str, seq_len: int, gen_tokens: int) -> None:
 def compare(a_path: str, b_path: str) -> int:
     import torch
 
-    a, b = torch.load(a_path), torch.load(b_path)
+    a, b = torch.load(a_path, weights_only=False), torch.load(b_path, weights_only=False)
     ok = True
     if a["state_keys"] != b["state_keys"]:
         ok = False
