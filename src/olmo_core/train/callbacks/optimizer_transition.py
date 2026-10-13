@@ -7,7 +7,7 @@ disturbing the loaded Adam moments.
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from torch.optim import Optimizer
 
@@ -85,12 +85,15 @@ class OptimizerHyperparameterTransitionCallback(Callback):
     OLMoDDP train modules).
     """
 
-    expected_step: int
-    """The global step the loaded checkpoint must be at."""
     source_lr: float
     target_lr: float
     source_weight_decay: float
     target_weight_decay: float
+    expected_step: Optional[int] = None
+    """
+    If set, the global step the loaded checkpoint must be at. Leave ``None`` to accept whatever
+    step the explicit ``load_path`` checkpoint resolved to.
+    """
     _applied: bool = False
 
     def state_dict(self) -> Dict[str, Any]:
@@ -103,7 +106,12 @@ class OptimizerHyperparameterTransitionCallback(Callback):
         if self._applied:
             log.info("Optimizer hyperparameter transition was already applied; skipping")
             return
-        if self.trainer.global_step != self.expected_step:
+        if self.trainer.global_step == 0:
+            raise RuntimeError(
+                "Optimizer hyperparameter transition requires a loaded checkpoint, but the "
+                "trainer is at step 0"
+            )
+        if self.expected_step is not None and self.trainer.global_step != self.expected_step:
             raise RuntimeError(
                 "Optimizer hyperparameter transition expected checkpoint step "
                 f"{self.expected_step}, got {self.trainer.global_step}"
@@ -125,7 +133,7 @@ class OptimizerHyperparameterTransitionCallback(Callback):
         log.info(
             "Transitioned optimizer hyperparameters at step %d: LR %.8g -> %.8g; WD %.8g "
             "-> %.8g across %d regularized groups; Adam moments and step counters unchanged",
-            self.expected_step,
+            self.trainer.global_step,
             self.source_lr,
             self.target_lr,
             self.source_weight_decay,
