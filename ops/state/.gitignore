@@ -1,2 +1,4 @@
 cache/
 *.lock
+# live state moved to /accounts/projects/berkeleynlp/prasann/ops_state (own git repo)
+*.jsonl

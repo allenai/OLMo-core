@@ -32,10 +32,13 @@ def _warn(what: str, err: BaseException) -> None:
 
 
 def state_dir() -> Path:
-    """``$OPS_STATE_DIR``, else the state dir of the checkout behind :data:`STABLE_OPS`, else this one's."""
+    """``$OPS_STATE_DIR``, else the shared live state dir (:data:`paths.DEFAULT_STATE_DIR`), else the
+    state dir of the checkout behind :data:`STABLE_OPS`, else this checkout's."""
     env = os.environ.get("OPS_STATE_DIR")
     if env:
         return Path(env)
+    if paths.DEFAULT_STATE_DIR.is_dir():
+        return paths.DEFAULT_STATE_DIR
     try:
         real = Path(os.path.realpath(STABLE_OPS))
         if real.is_file():

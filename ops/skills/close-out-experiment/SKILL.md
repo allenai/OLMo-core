@@ -24,10 +24,13 @@ out before moving on.
 2. `$OPS exp index` (regenerates `ops/experiments/INDEX.md`); `$OPS exp check` must be clean.
 3. **Runs:** `$OPS status --experiment E`, then `$OPS update RUN final_state=done|failed|cancelled`
    for each finished run (or `$OPS status --record`). Register any launch that is missing.
-4. **Clean up:** stop the Monitor tasks, background shells and watcher loops you started; leave
+4. **Snapshot live state:** `git -C /accounts/projects/berkeleynlp/prasann/ops_state add -A && git -C
+   /accounts/projects/berkeleynlp/prasann/ops_state commit -qm "snapshot: <experiment>"` (runs + results live
+   there, outside any code checkout; skip if nothing changed).
+5. **Clean up:** stop the Monitor tasks, background shells and watcher loops you started; leave
    real jobs running and say which are still live.
-5. **Memory:** only durable rules (a new trap, a directive from Prasann, an env fact). **Never put
+6. **Memory:** only durable rules (a new trap, a directive from Prasann, an env fact). **Never put
    experiment state, numbers or "in flight" lists in memory**: those go in STATUS.md. If a memory file
    is now covered by STATUS.md, add `superseded_by: ops/experiments/E/STATUS.md` to its description
    and drop it from the MEMORY.md index.
-6. Tell the user: what changed, what is still running, the next step.
+7. Tell the user: what changed, what is still running, the next step.

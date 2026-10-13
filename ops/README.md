@@ -20,9 +20,9 @@ those one home:
 
 | question | answer lives in | command |
 |---|---|---|
-| what did we launch, where, with which commit? | `state/runs.jsonl` | `ops register`, `ops update`, `ops runs` |
+| what did we launch, where, with which commit? | `~/ops_state/runs.jsonl` | `ops register`, `ops update`, `ops runs` |
 | is it running / stuck / done? | live query of Beaker, slurm, Lambda | `ops status`, `ops stall ID` |
-| what did it score? | `state/results.jsonl` | `ops result add/check/show` |
+| what did it score? | `~/ops_state/results.jsonl` | `ops result add/check/show` |
 | where does experiment X stand, what's next? | `experiments/<X>/STATUS.md` | `ops exp show X`, `ops exp index` |
 | wrap a local command so a stall can't go unnoticed | — | `ops guard -- CMD` |
 
@@ -55,7 +55,7 @@ $EDITOR ops/experiments/ds64/STATUS.md && $OPS exp index
 
 ## Commands
 
-### Run registry — `state/runs.jsonl`
+### Run registry — `~/ops_state/runs.jsonl`
 - `ops register --run-id X --experiment E --cluster beaker|slurm|lambda|local [--kind train|eval|data|other]
   [--job-id ..] [--parent-run ..] [--arm ..] [--task ..] [--node ..] [--ckpt-path ..] [--log-path ..]
   [--wandb-url ..] [--expected-minutes N] [--git REPO_DIR] [--notes ..]` — append a launch event.
@@ -85,7 +85,7 @@ Writers hold an `flock`, so concurrent sessions can register safely.
   them from the login side.
 - Claude Code hooks for these checks live in `hooks/` (see `INCORPORATE.d/` for how they are wired).
 
-### Results — `state/results.jsonl`
+### Results — `~/ops_state/results.jsonl`
 Each eval pass is its own run (`kind=eval`, `parent_run` = the training run): a result row's `run_id`
 is the eval pass and `train_run` the training run it scores (filled from the registry; older rows
 get it on read). Eval pass ids: the launcher's natural name (Beaker `ev-<task>-<run>`), else
@@ -164,8 +164,9 @@ ops/
   hooks/                  Claude Code PreToolUse hooks
   skills/<name>/SKILL.md
   experiments/<name>/STATUS.md, experiments/INDEX.md (generated)
-  state/runs.jsonl, state/results.jsonl   tracked, append-only
-  state/cache/            gitignored
+  state/                  fallback only — LIVE runs.jsonl / results.jsonl live in
+                          /accounts/projects/berkeleynlp/prasann/ops_state (own git repo,
+                          outside any checkout; OPS_STATE_DIR overrides)
   tests/                  stdlib unittest; whole suite < 10 s
   INCORPORATE.d/          repo edits to apply when ops/ is merged
 ```
