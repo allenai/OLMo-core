@@ -28,9 +28,9 @@ code style, docstrings, test conventions and Docker/Beaker image mechanics:
 **CTC evals:** the current path is olmo-eval `scripts/ctc_suite/launch_ctc_suite.py` (tokenizer
 `Qwen/Qwen3.5-0.8B`; `--doc-markers` for marker-trained checkpoints; r256k = YaRN x2 + 131,072-token
 chunked prefill **by default**, else left-truncated) — see `records/ctc-fast-suite-eval.md` and the
-`run-evals` skill. The script exists only on olmo-eval branch `prasann/ctc-suite-launcher`, and PR #400
-(`prasann/ctc-absence-low-ctc`) carries grader commits not in it: **which olmo-eval branch is
-canonical is still to be confirmed by Prasann** (`ops exp show ctc_suite_eval`). OLMo-core's legacy
+`run-evals` skill. **Canonical olmo-eval = `main`** (PR #400 merged 2026-10-12); the launcher +
+fixes are in PR #467 (`prasann/ctc-suite-launcher-on-main`) — use that branch until it merges, then
+`main`. The old `prasann/ctc-suite*` branches are superseded. OLMo-core's legacy
 native launcher (`recipes/eval/legacy_native/`) remains only for the singletask/xlong ladders.
 
 ## Repo layout

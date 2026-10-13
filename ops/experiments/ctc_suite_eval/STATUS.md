@@ -2,8 +2,8 @@
 experiment: ctc_suite_eval
 title: CTC-suite eval pipeline (infra) — olmo-eval launch_ctc_suite.py, 22 rows + 2 OOD, 2k-256k, Qwen3.5 checkpoints on Beaker
 status: active
-updated: 2026-10-12
-branch: prasann/ctc-suite-launcher
+updated: 2026-10-13
+branch: olmo-eval main (PR #400 merged) + PR #467 prasann/ctc-suite-launcher-on-main
 launcher: scripts/ctc_suite/launch_ctc_suite.py
 records:
   - records/ctc-fast-suite-eval.md
@@ -14,7 +14,7 @@ results:
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_fast_suite/results/bench_xlong.json
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_final_suite/suite_table.json
 wandb_group:
-next_step: Prasann to pick the canonical olmo-eval branch. Either merge PR #400's grader commits (origin/prasann/ctc-absence-low-ctc @8d7dec9b) into prasann/ctc-suite-launcher, or declare the launcher branch canonical and drop the divergent ones.
+next_step: Merge olmo-eval PR #467 (launcher + hashed prompt/marker/shard knobs + gold-pair canonicalisation, ported onto main), then launch from main; upload the two OOD ladders to enable --rows all.
 ---
 
 # ctc_suite_eval
@@ -84,6 +84,6 @@ PR #400 and flopdrop_clean all grade with the same code.
   - the PR-#400-only commit list;
   - the launcher manifests under `olmo-eval/scripts/ctc_suite/launches/`. These record `olmo_eval_branch: prasann/ctc-suite-launcher` and a 2026-10-12 `setA-256k-default-yarn-SMOKE` with `yarn_rungs: r256k`.
 - Verified: `debug/ctc_fast_suite/results/bench_{2k32k,xlong}.json` exist. The fitted rates were NOT recomputed. They are quoted from the record.
-- UNVERIFIED — confirm with Prasann: which olmo-eval branch is canonical. Evidence favours `prasann/ctc-suite-launcher` for launching, but PR #400 holds newer grader and hash fixes that the launcher lacks.
+- RESOLVED 2026-10-13 (Prasann): PR #400 / olmo-eval `main` is canonical; the 25 launcher-only commits were ported onto main as PR #467 (`prasann/ctc-suite-launcher-on-main`). Superseded note follows: Evidence favours `prasann/ctc-suite-launcher` for launching, but PR #400 holds newer grader and hash fixes that the launcher lacks.
 - UNVERIFIED: the "YaRN and `--fit-window` agree within noise on setA" claim. The result JSONs are on the weka results root and were not read.
 - Conflict: the record (2026-09-21) gives the hybridish sweep as 0.23B/0.29B models. The hybridish branch README says the trained arms are 1.4B (4:1) and 2.1B (7:1). UNVERIFIED — confirm with Prasann which models the throughput numbers came from.
