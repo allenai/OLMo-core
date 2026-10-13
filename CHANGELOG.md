@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `NumpyFSLSubsetDataset` and `NumpyFSLDynamicRepackedDataset`, built from `NumpyFSLDatasetConfig.subset_manifest` (an `olmo-token-subset-v1` manifest of exact instance ranges) and `dynamic_repacking`, which deterministically repacks the same documents into new fixed-length instances every epoch after the first ("REPACK" for repeated-data training). Ported from the repeated-data paper branch (`sewonm/icsl` on `allenai/EMO`).
+- Added `shuffle`, `reshuffle_each_epoch`, `batch_shuffling`, and `restore_data_order_from_state` to `NumpyDataLoaderConfig` / `NumpyDataLoaderBase` so a repeated-data run can use a fixed epoch-1 order, shuffle only intact global batches, or reshuffle instances every epoch (the default), with the mode recorded in the data loader state.
+- Added `OptimizerHyperparameterTransitionCallback` for moving a loaded checkpoint to a new LR / weight-decay coordinate without touching Adam moments.
+- Added `ConfigSaverCallback.validate_checkpoint_config` and a `Callback.pre_checkpoint_loaded()` hook to abort a checkpoint load when the saved model / train-module config does not match the command's.
+- Added `TrainerConfig.prefer_explicit_load_path` and `reset_data_loader_state_on_load_path`, plus `TrainModule.validate_load_path_checkpoint()` (rejects fully-decayed zero-LR checkpoints), for deliberately chaining runs from explicit checkpoints.
+- Added the DCLM document-split / pool-manifest tooling under `src/scripts/data/repeated_data/` and the paper's pool manifests under `src/olmo_core/data/subsets/`.
+- The in-loop `LMEvaluatorCallbackConfig` now accepts any fixed-sequence-length numpy dataset, not only `NumpyPaddedFSLDataset`, so a subset-manifest validation set can be used.
+
 - Added Ulysses context parallelism for `KimiDeltaAttention` (`apply_cp`), mirroring the `GatedDeltaNet` all-to-all head/sequence exchange, with the in-kernel gate parameters sliced to each rank's heads.
 - Added a Ulysses context-parallel parity test for the recurrent mixers (`GatedDeltaNet`, `KimiDeltaAttention`) that compares per-stage activations, outputs, and gradients against a single-process reference, including packed documents that straddle the CP split, plus a model-level gradient-parity test for `gdn` and `kda` under Ulysses CP.
 

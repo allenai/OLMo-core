@@ -23,6 +23,7 @@ from .list_checkpointer import ListCheckpointerCallback
 from .metric_saver import MetricSaverCallback
 from .model_merger import ModelMergeCallback
 from .monkey_patcher import MonkeyPatcherCallback
+from .optimizer_transition import OptimizerHyperparameterTransitionCallback
 from .profiler import (
     NvidiaProfilerCallback,
     ProfilerCallback,
@@ -66,6 +67,7 @@ __all__ = [
     "MetricSaverCallback",
     "ModelMergeCallback",
     "ListCheckpointerCallback",
+    "OptimizerHyperparameterTransitionCallback",
 ]
 
 __doc__ += "\n"

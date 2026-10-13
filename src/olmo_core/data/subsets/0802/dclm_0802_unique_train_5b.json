@@ -1,0 +1,54 @@
+{
+  "format": "olmo-token-subset-v1",
+  "created_at": "2026-08-02T18:09:12.835541+00:00",
+  "name": "unique_train_5b",
+  "source": {
+    "mix": "dclm-full",
+    "source_mix_file": "OLMoE-mix-0824.txt",
+    "source_mix_sha256": "b784bb2a3867ac4ecb0e54bdbab87bfefd64808b4b5ea649bb71d07f0b9e0a0f",
+    "label": "dclm",
+    "tokenizer": "allenai/dolma2-tokenizer",
+    "dtype": "uint32",
+    "original_num_source_paths": 940,
+    "original_available_tokens": 3684671294617,
+    "original_documents": 2949254346
+  },
+  "selection": {
+    "method": "global-sha256-document-order-prefix",
+    "identity": [
+      "canonical_shard_path",
+      "zero_based_metadata_row_index"
+    ],
+    "domain": "dclm-train-unique-sample-v1",
+    "seed": 2,
+    "requested_tokens": 5000000000,
+    "sequence_length": 4096,
+    "selected_documents": 4002478,
+    "selected_real_document_tokens": 5000000058,
+    "padding_eos_tokens": 3804614,
+    "selected_tokens": 5003804672,
+    "selected_instances": 1221632,
+    "boundary_key": "0058f3996b37610a37d072c0525bd26b4818296dd8191d15ee962f25191e87ad"
+  },
+  "materialized": {
+    "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_unique_train_5b_uint32.npy",
+    "token_sha256": "2bbe15169d04dd873945fdcbc2611303dc7912ea69af59cdc46717340a79a987",
+    "document_metadata_path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_unique_train_5b_uint32.csv.gz",
+    "document_metadata_sha256": "3c785dc95edad4df63ecf172564e6dbf66493fa30371a0577c85e8ff83560de3"
+  },
+  "source_document_ledger": {
+    "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_unique_train_5b.documents.csv.gz",
+    "sha256": "88653f989e5356edaec5855cb5b5c0e7199c969e7563e047b5756c6dc754628b",
+    "documents": 4002478
+  },
+  "entries_sha256": "6321f5e2fbac5e09a0320542cb3b93c0070d3bfe2b2c8ced06a699d27052b1f3",
+  "entries": [
+    {
+      "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_unique_train_5b_uint32.npy",
+      "start_instance": 0,
+      "num_instances": 1221632,
+      "available_instances": 1221632,
+      "available_tokens": 5003804672
+    }
+  ]
+}

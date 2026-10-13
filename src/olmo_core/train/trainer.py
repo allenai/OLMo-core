@@ -210,6 +210,21 @@ class Trainer:
     if it exists in the checkpoint, but will not error if it doesn't.
     """
 
+    reset_data_loader_state_on_load_path: bool = False
+    """
+    When loading from :data:`load_path`, restore trainer progress but initialize the configured
+    data loader at batch zero. This must only be used with an audited disjoint continuation
+    dataset. It does not apply when recovering from :data:`save_folder`.
+    """
+
+    prefer_explicit_load_path: bool = False
+    """
+    Try :data:`load_path` before automatic recovery from :data:`save_folder`.
+
+    This narrow opt-in is intended for a deliberate continuation from an older checkpoint in
+    the same canonical output directory. The default preserves normal latest-checkpoint recovery.
+    """
+
     metrics_collect_interval: int = 5
     """
     How often (in steps) to collect, reduce, and pass on metrics to the
@@ -684,6 +699,59 @@ class Trainer:
         # on another rank, leading to a deadlock.
         self.run_bookkeeping_op(self._check_if_canceled)
 
+    def _load_initial_checkpoint(self) -> None:
+        """Load the checkpoint selected by the configured resume policy."""
+        if (
+            self.no_checkpoints
+            or self.checkpoint_loaded
+            or self.load_strategy == LoadStrategy.never
+        ):
+            return
+
+        # In explicit-preference mode ``load_path`` is authoritative. Load it directly so an
+        # explicit checkpoint directory cannot be treated as an optional container lookup and
+        # silently replaced by a newer endpoint in ``save_folder``.
+        if self.prefer_explicit_load_path and self.load_path is not None:
+            self.load_checkpoint(
+                self.load_path,
+                reset_data_loader_state=self.reset_data_loader_state_on_load_path,
+            )
+            self.train_module.validate_load_path_checkpoint()
+
+        if not self.checkpoint_loaded:
+            # Try loading from the save folder first. The save folder is used for continuing
+            # existing runs that failed or were preempted, so we always load trainer state and
+            # optimizer state.
+            self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            )
+
+        # Then fallback to the load path, if provided.
+        if self.load_path is not None:
+            if not self.checkpoint_loaded:
+                loaded_from_load_path = self.maybe_load_checkpoint(
+                    self.load_path,
+                    reset_data_loader_state=self.reset_data_loader_state_on_load_path,
+                )
+                if loaded_from_load_path:
+                    self.train_module.validate_load_path_checkpoint()
+            elif not self.prefer_explicit_load_path:
+                log.warning(
+                    f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
+                )
+
+        if not self.checkpoint_loaded:
+            if self.load_strategy == LoadStrategy.always:
+                raise FileNotFoundError(
+                    f"No checkpoint found in save folder ('{self.save_folder}') or "
+                    f"load path ('{self.load_path}')"
+                )
+            else:
+                log.warning(
+                    f"No checkpoint found in save folder ('{self.save_folder}') or "
+                    f"load path ('{self.load_path}'), will train from scratch..."
+                )
+
     def fit(self):
         """
         Fit the model, potentially loading a checkpoint first depending on the
@@ -694,38 +762,7 @@ class Trainer:
         self._canceling_rank = None
 
         # Maybe load a checkpoint.
-        if (
-            not self.no_checkpoints
-            and not self.checkpoint_loaded
-            and self.load_strategy != LoadStrategy.never
-        ):
-            # Try loading from the save folder first. The save folder is used for continuing
-            # existing runs that failed or were preempted, so we always load trainer state and
-            # optimizer state.
-            self.maybe_load_checkpoint(
-                self.save_folder, load_trainer_state=True, load_optim_state=True
-            )
-
-            # Then fallback to the load path, if provided.
-            if self.load_path is not None:
-                if not self.checkpoint_loaded:
-                    self.maybe_load_checkpoint(self.load_path)
-                else:
-                    log.warning(
-                        f"Ignoring load path ('{self.load_path}') since checkpoint was found in save folder"
-                    )
-
-            if not self.checkpoint_loaded:
-                if self.load_strategy == LoadStrategy.always:
-                    raise FileNotFoundError(
-                        f"No checkpoint found in save folder ('{self.save_folder}') or "
-                        f"load path ('{self.load_path}')"
-                    )
-                else:
-                    log.warning(
-                        f"No checkpoint found in save folder ('{self.save_folder}') or "
-                        f"load path ('{self.load_path}'), will train from scratch..."
-                    )
+        self._load_initial_checkpoint()
 
         barrier()
 
@@ -999,9 +1036,15 @@ class Trainer:
             "callbacks": {k: cb.state_dict() for k, cb in self.callbacks.items()},
         }
 
-    def load_state_dict(self, state_dict: TrainerStateDict):
+    def load_state_dict(
+        self, state_dict: TrainerStateDict, *, reset_data_loader_state: bool = False
+    ):
         """
         Load trainer state (not model or optimizer state).
+
+        :param reset_data_loader_state: Restore global training progress, RNG, and callback
+            state while leaving the newly built data loader at its initial position. This is
+            intended for a checkpoint continuation onto a provably disjoint dataset.
         """
         # For backwards compatibility.
         if "data_loader" not in state_dict:
@@ -1022,7 +1065,13 @@ class Trainer:
                     "epoch": state_dict["epoch"],
                 }
 
-        self.data_loader.load_state_dict(state_dict["data_loader"])
+        if reset_data_loader_state:
+            log.warning(
+                "Resetting data loader state while restoring the remaining trainer state; "
+                "the configured dataset must be a fresh, disjoint continuation dataset"
+            )
+        else:
+            self.data_loader.load_state_dict(state_dict["data_loader"])
         self.global_step = state_dict["global_step"]
         self.global_train_tokens_seen = state_dict["global_train_tokens_seen"]
         self.global_train_petaflops = state_dict.get("global_train_petaflops", 0.0)
@@ -1053,6 +1102,7 @@ class Trainer:
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
         reset_optimizer_states_on_load: Optional[bool] = None,
+        reset_data_loader_state: bool = False,
     ):
         """
         Load a checkpoint.
@@ -1067,11 +1117,18 @@ class Trainer:
             this checkpoint load. When left ``None``, :meth:`Checkpointer.load` defaults it to the
             train module's ``reset_optimizer_states_on_resume`` setting on an actual resume (i.e.
             only when trainer state is found in the checkpoint).
+        :param reset_data_loader_state: If trainer state is loaded, restore all of it except
+            the data loader position. The newly configured dataset then starts from its first
+            batch while global step, token count, scheduler progress, RNG, and callbacks resume.
         """
         load_trainer_state = (
             self.load_trainer_state if load_trainer_state is None else load_trainer_state
         )
         load_optim_state = self.load_optim_state if load_optim_state is None else load_optim_state
+        if reset_data_loader_state and load_trainer_state is False:
+            raise ValueError(
+                "reset_data_loader_state=True requires load_trainer_state=True or None"
+            )
         if dir == self.save_folder:
             if load_trainer_state is False:
                 log.warning(
@@ -1104,6 +1161,9 @@ class Trainer:
         dir = dir_to_scatter
 
         log.info(f"Loading checkpoint from '{dir}'...")
+        for callback in self._iter_callbacks():
+            callback.pre_checkpoint_loaded(dir)
+
         load_start = time.perf_counter()
         trainer_state = self.checkpointer.load(
             dir,
@@ -1113,7 +1173,10 @@ class Trainer:
             reset_optimizer_states_on_load=reset_optimizer_states_on_load,
         )
         if trainer_state is not None:
-            self.load_state_dict(cast(TrainerStateDict, trainer_state))
+            self.load_state_dict(
+                cast(TrainerStateDict, trainer_state),
+                reset_data_loader_state=reset_data_loader_state,
+            )
 
         self.record_metric(
             "checkpoint/load_duration_s",
@@ -1134,6 +1197,7 @@ class Trainer:
         load_trainer_state: Optional[bool] = None,
         load_optim_state: Optional[bool] = None,
         reset_optimizer_states_on_load: Optional[bool] = None,
+        reset_data_loader_state: bool = False,
     ) -> bool:
         """
         Like :meth:`load_checkpoint()` but is a no-op if there is no checkpoint in the ``dir`` provided.
@@ -1155,6 +1219,7 @@ class Trainer:
                 load_trainer_state=load_trainer_state,
                 load_optim_state=load_optim_state,
                 reset_optimizer_states_on_load=reset_optimizer_states_on_load,
+                reset_data_loader_state=reset_data_loader_state,
             )
             assert self.checkpoint_loaded
             return True

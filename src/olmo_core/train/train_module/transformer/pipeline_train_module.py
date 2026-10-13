@@ -50,7 +50,12 @@ from olmo_core.utils import (
 )
 
 from ...common import MetricMergeStrategy, ReduceType
-from ..train_module import EvalBatchSizeUnit, EvalBatchSpec, TrainModule
+from ..train_module import (
+    EvalBatchSizeUnit,
+    EvalBatchSpec,
+    TrainModule,
+    assert_optimizer_lrs_nonzero,
+)
 from .common import parallelize_model
 from .config import (
     TransformerActivationCheckpointingConfig,
@@ -447,6 +452,10 @@ class TransformerPipelineTrainModule(TrainModule):
                     options=self.state_dict_load_opts,
                 )
                 gc_cuda()
+
+    def validate_load_path_checkpoint(self) -> None:
+        for optim in self.optimizers:
+            assert_optimizer_lrs_nonzero(optim)
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         # Set model to train mode if it isn't already.

@@ -79,7 +79,7 @@ from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, log_once, move_to_device
 
 from ...common import MetricMergeStrategy, ReduceType
-from ..train_module import EvalBatchSpec, TrainModule
+from ..train_module import EvalBatchSpec, TrainModule, assert_optimizer_lrs_nonzero
 from .config import (
     TransformerActivationCheckpointingConfig,
     TransformerContextParallelConfig,
@@ -1550,6 +1550,10 @@ class OLMoDDPTrainModule(TrainModule):
             )
 
     @nvtx.annotate("train_batch")
+    def validate_load_path_checkpoint(self) -> None:
+        if self.optim is not None:
+            assert_optimizer_lrs_nonzero(self.optim)
+
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self._require_optimizer()
         if dry_run:

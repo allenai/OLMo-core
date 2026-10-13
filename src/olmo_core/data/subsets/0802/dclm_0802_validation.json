@@ -1,0 +1,54 @@
+{
+  "format": "olmo-token-subset-v1",
+  "created_at": "2026-08-02T16:25:11.183930+00:00",
+  "name": "validation",
+  "source": {
+    "mix": "dclm-full",
+    "source_mix_file": "OLMoE-mix-0824.txt",
+    "source_mix_sha256": "b784bb2a3867ac4ecb0e54bdbab87bfefd64808b4b5ea649bb71d07f0b9e0a0f",
+    "label": "dclm",
+    "tokenizer": "allenai/dolma2-tokenizer",
+    "dtype": "uint32",
+    "original_num_source_paths": 940,
+    "original_available_tokens": 3684671294617,
+    "original_documents": 2949254346
+  },
+  "selection": {
+    "method": "global-sha256-document-order-prefix",
+    "identity": [
+      "canonical_shard_path",
+      "zero_based_metadata_row_index"
+    ],
+    "domain": "dclm-document-partition-v1",
+    "seed": 0,
+    "requested_tokens": 100000000,
+    "sequence_length": 4096,
+    "selected_documents": 79690,
+    "selected_real_document_tokens": 100000118,
+    "padding_eos_tokens": 3722,
+    "selected_tokens": 100003840,
+    "selected_instances": 24415,
+    "boundary_key": "0001c76487ba7d552658009d93f0f5db1b198a82084109e777fb537a89135220"
+  },
+  "materialized": {
+    "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_validation_uint32.npy",
+    "token_sha256": "dc565a4381dea3831b7678239cf30ee88483316e3bc7d3c260d236c4fb0a35c3",
+    "document_metadata_path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_validation_uint32.csv.gz",
+    "document_metadata_sha256": "a7d78427eedde0960547660cdd6c92adfdcb245957674835d3b65403b4066ad5"
+  },
+  "source_document_ledger": {
+    "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_validation.documents.csv.gz",
+    "sha256": "9a25f3959c447118e6fa63e56c772a513c9b10513ecc1df4bf55771ef0b451b4",
+    "documents": 79690
+  },
+  "entries_sha256": "b2ea89d38d815f12d6af4c2a3a116f20f7a404c2f1196ff4c21c5db10a16781b",
+  "entries": [
+    {
+      "path": "../sewonm/icsl/data/dclm_0802_v2_0ee8c2d9_retry4/dclm_0802_validation_uint32.npy",
+      "start_instance": 0,
+      "num_instances": 24415,
+      "available_instances": 24415,
+      "available_tokens": 100003840
+    }
+  ]
+}

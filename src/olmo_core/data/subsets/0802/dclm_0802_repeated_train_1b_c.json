@@ -1,0 +1,54 @@
+{
+  "format": "olmo-token-subset-v1",
+  "created_at": "2026-08-03T02:18:54.241986+00:00",
+  "name": "repeated_train_1b_c",
+  "source": {
+    "mix": "dclm-full",
+    "source_mix_file": "OLMoE-mix-0824.txt",
+    "source_mix_sha256": "b784bb2a3867ac4ecb0e54bdbab87bfefd64808b4b5ea649bb71d07f0b9e0a0f",
+    "label": "dclm",
+    "tokenizer": "allenai/dolma2-tokenizer",
+    "dtype": "uint32",
+    "original_num_source_paths": 940,
+    "original_available_tokens": 3684671294617,
+    "original_documents": 2949254346
+  },
+  "selection": {
+    "method": "global-sha256-document-order-prefix",
+    "identity": [
+      "canonical_shard_path",
+      "zero_based_metadata_row_index"
+    ],
+    "domain": "dclm-train-repeated-sample-v1",
+    "seed": 4,
+    "requested_tokens": 1000000000,
+    "sequence_length": 4096,
+    "selected_documents": 798225,
+    "selected_real_document_tokens": 1000003322,
+    "padding_eos_tokens": 2435334,
+    "selected_tokens": 1002438656,
+    "selected_instances": 244736,
+    "boundary_key": "0011bf904f47472cd152f8eecd09791cc1ad2ee502be6e9bd0b35d1117b8071c"
+  },
+  "materialized": {
+    "path": "../sewonm/icsl/data/dclm_0802_pool_variants_50f2499c_jupiter1/dclm_0802_repeated_train_1b_c_uint32.npy",
+    "token_sha256": "21d409858de90f7b75861daf626d5a0f12c59db4bf8180844d4f951b3cc7c394",
+    "document_metadata_path": "../sewonm/icsl/data/dclm_0802_pool_variants_50f2499c_jupiter1/dclm_0802_repeated_train_1b_c_uint32.csv.gz",
+    "document_metadata_sha256": "0558cc99111a698a9a1a7afb52bec4fb12f9864ed4f205bbf002f695d5f9fc39"
+  },
+  "source_document_ledger": {
+    "path": "../sewonm/icsl/data/dclm_0802_pool_variants_50f2499c_jupiter1/dclm_0802_repeated_train_1b_c.documents.csv.gz",
+    "sha256": "cec59c58cf4c6a97f4db03498806fd580664e95bc395d9c4c24484de8997a38f",
+    "documents": 798225
+  },
+  "entries_sha256": "09c4aa114caa6155f11041399ee99e6a5caaa9c910b330baaf19415fe0d95f33",
+  "entries": [
+    {
+      "path": "../sewonm/icsl/data/dclm_0802_pool_variants_50f2499c_jupiter1/dclm_0802_repeated_train_1b_c_uint32.npy",
+      "start_instance": 0,
+      "num_instances": 244736,
+      "available_instances": 244736,
+      "available_tokens": 1002438656
+    }
+  ]
+}

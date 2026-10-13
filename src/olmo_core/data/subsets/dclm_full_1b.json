@@ -1,0 +1,59 @@
+{
+  "format": "olmo-token-subset-v1",
+  "created_at": "2026-08-01T18:34:23.812364+00:00",
+  "source": {
+    "mix": "dclm-full",
+    "source_mix_file": "OLMoE-mix-0824.txt",
+    "source_mix_sha256": "b784bb2a3867ac4ecb0e54bdbab87bfefd64808b4b5ea649bb71d07f0b9e0a0f",
+    "label": "dclm",
+    "tokenizer": "allenai/dolma2-tokenizer",
+    "dtype": "uint32",
+    "data_root_hint": "/weka/oe-training-default/ai2-llm",
+    "original_data_root": "/weka/oe-training-default/ai2-llm",
+    "original_num_source_paths": 940,
+    "original_available_tokens": 3684671294617
+  },
+  "selection": {
+    "method": "proportional-shard-uniform-token-anchor-document-clusters",
+    "seed": 0,
+    "requested_tokens": 1000000000,
+    "alignment_tokens": 4194304,
+    "sequence_length": 4096,
+    "selected_tokens": 1002438656,
+    "selected_instances": 244736,
+    "selected_real_document_tokens": 1002438649,
+    "padding_eos_tokens": 7,
+    "selected_documents": 810130,
+    "num_source_paths": 1,
+    "candidate_multiplier": 2.0,
+    "allocation": "largest-remainder proportional to source shard token count"
+  },
+  "materialized": {
+    "path": "../sewonm/icsl/data/dclm_full_uniform_documents_seed0_1b_uint32.npy",
+    "token_sha256": "c577eca4c365a255425589d62c18d285757e947a805a0ab1c35d0208d3bd4af6",
+    "document_metadata_path": "../sewonm/icsl/data/dclm_full_uniform_documents_seed0_1b_uint32.csv.gz",
+    "document_metadata_sha256": "2a1a098e6ae4a02b614af309b079f55c43d57a9d638b142dfe5a12dc232303f2"
+  },
+  "entries_sha256": "144fde3553e5257b5d533f88732214d72ce63d21d6ff50a2ba5075992b605034",
+  "entries": [
+    {
+      "path": "../sewonm/icsl/data/dclm_full_uniform_documents_seed0_1b_uint32.npy",
+      "start_instance": 0,
+      "num_instances": 244736,
+      "available_instances": 244736,
+      "available_tokens": 1002438656
+    }
+  ],
+  "shard_audit": {
+    "path": "../sewonm/icsl/data/dclm_full_uniform_documents_seed0_1b_uint32.shards.json.gz",
+    "sha256": "1aa14b6ef28e4662fbbbdd77e976c8d74e9dc487f2dd3f27dd7aceb846d2c53a",
+    "contents_sha256": "88144aeeeea9f0d5eb609c28e262777be632d60ec9badccb5d6bd39551619344",
+    "num_shards": 940,
+    "sum_available_tokens": 3684671294617,
+    "sum_token_quotas": 1002438656,
+    "sum_selected_document_tokens": 1002438649,
+    "max_absolute_token_deviation_from_quota": 4272,
+    "mean_absolute_token_deviation_from_quota": 31.19468085106383,
+    "max_relative_deviation_from_quota": 0.0036560536700462913
+  }
+}

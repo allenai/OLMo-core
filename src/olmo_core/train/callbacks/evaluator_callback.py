@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from olmo_core.data import (
     NumpyDatasetConfig,
-    NumpyPaddedFSLDataset,
+    NumpyFSLDatasetBase,
     NumpyVSLDatasetConfig,
     TextDataLoaderBase,
     TokenizerConfig,
@@ -272,9 +272,9 @@ class LMEvaluatorCallbackConfig(CallbackConfig):
             raise NotImplementedError(batch_spec.batch_size_unit)
 
         dataset = self.eval_dataset.build()
-        if not isinstance(dataset, NumpyPaddedFSLDataset):
+        if not isinstance(dataset, NumpyFSLDatasetBase):
             raise OLMoConfigurationError(
-                f"Expected a padded FSL dataset, got '{dataset.__class__.__name__}' instead"
+                f"Expected an FSL dataset, got '{dataset.__class__.__name__}' instead"
             )
 
         if not isinstance(trainer.data_loader, TextDataLoaderBase):

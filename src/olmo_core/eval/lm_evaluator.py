@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterable, Optional, Sequence, Set
 import torch
 import torch.distributed as dist
 
-from ..data import DataCollator, NumpyFSLDataLoader, NumpyPaddedFSLDataset
+from ..data import DataCollator, NumpyFSLDataLoader, NumpyFSLDatasetBase
 from ..distributed.utils import get_fs_local_rank, get_rank, get_world_size
 from ..exceptions import OLMoConfigurationError
 from ..utils import get_default_device
@@ -41,7 +41,7 @@ class LMEvaluator(Evaluator):
     @classmethod
     def from_numpy_dataset(
         cls,
-        dataset: NumpyPaddedFSLDataset,
+        dataset: NumpyFSLDatasetBase,
         *,
         name: str,
         global_batch_size: int,
@@ -55,7 +55,9 @@ class LMEvaluator(Evaluator):
         deterministic: bool = True,
     ) -> "LMEvaluator":
         """
-        Initialize an :class:`LMEvaluator` from a :class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset`.
+        Initialize an :class:`LMEvaluator` from a fixed-sequence-length numpy dataset, e.g. a
+        :class:`~olmo_core.data.numpy_dataset.NumpyPaddedFSLDataset` or a
+        :class:`~olmo_core.data.numpy_dataset.NumpyFSLSubsetDataset`.
         """
         labels: Set[str] = set()
         for path, metadata in zip(dataset.paths, dataset.metadata):

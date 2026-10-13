@@ -24,6 +24,27 @@ if TYPE_CHECKING:
     from ..trainer import Trainer
 
 
+def assert_optimizer_lrs_nonzero(optim: Optimizer) -> None:
+    """
+    Reject an optimizer checkpoint whose current LR has reached zero after decay.
+
+    :raises OLMoConfigurationError: If any parameter group has a zero or missing LR.
+    """
+    for group_idx, group in enumerate(optim.param_groups):
+        lr = group.get("lr")
+        if isinstance(lr, torch.Tensor):
+            if lr.numel() != 1:
+                raise OLMoConfigurationError(
+                    f"Loaded checkpoint optimizer group {group_idx} has a non-scalar LR"
+                )
+            lr = lr.detach().item()
+        if lr is None or float(lr) == 0.0:
+            raise OLMoConfigurationError(
+                f"Loaded checkpoint optimizer group {group_idx} has LR {lr!r}. "
+                "load_path must point to a pre-decay checkpoint with non-zero LR."
+            )
+
+
 class EvalBatchSizeUnit(StrEnum):
     """
     The different units for defining the size for eval batches.
@@ -126,6 +147,12 @@ class TrainModule(Stateful, metaclass=ABCMeta):
         """
         Runs before the training loop starts and right after ``pre_train()`` has been called on all
         callbacks.
+        """
+
+    def validate_load_path_checkpoint(self) -> None:
+        """
+        Validate state restored from an explicit trainer ``load_path``, e.g. that the loaded
+        optimizer is not at a fully-decayed (zero) learning rate. The default is a no-op.
         """
 
     @abstractmethod
@@ -312,6 +339,9 @@ class BasicTrainModule(TrainModule):
                 state_dict["optim"],
                 options=dist_cp_sd.StateDictOptions(strict=True),
             )
+
+    def validate_load_path_checkpoint(self) -> None:
+        assert_optimizer_lrs_nonzero(self.optim)
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
         self.model.train()

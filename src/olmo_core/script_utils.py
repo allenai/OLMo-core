@@ -154,9 +154,21 @@ def main(
             callback.config = config.as_config_dict()
             break
 
-    # If we have a load path set and there is no checkpoint in the save folder, load the
-    # checkpoint from the load path.
-    if not trainer.no_checkpoints and not trainer.maybe_load_checkpoint() and config.load_path:
+    # In explicit-preference mode checkpoint selection belongs to ``Trainer.fit()``. Calling
+    # ``maybe_load_checkpoint()`` here first would recover the newest save-folder endpoint and
+    # mark a checkpoint as loaded before the trainer can honor the exact explicit path.
+    defer_checkpoint_selection = bool(
+        trainer.prefer_explicit_load_path and trainer.load_path is not None
+    )
+
+    # Otherwise preserve the legacy behavior: recover the save folder first, then use the
+    # configured load path only when no save-folder checkpoint exists.
+    if (
+        not trainer.no_checkpoints
+        and not defer_checkpoint_selection
+        and not trainer.maybe_load_checkpoint()
+        and config.load_path
+    ):
         log.info(
             f"Loading checkpoint from {config.load_path} since no checkpoints were found in the save folder..."
         )

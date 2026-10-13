@@ -74,6 +74,14 @@ class Callback(Stateful):
         """
         pass
 
+    def pre_checkpoint_loaded(self, path: PathOrStr):
+        """
+        Called immediately before a checkpoint is loaded.
+
+        :param path: The resolved path/URL to the exact checkpoint.
+        """
+        del path
+
     def post_checkpoint_loaded(self, path: PathOrStr):
         """
         Called when a checkpoint is successfully loaded.
