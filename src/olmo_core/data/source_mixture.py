@@ -472,6 +472,7 @@ class SourceMixtureDatasetConfig(Config):
         for source_idx, source in enumerate(tokens_details_by_source):
             source_path_tokens = tokens_per_path_per_source[source.config.source_name]
             requested_source_instances = source_instances[source_idx]
+            path_count = len(source.config.resolved_paths)
             int_instances = []
             remainders = []
             path_fractions = []
@@ -486,14 +487,14 @@ class SourceMixtureDatasetConfig(Config):
 
             additional_instances_needed = requested_source_instances - sum(int_instances)
             if additional_instances_needed < 0:
-                # Per-path ceiling can create more whole sequences than this source was assigned.
+                # Trim later repetitions first so per-path ceiling cannot discard unique data.
                 while additional_instances_needed < 0:
                     candidates = sorted(
-                        (path_fractions[idx], idx)
+                        (-(idx // path_count), path_fractions[idx], idx)
                         for idx, instances in enumerate(int_instances)
                         if instances > 0
                     )
-                    for _, idx in candidates[:-additional_instances_needed]:
+                    for _, _, idx in candidates[:-additional_instances_needed]:
                         int_instances[idx] -= 1
                         additional_instances_needed += 1
 

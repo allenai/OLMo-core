@@ -968,6 +968,114 @@ def test_dataset_mixture_zero_assigned_empty_source_keeps_zero_path(
     assert dataset[0]["input_ids"].shape == (10,)
 
 
+@pytest.mark.parametrize("reverse_sources", [False, True])
+@pytest.mark.parametrize("duplicate_path", [False, True])
+@pytest.mark.parametrize(
+    ("sizes", "requested_tokens", "max_repetition_ratio"),
+    [
+        ((2, 4, 4, 4), 18, 2.0),
+        ((4, 2, 4, 4), 18, 2.0),
+        ((4, 4, 4, 2), 18, 2.0),
+        ((0, 1, 2, 4, 4, 4), 18, 2.0),
+        ((2, 4, 4, 4), 32, 3.0),
+        ((2, 4, 4, 4), 18, 1.5),
+    ],
+)
+def test_dataset_mixture_trims_repetitions_before_original_paths(
+    tmp_path: Path,
+    reverse_sources: bool,
+    duplicate_path: bool,
+    sizes: tuple[int, ...],
+    requested_tokens: int,
+    max_repetition_ratio: float,
+):
+    sources = []
+    for name in ("a", "b"):
+        paths = []
+        for index, size in enumerate(sizes):
+            path = tmp_path / f"{name}_{index}.bin"
+            np.full(size, index, dtype=np.uint32).tofile(path)
+            paths.append(str(path))
+        if duplicate_path:
+            # Explicit duplicate occurrences remain part of the configured population.
+            duplicate_indices = [index for index, size in enumerate(sizes) if size == 4]
+            paths[duplicate_indices[1]] = paths[duplicate_indices[0]]
+        sources.append(
+            SourceMixtureConfig(
+                source_name=name,
+                target_ratio=0.5,
+                paths=paths,
+                max_repetition_ratio=max_repetition_ratio,
+            )
+        )
+    if reverse_sources:
+        sources.reverse()
+    config = SourceMixtureDatasetConfig(
+        source_list=SourceMixtureList(sources),
+        requested_tokens=2 * requested_tokens,
+        global_batch_size=2 * requested_tokens,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=2)
+
+    assert [source.name for source in mixture.sources] == [source.source_name for source in sources]
+    for source in mixture.sources:
+        selected = source.path_tokens
+        assert sum(item.tokens for item in selected) == requested_tokens
+        assert [item.tokens for item in selected[: len(sizes)]] == [size // 2 * 2 for size in sizes]
+        assert all(item.tokens % 2 == 0 and item.tokens <= item.max_tokens for item in selected)
+        if requested_tokens == 32:
+            assert [item.tokens for item in selected[len(sizes) : 2 * len(sizes)]] == list(sizes)
+    assert mixture.to_paths() == [
+        item.path for source in mixture.sources for item in source.path_tokens
+    ]
+    assert list(mixture.to_index().values()) == [
+        item.tokens for source in mixture.sources for item in source.path_tokens
+    ]
+    assert config.build(npdtype=np.uint32, sequence_length=2).to_index() == mixture.to_index()
+
+
+def test_dataset_mixture_trim_preserves_unique_shard_in_numpy_dataset(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((2, 4, 4, 4)):
+        path = tmp_path / f"source_{index}.bin"
+        np.tile(np.array([index + 1, 0], dtype=np.uint32), size // 2).tofile(path)
+        paths.append(str(path))
+    config = SourceMixtureDatasetConfig(
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source", target_ratio=1.0, paths=paths, max_repetition_ratio=2.0
+                )
+            ]
+        ),
+        requested_tokens=18,
+        global_batch_size=18,
+        quiet=True,
+        render_tables=False,
+    )
+    mixture = config.build(npdtype=np.uint32, sequence_length=2)
+    assert [item.tokens for item in mixture.sources[0].path_tokens] == [2, 4, 4, 4, 0, 0, 2, 2]
+
+    dataset = NumpyFSLDatasetConfig(
+        source_mixture_config=config,
+        sequence_length=2,
+        tokenizer=TokenizerConfig(vocab_size=32_000, eos_token_id=0, pad_token_id=-1),
+        dtype=NumpyDatasetDType.uint32,
+        include_instance_metadata=False,
+    ).build()
+    dataset.prepare()
+    assert len(dataset) == 9
+    assert {int(dataset[i]["input_ids"][0]) for i in range(len(dataset))} == {
+        1,
+        2,
+        3,
+        4,
+    }
+
+
 def test_dataset_mixture_trims_per_path_rounding_to_source_target(tmp_path: Path):
     paths = []
     for index in range(101):
