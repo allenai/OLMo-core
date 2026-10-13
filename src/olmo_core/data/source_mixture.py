@@ -352,15 +352,15 @@ class SourceMixtureDatasetConfig(Config):
         num_instances_per_batch = self.global_batch_size // sequence_length
         requested_instances = training_steps * num_instances_per_batch
 
-        total_ratio = sum(source.target_ratio for source in self.source_list.sources)
+        source_ratios = [Fraction(str(source.target_ratio)) for source in self.source_list.sources]
+        total_ratio = sum(source_ratios)
         # Apply Hamilton's method at source granularity before respecting path capacities.
         source_instances = [
-            int(requested_instances * source.target_ratio / total_ratio)
-            for source in self.source_list.sources
+            int(requested_instances * ratio / total_ratio) for ratio in source_ratios
         ]
         source_remainders = [
-            requested_instances * source.target_ratio / total_ratio - instances
-            for source, instances in zip(self.source_list.sources, source_instances)
+            requested_instances * ratio / total_ratio - instances
+            for ratio, instances in zip(source_ratios, source_instances)
         ]
         source_caps = [
             int(

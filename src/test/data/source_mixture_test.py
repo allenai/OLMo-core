@@ -430,6 +430,32 @@ def test_dataset_mixture_breaks_equal_source_remainders_by_capacity(tmp_path: Pa
     )
 
 
+@pytest.mark.parametrize("reverse_sources", [False, True])
+def test_dataset_mixture_preserves_decimal_hamilton_ties(tmp_path: Path, reverse_sources: bool):
+    sources = []
+    for index, (size, ratio) in enumerate(((270, 0.55), (230, 0.45))):
+        path = tmp_path / f"source_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        sources.append(
+            SourceMixtureConfig(source_name=str(index), target_ratio=ratio, paths=[str(path)])
+        )
+    if reverse_sources:
+        sources.reverse()
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=500,
+        source_list=SourceMixtureList(sources),
+        global_batch_size=500,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert [sum(item.tokens for item in source.path_tokens) for source in mixture.sources] == (
+        [230, 270] if reverse_sources else [270, 230]
+    )
+
+
 @pytest.mark.parametrize(
     ("path_sizes", "expected_source"),
     [([[10], [9, 9]], 0), ([[9, 9], [10]], 1)],
