@@ -22,12 +22,12 @@ Layout: the **last ``num_landmarks`` tokens of every chunk are landmarks**; ``T`
     (``AttentionType.sparse_landmark``). A fused Triton kernel is the natural next step for peak speed.
 """
 
-import os
 from typing import Optional
 
 import torch
 import torch.nn.functional as F
 
+from olmo_core import env_flags
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_cp2hp,
     all_to_all_single_cp2hp,
@@ -470,9 +470,13 @@ class SparseLandmarkAttention(Attention):
         """Sparse landmark self-attention on ``(B, H, T, D)`` with ``T`` a multiple of block_size.
 
         Fused Triton fwd+bwd kernel when available (much faster); eager torch fallback otherwise.
-        Disable the kernel with ``LM_SPARSE_KERNEL=0``. ``doc_id`` enables packing masking.
+        Disable the kernel with ``OLMO_LANDMARK_SPARSE_KERNEL=0``. ``doc_id`` enables packing masking.
         """
-        if q.is_cuda and has_sparse_kernel() and os.environ.get("LM_SPARSE_KERNEL", "1") != "0":
+        if (
+            q.is_cuda
+            and has_sparse_kernel()
+            and env_flags.get_env(env_flags.LANDMARK_SPARSE_KERNEL, "1") != "0"
+        ):
             return sparse_landmark_attention_triton_train(
                 q,
                 k,

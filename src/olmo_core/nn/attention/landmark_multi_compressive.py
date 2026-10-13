@@ -38,10 +38,10 @@ from typing import Optional
 
 import torch
 
+from olmo_core import env_flags
 from olmo_core.exceptions import OLMoConfigurationError
 
 from .landmark_compressive import FastCompressiveLandmarkAttention
-from .landmark_fast import _env_int
 from .landmark_kernel import _bwd_preprocess, has_landmark_kernel
 
 __all__ = [
@@ -538,11 +538,11 @@ class _FusedMultiCompressiveLandmarkAttention(torch.autograd.Function):
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if d > 128:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 8)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 2)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 8)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 2)
         else:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 4)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 3)
         _fwd_kernel_multi_compressive[grid](
             q,
             k,
@@ -639,11 +639,11 @@ class _FusedMultiCompressiveLandmarkAttention(torch.autograd.Function):
             AGG=ctx.agg,
         )
         if ctx.BLOCK_DMODEL > 128:
-            warps = _env_int("LM_FAST_WARPS", 8)
-            stages = _env_int("LM_FAST_STAGES", 1)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 8)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 1)
         else:
-            warps = _env_int("LM_FAST_WARPS", 4)
-            stages = _env_int("LM_FAST_STAGES", 2)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 4)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
         stride_args = (
             q.stride(0),

@@ -27,12 +27,12 @@ original landmark attention does. The fused Triton kernel is required (CUDA + tr
 """
 
 import math
-import os
 from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 
+from olmo_core import env_flags
 from olmo_core.distributed.parallel.context_parallel import (
     all_to_all_qkv_cp2hp,
     all_to_all_single_hp2cp,
@@ -63,10 +63,6 @@ try:
 except ImportError:
     triton = None  # type: ignore
     tl = None  # type: ignore
-
-
-def _env_int(name: str, default: int) -> int:
-    return int(os.environ.get(name, str(default)))
 
 
 if triton is not None:
@@ -483,11 +479,11 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         # (BLOCK, 256) fp32 accumulator across registers, fewer stages so the pipelined K/V tiles
         # fit in shared memory. The <= 128 defaults are untouched.
         if d > 128:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 8)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 2)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 8)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 2)
         else:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 4)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 3)
         _fwd_kernel[grid](
             q,
             k,
@@ -624,11 +620,11 @@ class _FusedLandmarkAttentionFast(FusedLandmarkAttention):
         # at 2 stages the pipelined (BLOCK, 256) Q/DO tiles of _bwd_kv_kernel overflow H100 shared
         # memory (279KB required vs 232KB available at BLOCK=64, fp32). <= 128 defaults untouched.
         if ctx.BLOCK_DMODEL > 128:
-            warps = _env_int("LM_FAST_WARPS", 8)
-            stages = _env_int("LM_FAST_STAGES", 1)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 8)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 1)
         else:
-            warps = _env_int("LM_FAST_WARPS", 4)
-            stages = _env_int("LM_FAST_STAGES", 2)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 4)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
         _bwd_kv_kernel[(ctx.grid[1], n_kv_blocks)](
             *args, **const, num_warps=warps, num_stages=stages

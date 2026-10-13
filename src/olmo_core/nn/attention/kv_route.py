@@ -45,12 +45,13 @@ and priced on the same FLOP axis as the FFN router so the two allocations can be
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from olmo_core import env_flags
 
 if TYPE_CHECKING:
     from . import Attention
@@ -362,7 +363,10 @@ def _masked_attention(
             d_ok = (~in_c) & ((kj - Kp) == qi) & dropped_q[b, qi]
             return c_ok | d_ok
 
-        if os.environ.get("KV_ROUTE_BLOCKMASK", "block") == "dense":
+        blockmask = env_flags.get_env(
+            env_flags.KV_ROUTE_BLOCKMASK, "block", legacy=env_flags.KV_ROUTE_BLOCKMASK_LEGACY
+        )
+        if blockmask == "dense":
             # reference builder: materialises a dense (T x (Kp+T)) bool mask first -- 8.6 GB per
             # layer at 65k x 131k, which OOMs 36-layer models (Qwen3-4B, 2026-09-05)
             block_mask = create_block_mask(
@@ -560,11 +564,8 @@ def kv_route_attention(
             "kv_route does not support context parallelism (single-rank attention only)"
         )
 
-    if (
-        cfg is not None
-        and cfg["holder"].enabled
-        and os.environ.get("KV_ROUTE_DEBUG") == "no_router"
-    ):
+    debug = env_flags.get_env(env_flags.KV_ROUTE_DEBUG, legacy=env_flags.KV_ROUTE_DEBUG_LEGACY)
+    if cfg is not None and cfg["holder"].enabled and debug == "no_router":
         # memory-diagnostic ablation: flex path with no router graph at all (keep everything)
         keep = torch.ones(B, T, dtype=torch.bool, device=x.device)
         if block_keep is not None:
@@ -610,7 +611,7 @@ def kv_route_attention(
         # outside this router's own budget (the block-skip budget owns them).
         if block_keep is not None:
             keep = keep & block_keep.to(torch.bool)
-        if os.environ.get("KV_ROUTE_DEBUG") == "no_holder":
+        if debug == "no_holder":
             pass  # memory-diagnostic ablation: router runs, nothing escapes to the holder
         else:
             holder.accumulate(exp_keep=p.mean(), keep=keep, layer_idx=layer_idx)

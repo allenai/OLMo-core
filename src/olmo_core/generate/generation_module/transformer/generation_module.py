@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -15,6 +14,7 @@ from torch.distributed import DeviceMesh, ProcessGroup
 from torch.distributed.checkpoint.metadata import Metadata
 from tqdm import tqdm
 
+from olmo_core import env_flags
 from olmo_core.aliases import PathOrStr
 from olmo_core.config import DType
 from olmo_core.data.tokenizer import TokenizerConfig
@@ -323,7 +323,7 @@ class TransformerGenerationModule(GenerationModule):
         """:data:`GenerationConfig.landmark_sparse_decode`, with the ``OLMO_LANDMARK_SPARSE_DECODE``
         environment variable as an override (``0``/``false``/``no`` disables, anything else enables).
         """
-        env = os.environ.get("OLMO_LANDMARK_SPARSE_DECODE")
+        env = env_flags.get_env(env_flags.LANDMARK_SPARSE_DECODE)
         if env is not None:
             return env.strip().lower() not in ("0", "false", "no", "off", "")
         return self._generation_config.landmark_sparse_decode
@@ -337,7 +337,7 @@ class TransformerGenerationModule(GenerationModule):
         if getattr(self, "_fla_autotune_frozen", False):
             return
         self._fla_autotune_frozen = True
-        if os.environ.get("OLMO_FLA_LENGTH_AUTOTUNE") == "1":
+        if env_flags.get_env(env_flags.FLA_LENGTH_AUTOTUNE) == "1":
             return
         from olmo_core.nn.attention.fla_autotune import freeze_fla_length_autotune
 
@@ -515,7 +515,7 @@ class TransformerGenerationModule(GenerationModule):
             # eval harnesses toggle the variant with no model-arg change). See
             # analysis/flat_softmax_variant_eval.md.
             flat_softmax = generation_config.landmark_flat_softmax or bool(
-                os.environ.get("OLMO_LANDMARK_FLAT_SOFTMAX")
+                env_flags.get_env(env_flags.LANDMARK_FLAT_SOFTMAX)
             )
             if flat_softmax:
                 log.info("Landmark flat-softmax decode variant ACTIVE (gate reweighting removed)")

@@ -48,7 +48,7 @@ def _support_set(attn, *, qpos, total):
 
 
 def test_sparse_eval_decode_support_sets():
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     # block_size = mem_freq + num_landmarks = 4; landmarks at j % 4 == 3.
     attn = _build(AttentionType.sparse_landmark, mem_freq=3, num_landmarks=1, head_dim=15)
     total, qpos, P = 15, 14, 10  # generated query at 14, prompt boundary at 10

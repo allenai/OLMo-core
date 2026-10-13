@@ -180,7 +180,7 @@ def test_fast_topk_per_head_selection():
 
 
 def test_sparse_topk_decode_retrieval():
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     # block_size = mem_freq + num_landmarks = 4; landmarks at j % 4 == 3.
     attn = _build(AttentionType.sparse_landmark, mem_freq=3, num_landmarks=1, head_dim=15)
     # Prompt of 3 full chunks (landmarks at 3, 7, 11); generated query at 14.

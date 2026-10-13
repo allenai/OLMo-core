@@ -75,9 +75,9 @@ def _check_decode_matches_full(attn, *, N, P, d_model, dtype, device, atol, rtol
 @requires_gpu
 @pytest.mark.gpu
 def test_sparse_landmark_decode_matches_full_eager():
-    # Eager torch path (LM_SPARSE_KERNEL=0); fp32 -> tight tolerance, validates the cache/RoPE
-    # plumbing and the decode mask precisely.
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    # Eager torch path (OLMO_LANDMARK_SPARSE_KERNEL=0); fp32 -> tight tolerance, validates the
+    # cache/RoPE plumbing and the decode mask precisely.
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     attn = _build(
         AttentionType.sparse_landmark,
         mem_freq=15,
@@ -95,7 +95,7 @@ def test_sparse_landmark_decode_matches_full_eager():
 @pytest.mark.gpu
 @pytest.mark.skipif(not has_sparse_kernel(), reason="sparse landmark triton kernel unavailable")
 def test_sparse_landmark_decode_matches_full_kernel():
-    os.environ["LM_SPARSE_KERNEL"] = "1"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "1"
     attn = _build(
         AttentionType.sparse_landmark, mem_freq=15, num_landmarks=1, dtype=DType.bfloat16, device="cuda"
     )

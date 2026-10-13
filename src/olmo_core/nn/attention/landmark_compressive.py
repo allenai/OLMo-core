@@ -58,10 +58,11 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from olmo_core import env_flags
 from olmo_core.exceptions import OLMoConfigurationError
 
 from . import landmark_gate_analysis as gate_log
-from .landmark_fast import FastLandmarkAttention, _env_int
+from .landmark_fast import FastLandmarkAttention
 from .landmark_kernel import _bwd_preprocess, has_landmark_kernel
 
 # Valid values for ``group_landmark_selection`` (``None`` means "off", i.e. today's per-head
@@ -1157,11 +1158,11 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
         L = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         m = torch.empty((q.shape[0] * q.shape[1], q.shape[2]), device=q.device, dtype=torch.float32)
         if d > 128:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 8)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 2)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 8)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 2)
         else:
-            num_warps = _env_int("LM_FAST_FWD_WARPS", 4)
-            num_stages = _env_int("LM_FAST_FWD_STAGES", 3)
+            num_warps = env_flags.env_int(env_flags.LM_FAST_FWD_WARPS, 4)
+            num_stages = env_flags.env_int(env_flags.LM_FAST_FWD_STAGES, 3)
         const = dict(
             BLOCK=BLOCK,
             BLOCK_DMODEL=d,
@@ -1308,11 +1309,11 @@ class _FusedCompressiveLandmarkAttention(torch.autograd.Function):
             DOC_MASK=doc_mask,
         )
         if ctx.BLOCK_DMODEL > 128:
-            warps = _env_int("LM_FAST_WARPS", 8)
-            stages = _env_int("LM_FAST_STAGES", 1)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 8)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 1)
         else:
-            warps = _env_int("LM_FAST_WARPS", 4)
-            stages = _env_int("LM_FAST_STAGES", 2)
+            warps = env_flags.env_int(env_flags.LM_FAST_BWD_WARPS, 4)
+            stages = env_flags.env_int(env_flags.LM_FAST_BWD_STAGES, 2)
         n_kv_blocks = triton.cdiv(k.shape[2], BLOCK)
         # Same dispatch as forward: genuinely separate, unmodified kernels for the disabled path.
         if ctx.has_q_gate:

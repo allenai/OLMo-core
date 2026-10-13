@@ -33,7 +33,7 @@ from olmo_core.nn.attention.landmark_sparse_decode import (
 )
 from olmo_core.nn.layer_norm import LayerNormConfig
 
-os.environ.setdefault("LM_SPARSE_KERNEL", "0")  # CPU: eager sparse-landmark core
+os.environ.setdefault("OLMO_LANDMARK_SPARSE_KERNEL", "0")  # CPU: eager sparse-landmark core
 
 
 def _build(*, mem_freq=3, num_landmarks=1, n_heads=4, n_kv_heads=4, head_dim=16):

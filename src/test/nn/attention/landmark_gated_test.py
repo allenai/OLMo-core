@@ -132,7 +132,7 @@ def test_gated_landmark_eager_matches_reference(granularity: GateGranularity):
 
 
 def test_gated_sparse_landmark_eager_matches_reference(monkeypatch):
-    monkeypatch.setenv("LM_SPARSE_KERNEL", "0")  # force the eager torch fallback
+    monkeypatch.setenv("OLMO_LANDMARK_SPARSE_KERNEL", "0")  # force the eager torch fallback
     torch.manual_seed(0)
     attn = _build(AttentionType.sparse_landmark, gate=True, mem_freq=3, num_landmarks=1)
     assert isinstance(attn, SparseLandmarkAttention)

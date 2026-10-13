@@ -20,7 +20,7 @@ from olmo_core.nn.attention import AttentionConfig, AttentionType
 from olmo_core.nn.attention.landmark import repeat_kv
 from olmo_core.nn.layer_norm import LayerNormConfig
 
-os.environ.setdefault("LM_SPARSE_KERNEL", "0")
+os.environ.setdefault("OLMO_LANDMARK_SPARSE_KERNEL", "0")
 
 MEM_FREQ = 7
 NUM_LANDMARKS = 1

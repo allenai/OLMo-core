@@ -247,10 +247,10 @@ def test_compressive_kernel_backward_matches_eager(
 @requires_gpu
 @pytest.mark.skipif(not has_landmark_kernel(), reason="requires triton landmark kernel")
 def test_compressive_kernel_num_stages_invariant(monkeypatch):
-    """The forward launch config (``LM_FAST_FWD_STAGES``, default 3 at head_dim<=128) controls
+    """The forward launch config (``OLMO_LM_FAST_FWD_STAGES``, default 3 at head_dim<=128) controls
     Triton software-pipelining depth, not kernel numerics. At block_size=256 (Qwen3-4B head_dim=128,
     mem_freq=255) the default overflows H100 shared memory (``OutOfResources``: ~449KB required vs.
-    ~227KB available); ``LM_FAST_FWD_STAGES=1`` fits. Since block_size=256 can't run the default
+    ~227KB available); ``OLMO_LM_FAST_FWD_STAGES=1`` fits. Since block_size=256 can't run the default
     config to compare against, validate the num_stages=1 override at block_size=128 (head_dim=128,
     matching the real training shape) instead, where num_stages=3 still fits."""
     torch.manual_seed(0)
@@ -263,7 +263,7 @@ def test_compressive_kernel_num_stages_invariant(monkeypatch):
     grad_out = torch.rand_like(base)
 
     def run(num_stages: int):
-        monkeypatch.setenv("LM_FAST_FWD_STAGES", str(num_stages))
+        monkeypatch.setenv("OLMO_LM_FAST_FWD_STAGES", str(num_stages))
         q, k, v = (base.clone().requires_grad_(True) for _ in range(3))
         out = fused_compressive_landmark_attention(
             q, k, v, is_mem, sm_scale=scale, block_size=block_size
@@ -285,11 +285,11 @@ def test_compressive_kernel_num_stages_invariant(monkeypatch):
 def test_compressive_kernel_block256_reduced_stages_matches_eager(monkeypatch):
     """The real block256 training config (Qwen3-4B head_dim=128, block_size=256) overflows H100
     shared memory at the *default* launch config in both directions: forward num_stages=3 needs
-    ~449KB and backward num_stages=2 needs ~514KB against a ~227KB limit. ``LM_FAST_FWD_STAGES=1``
-    (forward) and ``LM_FAST_STAGES=1`` (backward) are the minimum stage counts Triton allows;
+    ~449KB and backward num_stages=2 needs ~514KB against a ~227KB limit. ``OLMO_LM_FAST_FWD_STAGES=1``
+    (forward) and ``OLMO_LM_FAST_BWD_STAGES=1`` (backward) are the minimum stage counts Triton allows;
     validate they fit in shared memory *and* still match the eager reference at this exact shape."""
-    monkeypatch.setenv("LM_FAST_FWD_STAGES", "1")
-    monkeypatch.setenv("LM_FAST_STAGES", "1")
+    monkeypatch.setenv("OLMO_LM_FAST_FWD_STAGES", "1")
+    monkeypatch.setenv("OLMO_LM_FAST_BWD_STAGES", "1")
     torch.manual_seed(0)
     block_size, head_dim = 256, 128
     B, n_heads = 2, 4

@@ -10,6 +10,7 @@ import os
 import pytest
 import torch
 
+from olmo_core import env_flags
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.generate.generation_module import TransformerGenerationModule
 from olmo_core.generate.generation_module.config import GenerationConfig
@@ -173,7 +174,7 @@ def _build_module(decode_mode="extend_last_block", **gen_overrides):
 
 @pytest.mark.parametrize("decode_mode", ["extend_last_block", "generation_only"])
 def test_sparse_landmark_generation_end_to_end(decode_mode):
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     gm = _build_module(decode_mode=decode_mode)
     prompt = torch.randint(2, 400, (1, 14))
 
@@ -199,7 +200,7 @@ def test_landmark_generation_max_length_budget_accounts_for_inserted_tokens():
     # inserted count reaches max_gen_toks). Here a 14-token prompt with mem_freq=4 gets 3 landmarks
     # inserted (prompt_len 14 -> 17); without compensation only 7 of the requested 10 tokens would
     # be produced.
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     budget = 10
     prompt = torch.randint(2, 400, (1, 14))
     gm = _build_module(max_new_tokens=None, max_length=prompt.shape[1] + budget)
@@ -215,7 +216,7 @@ def test_landmark_generation_max_length_budget_accounts_for_inserted_tokens():
 
 
 def test_landmark_generation_requires_mem_id():
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     gm = _build_module()
     gm._generation_config = gm._generation_config.replace(landmark_mem_id=None)
     with pytest.raises(OLMoConfigurationError, match="landmark_mem_id"):
@@ -223,7 +224,7 @@ def test_landmark_generation_requires_mem_id():
 
 
 def test_landmark_generation_requires_cache():
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     gm = _build_module()
     with pytest.raises(OLMoConfigurationError, match="use_cache"):
         gm.generate_batch(torch.randint(2, 400, (1, 14)), use_cache=False, log_timing=False)
@@ -236,7 +237,7 @@ def test_sparse_decode_generation_matches_shipped_decode(decode_mode):
     It swaps a dense-scan-then-mask decode for one that scores only the unmasked keys, so the
     generated ids must be identical to the shipped path token for token.
     """
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
     prompt = torch.randint(2, 400, (1, 37))
 
@@ -258,15 +259,20 @@ def test_sparse_decode_generation_matches_shipped_decode(decode_mode):
     assert torch.equal(again_got, again_ref)
 
 
-def test_sparse_decode_env_var_escape_hatch():
-    os.environ["LM_SPARSE_KERNEL"] = "0"
-    try:
-        os.environ["OLMO_LANDMARK_SPARSE_DECODE"] = "0"
-        gm = _build_module(landmark_sparse_decode=True)
-        gm.generate_batch(torch.randint(2, 400, (1, 14)), log_timing=False)
-        assert gm._sparse_decode_layers is None  # env var wins over the config field
-    finally:
-        os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
+@pytest.mark.parametrize(
+    "env_value, config_value, expect_layers",
+    [("0", True, None), ("off", True, None), ("1", False, 2), (None, True, 2), (None, False, None)],
+)
+def test_sparse_decode_env_var_escape_hatch(monkeypatch, env_value, config_value, expect_layers):
+    """``OLMO_LANDMARK_SPARSE_DECODE``, when set, wins over the config field in both directions."""
+    monkeypatch.setenv(env_flags.LANDMARK_SPARSE_KERNEL, "0")
+    if env_value is None:
+        monkeypatch.delenv(env_flags.LANDMARK_SPARSE_DECODE, raising=False)
+    else:
+        monkeypatch.setenv(env_flags.LANDMARK_SPARSE_DECODE, env_value)
+    gm = _build_module(landmark_sparse_decode=config_value)
+    gm.generate_batch(torch.randint(2, 400, (1, 14)), log_timing=False)
+    assert gm._sparse_decode_layers == expect_layers
 
 
 def _trim_eos(ids, eos=1):
@@ -286,7 +292,7 @@ def test_sparse_landmark_ragged_batch_matches_per_row_bs1():
     path batches different-length prompts by right-padding; this pins that it changes throughput
     only, not output: each row must match its own bs=1 generation.
     """
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     os.environ.pop("OLMO_LANDMARK_SPARSE_DECODE", None)
     gm = _build_module(max_new_tokens=8)
     assert gm.supports_landmark_ragged_batch()
@@ -305,7 +311,7 @@ def test_landmark_generation_multi_landmark_prompts():
     # ``_insert_landmark_tokens`` is num_landmarks-aware (the last ``num_landmarks`` slots of each
     # block are landmarks), so a num_landmarks > 1 mixer generates; the block-size check now
     # requires ``block_size == mem_freq + num_landmarks`` instead of rejecting the model.
-    os.environ["LM_SPARSE_KERNEL"] = "0"
+    os.environ["OLMO_LANDMARK_SPARSE_KERNEL"] = "0"
     seed_all(0)
     cfg = TransformerConfig.llama_like(d_model=128, n_heads=4, n_layers=2, vocab_size=512)
     assert not isinstance(cfg.block, dict)

@@ -40,7 +40,8 @@ top-k kept ones; again descending by score), so the full gate-score distribution
 hard cutoff falls within it — is recoverable. This is off by default because it scales the record
 size with the number of past blocks (O(context) rather than O(top_k)).
 
-Per-example metadata is read from the environment (the harness sets these per eval process)::
+Per-example metadata is read from the environment (the harness sets these per eval process; the
+names are the constants in :mod:`olmo_core.env_flags`)::
 
     OLMO_LANDMARK_GATE_LOG   output path (presence enables logging)
     OLMO_GATE_DATASET        "dataset" field (default "ruler")
@@ -62,6 +63,8 @@ import threading
 from typing import Dict, List, Optional
 
 import torch
+
+from olmo_core import env_flags
 
 __all__ = [
     "is_enabled",
@@ -99,11 +102,11 @@ def _init() -> None:
         if _initialized:
             return
         _initialized = True
-        path = os.environ.get("OLMO_LANDMARK_GATE_LOG")
+        path = os.environ.get(env_flags.LANDMARK_GATE_LOG)
         if not path:
             _enabled = False
             return
-        _log_all = bool(os.environ.get("OLMO_GATE_LOG_ALL"))
+        _log_all = bool(os.environ.get(env_flags.GATE_LOG_ALL))
         # Per-worker output so parallel eval workers never clobber the same file. Use the torchrun
         # rank when present, else the pid (oe-eval spawns one model process per GPU without setting
         # RANK, so the pid is what guarantees uniqueness there).
@@ -127,11 +130,11 @@ def is_enabled() -> bool:
 def _read_env_metadata() -> None:
     """Refresh the per-example metadata from the environment (cheap; allows per-example updates)."""
     global _dataset, _subtask, _context_len_env, _doc_id_env
-    _dataset = os.environ.get("OLMO_GATE_DATASET", "ruler")
-    _subtask = os.environ.get("OLMO_GATE_SUBTASK", "")
-    cl = os.environ.get("OLMO_GATE_CONTEXT_LEN")
+    _dataset = os.environ.get(env_flags.GATE_DATASET, "ruler")
+    _subtask = os.environ.get(env_flags.GATE_SUBTASK, "")
+    cl = os.environ.get(env_flags.GATE_CONTEXT_LEN)
     _context_len_env = int(cl) if cl else None
-    did = os.environ.get("OLMO_GATE_DOC_ID")
+    did = os.environ.get(env_flags.GATE_DOC_ID)
     _doc_id_env = did if did else None
 
 
