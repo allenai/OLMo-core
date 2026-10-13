@@ -25,7 +25,7 @@ explicitly overrides one for that launch.
 ## CTC-suite evals: use the olmo-eval launcher (current, 2026-10)
 
 For the CTC suite (the 22-row roster + OOD rows, 2k-256k) the current path is **olmo-eval's
-`scripts/ctc_suite/launch_ctc_suite.py`** (olmo-eval branch `prasann/ctc-suite-launcher-on-main` = main + launcher; README in that folder; default `--rows roster`). It packs single-GPU Beaker jobs on jupiter and runs a per-job `preflight.py`. Its defaults
+`scripts/ctc_suite/launch_ctc_suite.py`** (olmo-eval branch `prasann/ctc-suite-flopdrop` = main + launcher; README in that folder; default `--rows roster`). It packs single-GPU Beaker jobs on jupiter and runs a per-job `preflight.py`. Its defaults
 already apply rule 2 at the r256k rung: **YaRN factor 2 + 131,072-token chunked prefill**, in jobs of
 their own, with every other rung untouched. You need no `_yarn2` copy; the model runs from the step
 dir. That rung's prompts run to ~272k tokens, and without YaRN 43-100% of rows are left-truncated
