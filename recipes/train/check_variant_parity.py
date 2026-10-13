@@ -55,9 +55,11 @@ CASES: Dict[str, Tuple[List[str], Optional[str], str]] = {
         "kvroute",
         "kv_route_target=0.4",
     ),
-    # No --block-skip-target: Transformer.enable_block_skip passes compact=/capacity_frac= that
-    # BlockSkipHolder on this branch does not accept (TypeError in BOTH recipes, pre-existing), so
-    # the block-skip router cannot be built here at all. Config-level parity still covers it.
+    "flexcompute-blockskip": (
+        ["--variant", "flexcompute", "--pack", "--kv-route-target", "0.4", "--block-skip-target", "0.5"],
+        "flexcompute",
+        "kv_route_target=0.4,block_skip_target=0.5",
+    ),
     "flexcompute": (
         ["--variant", "flexcompute", "--pack", "--kv-route-target", "0.4"],
         "flexcompute",
