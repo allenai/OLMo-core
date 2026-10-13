@@ -1,5 +1,5 @@
 """Tests for the tokenizer-specific reserved-id ("marker set") parameterization of the
-document-chunk converter path (blocker B0 in ``src/scripts/data/ctc_suite/BUILD_MATRIX.md``).
+document-chunk converter path (blocker B0 in ``src/scripts/data/ctc_suite/BUILD_MATRIX.md`` on prasann/landmark).
 
 Three guarantees:
 
@@ -36,7 +36,10 @@ from olmo_core.nn.attention.chunked_mask import (
 )
 
 _CONVERTER_PATH = (
-    Path(__file__).parents[2] / "scripts" / "data" / "convert_unified_to_document_landmark.py"
+    Path(__file__).resolve().parents[3]
+    / "recipes"
+    / "data"
+    / "convert_unified_to_document_landmark.py"
 )
 
 
