@@ -188,6 +188,30 @@ class SourcePathTokens:
     max_tokens: int
 
 
+def _fractional_repetition_capacity_by_path(
+    token_counts_by_path: List[int], sequence_length: int, max_repetition_ratio: float
+) -> Tuple[int, List[int]]:
+    """Return full copies and the final fractional copy's per-path sequence capacities."""
+    path_instances = [tokens // sequence_length for tokens in token_counts_by_path]
+    full_repetitions = math.floor(max_repetition_ratio)
+    fractional_ratio = max_repetition_ratio - full_repetitions
+    total_instances = sum(path_instances)
+    fractional_total = (
+        math.floor(total_instances * max_repetition_ratio) - full_repetitions * total_instances
+    )
+    fractional_exact = [instances * fractional_ratio for instances in path_instances]
+    fractional_by_path = [math.floor(instances) for instances in fractional_exact]
+    remaining = fractional_total - sum(fractional_by_path)
+    remainder_order = sorted(
+        range(len(path_instances)),
+        key=lambda idx: (-(fractional_exact[idx] - fractional_by_path[idx]), idx),
+    )
+    for idx in remainder_order[:remaining]:
+        fractional_by_path[idx] += 1
+
+    return full_repetitions, fractional_by_path
+
+
 @dataclass
 class SourceMixtureOutcome:
     name: str
@@ -344,14 +368,19 @@ class SourceMixtureDatasetConfig(Config):
             )
             for source in self.source_list.sources
         ]
-        source_instance_caps = [
-            min(
-                source_caps[idx] // sequence_length,
-                sum(tokens // sequence_length for tokens in token_counts_by_source[idx])
-                * math.ceil(source.max_repetition_ratio),
+        source_instance_caps = []
+        for idx, source_config in enumerate(self.source_list.sources):
+            full_repetitions, fractional_repetitions = _fractional_repetition_capacity_by_path(
+                token_counts_by_path=token_counts_by_source[idx],
+                sequence_length=sequence_length,
+                max_repetition_ratio=source_config.max_repetition_ratio,
             )
-            for idx, source in enumerate(self.source_list.sources)
-        ]
+            max_repetition_instances = full_repetitions * sum(
+                tokens // sequence_length for tokens in token_counts_by_source[idx]
+            ) + sum(fractional_repetitions)
+            source_instance_caps.append(
+                min(source_caps[idx] // sequence_length, max_repetition_instances)
+            )
         remaining_instances = requested_instances - sum(source_instances)
         for _, _, idx in sorted(
             (
@@ -403,25 +432,36 @@ class SourceMixtureDatasetConfig(Config):
                 token_details=source,
                 npdtype=npdtype,
                 token_counts_by_path=token_counts_by_source[source_idx],
+                sequence_length=sequence_length,
             )
             requested_source_instances = source_instances[source_idx]
-            take_ratio = source.num_selected / source.population if source.population else 0.0
+            full_repetitions, fractional_repetitions = _fractional_repetition_capacity_by_path(
+                token_counts_by_path=token_counts_by_source[source_idx],
+                sequence_length=sequence_length,
+                max_repetition_ratio=source.config.max_repetition_ratio,
+            )
+            path_count = len(source.config.resolved_paths)
+            materialized_repetitions = len(source_path_tokens) // path_count
             additional_repetitions = max(
-                0,
-                math.ceil(source.config.max_repetition_ratio) - math.ceil(take_ratio),
+                0, math.ceil(source.config.max_repetition_ratio) - materialized_repetitions
             )
             path_capacity = sum(
                 path_token.max_tokens // sequence_length for path_token in source_path_tokens
             )
             if path_capacity < requested_source_instances and additional_repetitions:
-                max_tokens_by_path = {path.path: path.max_tokens for path in source_path_tokens}
                 for _ in range(additional_repetitions):
-                    for path in source.config.resolved_paths:
-                        max_tokens = max_tokens_by_path[path]
+                    for path_idx, path in enumerate(source.config.resolved_paths):
+                        if materialized_repetitions < full_repetitions:
+                            max_tokens = token_counts_by_source[source_idx][path_idx]
+                        elif materialized_repetitions == full_repetitions:
+                            max_tokens = fractional_repetitions[path_idx] * sequence_length
+                        else:
+                            max_tokens = 0
                         source_path_tokens.append(
                             SourcePathTokens(path=path, tokens=0, max_tokens=max_tokens)
                         )
                         path_capacity += max_tokens // sequence_length
+                    materialized_repetitions += 1
                     if path_capacity >= requested_source_instances:
                         break
             tokens_per_path_per_source[source.config.source_name] = source_path_tokens
@@ -539,12 +579,15 @@ class SourceMixtureDatasetConfig(Config):
         token_details: SourceTokenDetails,
         npdtype: NumpyUIntTypes,
         token_counts_by_path: Optional[List[int]] = None,
+        *,
+        sequence_length: int = 1,
     ) -> List[SourcePathTokens]:
         """
         Get the paths and resulting token count for a source.
 
         :param token_counts_by_path: Optional token counts in the same order as the resolved paths.
             If provided, these are reused instead of counting the files again.
+        :param sequence_length: Number of tokens per complete sequence.
         """
         path_tokens: List[SourcePathTokens] = []
 
@@ -555,11 +598,25 @@ class SourceMixtureDatasetConfig(Config):
             ]
         elif len(token_counts_by_path) != len(resolved_paths):
             raise ValueError("token_counts_by_path must match the resolved paths")
+        available_token_counts = token_counts_by_path
+
+        full_repetitions, fractional_repetitions = _fractional_repetition_capacity_by_path(
+            token_counts_by_path=available_token_counts,
+            sequence_length=sequence_length,
+            max_repetition_ratio=source_config.max_repetition_ratio,
+        )
+
+        def max_tokens_for_path(path_idx: int, repetition_idx: int) -> int:
+            if repetition_idx < full_repetitions:
+                return available_token_counts[path_idx]
+            if repetition_idx == full_repetitions:
+                return fractional_repetitions[path_idx] * sequence_length
+            return 0
 
         if token_details.population == 0:
             return [
                 SourcePathTokens(path=path, tokens=0, max_tokens=tokens)
-                for path, tokens in zip(resolved_paths, token_counts_by_path)
+                for path, tokens in zip(resolved_paths, available_token_counts)
             ]
 
         take_ratio = token_details.num_selected / token_details.population
@@ -574,26 +631,30 @@ class SourceMixtureDatasetConfig(Config):
                 take_ratios.append(chunk)
                 remaining -= chunk
 
-            for ratio in take_ratios:
-                for path, available_tokens in zip(resolved_paths, token_counts_by_path):
+            for repetition_idx, ratio in enumerate(take_ratios):
+                for path_idx, (path, available_tokens) in enumerate(
+                    zip(resolved_paths, available_token_counts)
+                ):
                     tokens_to_keep = int(math.ceil(available_tokens * ratio))
                     path_tokens.append(
                         SourcePathTokens(
                             path=path,
                             tokens=tokens_to_keep,
-                            max_tokens=available_tokens,
+                            max_tokens=max_tokens_for_path(path_idx, repetition_idx),
                         )
                     )
 
             return path_tokens
 
-        for path, available_tokens in zip(resolved_paths, token_counts_by_path):
+        for path_idx, (path, available_tokens) in enumerate(
+            zip(resolved_paths, available_token_counts)
+        ):
             tokens_to_keep = int(math.ceil(available_tokens * take_ratio))
             path_tokens.append(
                 SourcePathTokens(
                     path=path,
                     tokens=tokens_to_keep,
-                    max_tokens=available_tokens,
+                    max_tokens=max_tokens_for_path(path_idx, 0),
                 )
             )
 

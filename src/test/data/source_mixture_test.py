@@ -624,6 +624,149 @@ def test_dataset_mixture_materializes_repetitions_for_batch_padding(tmp_path: Pa
     assert sum(item.tokens for item in path_tokens) == 200
 
 
+def test_dataset_mixture_does_not_round_fractional_repetition_capacity_up(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((9, 91)):
+        path = tmp_path / f"fragment_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=100,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_repetition_ratio=1.01,
+                )
+            ]
+        ),
+        global_batch_size=100,
+        quiet=True,
+        render_tables=False,
+    )
+
+    with pytest.raises(OLMoConfigurationError, match="Insufficient source capacity"):
+        config.build(npdtype=np.uint32, sequence_length=10)
+
+
+def test_dataset_mixture_caps_fractional_repetitions_per_path(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((81, 19)):
+        path = tmp_path / f"fragment_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=100,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_repetition_ratio=1.2,
+                )
+            ]
+        ),
+        global_batch_size=100,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    path_tokens = mixture.sources[0].path_tokens
+    selected_by_path = {
+        path: sum(item.tokens for item in path_tokens if item.path == path) for path in paths
+    }
+    assert selected_by_path == {paths[0]: 90, paths[1]: 10}
+
+
+def test_dataset_mixture_apportions_fractional_repetitions_across_duplicate_paths(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(10, dtype=np.uint32).tofile(path)
+    paths = [str(path), str(path)]
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=30,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_repetition_ratio=1.5,
+                )
+            ]
+        ),
+        global_batch_size=30,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert [item.tokens for item in mixture.sources[0].path_tokens] == [10, 10, 10, 0]
+
+
+def test_dataset_mixture_rounds_fractional_capacity_after_aggregating_paths(tmp_path: Path):
+    paths = []
+    for index, size in enumerate((20, 30)):
+        path = tmp_path / f"source_{index}.bin"
+        np.zeros(size, dtype=np.uint32).tofile(path)
+        paths.append(str(path))
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=60,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=paths,
+                    max_repetition_ratio=1.2,
+                )
+            ]
+        ),
+        global_batch_size=60,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    assert [item.tokens for item in mixture.sources[0].path_tokens] == [20, 30, 0, 10]
+
+
+def test_dataset_mixture_materialization_respects_fractional_source_cap(tmp_path: Path):
+    path = tmp_path / "source.bin"
+    np.zeros(100, dtype=np.uint32).tofile(path)
+    config = SourceMixtureDatasetConfig(
+        requested_tokens=110,
+        source_list=SourceMixtureList(
+            [
+                SourceMixtureConfig(
+                    source_name="source",
+                    target_ratio=1.0,
+                    paths=[str(path)],
+                    max_repetition_ratio=2.0,
+                    max_source_fraction=0.55,
+                )
+            ]
+        ),
+        global_batch_size=110,
+        quiet=True,
+        render_tables=False,
+    )
+
+    mixture = config.build(npdtype=np.uint32, sequence_length=10)
+
+    selected_tokens = sum(item.tokens for item in mixture.sources[0].path_tokens)
+    assert selected_tokens == 110
+    assert selected_tokens <= 100 * 0.55 * 2.0
+
+
 @pytest.mark.parametrize(("max_repetition_ratio", "should_fill"), [(1.0, False), (2.0, True)])
 def test_dataset_mixture_materializes_repetitions_for_fragmented_paths(
     tmp_path: Path, max_repetition_ratio: float, should_fill: bool
