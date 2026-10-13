@@ -253,43 +253,8 @@ class Dion3Config(DionConfig):
         else:
             dist_mesh = None
 
-        optim = self.optimizer()(
+        return self.optimizer()(
             self.build_groups(model, strict=strict),
             distributed_mesh=dist_mesh,
             **kwargs,
         )
-
-        # Dion3 keeps `lr` as a live GPU tensor rather than a plain float, and unlike
-        # Dion's `initial_lr`, it has no field that's protected from being overwritten
-        # on checkpoint load. Without an anchor, resuming from a checkpoint silently
-        # restores whatever `lr` had drifted to at save time instead of the true
-        # config value, which breaks the LR schedule (see PR description for details
-        # and before/after recovery plots).
-        #
-        # `pristine_lr` snapshots the true config-scaled LR once at construction time
-        # and is excluded from `load_state_dict` so it can't be clobbered by whatever
-        # was saved in the checkpoint.
-        initial_lrs = []
-        for group in optim.param_groups:
-            raw_lr = group["lr"]
-            initial_lrs.append(raw_lr.item() if isinstance(raw_lr, torch.Tensor) else float(raw_lr))
-
-        for group, init_lr in zip(optim.param_groups, initial_lrs):
-            group["pristine_lr"] = init_lr
-
-        original_load_state_dict = optim.load_state_dict
-
-        def patched_load_state_dict(*args, **kwargs):
-            # Remove pristine_lr before loading so the distributed checkpoint loader
-            # doesn't try to find a matching key on disk, then restore it afterward
-            # so it survives the load untouched.
-            for group in optim.param_groups:
-                group.pop("pristine_lr", None)
-            result = original_load_state_dict(*args, **kwargs)
-            for group, init_lr in zip(optim.param_groups, initial_lrs):
-                group["pristine_lr"] = init_lr
-            return result
-
-        optim.load_state_dict = patched_load_state_dict
-
-        return optim

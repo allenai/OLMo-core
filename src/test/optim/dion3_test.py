@@ -55,8 +55,6 @@ def test_dion3_config_builds():
 
     assert isinstance(optim, Dion3)
     assert len(optim.param_groups) == 4
-    for group in optim.param_groups:
-        assert "pristine_lr" in group
 
 
 # =====================================================================
@@ -119,6 +117,6 @@ def test_dion3_lr_survives_checkpoint_recovery(device: torch.device):
             optim_c.step()
 
     assert lrs_resumed == pytest.approx(baseline_lrs), (
-        "Resumed LR trajectory diverged after a cold restart! The config's pristine_lr "
-        "was either overwritten by the decayed LR or wiped by the DCP schema merge."
+        "Resumed LR trajectory diverged after a cold restart! The initial_lr float anchor "
+        "was overwritten by a live tensor pointer during DCP recovery."
     )
