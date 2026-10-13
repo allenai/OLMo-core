@@ -22,7 +22,7 @@ probe showed doc K/V are content-determined across contexts (R^2 .85-.98), which
 offline cache legitimate. Building the cache runs each doc with **within-doc (+ preamble)
 attention only** -- cost O(sum L_i^2), never O(T^2) -- so no full-context forward is ever taken.
 
-Cache builder: ``src/scripts/train/memexpress/pooledkv/build_oracle_slot_cache.py``.
+Cache builder: ``research/token_routing/pooledkv_train/build_oracle_slot_cache.py``.
 """
 
 import hashlib

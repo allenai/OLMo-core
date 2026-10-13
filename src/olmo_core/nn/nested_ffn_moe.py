@@ -65,7 +65,7 @@ Parameter baking
 ----------------
 The router and gain parameters are new state-dict keys, so a base checkpoint must be re-saved with
 them present before training (distributed-checkpoint loads are driven by the destination model's
-keys). Use ``src/scripts/train/memexpress/ffnmoe/bake_ffn_moe_into_base.py``, exactly as the
+keys). Use ``research/ffn_compute/ffnmoe_train/bake_ffn_moe_into_base.py``, exactly as the
 soft-token projector is baked by ``bake_projector_into_base.py``.
 
 Enabled via :meth:`~olmo_core.nn.transformer.model.Transformer.enable_nested_ffn_moe`.
