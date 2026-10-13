@@ -242,6 +242,33 @@ XABSENCE_INSTRUCTION = (
     "Write your answer in the following format:\nUnmatched: [id1], [id2], ..."
 )
 
+# One-sided variant (``orphan_side == "A"``): verbatim from the reference renderer
+# (olmo_core.data.corpus_reasoning_prompts._prompts), which picks the wording per example.
+XABSENCE_ONESIDED_INSTRUCTION = (
+    "Below are two corpora of numbered claims, A and B. Every claim in corpus A "
+    "appears again, word for word, in corpus B — except for exactly {n} claims. "
+    "Those {n} claims from corpus A are MISSING from corpus B. Find them. "
+    "Only claims from corpus A can be missing; every claim in corpus B also "
+    "appears in corpus A.\n"
+    "Write your answer in the following format:\nMissing: [id1], [id2], ..."
+)
+
+# Prose-corpus flavour of the one-sided variant (e.g. --src-tag gutenberg): the items are
+# narrative PASSAGES, not claims, so calling them "claims" is simply false about the context --
+# the same class of prompt/data mismatch as the "paraphrase" wording that was fixed earlier.
+# Word-for-word identical to XABSENCE_ONESIDED_INSTRUCTION except "claims" -> "passages"; the
+# {n} substitution and the "Missing: [id1], [id2], ..." answer format are unchanged, so the
+# target builder (_build_output, anchored on orphan_side) and the grader (_parse_id_set) are
+# untouched by this variant.
+XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION = (
+    "Below are two corpora of numbered passages, A and B. Every passage in corpus A "
+    "appears again, word for word, in corpus B — except for exactly {n} passages. "
+    "Those {n} passages from corpus A are MISSING from corpus B. Find them. "
+    "Only passages from corpus A can be missing; every passage in corpus B also "
+    "appears in corpus A.\n"
+    "Write your answer in the following format:\nMissing: [id1], [id2], ..."
+)
+
 # ── Cycle-comparison task ──
 # Claims assert a strict comparison (A ranks strictly above B). The model finds
 # every set of claims whose edges form a directed cycle (an impossible loop).

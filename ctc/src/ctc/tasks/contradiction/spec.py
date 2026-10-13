@@ -75,21 +75,43 @@ def parse(text: str, n_docs: Optional[int] = None) -> Optional[List[List[int]]]:
     return parsing.parse_pairs(text)
 
 
-def _check_gold(gold: Sequence[Sequence[int]]) -> None:
-    """
-    Assert the invariant the set comparison depends on.
+#: Gold pairs canonicalised by :func:`_canonical_gold` since import, as a defect signal. A non-zero
+#: value means some ladder file was built by a path that does not sort its pairs -- the numbers are
+#: correct regardless, but the builder needs fixing.
+UNSORTED_GOLD_SEEN = 0
 
-    :param gold: Gold pairs.
 
-    :raises ValueError: If a pair is not sorted low-high, which would make it unmatchable.
+def _canonical_gold(gold: Sequence[Sequence[int]]) -> List[List[int]]:
     """
+    Put gold pairs in the same canonical form :func:`parse` puts predicted pairs in.
+
+    A contradiction pair is UNORDERED -- "1 contradicts 4" and "4 contradicts 1" are the same claim,
+    which is why :func:`parsing.parse_pairs` sorts every predicted pair. Gold was never canonicalised
+    the same way, and that asymmetry is the whole defect: scoring is a set intersection, so a gold
+    ``[4, 1]`` can never match a predicted ``[1, 4]`` and is a guaranteed miss.
+
+    This used to raise instead. Raising was right while the only producers were the generators
+    (checked: 0 unsorted of 3,153), but ``expand_ctc_rung`` grows a rung by shuffling documents and
+    remapping indices, and it did not re-sort -- which put ~50% unsorted pairs into every
+    contradiction rung above 32k and made those files unscoreable rather than merely mis-scored.
+    Canonicalising here fixes every such file at once, including ones nobody has audited.
+
+    Sorting is meaning-preserving ONLY because these pairs are unordered. Tasks whose two positions
+    mean different things go through :func:`parsing.parse_qd_pairs` and never reach this function.
+
+    :param gold: Gold pairs, possibly in arbitrary order.
+
+    :returns: The same pairs, each sorted low-high.
+    """
+    global UNSORTED_GOLD_SEEN
+    out = []
     for p in gold:
         if len(p) == 2 and p[0] > p[1]:
-            raise ValueError(
-                f"gold pair {list(p)} is not sorted low-high. Predicted pairs are sorted, and "
-                "scoring is a set intersection, so this pair could never be matched and would "
-                "silently cost recall on every example that contains it."
-            )
+            UNSORTED_GOLD_SEEN += 1
+            out.append([p[1], p[0]])
+        else:
+            out.append(list(p))
+    return out
 
 
 def score(
@@ -109,10 +131,11 @@ def score(
        has empty-gold examples.
 
     .. note::
-       Gold pairs must be sorted low-high, because :func:`parse` sorts predicted pairs and the
-       comparison is a set intersection -- a gold ``[4, 1]`` could never match a predicted
-       ``[1, 4]``. The generators satisfy this (checked: 0 unsorted of 3,153) but never asserted
-       it, so :func:`_check_gold` does.
+       Gold pairs are canonicalised to sorted low-high by :func:`_canonical_gold`, matching what
+       :func:`parse` does to predicted pairs, because the comparison is a set intersection and a
+       gold ``[4, 1]`` could never match a predicted ``[1, 4]``. Module counter
+       :data:`UNSORTED_GOLD_SEEN` records how often that fired -- non-zero means a ladder builder
+       is emitting unsorted pairs and should be fixed even though the scores are now correct.
 
     :param parsed: Output of :func:`parse`. ``None`` (unparseable) scores zero on every metric --
         it is not the same as ``[]``, which is a real answer and can be correct.
@@ -122,9 +145,8 @@ def score(
         Track ``parsed``: a drop in it means a decoding or truncation problem, and without it that
         is indistinguishable from the model getting worse.
 
-    :raises ValueError: If a gold pair is not sorted low-high.
     """
-    _check_gold(gold)
+    gold = _canonical_gold(gold)
     if parsed is None:
         return {"precision": 0.0, "recall": 0.0, "f1": 0.0, "exact_match": 0.0, "parsed": 0.0}
     return {**metrics.pair_metrics(parsed, gold), "parsed": 1.0}

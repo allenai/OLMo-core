@@ -246,11 +246,41 @@ def test_contradiction_keeps_hallucinated_ids():
     assert spec.score(spec.parse("[[1, 9999]]"), [[1, 4]])["precision"] == 0.0
 
 
-def test_unsorted_gold_is_rejected_not_silently_unmatchable():
-    """Predicted pairs are sorted and scoring is a set intersection, so [4, 1] can never match."""
+def test_unsorted_gold_is_canonicalised_not_silently_unmatchable():
+    """Predicted pairs are sorted and scoring is a set intersection, so a raw gold [4, 1] could
+    never match. Contradiction pairs are unordered, so gold is sorted the same way parse() sorts
+    predictions (expand_ctc_rung shipped ~50% unsorted pairs above 32k), and the counter keeps the
+    builder defect visible."""
+    from ctc.tasks.contradiction import spec as contradiction
+
     spec = registry.get("contradiction")
-    with pytest.raises(ValueError, match="not sorted low-high"):
-        spec.score([[1, 4]], [[4, 1]])
+    before = contradiction.UNSORTED_GOLD_SEEN
+    assert spec.score([[1, 4]], [[4, 1]])["f1"] == 1.0
+    assert contradiction.UNSORTED_GOLD_SEEN == before + 1
+    assert spec.score([[1, 4]], [[1, 4]])["f1"] == 1.0  # already-sorted gold is unchanged
+    assert contradiction.UNSORTED_GOLD_SEEN == before + 1
+
+
+def test_xabsence_ask_follows_the_data():
+    """One-sided rows (orphan_side == "A", the suite's Gutenberg exact copies) get the one-sided
+    "Missing:" ask -- worded "passages" for a prose corpus -- and legacy two-sided rows keep the
+    paraphrase instruction and the "Unmatched:" anchor."""
+    from ctc.format.prompts import (
+        XABSENCE_INSTRUCTION,
+        XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION,
+        XABSENCE_ONESIDED_INSTRUCTION,
+    )
+    from ctc.tasks.xabsence.spec import build_query, build_target
+
+    one = {"orphan_side": "A", "num_unmatched": 2, "gold_doc_indices": [0, 4]}
+    assert build_query({**one, "source": "gutenberg"}) == (
+        XABSENCE_ONESIDED_GUTENBERG_INSTRUCTION.format(n=2)
+    )
+    assert build_query({**one, "source": "pubmed"}) == XABSENCE_ONESIDED_INSTRUCTION.format(n=2)
+    assert build_target(one).startswith("Missing:")
+    two = {"gold_doc_indices": [0, 4]}
+    assert build_query(two) == XABSENCE_INSTRUCTION
+    assert build_target(two).startswith("Unmatched:")
 
 
 def test_unparseable_on_empty_gold_does_not_score_perfect():
