@@ -96,8 +96,15 @@ def retrieval_f1(predicted_ids: set[int], gold_ids: set[int]) -> float:
 
 
 def parse_doc_ids(text: str) -> set[int]:
-    """Extract document IDs from text like '[3], [7]' or 'Document [3]'."""
-    return set(int(m) for m in re.findall(r'\[(\d+)\]', text))
+    """Extract document IDs from text like '[3], [7]' or 'Document [3]'.
+
+    The opening bracket is OPTIONAL: the eval prompt primes the answer with a leading '[', so a
+    model's *generation* is often the completion 'N]' (closing bracket only, no '['). Requiring
+    both brackets silently scored correct answers as wrong for such checkpoints -- e.g. niah,
+    whose model picks the right doc but emits '8]', collapsed to 0.16 while msmarco (emits '[15]')
+    scored 0.96. Matching an optional '[' recovers those without changing bracketed outputs.
+    """
+    return set(int(m) for m in re.findall(r'\[?\s*(\d+)\s*\]', text))
 
 
 def aggregate(results: list[dict], keys: list[str]) -> dict:

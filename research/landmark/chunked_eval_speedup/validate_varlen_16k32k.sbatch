@@ -50,9 +50,9 @@ mkdir -p "$R3/src" "$R3/research/landmark/ctc_vllm_validation" /data/prasann/job
 rsync -a --delete $REPO_ROOT/src/ "$R3/src/"
 rsync -a --delete $REPO_ROOT/research/landmark/ctc_vllm_validation/ "$R3/research/landmark/ctc_vllm_validation/"
 # Take the patched copies from /accounts -- that is where the other session's varlen work lives.
-cp "$ACC/research/common/corpus_reasoning/lib/vllm_chunked_patch.py" "$R3/research/common/corpus_reasoning/lib/vllm_chunked_patch.py"
+cp "$ACC/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py" "$R3/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py"
 cp "$ACC/research/landmark/ctc_vllm_validation/run_vllm_eval.py"     "$R3/research/landmark/ctc_vllm_validation/run_vllm_eval.py"
-grep -q "CHUNK_VARLEN_PREFILL" "$R3/research/common/corpus_reasoning/lib/vllm_chunked_patch.py" \
+grep -q "CHUNK_VARLEN_PREFILL" "$R3/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py" \
   || { echo "FATAL: CHUNK_VARLEN_PREFILL absent from the patch copy -- nothing to validate"; exit 2; }
 
 VDIR=$R3/research/landmark/ctc_vllm_validation

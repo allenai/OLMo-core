@@ -6,14 +6,15 @@ Code shared by several `research/*` components. Put this directory on `PYTHONPAT
 
 ## Contents
 
-* `corpus_reasoning/{eval,lib}/` -- vendored from the old `src/corpus_reasoning/`, **only** the import closure of what
-  `research/` code uses (8 eval + 11 lib files + `__init__.py`s; computed from `from corpus_reasoning...` imports,
-  transitively, starting at the files named below). Files are unmodified copies except `corpus_reasoning/__init__.py`
-  (docstring) and two path comments in `lib/vllm_chunked_patch.py`.
-  * eval: `evaluate`, `eval_lc_native_docchunk`, `eval_lc_native_docchunk_contra`, `eval_lc_native_landmark`,
-    `batched_native_decode`, `batched_chunked_serial_prefill`, `chunked_batch_helpers`, `shared_corpus_cache`
-  * lib: `vllm_chunked_patch`, `eval_tasks`, `metrics`, `io`, `data_format`, `prompts`, `chunked_attention`,
-    `vllm_utils`, `adapter_save`, `longlora_attn`, `olmo3_mask_patch`
+* `corpus_reasoning/{eval,lib}/` -- vendored from the old `src/corpus_reasoning/`. Every module that also existed in
+  the eval harness is now an **alias** (importing it returns the canonical module; `python -m` / script-path runs
+  execute the canonical `__main__`); importing `corpus_reasoning` puts `recipes/eval/legacy_native` on `sys.path`.
+  * aliases of `olmo_core.data.corpus_reasoning_prompts.*`: `lib.data_format`, `lib.prompts`, `lib.io`
+  * aliases of `ctc_eval.lib.*` (`recipes/eval/legacy_native/ctc_eval/lib`): `vllm_chunked_patch`, `eval_tasks`,
+    `metrics`, `chunked_attention`, `vllm_utils`, `adapter_save`, `longlora_attn`, `olmo3_mask_patch`
+  * aliases of `ctc_eval.eval.*`: `evaluate`, `eval_lc_native_docchunk`, `batched_native_decode`,
+    `batched_chunked_serial_prefill`, `chunked_batch_helpers`, `shared_corpus_cache`
+  * research-only (real code here): `eval.eval_lc_native_docchunk_contra`, `eval.eval_lc_native_landmark`
 * `beaker_native_lengthmix_eval.py` -- launches the native (olmo-core) length-mix ladder eval on Beaker; from
   `debug/outlier_lengthmix_scaling/`. It runs `recipes/eval/legacy_native/ctc_eval/eval/eval_lc_native.py` in the container.
 * `taskscale_points.json` -- per-task/arm/length accuracy points (from `debug/taskscale_lengthmix/points.json`) read by the
@@ -32,4 +33,4 @@ Code shared by several `research/*` components. Put this directory on `PYTHONPAT
 | `research/common/beaker_native_lengthmix_eval.py` | launcher only |
 
 Not included on purpose: everything else in the old `src/corpus_reasoning/` (data generators, training, analysis, other eval
-drivers). `recipes/data/generators/cr_io.py` carries its own copy of `lib/io.py`.
+drivers).

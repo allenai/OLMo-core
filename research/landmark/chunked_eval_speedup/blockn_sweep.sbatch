@@ -33,8 +33,8 @@ LOCAL_REPO=${LOCAL_REPO:-/data/prasann/repo/OLMo-core}  # node-local mirror of t
 VD=$LOCAL_REPO/research/landmark/ctc_vllm_validation
 OUT=/data/prasann/chunk_profile
 mkdir -p /data/prasann/joblogs "$OUT"
-cp "$SRCREPO/research/common/corpus_reasoning/lib/vllm_chunked_patch.py" \
-   "$LOCAL_REPO/research/common/corpus_reasoning/lib/vllm_chunked_patch.py"
+cp "$SRCREPO/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py" \
+   "$LOCAL_REPO/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py"
 
 source /data/prasann/node_local_env.sh
 mkdir -p "$HOME" "$TMPDIR" "$FLASHINFER_CACHE_DIR" "$TRITON_CACHE_DIR" "$HF_HOME"

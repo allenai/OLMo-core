@@ -34,9 +34,9 @@ OUT=/data/prasann/chunk_profile
 mkdir -p /data/prasann/joblogs "$OUT"
 
 # Ship the instrumented patch to the node-local repo the driver imports from.
-cp "$SRCREPO/research/common/corpus_reasoning/lib/vllm_chunked_patch.py" \
-   "$LOCAL_REPO/research/common/corpus_reasoning/lib/vllm_chunked_patch.py"
-echo "=== instrumented patch synced: $(grep -c _prof_add "$LOCAL_REPO/research/common/corpus_reasoning/lib/vllm_chunked_patch.py") call sites ==="
+cp "$SRCREPO/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py" \
+   "$LOCAL_REPO/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py"
+echo "=== instrumented patch synced: $(grep -c _prof_add "$LOCAL_REPO/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py") call sites ==="
 
 source /data/prasann/node_local_env.sh
 mkdir -p "$HOME" "$TMPDIR" "$FLASHINFER_CACHE_DIR" "$TRITON_CACHE_DIR" "$HF_HOME"

@@ -3,8 +3,11 @@ NATIVE olmo_core eval for **document-chunked** models on the single-task ladder 
 dense (``DocumentChunkedAttention``) and landmark (``DocumentLandmarkAttention``) variants. Custom
 attention can't use HF/vLLM, so we load the olmo-core distcp directly and decode greedily.
 
-Supports ``--task`` ``oolong | contradiction | retrieval | rerank | outlier`` (aliases ``nq`` ->
-``retrieval``, ``contra`` -> ``contradiction``). The box-marker prefill is built with the SAME
+Supports ``--task`` ``oolong | contradiction | retrieval | rerank | outlier`` plus the CTC suite
+tasks (``records/ctc-suite-scaling-plan.md`` §3): ``redundancy | absence | xabsence | strmatch |
+qdmatch | mathmatch | cycle | groups4 | textgroups | reorder | grouping | grouping_labeled | qa |
+summarization | cot_retrieval`` (aliases ``nq`` -> ``retrieval``, ``contra`` -> ``contradiction``).
+The box-marker prefill is built with the SAME
 ``segment_prompt_to_chunks`` path the training converter uses, dispatched per task by ``TASK_CFG``
 (segmentation task + ``chunk_by`` + decode budget/stop rule + scorer + default CoT mode); the per-task
 scorers are reused verbatim from ``scripts/eval/evaluate.py``. The single-task ladder (v2) shards are
@@ -46,12 +49,16 @@ import time
 
 import torch
 
+from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never retype
+    DOC_END_ID,
+    DOC_START_ID,
+    EOS_TOKEN_ID,
+    LANDMARK_TOKEN_ID,
+    PAD_TOKEN_ID,
+    REAL_VOCAB_SIZE,
+)
+
 # Reserved ids (match the converter + olmo_core.data.document_chunk_landmark defaults).
-EOS_TOKEN_ID = 151643
-LANDMARK_TOKEN_ID = 151860
-DOC_START_ID = 151648  # <|box_start|>
-DOC_END_ID = 151649  # <|box_end|>
-PAD_TOKEN_ID = 151863
 
 # Per-task eval config. Mirrors scripts/eval/evaluate.py: the segmentation task name + chunk_by used
 # to build the box-marker prefill (MUST match the training converter -- see
@@ -72,9 +79,117 @@ TASK_CFG = {
     ),
     "rerank": dict(chunk_by="document", max_new=512, stop="newline", scorer="rerank", cot="none"),
     "outlier": dict(chunk_by="document", max_new=256, stop="eos", scorer="outlier", cot="none"),
+    # ---- CTC suite (records/ctc-suite-scaling-plan.md §3) -- added to cover the ~20 canonical
+    # task keys beyond the original 5. chunk_by is "document" for every one of these (oolong is
+    # the only "line" task -- see BUILD_MATRIX.md's chunk-by map). max_new mirrors evaluate.py's
+    # per-task --max-tokens overrides (~lines 1171-1231); scorer reuses evaluate.py's per-task
+    # dispatch (~lines 1411-1450) verbatim -- several canonical tasks deliberately share a scorer
+    # function there (redundancy/strmatch/mathmatch -> _eval_contradiction, xabsence -> _eval_absence,
+    # groups4/textgroups -> _eval_cycle, cot_retrieval -> _eval_retrieval, grouping_labeled ->
+    # _eval_grouping) and TASK_CFG mirrors that reuse via the "scorer" key rather than duplicating.
+    # stop rule mirrors evaluate.py's HF `multiline_output` set (cot_retrieval/grouping/
+    # grouping_labeled/reorder -> eos-only); summarization is ALSO eos-only here even though
+    # evaluate.py's multiline_output omits it -- GovReport references are multi-paragraph and a
+    # first-newline stop would truncate them to one line against an intentional max_new=1024
+    # budget, so this is a deliberate deviation (documented, not an oversight).
+    "redundancy": dict(
+        chunk_by="document", max_new=200, stop="newline", scorer="contradiction", cot="none"
+    ),
+    "absence": dict(chunk_by="document", max_new=200, stop="newline", scorer="absence", cot="none"),
+    "xabsence": dict(
+        chunk_by="document", max_new=200, stop="newline", scorer="absence", cot="none"
+    ),
+    "strmatch": dict(
+        chunk_by="document", max_new=200, stop="newline", scorer="contradiction", cot="none"
+    ),
+    "qdmatch": dict(chunk_by="document", max_new=200, stop="newline", scorer="qdmatch", cot="none"),
+    "mathmatch": dict(
+        chunk_by="document", max_new=200, stop="newline", scorer="contradiction", cot="none"
+    ),
+    "cycle": dict(chunk_by="document", max_new=200, stop="newline", scorer="cycle", cot="none"),
+    "groups4": dict(chunk_by="document", max_new=200, stop="newline", scorer="cycle", cot="none"),
+    "textgroups": dict(
+        chunk_by="document", max_new=200, stop="newline", scorer="cycle", cot="none"
+    ),
+    "reorder": dict(chunk_by="document", max_new=1024, stop="eos", scorer="reorder", cot="none"),
+    "grouping": dict(chunk_by="document", max_new=2048, stop="eos", scorer="grouping", cot="none"),
+    "grouping_labeled": dict(
+        chunk_by="document", max_new=2048, stop="eos", scorer="grouping", cot="none"
+    ),
+    "qa": dict(chunk_by="document", max_new=64, stop="newline", scorer="qa", cot="none"),
+    "summarization": dict(
+        chunk_by="document", max_new=1024, stop="eos", scorer="summarization", cot="none"
+    ),
+    "cot_retrieval": dict(
+        chunk_by="document", max_new=512, stop="eos", scorer="retrieval", cot="none"
+    ),
 }
 # Convenience aliases (run-name / launcher shorthands) -> canonical segmentation task.
 TASK_ALIASES = {"nq": "retrieval", "contra": "contradiction"}
+
+
+def build_eval_prefill(
+    tok,
+    raw_example,
+    task,
+    *,
+    variant,
+    cot_mode=None,
+    doc_start_id=DOC_START_ID,
+    doc_end_id=DOC_END_ID,
+    mem_freq=63,
+    query_position="both",
+    use_titles=False,
+):
+    """
+    Render one eval example's **prompt-only prefill** token ids for any ``TASK_CFG`` task.
+
+    Module-level and public **on purpose** (mirrors
+    ``eval_lc_native_docchunk_contra.build_eval_prefill``): this is the single source of truth for
+    the general (non-contradiction) prefill layout, called by both this module's own eval loop
+    (``main()``'s ``build_prefill`` closure) and any external driver -- e.g. the vLLM parity harness
+    in ``debug/ctc_vllm_validation/general/`` -- that needs token-identical prompts without loading a
+    model. Keeping one call site (instead of two copies of the ``segment_prompt_to_chunks`` /
+    ``emit_document_chunk_*`` invocation) means the two can never silently drift apart.
+
+    :param task: ``TASK_CFG`` key (already resolved through ``TASK_ALIASES`` if needed).
+    :param variant: ``"dense"`` / ``"full"`` use the dense (box-marker) emitter; ``"landmark"`` packs
+        into landmark windows.
+    :param cot_mode: overrides ``TASK_CFG[task]["cot"]`` when given.
+    :param mem_freq: landmark variant only -- window size passed to ``emit_document_chunk_landmark``.
+    :param use_titles: render document titles; must match the training converter's ``--use-titles``.
+
+    :returns: The prefill token ids (a list). No answer, no EOS and no padding.
+    """
+    from olmo_core.data.document_chunk_landmark import (
+        emit_document_chunk_dense,
+        emit_document_chunk_landmark,
+        segment_prompt_to_chunks,
+    )
+
+    cfg = TASK_CFG[task]
+    chunk_by = cfg["chunk_by"]
+    cm = cot_mode if cot_mode is not None else cfg["cot"]
+    segs, ids, _ = segment_prompt_to_chunks(
+        tok,
+        raw_example,
+        task,
+        query_position=query_position,
+        cot_mode=cm,
+        chunk_by=chunk_by,
+        item_regex=r"\|\|",
+        include_answer=False,
+        use_titles=use_titles,
+        doc_start_id=doc_start_id,
+        doc_end_id=doc_end_id,
+    )
+    if variant in ("dense", "full"):
+        out, _ = emit_document_chunk_dense(segs)  # box markers present; full attention ignores them
+    else:
+        out, _ = emit_document_chunk_landmark(
+            segs, mem_freq=mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
+        )
+    return out
 
 
 def main():
@@ -83,10 +198,27 @@ def main():
     ap.add_argument("--model-path", required=True, help="step dir: config.json + model_and_optim/")
     ap.add_argument("--out", required=True)
     ap.add_argument("--tokenizer", default="Qwen/Qwen3-4B")
+    # Boundary / special token ids. Defaults are the Qwen3 tokenizer values (unchanged behavior for
+    # the dense Qwen3-0.6B/4B docchunk models). For the hybrid Qwen3.5 models the tokenizer differs
+    # (vocab 248320): pass --doc-start-id 248049 --doc-end-id 248050 --eos-token-id 248044 to match
+    # the Qwen3.5-tokenized shards (see Qwen3.5-0.8B-docchunk-mask-mix-contradiction-SFT-local.py).
+    ap.add_argument("--doc-start-id", type=int, default=DOC_START_ID, help="<|box_start|> id")
+    ap.add_argument("--doc-end-id", type=int, default=DOC_END_ID, help="<|box_end|> id")
+    ap.add_argument(
+        "--eos-token-id", type=int, default=EOS_TOKEN_ID, help="document-separator EOS id"
+    )
+    ap.add_argument(
+        "--pad-fallback-id",
+        type=int,
+        default=151645,
+        help="generation pad id when the tokenizer pad == eos (Qwen3 default 151645).",
+    )
     ap.add_argument(
         "--task",
         default="oolong",
-        help="oolong | contradiction | retrieval | rerank | outlier "
+        help="one of TASK_CFG's keys: oolong | contradiction | retrieval | rerank | outlier | "
+        "redundancy | absence | xabsence | strmatch | qdmatch | mathmatch | cycle | groups4 | "
+        "textgroups | reorder | grouping | grouping_labeled | qa | summarization | cot_retrieval "
         "(aliases: nq->retrieval, contra->contradiction).",
     )
     # --data is the general eval JSONL; --oolong-data kept as a back-compat alias.
@@ -100,6 +232,12 @@ def main():
         type=int,
         default=None,
         help="override the per-task default decode budget.",
+    )
+    ap.add_argument(
+        "--per-example-out",
+        default=None,
+        help="if set, dump per-example grading (idx, prediction, task-specific fields) as a JSON "
+        "list -- for connectivity-stratified analysis.",
     )
     ap.add_argument("--max-length", type=int, default=8192)
     ap.add_argument("--mem-freq", type=int, default=63)
@@ -125,8 +263,43 @@ def main():
         help="landmark variant: top-k = ceil(fraction * num_prompt_blocks), set per example. "
         "Overridden by --landmark-top-k-blocks.",
     )
+    ap.add_argument(
+        "--query-position",
+        default="both",
+        choices=("before", "after", "both"),
+        help="Where the question block sits relative to the documents. Default 'both' matches how "
+        "these checkpoints were trained (the converters' own default) and MUST stay the default. "
+        "'after' exists to measure one specific thing: with 'both', a per-query question is emitted "
+        "BEFORE the shared corpus, so the shared documents are not a token prefix and "
+        "--shared-corpus-cache can reuse nothing on any task that has a real query (measured: nq "
+        "0.5%, rerank 0.9%, oolong 0.1% reusable). 'after' makes the corpus a true prefix, at the "
+        "cost of an off-distribution prompt -- quantify that cost before using it for real numbers.",
+    )
+    ap.add_argument(
+        "--shared-corpus-cache",
+        action="store_true",
+        help="prefill each corpus's shared document prefix ONCE and rewind to it for every query "
+        "that shares it (files built by corpus_reasoning.data.build_shared_corpus_evals, which "
+        "adds corpus_id / shared_prefix_len). Pure optimisation: the decode loop, stop rules and "
+        "scoring are unchanged, so scores must match the same file run without this flag. "
+        "--variant dense|full only; not compatible with --batch-size > 1.",
+    )
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="examples decoded per forward (left-padded, KV-cached). Default 1 keeps the exact "
+        "original bs=1 loop. Only '--variant dense' and '--variant full' are supported -- "
+        "'--variant landmark' always uses the bs=1 path. See "
+        "ctc_eval.eval.batched_native_decode.",
+    )
     args = ap.parse_args()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if args.batch_size > 1 and args.variant == "landmark":
+        raise SystemExit(
+            "--batch-size > 1 is not supported for --variant landmark (periodic landmark-token "
+            "re-insertion during decode doesn't fit the batched loop). Use --batch-size 1."
+        )
 
     seg_task = TASK_ALIASES.get(args.task, args.task)
     if seg_task not in TASK_CFG:
@@ -138,24 +311,26 @@ def main():
     stop_rule = cfg["stop"]
     eval_data = args.data or args.oolong_data
 
-    from ctc_eval.eval.evaluate import (
-        _eval_contradiction,
-        _eval_oolong,
-        _eval_outlier,
-        _eval_rerank,
-        _eval_retrieval,
-        load_unified_examples,
-    )
     from transformers import AutoTokenizer
 
+    from ctc_eval.eval.evaluate import (
+        _eval_absence,
+        _eval_contradiction,
+        _eval_cycle,
+        _eval_grouping,
+        _eval_oolong,
+        _eval_outlier,
+        _eval_qa,
+        _eval_qdmatch,
+        _eval_reorder,
+        _eval_rerank,
+        _eval_retrieval,
+        _eval_summarization,
+        load_unified_examples,
+    )
     from olmo_core.config import DType
     from olmo_core.data.document_chunk_landmark import DOC_END_ID as _DE
     from olmo_core.data.document_chunk_landmark import DOC_START_ID as _DS
-    from olmo_core.data.document_chunk_landmark import (
-        emit_document_chunk_dense,
-        emit_document_chunk_landmark,
-        segment_prompt_to_chunks,
-    )
     from olmo_core.generate.generation_module.config import GenerationConfig
     from olmo_core.generate.generation_module.transformer import (
         TransformerGenerationModuleConfig,
@@ -163,14 +338,26 @@ def main():
 
     SCORERS = {
         "oolong": _eval_oolong,
-        "contradiction": _eval_contradiction,
-        "retrieval": _eval_retrieval,
+        "contradiction": _eval_contradiction,  # reused by redundancy, strmatch, mathmatch
+        "retrieval": _eval_retrieval,  # reused by cot_retrieval
         "rerank": _eval_rerank,
         "outlier": _eval_outlier,
+        "absence": _eval_absence,  # reused by xabsence
+        "qdmatch": _eval_qdmatch,
+        "cycle": _eval_cycle,  # reused by groups4, textgroups
+        "reorder": _eval_reorder,
+        "grouping": _eval_grouping,  # reused by grouping_labeled
+        "qa": _eval_qa,
+        "summarization": _eval_summarization,
     }
     scorer = SCORERS[cfg["scorer"]]
 
-    assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
+    # Resolve boundary/eos ids from CLI (Qwen3 defaults preserve prior behavior; Qwen3.5 overrides).
+    ds_id, de_id, eos_id = args.doc_start_id, args.doc_end_id, args.eos_token_id
+    if (ds_id, de_id) == (DOC_START_ID, DOC_END_ID):
+        # Only sanity-check the module defaults when using the built-in (Qwen3) boundary ids;
+        # explicit overrides are passed straight through to segment_prompt_to_chunks below.
+        assert (_DS, _DE) == (DOC_START_ID, DOC_END_ID)
 
     # ---- data-parallel across ranks (torchrun) ----
     world = int(os.environ.get("WORLD_SIZE", "1"))
@@ -191,8 +378,8 @@ def main():
 
     t0 = time.time()
     # GenerationConfig requires pad != eos; Qwen3 has no pad, and we decode bs=1 (pad is unused), so
-    # any distinct reserved id is fine (151645 = <|im_end|>).
-    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, EOS_TOKEN_ID) else 151645
+    # any distinct reserved id is fine (default --pad-fallback-id 151645 = <|im_end|>).
+    pad_id = tok.pad_token_id if tok.pad_token_id not in (None, eos_id) else args.pad_fallback_id
     # All variants now support a KV cache. Dense / full (DocumentChunkedAttention) prefill with the
     # chunked mask + cache K,V; decode is plain causal over the cache (generated tokens are FREE). The
     # landmark variant (DocumentLandmarkAttention) prefills with the chunked grouped-softmax mask +
@@ -200,7 +387,7 @@ def main():
     # Both turn eval from O(gen*n^2) eager re-feeding into O(n^2 + gen*n), identical tokens.
     use_cache = True
     gen_cfg = GenerationConfig(
-        eos_token_id=EOS_TOKEN_ID,
+        eos_token_id=eos_id,
         pad_token_id=pad_id,
         max_length=args.max_length,
         use_cache=use_cache,
@@ -216,14 +403,39 @@ def main():
     )
     # Belt-and-suspenders: ensure runtime chunk_id reconstruction is on (config.json should already
     # set it, but we control pad_id here). The full-attention baseline has NO chunked mask.
+    # pad_id is always PAD_TOKEN_ID now (not just for landmark): batched eval (--batch-size > 1)
+    # left-pads the prompt with this id, and chunk_ids reconstruction must mark it PAD (non-
+    # attendable) rather than FREE. At --batch-size 1 no such token ever appears in the dense
+    # prefill, so this is bit-identical to the old ``pad_id=None`` behavior there.
     if args.variant != "full":
         gm.model.enable_document_chunk_attention(
-            doc_start_id=DOC_START_ID,
-            doc_end_id=DOC_END_ID,
-            eos_id=EOS_TOKEN_ID,
+            doc_start_id=ds_id,
+            doc_end_id=de_id,
+            eos_id=eos_id,
             mode="chunked",
-            pad_id=PAD_TOKEN_ID if args.variant == "landmark" else None,
+            pad_id=PAD_TOKEN_ID,
         )
+    elif args.batch_size > 1:
+        from ctc_eval.eval.batched_native_decode import (
+            model_has_document_chunked_attention,
+        )
+
+        if model_has_document_chunked_attention(gm):
+            # This "full" checkpoint's attention layers really are DocumentChunkedAttention (mask
+            # disabled for this arm). Batched decode left-pads the prompt, so the pad prefix must
+            # still be excluded from attention -- done via batched_native_decode's
+            # force_standard_pattern around each batched call. Thread chunk_ids here so that pattern
+            # has a pad role to exclude; bs=1 "full" is untouched (requires batch_size > 1).
+            gm.model.enable_document_chunk_attention(
+                doc_start_id=ds_id,
+                doc_end_id=de_id,
+                eos_id=eos_id,
+                mode="chunked",
+                pad_id=PAD_TOKEN_ID,
+            )
+        # else: a genuinely plain-attention-trained "full" checkpoint -- its KV-cached prefill already
+        # honors cache_leftpad natively (flash_attn_with_kvcache); calling
+        # enable_document_chunk_attention would crash (those blocks don't accept chunk_ids).
     print(
         f"[docchunk-{args.variant}] task={seg_task} chunk_by={chunk_by} cot={cot_mode} "
         f"max_new={max_new_tokens} stop={stop_rule} built from {args.model_path} "
@@ -240,37 +452,55 @@ def main():
         if nxt_id != NEWLINE_ID:
             return False
         if stop_rule == "newline":
-            return True  # single-line answer: stop at the first generated newline
+            # Stop at the newline that ENDS the single-line answer -- but NOT a
+            # LEADING newline before any content. Models often emit a formatting
+            # "\n" before the answer; stopping there yields an empty generation
+            # and a contaminated metric (obliq/retrieval scored ~random with all
+            # gens empty until this fix). new_content includes nxt_id, so check
+            # the content BEFORE it.
+            prior = tok.decode(new_content[:-1], skip_special_tokens=True).strip()
+            return len(prior) > 0
         # "oolong": stop at a newline only once the templated "answer:" line has been emitted
         return "answer:" in tok.decode(new_content, skip_special_tokens=True).lower()
 
     def build_prefill(raw_example):
-        segs, ids, _ = segment_prompt_to_chunks(
+        return build_eval_prefill(
             tok,
             raw_example,
             seg_task,
-            query_position="both",
+            variant=args.variant,
             cot_mode=cot_mode,
-            chunk_by=chunk_by,
-            item_regex=r"\|\|",
-            include_answer=False,
+            doc_start_id=ds_id,
+            doc_end_id=de_id,
+            mem_freq=args.mem_freq,
+            query_position=args.query_position,
             use_titles=args.use_titles,
-            doc_start_id=DOC_START_ID,
-            doc_end_id=DOC_END_ID,
         )
-        if args.variant in ("dense", "full"):
-            out, _ = emit_document_chunk_dense(
-                segs
-            )  # box markers present; full attention ignores them
-        else:
-            out, _ = emit_document_chunk_landmark(
-                segs, mem_freq=args.mem_freq, mem_id=LANDMARK_TOKEN_ID, pad_id=PAD_TOKEN_ID
-            )
-        return out
 
     block_size = (
         args.mem_freq + 1
     )  # landmark window (64); the eager landmark forward needs T % 64 == 0
+
+    @torch.no_grad()
+    def decode_from_logits(logits):
+        """Greedy decode loop for dense/full, starting from the last prompt token's logits.
+
+        Factored out of ``generate_one`` so the shared-corpus prefix-cache path
+        (``--shared-corpus-cache``) can reuse the EXACT decode behaviour -- stop rules, think-strip
+        and all -- while changing only where the prompt's KV came from.
+        """
+        nxt = int(logits[0, -1].argmax().item())
+        new_content = []
+        for _ in range(max_new_tokens):
+            if nxt == eos_id:
+                break
+            new_content.append(nxt)
+            if should_stop(nxt, new_content):
+                break
+            logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
+            nxt = int(logits[0, -1].argmax().item())
+        text = tok.decode(new_content, skip_special_tokens=True)
+        return text.split("</think>", 1)[1] if "</think>" in text else text
 
     @torch.no_grad()
     def generate_one(prefill):
@@ -289,18 +519,7 @@ def main():
             logits = gm.model(
                 torch.tensor([prefill], device=device), logits_to_keep=1, cache_leftpad=leftpad
             )
-            nxt = int(logits[0, -1].argmax().item())
-            new_content = []
-            for _ in range(max_new_tokens):
-                if nxt == EOS_TOKEN_ID:
-                    break
-                new_content.append(nxt)
-                if should_stop(nxt, new_content):
-                    break
-                logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
-                nxt = int(logits[0, -1].argmax().item())
-            text = tok.decode(new_content, skip_special_tokens=True)
-            return text.split("</think>", 1)[1] if "</think>" in text else text
+            return decode_from_logits(logits)
 
         # Landmark: KV-cached decode. The prefill (block-aligned, landmark at every block end) is run
         # once with the chunked grouped-softmax mask + K,V cached; then each generated token is fed
@@ -315,7 +534,7 @@ def main():
         new_content = []
         since_landmark = 0
         for _ in range(max_new_tokens):
-            if nxt == EOS_TOKEN_ID:
+            if nxt == eos_id:
                 break
             new_content.append(nxt)
             logits = gm.model(torch.tensor([[nxt]], device=device), logits_to_keep=1)
@@ -336,7 +555,7 @@ def main():
         eval_data,
         args.max_test_samples,
         task=seg_task,
-        query_position="both",
+        query_position=args.query_position,
         use_alpaca=True,
     )
     import math
@@ -352,20 +571,111 @@ def main():
     my_gidx = list(range(rank, len(examples), world))
     local = []
     skipped = 0
-    for gi in my_gidx:
-        raw = examples[gi].get("ex", examples[gi])
-        prefill = build_prefill(raw)
-        if len(prefill) > cap:
-            skipped += 1
-            local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
-            continue
-        # Per-example top-k from a fraction of this prompt's landmark blocks (landmark variant only).
-        if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
-            n_blocks = max(1, len(prefill) // block_size)
-            gm.model.set_landmark_eval_top_k(
-                max(1, math.ceil(args.landmark_top_k_fraction * n_blocks))
+    shared_stats = {"groups": 0, "prefill_tokens": 0, "suffix_tokens": 0, "naive_tokens": 0}
+    if args.shared_corpus_cache:
+        # Shared-corpus path: rows carrying the same `corpus_id` share a byte-identical document
+        # prefix, so prefill it once per corpus and rewind to it for each query. Sharding is by
+        # GROUP, not by example -- splitting a group across ranks would prefill the same corpus on
+        # every rank and throw the saving away.
+        from ctc_eval.eval.shared_corpus_cache import (
+            generate_group_with_shared_prefix,
+            group_by_corpus,
+        )
+
+        if args.variant not in ("dense", "full"):
+            raise SystemExit(
+                f"--shared-corpus-cache supports --variant dense|full, not {args.variant!r}. "
+                "The landmark decode inserts periodic landmark tokens, so its cache cursor is not "
+                "a plain rewind."
             )
-        local.append((gi, generate_one(prefill)))
+        all_groups = list(group_by_corpus(examples).items())
+        for cid, member_idx in all_groups[rank::world]:
+            keep_idx, prefills = [], []
+            for gi in member_idx:
+                raw = examples[gi].get("ex", examples[gi])
+                prefill = build_prefill(raw)
+                if len(prefill) > cap:
+                    skipped += 1
+                    local.append((gi, ""))
+                    continue
+                keep_idx.append(gi)
+                prefills.append(prefill)
+            if not prefills:
+                continue
+            texts, st = generate_group_with_shared_prefix(
+                gm, prefills, device, args.max_length, decode_from_logits
+            )
+            local.extend(zip(keep_idx, texts))
+            shared_stats["groups"] += 1
+            shared_stats["prefill_tokens"] += st["prefill_tokens"]
+            shared_stats["suffix_tokens"] += st["suffix_tokens"]
+            shared_stats["naive_tokens"] += sum(len(p) for p in prefills)
+        if shared_stats["naive_tokens"]:
+            fed = shared_stats["prefill_tokens"] + shared_stats["suffix_tokens"]
+            print(
+                f"[shared-corpus] rank={rank} groups={shared_stats['groups']} "
+                f"prompt tokens fed {fed:,} vs {shared_stats['naive_tokens']:,} naive "
+                f"({shared_stats['naive_tokens'] / max(1, fed):.1f}x fewer)",
+                flush=True,
+            )
+    elif args.batch_size <= 1:
+        for gi in my_gidx:
+            raw = examples[gi].get("ex", examples[gi])
+            prefill = build_prefill(raw)
+            if len(prefill) > cap:
+                skipped += 1
+                local.append((gi, ""))  # too long for this max_length -> empty (scored wrong)
+                continue
+            # Per-example top-k from a fraction of this prompt's landmark blocks (landmark only).
+            if args.variant == "landmark" and args.landmark_top_k_fraction is not None:
+                n_blocks = max(1, len(prefill) // block_size)
+                gm.model.set_landmark_eval_top_k(
+                    max(1, math.ceil(args.landmark_top_k_fraction * n_blocks))
+                )
+            local.append((gi, generate_one(prefill)))
+    else:
+        # Batched path (--variant dense | full only -- validated above). Length-filter first (exactly
+        # as bs=1), then decode the survivors ``--batch-size`` at a time.
+        from contextlib import nullcontext
+
+        from ctc_eval.eval.batched_native_decode import (
+            force_standard_pattern,
+            generate_batch_docchunk,
+        )
+
+        keep: list = []
+        for gi in my_gidx:
+            raw = examples[gi].get("ex", examples[gi])
+            prefill = build_prefill(raw)
+            if len(prefill) > cap:
+                skipped += 1
+                local.append((gi, ""))
+            else:
+                keep.append((gi, prefill))
+
+        def is_answer_complete(content):
+            return bool(content) and should_stop(content[-1], content)
+
+        ctx = force_standard_pattern(gm) if args.variant == "full" else nullcontext()
+        with ctx:
+            for start in range(0, len(keep), args.batch_size):
+                group = keep[start : start + args.batch_size]
+                gidxs = [gi for gi, _ in group]
+                prefills = [p for _, p in group]
+                outs = generate_batch_docchunk(
+                    gm,
+                    prefills,
+                    device=device,
+                    eos_id=eos_id,
+                    pad_token_id=PAD_TOKEN_ID,
+                    max_new_tokens=max_new_tokens,
+                    max_length=args.max_length,
+                    is_answer_complete=is_answer_complete,
+                )
+                for gi, new_content in zip(gidxs, outs):
+                    text = tok.decode(new_content, skip_special_tokens=True)
+                    text = text.split("</think>", 1)[1] if "</think>" in text else text
+                    local.append((gi, text))
 
     full = [None] * len(examples)
     if world > 1:
@@ -379,13 +689,20 @@ def main():
             full[gi] = resp
 
     if is_main:
-        res, _ = scorer(examples, full)
+        res, details = scorer(examples, full)
+        if args.per_example_out:
+            for i, d in enumerate(details):
+                d["idx"] = i
+            os.makedirs(os.path.dirname(args.per_example_out) or ".", exist_ok=True)
+            with open(args.per_example_out, "w") as f:
+                json.dump(details, f)
+            print(f"[per-example] wrote {len(details)} rows -> {args.per_example_out}", flush=True)
         summary = {
             "model_path": args.model_path,
             "variant": args.variant,
             "task": seg_task,
             "data": eval_data,
-            "n": len(examples),
+            "eval_size": len(examples),
             "skipped_too_long": skipped,
             "landmark_top_k_blocks": args.landmark_top_k_blocks,
             "landmark_top_k_fraction": args.landmark_top_k_fraction,

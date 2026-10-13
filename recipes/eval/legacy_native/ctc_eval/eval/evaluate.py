@@ -107,23 +107,46 @@ from tqdm import tqdm
 
 
 def parse_pairs(text: str) -> list[list[int]] | None:
-    """Extract list of integer pairs from model output."""
+    """Extract list of integer pairs from model output.
+
+    The prompt PRIMES the answer with a leading ``[[``, so the model's generation is
+    usually the completion with the opening bracket(s) dropped (e.g.
+    ``1, 37], [6, 60], [35, 71]]``). The old parser required the leading ``[``, so its
+    ``\\[...\\]`` search silently dropped the FIRST pair on every such example --
+    collapsing recall and destroying exact_match (contradiction EM read ~0.60 when the
+    model was emitting the correct 3 pairs and true EM is >0.9). We now also try
+    bracket-reconstructed variants and keep the parse with the MOST pairs, and loosen
+    the regex fallback's opening bracket to optional. Same primed-bracket bug class as
+    ``parse_doc_ids`` and ``_parse_snippet_list``. Well-formed ``[[...]]`` output is
+    unchanged.
+    """
     text = text.strip()
-    for candidate in [text, re.search(r"\[[\s\S]*\]", text)]:
-        if candidate is None:
-            continue
-        s = candidate if isinstance(candidate, str) else candidate.group()
-        try:
-            parsed = json.loads(s)
-            if isinstance(parsed, list):
-                return [
-                    sorted([int(p[0]), int(p[1])])
-                    for p in parsed
-                    if isinstance(p, list) and len(p) == 2
-                ]
-        except (json.JSONDecodeError, ValueError, TypeError):
-            continue
-    matches = re.findall(r"[\[\(]\s*(\d+)\s*,\s*(\d+)\s*[\]\)]", text)
+    candidates = [text]
+    if text[:1].isdigit():
+        candidates.append("[[" + text)  # primed '[[' dropped, starts at a digit
+    elif text.startswith("[") and not text.startswith("[["):
+        candidates.append("[" + text)  # primed outer '[' dropped, starts at '[digit'
+    best = None
+    for s in candidates:
+        for candidate in [s, re.search(r"\[\[[\s\S]*\]\]", s) or re.search(r"\[[\s\S]*\]", s)]:
+            if candidate is None:
+                continue
+            frag = candidate if isinstance(candidate, str) else candidate.group()
+            try:
+                parsed = json.loads(frag)
+                if isinstance(parsed, list):
+                    pairs = [
+                        sorted([int(p[0]), int(p[1])])
+                        for p in parsed
+                        if isinstance(p, list) and len(p) == 2
+                    ]
+                    if best is None or len(pairs) > len(best):
+                        best = pairs
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+    if best:
+        return best
+    matches = re.findall(r"[\[\(]?\s*(\d+)\s*,\s*(\d+)\s*[\]\)]", text)
     if matches:
         return [sorted([int(a), int(b)]) for a, b in matches]
     return [] if text in ("[]", "") else None
@@ -1644,11 +1667,23 @@ def main():
                     prompt = ex["prompt"]
                     if args.enable_thinking:
                         prompt = prompt + "<think>\n"
+                    # truncation=False: `truncation=True` with no max_length silently cut at
+                    # tokenizer.model_max_length -- a number nobody passed and nobody sees --
+                    # removing the prompt TAIL, where the question is. Fail instead.
                     input_ids = tokenizer(
                         prompt,
                         return_tensors="pt",
-                        truncation=True,
-                    ).input_ids.to(device)
+                        truncation=False,
+                    ).input_ids
+                    _tok_cap = getattr(tokenizer, "model_max_length", None)
+                    if _tok_cap is not None and input_ids.shape[1] > _tok_cap:
+                        raise ValueError(
+                            f"[maxlen] prompt is {input_ids.shape[1]} tokens, past the tokenizer's "
+                            f"model_max_length {_tok_cap} ({label}, task={args.task}). Raise "
+                            f"model_max_length on the tokenizer or evaluate a shorter rung -- "
+                            f"truncating would silently drop the end of the prompt."
+                        )
+                    input_ids = input_ids.to(device)
                     response = generate_hf(
                         model,
                         tokenizer,
@@ -1672,10 +1707,22 @@ def main():
                 # locate them). vLLM accepts prompt_token_ids directly.
                 from vllm import TokensPrompt
 
+                # truncation=False on purpose -- see the note on the per-example hf path above.
+                # An over-budget prompt is a --max-model-len error to fix, not a tail to discard.
                 prompt_token_ids = [
-                    chunked_tokenizer(p, truncation=True, max_length=args.max_model_len).input_ids
-                    for p in prompts
+                    chunked_tokenizer(p, truncation=False).input_ids for p in prompts
                 ]
+                _cap = args.max_model_len - args.max_tokens
+                _over = [(i, len(t)) for i, t in enumerate(prompt_token_ids) if len(t) > _cap]
+                if _over:
+                    _worst = max(n for _, n in _over)
+                    raise ValueError(
+                        f"[maxlen] {len(_over)}/{len(prompt_token_ids)} prompts exceed the "
+                        f"{_cap}-token prompt cap (--max-model-len {args.max_model_len} minus "
+                        f"max_tokens {args.max_tokens}); longest is {_worst} tokens "
+                        f"(example indices {[i for i, _ in _over][:8]}). Re-run with "
+                        f"--max-model-len >= {_worst + args.max_tokens}."
+                    )
                 inputs = [TokensPrompt(prompt_token_ids=t) for t in prompt_token_ids]
                 outputs = llm.generate(inputs, sampling_params, lora_request=lora_request)
                 responses = [o.outputs[0].text for o in outputs]
@@ -2132,7 +2179,20 @@ def _norm_snippet(s):
 
 def _parse_snippet_list(text):
     """Extract the model's JSON list of first-four-words snippets. Falls back to
-    quote-delimited extraction if json.loads fails."""
+    quote-delimited extraction if json.loads fails, OR if the opening '[' is
+    missing entirely.
+
+    The opening bracket is treated as OPTIONAL: the label for this task is a bare
+    JSON array (``["snip1", "snip2"]``) with no natural-language lead-in, and some
+    checkpoints -- notably under document-chunked attention -- consistently drop
+    the leading '[' token and start the answer directly at the first quoted
+    snippet (content ends cleanly with ']'). Requiring '[' silently scored every
+    such response as a parse failure (absence_gutenberg chunked read parse_rate
+    ~0.01 while the emitted snippets were coherent and correct). Recovering the
+    quoted snippets from the whole string when the bracketed match is absent fixes
+    that without changing behavior for well-formed bracketed outputs. Same class
+    of bug as ``parse_doc_ids`` (primed-bracket).
+    """
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
         try:
@@ -2144,6 +2204,24 @@ def _parse_snippet_list(text):
         quoted = re.findall(r'"([^"]*)"', m.group(0))
         if quoted:
             return quoted
+    # No bracketed array: the model may have dropped the leading '[' (or the
+    # whole '["' -- the observed chunked failure starts directly at the first
+    # snippet's text with no opening bracket or quote). Reconstruct a parseable
+    # array and retry, so coherent snippets aren't scored as a parse failure.
+    if "]" in text and "[" not in text:
+        stripped = text.strip()
+        rebuilt = ("[" + stripped) if stripped.startswith('"') else ('["' + stripped)
+        m2 = re.search(r"\[.*\]", rebuilt, re.DOTALL)
+        if m2:
+            try:
+                arr = json.loads(m2.group(0))
+                if isinstance(arr, list):
+                    return [str(x) for x in arr]
+            except Exception:
+                pass
+            quoted = re.findall(r'"([^"]*)"', m2.group(0))
+            if quoted:
+                return quoted
     return None
 
 
@@ -2484,10 +2562,21 @@ def _eval_summarization(examples, responses):
 
         scorer = rouge_scorer.RougeScorer(["rouge1", "rougeL"], use_stemmer=True)
         use_rouge = True
-    except ImportError:
+    except ImportError as e:
+        # This fallback still writes its value under the keys "rouge1_f"/"rougeL_f", so a missing
+        # dependency silently relabels token-F1 as ROUGE. It did exactly that for the whole
+        # helmet_summ column of the CTC grid: `rouge_score` was installed on sneetches but its
+        # dependency `absl-py` was not, so every reported "rouge1_f" was really token-F1 (the
+        # tell is rouge1_f == rougeL_f to full precision, which ROUGE-1 and ROUGE-L never are).
+        # Be loud about it -- see records/helmet-narrativeqa-govreport-repair.md.
         from ctc_eval.lib.metrics import token_f1
 
         use_rouge = False
+        print(
+            f"!! _eval_summarization: rouge_score unavailable ({e}); falling back to token_f1. "
+            f"The reported 'rouge1_f'/'rougeL_f' are NOT ROUGE -- check the 'metric' field before "
+            f"quoting them. Fix with: pip install rouge_score absl-py nltk"
+        )
 
     r1s, rls, details = [], [], []
     for ex, resp in zip(examples, responses):

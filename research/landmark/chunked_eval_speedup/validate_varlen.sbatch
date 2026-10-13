@@ -25,7 +25,7 @@ R2=/data/prasann/repo_r2/OLMo-core
 mkdir -p "$R2/src" "$R2/research/landmark/ctc_vllm_validation" /data/prasann/joblogs
 rsync -a --delete $REPO_ROOT/src/ "$R2/src/"
 rsync -a --delete $REPO_ROOT/research/landmark/ctc_vllm_validation/ "$R2/research/landmark/ctc_vllm_validation/"
-cp "$ACC/research/common/corpus_reasoning/lib/vllm_chunked_patch.py" "$R2/research/common/corpus_reasoning/lib/vllm_chunked_patch.py"
+cp "$ACC/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py" "$R2/recipes/eval/legacy_native/ctc_eval/lib/vllm_chunked_patch.py"
 cp "$ACC/research/landmark/ctc_vllm_validation/run_vllm_eval.py"     "$R2/research/landmark/ctc_vllm_validation/run_vllm_eval.py"
 
 VDIR=$R2/research/landmark/ctc_vllm_validation
