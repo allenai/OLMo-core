@@ -68,6 +68,7 @@ from olmo_core.data.document_chunk_landmark import (  # canonical ids -- never r
     reserved_ids,
     segment_prompt_to_chunks,
 )
+from olmo_core.progress import Progress
 
 log = logging.getLogger("convert_unified_doc_chunked")
 
@@ -495,7 +496,9 @@ def main() -> None:
     else:
         results = (tokenize_example(tok, ex, ids_set=ids_set, **tok_kwargs) for ex in examples)
 
+    prog = Progress(len(examples), f"convert {args.task}", every=1000)
     for ex, res in zip(examples, results):
+        prog.update()  # items 1,2,5,10,... with rate/ETA: a stalled pool is visible in seconds
         if res is None:
             dropped += 1
             continue
@@ -514,6 +517,7 @@ def main() -> None:
         if buffered >= args.shard_tokens:
             flush()
             buffered = 0
+    prog.done(f"kept={kept} dropped={dropped}")
     if pool is not None:
         pool.close()
         pool.join()

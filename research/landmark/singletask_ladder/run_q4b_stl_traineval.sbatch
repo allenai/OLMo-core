@@ -37,7 +37,7 @@ echo "=== HOST=$(hostname) RUN=$RUN_NAME TASK=$TASK SEQ=$SEQ_LEN BT=$BATCH_TOKEN
 
 source /system/linux/miniforge-3.13/etc/profile.d/conda.sh
 OLMOENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$OLMOENV" ] || OLMOENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
+[ -x "$OLMOENV/bin/python" ] || { echo "FATAL: no node-local env at $OLMOENV on $(hostname -s); an NFS interpreter deadlocks in D state (local_cluster.md)"; exit 1; }
 export TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1 OMP_NUM_THREADS=8
 export NCCL_IB_DISABLE=1 NCCL_P2P_DISABLE=1 NCCL_DEBUG=WARN NCCL_SOCKET_IFNAME=lo
 export WANDB_API_KEY=$(awk '/api.wandb.ai/{getline; if($1=="login")getline; for(i=1;i<=NF;i++) if($i=="password") print $(i+1)}' ~/.netrc 2>/dev/null | head -1)
@@ -54,7 +54,7 @@ export PYTHONPATH="$REPO/research/common:$REPO/src"; cd "$REPO"
 trc=1
 for attempt in 1 2 3; do
   MP=$(( 20000 + RANDOM % 20000 )); echo "--- train attempt $attempt (port $MP) $(date '+%T') ---"
-  torchrun --nproc_per_node="$NGPU" --master_port="$MP" \
+  "$OLMOENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MP" \
     research/landmark/singletask_ladder/Qwen3-4B-singletask-ladder-SFT-local.py \
     --variant dense --task "$TASK" --data-root "$DATA_ROOT" \
     --seq-len "$SEQ_LEN" --max-steps "$MAX_STEPS" --lr "$LR" --batch-tokens "$BATCH_TOKENS" \
@@ -81,7 +81,7 @@ case "$TASK" in
 esac
 echo "=== EVAL $(date '+%T') -> $OUT ==="
 EP=$(( 20000 + RANDOM % 20000 ))
-torchrun --nproc_per_node="$NGPU" --master_port="$EP" scripts/eval/eval_lc_native.py $ARGS
+"$OLMOENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$EP" scripts/eval/eval_lc_native.py $ARGS
 erc=$?
 mkdir -p "$RESULTS_SHARED"
 [ -f "$OUT" ] && { cp "$OUT" "$RESULTS_SHARED/${RUN_NAME}_${TASK}_14k.json"; echo "--- result ---"; cat "$OUT"; }

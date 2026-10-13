@@ -144,6 +144,14 @@ except ImportError:  # pragma: no cover
     _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     import variants as V  # type: ignore[no-redef]
 
+try:  # start-of-run guards shared with the setA recipe (recipes/train/run_guards.py)
+    from recipes.train import run_guards as RG
+except ImportError:  # pragma: no cover
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import run_guards as RG  # type: ignore[no-redef]
+
 #: Supported model families. The trainer is family-agnostic: everything below (marker ids,
 #: embedding size, tokenizer, model factory) is keyed on the family, which is auto-detected from
 #: the shard's ``marker_set`` (or forced via ``--model-family``). ``qwen3_5`` is the GDN+attn
@@ -899,6 +907,63 @@ def dry_run(opts: argparse.Namespace) -> None:
 _tolerant_base_load = V.tolerant_base_load
 
 
+def _guard_save_folder_and_markers(
+    opts: argparse.Namespace, save_folder: str, base_checkpoint: str
+) -> Dict[str, Any]:
+    """Start-of-run guards (recipes/train/run_guards.py), checked on rank 0 and broadcast so every
+    rank fails together instead of the others hanging at the first collective.
+
+    * silent auto-resume: refuse a NEW launch into a save folder holding another launch's step
+      checkpoints unless ``--resume`` (a preemption restart of the same launch passes);
+    * unrepaired marker base: the marker rows the shard feeds the model must be distinguishable and
+      in-distribution in norm, unless ``--skip-marker-audit``.
+
+    :returns: The run identity to record in the save folder.
+    """
+    from olmo_core.distributed.utils import broadcast_object, is_distributed
+
+    errors: List[str] = []
+    identity: Optional[Dict[str, Any]] = None
+    if get_rank() == 0:
+        try:  # any rank-0 failure must reach the broadcast, or the other ranks hang
+            try:
+                identity = RG.check_run_identity(
+                    save_folder, opts.run_name, allow_resume=opts.resume, resume_flag="--resume"
+                )
+            except RuntimeError as exc:
+                errors.append(str(exc))
+            meta_path = os.path.join(opts.data, "metadata.json")
+            meta = json.load(open(meta_path)) if os.path.exists(meta_path) else {}
+            markers = ["doc_start", "doc_end"] if meta.get("doc_markers", True) else []
+            if variant_and_options(opts)[0].data_path == "landmark":
+                markers.append("landmark")
+            if opts.skip_marker_audit:
+                print("[ctc-suite] --skip-marker-audit: marker embedding audit NOT run", flush=True)
+            elif markers:
+                res = RG.audit_base_checkpoint(base_checkpoint, opts.model_family, markers)
+                if res["ok"]:
+                    r = res["report"]
+                    print(
+                        f"[ctc-suite] marker audit PASS ({','.join(markers)}): norm/median "
+                        f"{ {k: round(v, 3) for k, v in r['marker_norm_ratios'].items()} } "
+                        f"cos { {k: round(v, 4) for k, v in r['pairwise_cosine'].items()} }",
+                        flush=True,
+                    )
+                else:
+                    errors.append(
+                        f"{res['error']}\n(pass --skip-marker-audit only if you know the markers "
+                        "are irrelevant to this run)"
+                    )
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"start-of-run guard crashed: {type(exc).__name__}: {exc}")
+    if is_distributed():
+        errors, identity = broadcast_object((errors, identity))
+    if errors:
+        raise SystemExit("[ctc-suite] refusing to start:\n  " + "\n  ".join(errors))
+    assert identity is not None
+    return identity
+
+
 def build_and_fit(opts: argparse.Namespace) -> None:
     """Build the model / data loader / trainer and run the fit (real training entrypoint).
 
@@ -920,6 +985,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         )
 
     world_size = max(1, get_world_size())
+    run_identity = _guard_save_folder_and_markers(opts, save_folder, base_checkpoint)
     plan = resolve_plan(opts, world_size)
     print(
         f"[ctc-suite] task={opts.task} variant={opts.variant} scale={opts.model_scale} "
@@ -932,6 +998,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
     if get_rank() == 0:
         os.makedirs(save_folder, exist_ok=True)
+        RG.write_run_identity(save_folder, run_identity)
         with open(os.path.join(save_folder, "provenance.json"), "w") as f:
             json.dump(build_provenance(opts, world_size), f, indent=2, default=str)
 
@@ -1686,6 +1753,19 @@ def parse_args() -> argparse.Namespace:
         help="instances per optimizer step across all ranks (global batch tokens = this * seq-len)",
     )
     ap.add_argument("--save-folder", default=None, help=f"default {SAVE_ROOT}/<run-name>")
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help="allow continuing step checkpoints that ANOTHER launch left in the save folder. "
+        "Without it a new launch into such a folder fails (the trainer would silently resume); "
+        "a preemption restart of the same Beaker experiment / slurm job resumes without it.",
+    )
+    ap.add_argument(
+        "--skip-marker-audit",
+        action="store_true",
+        help="skip the start-of-run check that the base's marker embedding rows are repaired "
+        "(recipes/data/fix_marker_embeddings.py)",
+    )
     ap.add_argument("--run-name", default="ctc-suite-smoke")
     ap.add_argument("--wandb-group", default=None, help="default: the run name")
     ap.add_argument("--wandb-entity", default=None)
@@ -1856,6 +1936,10 @@ def parse_args() -> argparse.Namespace:
         )
     if opts.vocab_size is None:
         opts.vocab_size = FAMILY_VOCAB_SIZE[opts.model_family]
+    try:
+        RG.check_token_budget(opts.max_tokens, opts.global_batch, opts.seq_len)
+    except ValueError as exc:
+        ap.error(str(exc))
     if not opts.dry_run and opts.dry_run_n_examples:
         ap.error("--dry-run-n-examples is only valid with --dry-run")
     if opts.variant == "chunked-mix" and opts.compile:
@@ -1960,6 +2044,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     """CLI entrypoint: dry-run without distributed init, otherwise train under torchrun."""
+    # `kill -USR1 <pid>` dumps every thread's stack into the log (hung-job diagnosis, no py-spy).
+    RG.install_stack_dump_handler()
     opts = parse_args()
     if opts.dry_run:
         dry_run(opts)

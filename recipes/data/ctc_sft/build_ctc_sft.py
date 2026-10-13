@@ -40,6 +40,13 @@ import sys
 import time
 from typing import Dict, List, Optional
 
+try:
+    from olmo_core.progress import Progress
+except ImportError:  # run from a checkout without the editable install
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), *[os.pardir] * 3,
+                                    "src"))
+    from olmo_core.progress import Progress
+
 #: Tokens a rung label stands for. Rung LABELS are not token counts (contradiction runs ~1.5x under
 #: its label); this is only the divisor that turns a token budget into an example count.
 BUCKET_TOKENS = {
@@ -440,10 +447,15 @@ def main() -> None:
     first = args.buckets[0]
     warm = [j for j in jobs if j[1] == first]
     print(f"=== warming seed-pool cache ({len(warm)} serial) ===", flush=True)
-    results = [_build_cell(j) for j in warm]
-    for r in results:
-        print(f"  [{r['status']}] {r['task']}@{r['bucket']} rows={r.get('rows', 0)}"
-              + (f"  {r.get('error', '')}" if r["status"] == "FAILED" else ""), flush=True)
+    # One line per cell as it finishes (elapsed / rate / ETA): this phase is serial and long, and
+    # used to print nothing until every warm cell was done.
+    results = []
+    warm_prog = Progress(len(warm), "warm", every=1)
+    for j in warm:
+        r = _build_cell(j)
+        results.append(r)
+        warm_prog.update(extra=f"[{r['status']}] {r['task']}@{r['bucket']} rows={r.get('rows', 0)}"
+                         + (f"  {r.get('error', '')}" if r["status"] == "FAILED" else ""))
 
     rest = [j for j in jobs if j[1] != first]
     print(f"=== building {len(rest)}, {args.jobs}-way parallel ===", flush=True)

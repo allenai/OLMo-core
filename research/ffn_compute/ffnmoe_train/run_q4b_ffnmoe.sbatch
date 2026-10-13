@@ -56,7 +56,7 @@ WANDB_GROUP="${WANDB_GROUP:-ffnmoe-contra}"
 echo "=== HOST=$(hostname) RUN=$RUN FFN_MOE_START=$FFN_MOE_START TARGET=$TARGET SEQ_LEN=$SEQ_LEN AC_MODE=$AC_MODE START=$(date '+%F %T') ==="
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
+[ -x "$ENV/bin/python" ] || { echo "FATAL: no node-local env at $ENV on $(hostname -s); an NFS interpreter deadlocks in D state (local_cluster.md)"; exit 1; }
 export PATH="$ENV/bin:$PATH"
 export PYTHONPATH="$REPO/src"
 export TOKENIZERS_PARALLELISM=false
@@ -100,7 +100,7 @@ for TRY in $(seq 1 "$MAX_TRIES"); do
   rm -rf "$SAVE_DIR"/*-tmp 2>/dev/null
   MASTER_PORT=$((29000 + RANDOM % 1000))
   echo "=== attempt $TRY/$MAX_TRIES (port $MASTER_PORT) $(date '+%F %T') ==="
-  torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
+  "$ENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
     research/ffn_compute/ffnmoe_train/Qwen3-4B-ffnmoe-contra-local.py \
     --run-name "$RUN" --data "$DATA" --base-ckpt "$BASE" \
     --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --lr "$LR" --seed "$SEED" \

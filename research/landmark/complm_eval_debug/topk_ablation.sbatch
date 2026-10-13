@@ -59,7 +59,7 @@ NSHARD=$(ls "$CKPT/model_and_optim"/*.distcp 2>/dev/null | wc -l)
 for FRAC in 1.0 0.5 0.1; do
   echo
   echo "######## top_k_fraction=$FRAC  $(date '+%F %T') ########"
-  torchrun --nproc_per_node=2 --master_port=$((29500 + RANDOM % 1000)) \
+  /data/prasann/conda/envs/corpus-reasoning-olmo/bin/python -m torch.distributed.run --nproc_per_node=2 --master_port=$((29500 + RANDOM % 1000)) \
     $REPO/research/common/corpus_reasoning/eval/eval_lc_native_landmark.py \
     --model-path "$CKPT" \
     --out "$OUT/complm_contra_n100_topk${FRAC}.json" \

@@ -127,7 +127,7 @@ cd "$REPO"
 MAXARG=""; [ "$MAX_STEPS" -gt 0 ] && MAXARG="--max-steps $MAX_STEPS"
 MASTER_PORT=$((29000 + RANDOM % 1000))
 
-torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
+"$ENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   recipes/train/research_trainer/train_ctc_suite.py \
   --task "$TASK" --variant "$VARIANT" --model-scale "$SCALE" \
   ${MODEL_FAMILY:+--model-family "$MODEL_FAMILY"} \

@@ -51,7 +51,7 @@ WANDB_GROUP="${WANDB_GROUP:-pooledkv-contra-n100}"
 echo "=== HOST=$(hostname) ARM=$ARM RUN=$RUN SEQ_LEN=$SEQ_LEN EPOCHS=$EPOCHS START=$(date '+%F %T') ==="
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
+[ -x "$ENV/bin/python" ] || { echo "FATAL: no node-local env at $ENV on $(hostname -s); an NFS interpreter deadlocks in D state (local_cluster.md)"; exit 1; }
 export PATH="$ENV/bin:$PATH"
 export PYTHONPATH="$REPO/src"
 export TOKENIZERS_PARALLELISM=false
@@ -85,7 +85,7 @@ DATA="${DATA:-/data/prasann/pooledkv_exp/contra_n100_qboth_train}"
 
 cd "$REPO"
 MASTER_PORT=$((29000 + RANDOM % 1000))
-torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
+"$ENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   research/token_routing/pooledkv_train/Qwen3-4B-pooledkv-contra-n100-local.py \
   --arm "$ARM" --run-name "$RUN" --seq-len "$SEQ_LEN" --epochs "$EPOCHS" --lr "$LR" \
   --n-random "$N_RANDOM" --seed "$SEED" --wandb-group "$WANDB_GROUP" \

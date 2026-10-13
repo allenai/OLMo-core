@@ -106,7 +106,7 @@ echo "=== HOST=$(hostname) TASK=$TASK VARIANT=$VARIANT SCALE=$SCALE SEQ_LEN=$SEQ
 EPOCHS=$EPOCHS GLOBAL_BATCH=$GLOBAL_BATCH START=$(date '+%F %T') ==="
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
+[ -x "$ENV/bin/python" ] || { echo "FATAL: no node-local env at $ENV on $(hostname -s); an NFS interpreter deadlocks in D state (local_cluster.md)"; exit 1; }
 export PATH="$ENV/bin:$PATH"
 export PYTHONPATH="$REPO/src"
 export TOKENIZERS_PARALLELISM=false
@@ -189,7 +189,7 @@ WANDBARG=""; [ -n "${NOWANDB:-}" ] && WANDBARG="--no-wandb"
 # olmo-core refuses without compile), and the proven CP recipe (compile + budget AC).
 COMPILEARG="--no-compile"; [ -n "${COMPILE:-}" ] && COMPILEARG=""
 
-torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
+"$ENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
   recipes/train/research_trainer/train_ctc_suite.py \
   --task "$TASK" --variant "$VARIANT" --model-scale "$SCALE" \
   ${MODEL_FAMILY:+--model-family "$MODEL_FAMILY"} \

@@ -44,7 +44,7 @@ _finish() { cp -f "$OUT_DIR"/pooledkv-* "$MIRROR_DIR/" 2>/dev/null || true; _mir
 trap _finish EXIT
 
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-[ -d "$ENV" ] || ENV=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo
+[ -x "$ENV/bin/python" ] || { echo "FATAL: no node-local env at $ENV on $(hostname -s); an NFS interpreter deadlocks in D state (local_cluster.md)"; exit 1; }
 export PATH="$ENV/bin:$PATH"
 export PYTHONPATH="$REPO/src:$REPO/research/common"
 export HF_HOME=/data/prasann/hf_cache
@@ -62,7 +62,7 @@ for RUN in $RUNS; do
   fi
   echo "=== [$RUN] eval start $(date '+%F %T') ==="
   MASTER_PORT=$((29500 + RANDOM % 1000))
-  torchrun --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
+  "$ENV/bin/python" -m torch.distributed.run --nproc_per_node="$NGPU" --master_port="$MASTER_PORT" \
     research/common/corpus_reasoning/eval/eval_lc_native_docchunk_contra.py \
     --variant full --model-path "$MODEL_PATH" --out "$OUT" \
     --tokenizer Qwen/Qwen3-4B --contra-data "$EVAL_JSONL" \

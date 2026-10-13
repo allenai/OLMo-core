@@ -50,6 +50,9 @@ conversion — see plan §4 (0.8B audited PASS 2026-07-18; 4B/9B must be audited
 | `--micro-batch-instances` | `1` | Instances per rank per forward (throughput only; exact grad-accum) |
 | `--base-checkpoint` | 0.8b default | `model_and_optim` distcp subdir; REQUIRED for 4b/9b; `.metadata` guarded |
 | `--save-folder` / `--run-name` | — | Fresh save-folder per run (silent auto-resume trap) |
+| `--resume` | off | A new launch into a save folder holding ANOTHER launch's step checkpoints fails (`run_identity.json` records the owning run + Beaker experiment / slurm job); a preemption restart of the same launch resumes without it. Pass this to continue such a checkpoint on purpose |
+| `--skip-marker-audit` | off | Rank 0 audits the base's marker rows (`doc_start`/`doc_end`, + `landmark` for sparselandmark) at start with `fix_marker_embeddings.py`'s cos + norm gates and refuses an unrepaired base |
+| `--max-tokens` | `0` | Sub-budget point with a full schedule; refused if it buys < 2 optimizer steps (`global_batch × seq_len` tokens each) |
 | `--wandb-group` / `--wandb-entity` / `--no-wandb` | group=run name | Project `memory-networks`; group URL printed at launch |
 | `--seed` | `0` | Run-to-run seed offset for noise-floor runs |
 | `--mix-start-p` / `--mix-end-p` / `--mix-seed` | `0.8` / `0.0` / `42` | chunked-mix curriculum (hard-fails if the anneal cannot land on `mix_end_p`) |
@@ -181,6 +184,7 @@ done; done
 - wandb: project `memory-networks`, one group per task (`WANDB_GROUP=ctc-suite-<task>`), run
   name = `ctc-<task>-<variant>-<scale>[-tag]`. The trainer **prints the group URL at launch**
   (set `WANDB_ENTITY` or `--wandb-entity` for a direct link) — always surface it when launching.
-- Fresh `--save-folder` per run; relaunching into an existing folder silently RESUMES
-  (trainer-silent-autoresume trap).
+- Fresh `--save-folder` per run. A relaunch into a folder that holds another launch's step
+  checkpoint now fails at start instead of silently resuming (`--resume` to continue it on
+  purpose). `kill -USR1 <rank pid>` prints every thread's stack into the job log.
 - Reporting: `n` = corpus size only; eval-set size is `eval_size` (≥500, or flagged inline).

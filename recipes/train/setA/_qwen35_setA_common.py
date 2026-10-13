@@ -51,6 +51,7 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # recipes/train
 
+import run_guards  # noqa: E402  (recipes/train/run_guards.py)
 import variants as V  # noqa: E402  (recipes/train/variants.py)
 from _qwen35_xlong5_dolci25_256k_common import build_qwen35_xlong5_experiment  # noqa: E402
 from _setA_defaults import DEFAULT_VARIANT  # noqa: E402
@@ -368,8 +369,10 @@ def setA_train_hooks() -> TrainHooks:
     """
     The :class:`TrainHooks` that finish a variant at train time (no-ops for dense): the variant's
     ``enable_*`` calls on the meta-device model, its train-module hooks, and the tolerant base load
-    for variants that add parameters.
+    for variants that add parameters. Also makes ``kill -USR1 <pid>`` dump every thread's stack
+    into the job log (hung-job diagnosis without py-spy).
     """
+    run_guards.install_stack_dump_handler()
 
     def post_model(config: ExperimentConfig, model) -> None:
         if _PLAN is None:
