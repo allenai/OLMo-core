@@ -111,11 +111,14 @@ If a check fails, the finding is "this job needs rerunning", not a result. Mark 
 
 One result row per **(task, rung)** — not one per job; a job covering four rungs yields
 four rows. `ops result add --json` reads `*_multirung.json` directly (one row per
-`<task>_<rung>` key); it has no `eval_size` inside, so pass the realized count:
+`<task>_<rung>` key). Files written since 2026-10-12 carry `_meta.eval_run_id` (the pass's registered
+id), `_meta.eval_size`, the eval job id and commit, so `--json FILE --check` is enough. For an older
+file, pass what it lacks:
 
 ```bash
 $OPS result add --json <result JSON> --check \
-  --run-id <the TRAINING run_id being scored> --experiment E --eval-size <realized eval_size> \
+  --run-id <the EVAL run_id of this pass (ops runs)> --train-run <the TRAINING run_id scored> \
+  --experiment E --eval-size <realized eval_size> \
   --cot-label no-cot --eval-backend native --eval-job-id <beaker id> \
   --ckpt-path <the ckpt AS LAUNCHED, incl. _yarn2/_yarn4/_yarn8> --git-commit <EVAL commit>
 ```
@@ -125,11 +128,12 @@ missing provenance) before quoting the number — the full checklist is in `reco
 
 Rules carried over from the results-hub era, still binding:
 
-- **One model, one `run_id`.** Every task, rung and pass of one checkpoint records under
-  the same training `run_id` — including its YaRN passes: `<step>_yarn2/4/8` are
-  config-only copies of the *same weights* (`make_yarn_copy.py`), so giving them their own
-  id would split one model's length curve into unconnected methods. The YaRN factor lives
-  in `ckpt_path` (the copy launched) and the eval job's registered `notes`.
+- **One pass, one `run_id`; one model, one `train_run`.** Each eval pass records under its
+  own eval `run_id`, and every pass over one checkpoint shares the same `train_run` —
+  including its YaRN passes: `<step>_yarn2/4/8` are config-only copies of the *same
+  weights* (`make_yarn_copy.py`), so their `train_run` is the trained run, not the copy
+  (`ops` strips `_yarnK` from the ckpt path; pass `--train-run` if in doubt). The YaRN factor
+  lives in `ckpt_path` (the copy launched), the eval run id's variant and its `notes`.
 - **The realized settings, not the passed ones.** The runner forces bs=1 for
   landmark/compressive and for all xlong rungs, and raises `max_length` 10% over the rung;
   record what ran (in the eval job's `notes`), not what `eval_command` passed.
@@ -148,17 +152,17 @@ to `done` is optional history — it stays gitignored and is never committed.
 
 ## Step 6: report
 
-**Always end by reporting what was recorded.** One line per checkpoint — the `run_id`,
+**Always end by reporting what was recorded.** One line per checkpoint — the `train_run`,
 the tasks and rungs it covers, and the row count (`$OPS result show --experiment E`):
 
 ```
 Recorded via ops result add:
   q35-landmark-256K-partialrope   contra/nq/outlier/rerank/oolong @ 2k-32k + 64k,128k   38 rows
-                                  ...same run_id @ 256k,512k (yarn2) + 1M (yarn4)       15 rows
+                                  ...same train_run @ 256k,512k (yarn2) + 1M (yarn4)    15 rows
 ```
 
-(The YaRN passes appear under the *same* run_id as their native rungs — one model, one
-row group, a length curve that runs end to end.)
+(The YaRN passes appear under the *same* train_run as their native rungs — one model, one
+row group, a length curve that runs end to end — each with its own eval run_id.)
 
 Then the numbers themselves:
 
@@ -179,7 +183,8 @@ Then the numbers themselves:
 - [ ] Generations actually read; `parse_rate` and monotonicity checked
 - [ ] ≥256k rungs carry their YaRN factor
 - [ ] One row per (task, rung) via `ops result add --json ... --check`; every warning investigated
-- [ ] Same training `run_id` across the checkpoint's rows, including its YaRN passes
+- [ ] Each pass under its own eval `run_id`; the same `train_run` across the checkpoint's rows,
+      including its YaRN passes
 - [ ] Jobs marked `final_state=done`/`failed` (`ops update` / `ops status --record`)
 - [ ] STATUS.md numbers updated + `ops exp index`
 - [ ] Numbers reported at their resolution; sub-500 evals flagged inline

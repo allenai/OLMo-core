@@ -37,8 +37,6 @@ Soft arms train UNPACKED at seq 65536, 128 rows/step (~ the dense 524k tokens/st
 from __future__ import annotations
 
 import argparse
-import csv
-import datetime as dt
 import os
 import subprocess
 import sys
@@ -50,7 +48,9 @@ SCALE = os.environ.get("DS64_SCALE", "4b")
 BASE = {"4b": f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim",
         "27b": f"{WEKA}/ctc_suite/bases/q35-27b-base-markerfix/model_and_optim"}[SCALE]
 SHARDS = f"{WEKA}/ds64/shards"
-LEDGER = f"{REPO}/research/token_routing/ds64/LAUNCH_LEDGER.tsv"
+# Launches are recorded in the ops run registry (ops/state/runs.jsonl) by beaker_ctc_suite.py itself
+# (--experiment below); LAUNCH_LEDGER.tsv is kept as history only and no longer written.
+EXPERIMENT = "ds64"
 BUDGETS = ["16M", "32M", "64M", "128M"]
 # contradiction's pair pool cannot build the 128M arm (compose skipped it): its grid stops at 64M
 # Outlier runs a DEEPER ladder than the others: its gold-blind arms land at 156-190 PF, far below
@@ -548,22 +548,22 @@ def main():
                        "--model-family", "qwen3_5", "--model-scale", SCALE, "--data-root", data,
                        "--run-name", name, "--exact-run-name", "--num-nodes", str(NODES), "--num-gpus", str(GPUS),
                        "--epochs", "1", "--lr", str(args.lr), "--cluster", CLUSTER, "--wandb-group", args.wandb_group,
-                       "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + [args.mode]
+                       "--no-follow", "--no-compile", "--experiment", EXPERIMENT, "--arm", arm] + largs + (["--extra-args", extra] if extra else []) + [args.mode]
                 print(" ".join(cmd), flush=True)
                 res = subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=f"{REPO}/src"), capture_output=True, text=True)
                 out = res.stdout + res.stderr
+                for line in out.splitlines():  # the run-registry row is written by the launcher
+                    if line.startswith("[ops]"):
+                        print(f"  {line}", flush=True)
                 os.makedirs(f"{REPO}/research/token_routing/ds64/launch_logs", exist_ok=True)
                 open(f"{REPO}/research/token_routing/ds64/launch_logs/{name}.{args.mode}.log", "w").write(out)
                 ids = [l.split("id=")[1].split()[0] for l in out.splitlines() if "SUBMITTED id=" in l]
                 tail = (ids[-1] + " " if ids else "") + "\n".join(out.strip().splitlines()[-2:]).replace("\t", " ")[:200]
                 print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
                 rows.append((name, task, arm, budget, res.returncode, tail))
-    if args.mode == "launch":
-        with open(LEDGER, "a") as f:
-            w = csv.writer(f, delimiter="\t")
-            for name, task, arm, budget, rc, tail in rows:
-                w.writerow(["ds64", SCALE, task, arm, budget, name, CLUSTER, dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "LAUNCHED" if rc == 0 else "LAUNCH-FAILED", tail])
+    failed = [name for name, _task, _arm, _budget, rc, _tail in rows if rc != 0]
+    if failed:
+        print(f"LAUNCH-FAILED ({len(failed)}): {' '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -14,8 +14,6 @@ attention (the checkpoint's recorded architecture).
 from __future__ import annotations
 
 import argparse
-import csv
-import datetime as dt
 import os
 import subprocess
 import sys
@@ -23,7 +21,9 @@ import sys
 REPO = str(__import__("pathlib").Path(__file__).resolve().parents[3])
 LAUNCHER = f"{REPO}/recipes/eval/legacy_native/run_q4b_beaker_multirung_eval.py"
 CKPTS = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts"
-LEDGER = f"{REPO}/research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv"
+# Each eval job is recorded in the ops run registry (kind=eval, parent_run=<run>) by the eval
+# launcher itself (--experiment below); LAUNCH_LEDGER.tsv is kept as history only.
+EXPERIMENT = "flop_scaling"
 TASK_KEY = {"contradiction": "contra", "nq": "nq", "outlier": "outlier", "oolong": "oolong"}
 
 
@@ -47,7 +47,7 @@ def main() -> None:
             "--ckpt", f"{CKPTS}/{run}",
             "--query-position", "after", "--cot-mode", "none",
             "--tokenizer", "Qwen/Qwen3-4B", "--ngpu", str(args.ngpu),
-            "--max-test", str(args.max_test), "--priority", "urgent",
+            "--max-test", str(args.max_test), "--priority", "urgent", "--experiment", EXPERIMENT,
         ]
         if args.dry_run:
             cmd.append("--dry-run")
@@ -56,15 +56,14 @@ def main() -> None:
                              capture_output=True, text=True)
         out = (res.stdout + res.stderr).strip().splitlines()
         tail = "\n".join(out[-4:])
+        for line in out:
+            if line.startswith("[ops]"):
+                print(f"  {line}", flush=True)
         print(f"  -> rc={res.returncode}: {tail[:400]}", flush=True)
         rows.append((run, task, res.returncode, tail.replace("\t", " ")[:200]))
-    if not args.dry_run:
-        with open(LEDGER, "a") as f:
-            w = csv.writer(f, delimiter="\t")
-            for run, task, rc, tail in rows:
-                w.writerow(["beaker-eval", task, run.split("-")[2], run.split("-sh")[-1], "-", run,
-                            args.cluster, dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "LAUNCHED" if rc == 0 else "LAUNCH-FAILED", tail])
+    failed = [run for run, _task, rc, _tail in rows if rc != 0]
+    if failed:
+        print(f"LAUNCH-FAILED ({len(failed)}): {' '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

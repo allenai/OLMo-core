@@ -12,8 +12,6 @@ Arms (all soft arms: detached slot K/V + GDN writes, cent_cmean slot, gold-blind
     python research/token_routing/softdetach/launch_softdetach_cpt.py launch --budgets 32M,64M,128M
 """
 import argparse
-import csv
-import datetime as dt
 import os
 import subprocess
 import sys
@@ -25,7 +23,10 @@ SHARD = f"{WEKA}/softdetach_cpt/shards/cpt_u128M"  # budgets <= 128M are --max-t
 SHARD_1B = f"{WEKA}/softdetach_cpt/shards/cpt_u1B"  # budgets > 128M (same rows first: parts 0-27, dev part 28 held out)
 BASE = f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"  # marker-repaired 4B base (ds64's)
 TOKENIZER = f"{WEKA}/hf_tokenizers/Qwen3.5-0.8B-Base"
-LEDGER = f"{REPO}/research/token_routing/softdetach/LAUNCH_LEDGER.tsv"
+# Launches are recorded in the ops run registry (ops/state/runs.jsonl) by beaker_ctc_suite.py itself
+# (--experiment below); LAUNCH_LEDGER.tsv is kept as history only and no longer written
+# (collect_devloss.py still reads it for the pre-2026-10-12 arms).
+EXPERIMENT = "softdetach"
 CLUSTER = os.environ.get("SDC_CLUSTER", "ai2/jupiter-cirrascale-2")
 GPUS = int(os.environ.get("SDC_NGPU", "8"))
 BACKEND = os.environ.get("SDC_BACKEND", "flash_2")
@@ -77,25 +78,22 @@ def main():
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS),
                    "--epochs", "1", "--lr", str(a.lr), "--cluster", CLUSTER, "--wandb-group", a.wandb_group,
                    "--no-follow", "--no-compile", "--seq-len", "65536", "--global-batch", str(ROWS_PER_STEP),
-                   "--micro-batch-instances", "1", "--base-checkpoint", BASE] + (["--seed", str(a.seed)] if a.seed is not None else []) + ["--extra-args", extra, a.mode]
+                   "--micro-batch-instances", "1", "--base-checkpoint", BASE, "--experiment", EXPERIMENT, "--arm", arm] + (["--seed", str(a.seed)] if a.seed is not None else []) + ["--extra-args", extra, a.mode]
             print(" ".join(cmd), flush=True)
             res = subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=f"{REPO}/src"), capture_output=True, text=True)
             out = res.stdout + res.stderr
+            for line in out.splitlines():  # the run-registry row is written by the launcher
+                if line.startswith("[ops]"):
+                    print(f"  {line}", flush=True)
             os.makedirs(f"{REPO}/research/token_routing/softdetach/launch_logs", exist_ok=True)
             open(f"{REPO}/research/token_routing/softdetach/launch_logs/{name}.{a.mode}.log", "w").write(out)
             ids = [l.split("id=")[1].split()[0] for l in out.splitlines() if "SUBMITTED id=" in l]
             tail = (ids[-1] + " " if ids else "") + "\n".join(out.strip().splitlines()[-2:]).replace("\t", " ")[:200]
             print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
             rows.append((name, arm, budget, res.returncode, tail))
-    if a.mode == "launch":
-        new = not os.path.exists(LEDGER)
-        with open(LEDGER, "a") as f:
-            w = csv.writer(f, delimiter="\t")
-            if new:
-                w.writerow(["run", "arm", "budget", "cluster", "launched", "state", "note"])
-            for name, arm, budget, rc, tail in rows:
-                w.writerow([name, arm, budget, CLUSTER, dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "LAUNCHED" if rc == 0 else "LAUNCH-FAILED", tail])
+    failed = [name for name, _arm, _budget, rc, _tail in rows if rc != 0]
+    if failed:
+        print(f"LAUNCH-FAILED ({len(failed)}): {' '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,9 @@ description: >
 `OPS=/accounts/projects/berkeleynlp/prasann/bin/ops`. Nothing is quoted until it passes steps 1–3.
 
 ## 1. Find the outputs
+**Each eval pass is its own run** (`kind=eval`, `parent_run` = the training run). Result rows record
+under the EVAL run's `run_id`; `train_run` (the training run scored) is filled from the registry's
+`parent_run`, so all passes over one model line up under it in `ops result show`.
 Match every result JSON to a registered run (`$OPS runs --experiment E`, `$OPS status`). A result with
 no run is an unrecorded launch: register it (`$OPS register ... --notes "registered after the fact"`)
 before recording. A finished job with no result JSON needs a reason (failed, preempted, still writing).
@@ -33,7 +36,7 @@ before recording. A finished job with no result JSON needs a reason (failed, pre
 ## 3. Record
 ```bash
 $OPS result add --json RESULT.json --check          # or the explicit fields:
-$OPS result add --run-id RUN --experiment E --task T --rung rung_32768 --metric f1 \
+$OPS result add --run-id EVAL_RUN --train-run TRAIN_RUN --experiment E --task T --rung rung_32768 --metric f1 \
   --value 0.824 --eval-size 500 --cot-label no-cot --eval-backend olmo-eval-vllm \
   --ckpt-path CKPT --git-commit SHA --eval-job-id JOB --check
 $OPS result check ...                                 # dry run: warnings only
@@ -42,8 +45,9 @@ Investigate **every** `--check` warning (a jump against prior rows, a duplicate,
 eval_size<500) before you quote the number. If the warning is real, say so next to the number.
 
 ## 4. Update state
-- `$OPS update RUN final_state=done` for the finished jobs.
+- `$OPS update EVAL_RUN final_state=done` for the finished eval jobs.
 - Edit `ops/experiments/E/STATUS.md` → **Current best numbers** (arm, task/rung, metric, eval_size,
   ±SE, cot, source path), bump `updated:`, revise `next_step`, then `$OPS exp index`.
-- To read numbers back: `$OPS result show --experiment E [--task T] [--best]`.
-- The legacy `pull-evals` skill's ledger cross-check is still useful; skip its results-hub ingest step.
+- To read numbers back: `$OPS result show --experiment E [--task T] [--train-run T] [--best]` (grouped by
+  training run, one line per pass; `--best` names the best pass per task/rung).
+- For native multirung sweeps, the `pull-evals` skill does the job-by-job cross-check and validation, then hands off to this skill for recording.

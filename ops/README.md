@@ -86,10 +86,16 @@ Writers hold an `flock`, so concurrent sessions can register safely.
 - Claude Code hooks for these checks live in `hooks/` (see `INCORPORATE.d/` for how they are wired).
 
 ### Results — `state/results.jsonl`
-- `ops result add (--json FILE | --run-id .. --task .. --metric .. --value .. --eval-size ..) [--check]`
-- `ops result check (...same...)` — warnings only (jump vs prior rows, duplicate, eval_size < 500,
-  missing provenance). Investigate every warning before quoting the number.
-- `ops result show [--experiment E] [--task T] [--best]`
+Each eval pass is its own run (`kind=eval`, `parent_run` = the training run): a result row's `run_id`
+is the eval pass and `train_run` the training run it scores (filled from the registry; older rows
+get it on read). Eval pass ids: the launcher's natural name (Beaker `ev-<task>-<run>`), else
+`<train_run>__ev-<suite_or_task>-<variant>-<YYYYmmddHHMM>`.
+- `ops result add (--json FILE | --run-id EVAL_RUN [--train-run T] --task .. --metric .. --value .. --eval-size ..) [--check]`
+- `ops result check (...same...)` — warnings only (duplicate within one pass, jump vs other passes of
+  the same train_run or vs the experiment best, eval_size < 500, missing provenance). Investigate
+  every warning before quoting the number.
+- `ops result show [--experiment E] [--task T] [--run-id R] [--train-run T] [--best]` — grouped by
+  train_run, one line per pass; `--best` = best pass per task/rung.
 - `ops backfill ledgers|results [--dry-run]` — import the old `LAUNCH_LEDGER.tsv` files and result
   CSVs (rows are tagged `backfill`).
 

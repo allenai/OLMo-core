@@ -14,7 +14,14 @@ RUNS = {  # name -> (task, training experiment id)
     "ds64-outlier-flk64ns-b128f3-u16M": ("outlier", "01M35M9JSC7PA4FDXRABYTG2G0"),
     "ds64-outlier-flk64ns-b128f3-u32M": ("outlier", "01M35MABFX7VV8454SD3YPK2RJ"),
 }
-LEDGER = f"{D}/ns_evals.tsv"
+# Each eval is recorded in the ops run registry by the eval launcher (--experiment ds64); a training
+# failure is recorded as an update of the training run. ns_evals.tsv is kept as history only.
+sys.path.insert(0, f"{O.REPO}/ops")
+try:
+    from opslib import safe as ops_safe  # stdlib-only; its calls never raise
+except Exception as e:  # noqa: BLE001
+    print(f"[ops] WARNING: cannot import ops ({e}); training failures will not be recorded", flush=True)
+    ops_safe = None
 
 def status(ex):
     try:
@@ -31,6 +38,7 @@ def launch_eval(name, task):
            "--task", O.TASK_KEY[task], "--variant", "docchunk", "--ckpt", f"{O.W}/ctc_suite/ckpts/{name}",
            "--query-position", "after", "--cot-mode", "none", "--tokenizer", O.TOKENIZER,
            "--ngpu", O.EVAL_NGPU, "--max-test", "500", "--max-length", "70000", "--priority", "urgent",
+           "--experiment", "ds64",
            "--dc-rung-files", json.dumps(files), "--dc-rungs", ",".join(next(iter(files.values())).keys())]
     rc, out = O.sh(cmd, timeout=1200)
     return O.parse_id(out), out[-300:]
@@ -44,12 +52,10 @@ while pending:
             if rc == 0:
                 eid, tail = launch_eval(name, task)
                 print(f"  eval {name} -> {eid or 'FAILED ' + tail}", flush=True)
-                with open(LEDGER, "a") as f:
-                    f.write(f"{name}\t{task}\t{ex}\t{eid or 'EVAL-LAUNCH-FAILED'}\t{time.strftime('%Y-%m-%d %H:%M')}\n")
             else:
                 print(f"  TRAINING FAILED rc={rc}: {name}", flush=True)
-                with open(LEDGER, "a") as f:
-                    f.write(f"{name}\t{task}\t{ex}\tTRAIN-FAILED rc={rc}\t{time.strftime('%Y-%m-%d %H:%M')}\n")
+                if ops_safe is not None:
+                    ops_safe.update_run(name, final_state="failed", state_source=f"launch_ns_evals: beaker exit {rc}")
             del pending[name]
     if pending:
         time.sleep(300)

@@ -167,10 +167,15 @@ same submission as a yarn2 rung; a submission has exactly one checkpoint.
 ## Rule 4: register every launch
 
 **Every eval job is registered with `ops` before you report the launch as done**
-(`OPS=/accounts/projects/berkeleynlp/prasann/bin/ops`; details in the `launch-run` skill):
+(`OPS=/accounts/projects/berkeleynlp/prasann/bin/ops`; details in the `launch-run` skill). Each eval
+pass is its own run: `run_id` = the launcher's natural eval name (`run_q4b_beaker_multirung_eval.py`
+registers its jobs itself as `ev-<task>-<run>`, timestamp-suffixed when that name is taken, and
+exports it to the job as `OPS_EVAL_RUN_ID`), else `<train_run>__ev-<suite_or_task>-<variant>-<YYYYmmddHHMM>`
+(variant = e.g. `yarn2`, `chunked`, `doc-markers`); `--parent-run` = the training run scored.
+Result rows then record under that eval run_id with `train_run` = the parent. By hand:
 
 ```bash
-$OPS register --run-id ev-<task>-<run>-<tag> --experiment <E> --cluster beaker --kind eval \
+$OPS register --run-id <train run>__ev-<task>-<variant>-<YYYYmmddHHMM> --experiment <E> --cluster beaker --kind eval \
   --parent-run <train run_id> --task <task> --job-id <beaker experiment id> \
   --ckpt-path <--ckpt as passed, incl. _yarn2> --expected-minutes N --git <repo> \
   --notes "eval-tag=<tag> yarn_factor=<f|none> query_position=<both|after> bs=<what ran>"

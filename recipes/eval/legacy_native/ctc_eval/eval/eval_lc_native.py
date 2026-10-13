@@ -376,6 +376,7 @@ def main():
     # we pair the FULL model generation with its per-example detail (parsed pred, gold, metrics) and
     # a prompt tail (prompts can be 100k+ chars, so only the trailing question region is kept).
     gen_dump = []
+    eval_sizes = {}  # summary key -> examples graded; lands in _meta.eval_size (ops/results reads it)
 
     def _record_gens(task, label, examples, responses, details):
         if not args.save_generations:
@@ -420,6 +421,7 @@ def main():
         res, det = _eval_contradiction(ex, resp)
         _record_gens("contradiction", "single", ex, resp, det)
         summary["contradiction"] = res
+        eval_sizes["contradiction"] = len(ex)
         print(f"[contradiction] f1={res['f1']:.3f} (n={len(ex)})", flush=True)
 
     if not args.ladder and os.path.exists(args.nq_data):
@@ -428,6 +430,7 @@ def main():
         res, det = _eval_retrieval(ex, resp)
         _record_gens("nq", "single", ex, resp, det)
         summary["nq"] = res
+        eval_sizes["nq"] = len(ex)
         print(f"[nq] f1={res.get('f1', 0):.3f} (n={len(ex)})", flush=True)
 
     # ---- LENGTH-LADDER: each task at 2k..64k (reports <task>_<rung>), mirrors the landmark driver ----
@@ -907,6 +910,7 @@ def main():
                     else next((v for k, v in res.items() if k.startswith("mrr")), None)
                 )
                 summary[f"{task}_{label}"] = prim
+                eval_sizes[f"{task}_{label}"] = len(ex)
                 print(
                     f"[ladder:{task}@{label}] {pkey or 'mrr'}="
                     f"{prim if prim is None else round(prim,3)} (n={len(ex)})",
@@ -956,7 +960,20 @@ def main():
             "eval_bundle": E5 if args.ladder else "",
             "query_position": args.query_position,
         }
+        # eval_size / eval_job_id / git_commit / ckpt_path (ctc_eval/eval/provenance.py), also
+        # inside _meta so no reader mistakes them for scores. Best effort: never lose the scores.
+        try:
+            from ctc_eval.eval.provenance import eval_meta, maybe_record_results
+
+            suite = (args.ladder_tasks or "ladder").replace(",", "+") if args.ladder else "contra+nq"
+            variant = os.environ.get("VARIANT") or "native"  # set by run_beaker_multirung_eval.sh
+            summary["_meta"].update(eval_meta(args.model_path, eval_sizes, suite=suite, variant=variant))
+        except Exception as e:  # noqa: BLE001
+            maybe_record_results = None
+            print(f"[native] WARNING: provenance not recorded ({type(e).__name__}: {e})", flush=True)
         json.dump(summary, open(args.out, "w"), indent=2)
+        if maybe_record_results is not None:
+            maybe_record_results(args.out)
         if args.save_generations and gen_dump:
             gen_path = os.path.splitext(args.out)[0] + ".generations.jsonl"
             with open(gen_path, "w") as gf:

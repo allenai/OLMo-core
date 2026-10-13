@@ -14,8 +14,6 @@ Arms (the CPT stage; the SFT stage later starts from each export):
     python research/ffn_compute/ffndrop/launch_ffndrop_cpt.py launch --budgets 1B
 """
 import argparse
-import csv
-import datetime as dt
 import os
 import subprocess
 import sys
@@ -28,7 +26,9 @@ WEKA = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 SHARD = f"{WEKA}/softdetach_cpt/shards/cpt_u128M"  # budgets <= 128M are --max-tokens prefixes of it
 SHARD_1B = f"{WEKA}/softdetach_cpt/shards/cpt_u1B"  # parts 0-27; dev part 28 held out (cpt_dev)
 BASE = f"{WEKA}/ctc_suite/bases/q35-4b-base-markerfix/model_and_optim"  # marker-repaired 4B base
-LEDGER = f"{HERE}/LAUNCH_LEDGER.tsv"
+# Launches are recorded in the ops run registry (ops/state/runs.jsonl) by beaker_ctc_suite.py itself
+# (--experiment below); LAUNCH_LEDGER.tsv is kept as history only and no longer written.
+EXPERIMENT = "ffndrop"
 CLUSTER = os.environ.get("FDC_CLUSTER", "ai2/jupiter-cirrascale-2")
 GPUS = int(os.environ.get("FDC_NGPU", "8"))
 ROWS_PER_STEP = 8  # x 65025 tokens = 520k tokens/step, the sdcpt geometry
@@ -67,28 +67,25 @@ def main():
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(GPUS),
                    "--epochs", "1", "--lr", str(a.lr), "--cluster", CLUSTER, "--wandb-group", a.wandb_group,
                    "--no-follow", "--no-compile", "--seq-len", "65536", "--global-batch", str(ROWS_PER_STEP),
-                   "--micro-batch-instances", "1", "--base-checkpoint", BASE]
+                   "--micro-batch-instances", "1", "--base-checkpoint", BASE, "--experiment", EXPERIMENT, "--arm", arm]
             if a.max_steps:
                 cmd += ["--max-steps", str(a.max_steps)]
             cmd += ["--extra-args", extra, a.mode]
             print(" ".join(cmd), flush=True)
             res = subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=f"{REPO}/src"), capture_output=True, text=True)
             out = res.stdout + res.stderr
+            for line in out.splitlines():  # the run-registry row is written by the launcher
+                if line.startswith("[ops]"):
+                    print(f"  {line}", flush=True)
             os.makedirs(f"{HERE}/launch_logs", exist_ok=True)
             open(f"{HERE}/launch_logs/{name}.{a.mode}.log", "w").write(out)
             ids = [l.split("id=")[1].split()[0] for l in out.splitlines() if "SUBMITTED id=" in l]
             tail = (ids[-1] + " " if ids else "") + "\n".join(out.strip().splitlines()[-2:]).replace("\t", " ")[:200]
             print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
             rows.append((name, arm, budget, res.returncode, tail))
-    if a.mode == "launch":
-        new = not os.path.exists(LEDGER)
-        with open(LEDGER, "a") as f:
-            w = csv.writer(f, delimiter="\t")
-            if new:
-                w.writerow(["run", "arm", "budget", "cluster", "launched", "state", "note"])
-            for name, arm, budget, rc, tail in rows:
-                w.writerow([name, arm, budget, CLUSTER, dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "LAUNCHED" if rc == 0 else "LAUNCH-FAILED", tail])
+    failed = [name for name, _arm, _budget, rc, _tail in rows if rc != 0]
+    if failed:
+        print(f"LAUNCH-FAILED ({len(failed)}): {' '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

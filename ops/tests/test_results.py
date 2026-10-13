@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from opslib import results
+from opslib import registry, results
 
 
 class ResultsTest(unittest.TestCase):
@@ -95,6 +95,86 @@ class ResultsTest(unittest.TestCase):
         self.assertEqual(len(results.rows_from_json([self.row(), self.row(rung="8k")])), 2)
         with self.assertRaises(ValueError):
             results.rows_from_json({"foo": 1})
+
+    def test_rows_from_multirung_meta(self):
+        # native drivers record eval sizes + provenance inside _meta (never as top-level dicts)
+        multirung = {"model_path": "/w/ckpts/ds64-nq-dense-u16M/step90", "nq_8k": 0.5, "nq_16k": 0.4,
+                     "_meta": {"ladder_version": "v2", "eval_size": {"nq_8k": 500}, "eval_job_id": "01J",
+                               "git_commit": "abc", "cot_label": "no-cot"}}
+        rows = {r["rung"]: r for r in results.rows_from_json(multirung)}
+        self.assertEqual(rows["8k"]["eval_size"], 500)
+        self.assertNotIn("eval_size", rows["16k"])  # no size recorded -> stays missing, never guessed
+        self.assertEqual((rows["8k"]["eval_job_id"], rows["8k"]["git_commit"], rows["8k"]["cot_label"]),
+                         ("01J", "abc", "no-cot"))
+        self.assertEqual(rows["8k"]["run_id"], "ds64-nq-dense-u16M")
+        # explicit defaults (CLI --eval-size) win over _meta
+        self.assertEqual(results.rows_from_json(multirung, {"eval_size": 600})[0]["eval_size"], 600)
+
+    def test_rows_from_ctc_eval_outcome(self):
+        # ctc/src/ctc/eval/runner.py EvalOutcome.to_dict(): the results_io successor
+        outcome = {"task": "contradiction", "rung": "8k", "attn": "full", "backend": "vllm", "eval_size": 500,
+                   "metrics": {"f1": 0.8, "precision": 0.9}, "standard_errors": {"f1": 0.018},
+                   "primary_metric": "f1", "primary_value": 0.8, "parse_rate": 1.0, "cot_label": "no-cot",
+                   "provenance": {"ckpt": "/data/ckpts/run-b/step50", "git_commit": "g1"}}
+        (r,) = results.rows_from_json(outcome)
+        self.assertEqual((r["run_id"], r["task"], r["rung"], r["metric"], r["value"]), ("run-b", "contradiction", "8k", "f1", 0.8))
+        self.assertEqual((r["eval_size"], r["se"], r["cot_label"], r["eval_backend"]), (500, 0.018, "no-cot", "vllm"))
+        self.assertEqual((r["ckpt_path"], r["git_commit"]), ("/data/ckpts/run-b/step50", "g1"))
+        results.normalize(r)  # a valid contract row as-is
+
+    def test_train_run_from_registered_eval_pass(self):
+        registry.register(run_id="train-a", experiment="exp-a", cluster="beaker")
+        registry.register(run_id="train-a__ev-nq-yarn2-202610121200", experiment="exp-a", cluster="beaker",
+                          kind="eval", parent_run="train-a")
+        r = results.add(**self.row(run_id="train-a__ev-nq-yarn2-202610121200", experiment=None))
+        self.assertEqual((r["train_run"], r["experiment"]), ("train-a", "exp-a"))
+        # a non-eval run id is its own train_run; an explicit train_run wins
+        self.assertEqual(results.normalize(self.row(run_id="train-a"))["train_run"], "train-a")
+        self.assertEqual(results.normalize(self.row(run_id="x", train_run="t"))["train_run"], "t")
+
+    def test_load_defaults_train_run_for_old_rows(self):
+        registry.register(run_id="ev-1", experiment="e", cluster="beaker", kind="eval", parent_run="train-b")
+        path = Path(self.tmp.name) / "results.jsonl"
+        old = {k: v for k, v in self.row(run_id="legacy-train").items()}
+        path.write_text(json.dumps(old) + "\n" + json.dumps(self.row(run_id="ev-1")) + "\n")
+        rows = results.load()
+        self.assertEqual([r["train_run"] for r in rows], ["legacy-train", "train-b"])
+        self.assertNotIn("train_run", path.read_text())  # filled on read, never rewritten
+
+    def test_check_passes_of_same_train_run(self):
+        prior = [results.normalize(self.row(run_id="t__ev-a", train_run="t", value=0.90))]
+        warns = results.check(results.normalize(self.row(run_id="t__ev-b", train_run="t", value=0.70)), prior=prior)
+        self.assertFalse(any(w.startswith("duplicate") for w in warns))  # a new pass is not a duplicate
+        self.assertTrue(any("prior pass of t" in w and "explain before quoting" in w for w in warns))
+        other = results.check(results.normalize(self.row(run_id="u__ev-a", train_run="u", value=0.70)), prior=prior)
+        self.assertFalse(any("deviation" in w for w in other))  # worse than another run's best: normal
+
+    def test_rows_from_multirung_eval_run_id(self):
+        multirung = {"model_path": "/w/ckpts/run-c/step10", "nq_8k": 0.5,
+                     "_meta": {"eval_run_id": "run-c__ev-nq-docchunk-dense-202610121200", "train_run": "run-c",
+                               "eval_size": {"nq_8k": 500}}}
+        (r,) = results.rows_from_json(multirung)
+        self.assertEqual((r["run_id"], r["train_run"]), ("run-c__ev-nq-docchunk-dense-202610121200", "run-c"))
+        # a YaRN serving copy (same weights) still scores the trained run
+        (y,) = results.rows_from_json({"model_path": "/w/ckpts/run-c/step10_yarn2", "nq_256k": 0.4})
+        self.assertEqual((y["run_id"], y["train_run"]), ("run-c", "run-c"))
+
+    def test_cli_show_groups_by_train_run(self):
+        from opslib.cli import main
+
+        for rid, tr, v in (("t2__ev-x", "t2", 0.5), ("t1__ev-x", "t1", 0.6), ("t1__ev-y", "t1", 0.8)):
+            results.add(**self.row(run_id=rid, train_run=tr, value=v))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["result", "show"])
+        body = out.getvalue().splitlines()
+        self.assertTrue(body[0].startswith("train_run"))
+        self.assertEqual([l.split()[0] for l in body[1:4]], ["t1", "t1", "t2"])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["result", "show", "--best"])
+        self.assertIn("t1__ev-y", out.getvalue())  # the best pass is named
+        self.assertIn("(1 rows)", out.getvalue())
 
     def test_cli_add_json_and_show(self):
         from opslib.cli import main

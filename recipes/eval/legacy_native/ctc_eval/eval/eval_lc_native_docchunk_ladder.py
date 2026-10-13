@@ -684,6 +684,19 @@ def main():
     summary["model_path"] = args.model_path
     summary["variant"] = args.variant
     summary["ladder_version"] = args.ladder_version
+    # Provenance (eval_size per key, eval job id, commit, ckpt, cot label) inside _meta -- see
+    # ctc_eval/eval/provenance.py. Merged like the scores. Best effort: never costs the scores.
+    try:
+        from ctc_eval.eval.provenance import COT_MODE_LABELS, eval_meta, maybe_record_results
+
+        meta = summary["_meta"] if isinstance(summary.get("_meta"), dict) else {}
+        sizes = meta["eval_size"] if isinstance(meta.get("eval_size"), dict) else {}
+        meta.update(eval_meta(args.model_path, sizes, cot_label=COT_MODE_LABELS.get(args.cot_mode),
+                              suite=args.tasks.replace(",", "+"), variant=f"docchunk-{args.variant}"))
+        summary["_meta"] = meta
+    except Exception as e:  # noqa: BLE001
+        maybe_record_results = None
+        print(f"[docchunk-ladder] WARNING: provenance not recorded ({type(e).__name__}: {e})", flush=True)
 
     def flush():
         if is_main:
@@ -753,6 +766,8 @@ def main():
                 else:  # rerank -> first mrr* metric
                     prim = next((v for k, v in res.items() if k.startswith("mrr")), None)
                 summary[f"{task}_{label}"] = float(prim) if prim is not None else None
+                if "_meta" in summary:  # too-long examples are scored (as wrong), so all count
+                    summary["_meta"]["eval_size"][f"{task}_{label}"] = len(examples)
                 print(
                     f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
                     f"{prim if prim is None else round(float(prim), 3)} "
@@ -766,6 +781,8 @@ def main():
     flush()
     if is_main:
         print(f"\n[docchunk-ladder] WROTE {args.out} in {time.time()-t0:.1f}s", flush=True)
+        if maybe_record_results is not None:
+            maybe_record_results(args.out)
         keys = sorted(k for k in summary if any(k.startswith(t + "_") for t in ALL_TASKS))
         print(f"[docchunk-ladder] ladder keys present: {keys}", flush=True)
     if world > 1:

@@ -32,12 +32,15 @@ Usage::
 """
 
 import argparse
+import shlex
 import sys
 from datetime import datetime
+from pathlib import Path
 
 from olmo_core.internal.common import build_launch_config, get_root_dir, get_work_dir
 from olmo_core.launch.beaker import BeakerEnvVar, OLMoCoreBeakerImage
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 WANDB_ENTITY = "prasanns-allen-institute-for-ai"
 WANDB_PROJECT = "memory-networks"
 
@@ -210,8 +213,73 @@ def parse_args() -> argparse.Namespace:
         help="use --run-name verbatim (no timestamp suffix) so the save folder is predictable, "
         "e.g. for a stage-2 run that warm-starts from stage 1's export. Reusing a name RESUMES.",
     )
+    # Run registry (ops/state/runs.jsonl). Registration never fails or blocks a launch.
+    ap.add_argument(
+        "--experiment",
+        default=None,
+        help="ops registry experiment key (= ops/experiments/<name>/). Default: $OPS_EXPERIMENT, "
+        "else a known run-name prefix, else the slugged wandb group (ctc-suite-<task> -> ctc_suite_<task>).",
+    )
+    ap.add_argument(
+        "--arm", default=None, help="ops registry arm label (default: --variant); e.g. a campaign's arm name"
+    )
+    ap.add_argument(
+        "--expected-minutes",
+        type=float,
+        default=None,
+        help="expected wall-clock; `ops status` flags the run OVERRUN past 2x this",
+    )
     ap.add_argument("mode", choices=["launch", "dry_run"])
     return ap.parse_args()
+
+
+def _ops_safe():
+    """``ops/opslib/safe.py`` (stdlib-only, never raises), or ``None`` if ops cannot be imported."""
+    try:
+        if str(REPO_ROOT / "ops") not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT / "ops"))
+        from opslib import safe
+
+        return safe
+    except Exception as e:  # noqa: BLE001 - registry problems never fail a launch
+        print(f"[ops] WARNING: cannot import ops ({type(e).__name__}: {e}); run not registered", flush=True)
+        return None
+
+
+def register_run(opts, *, run_name, save_folder, wandb_group, git_commit=None, git_branch=None,
+                 dirty=None, job_id=None):
+    """Append this launch to the ops run registry. Never raises; returns the row or ``None``."""
+    try:
+        ops = _ops_safe()
+        if ops is None:
+            return None
+        if dirty:
+            print(
+                f"[ops] note: working tree is dirty; Beaker runs the PUSHED commit {git_commit}, "
+                "not your local edits",
+                flush=True,
+            )
+        return ops.register_launch(
+            git_dir=REPO_ROOT,
+            run_id=run_name,
+            experiment=opts.experiment
+            or ops.derive_experiment(run_name, wandb_group, default=f"ctc_suite_{opts.task}"),
+            kind="train",
+            cluster="beaker",
+            job_id=job_id,
+            task=opts.task,
+            arm=opts.arm or opts.variant,
+            ckpt_path=save_folder,
+            wandb_url=f"https://wandb.ai/{WANDB_ENTITY}/{WANDB_PROJECT}/groups/{wandb_group}",
+            git_commit=git_commit,
+            git_branch=git_branch,
+            dirty=dirty,
+            command=shlex.join(sys.argv),
+            expected_minutes=opts.expected_minutes,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ops] WARNING: registry write failed ({type(e).__name__}: {e}); continuing", flush=True)
+        return None
 
 
 def main() -> None:
@@ -306,8 +374,6 @@ def main() -> None:
     if opts.shard_degree:
         cmd += ["--shard-degree", str(opts.shard_degree)]
     if opts.extra_args:
-        import shlex
-
         cmd += shlex.split(opts.extra_args)
 
     launch_config = build_launch_config(
@@ -356,7 +422,27 @@ def main() -> None:
         launch_config.step_timeout = None
         launch_config.step_soft_timeout = None
 
-    workload = launch_config.launch(follow=opts.follow)
+    # The commit gantry ships is the launch config's git ref (the PUSHED HEAD), not the work tree.
+    git = getattr(launch_config, "git", None)
+    reg = dict(
+        run_name=run_name,
+        save_folder=save_folder,
+        wandb_group=wandb_group,
+        git_commit=getattr(git, "ref", None),
+        git_branch=getattr(git, "branch", None),
+    )
+    try:
+        reg["dirty"] = bool(git.is_dirty) if git is not None else None
+    except Exception:  # noqa: BLE001 - is_dirty shells out to git
+        reg["dirty"] = None
+    # follow=True blocks until the job ENDS, so register before submitting (job id filled in after).
+    followed = opts.follow and register_run(opts, **reg) is not None
+    try:
+        workload = launch_config.launch(follow=opts.follow)
+    except Exception:
+        if followed:
+            _ops_safe().update_run(run_name, final_state="failed", state_source="beaker_ctc_suite: launch raised")
+        raise
     # Print the id/name on ONE greppable line. `workload` renders as a multi-hundred-line protobuf
     # dump, so a batch launcher that keeps only the tail of stdout loses the id entirely and cannot
     # record what it just submitted.
@@ -365,6 +451,10 @@ def main() -> None:
     )
     wl_name = getattr(workload, "name", None) or run_name
     print(f"[beaker_ctc_suite] SUBMITTED id={wl_id} name={wl_name}")
+    if followed:
+        _ops_safe().update_run(run_name, job_id=wl_id)
+    else:
+        register_run(opts, job_id=wl_id, **reg)
     if wl_id:
         print(f"[beaker_ctc_suite] url=https://beaker.org/ex/{wl_id}")
     print(f"[beaker_ctc_suite] launched: {workload}")

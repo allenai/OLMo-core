@@ -38,7 +38,9 @@ Usage::
 
 import argparse
 import re
+import shlex
 import sys
+from pathlib import Path
 
 from olmo_core.internal.common import build_launch_config, get_root_dir
 from olmo_core.launch.beaker import OLMoCoreBeakerImage
@@ -56,6 +58,59 @@ ALL_TASKS = [
     "contra_fever",
 ]
 VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _ops():
+    """``ops/opslib/safe.py`` (stdlib-only; its calls never raise), or ``None``."""
+    try:
+        if str(REPO_ROOT / "ops") not in sys.path:
+            sys.path.insert(0, str(REPO_ROOT / "ops"))
+        from opslib import safe
+
+        return safe
+    except Exception as e:  # noqa: BLE001
+        print(f"[ops] WARNING: cannot import ops ({type(e).__name__}: {e}); eval not registered", flush=True)
+        return None
+
+
+def eval_pass_id(lc):
+    """This eval pass's ops run id: the Beaker job name (``ev-<task>-<run>``), suffixed with a
+    timestamp if that name is already registered (every pass is its own run)."""
+    ops = _ops()
+    return ops.unique_run_id(lc.name) if ops is not None else lc.name
+
+
+def register_eval(args, lc, task, job_id, run_id=None):
+    """Append this eval pass to the ops run registry (``ops/state/runs.jsonl``).
+
+    ``run_id`` = :func:`eval_pass_id` (also exported to the job as ``OPS_EVAL_RUN_ID``, so the result
+    JSON's ``_meta.eval_run_id`` matches), ``parent_run`` = the trained run. Never raises: a registry
+    problem prints one warning and the launch carries on.
+    """
+    try:
+        ops = _ops()
+        if ops is None:
+            return None
+        git = getattr(lc, "git", None)
+        # experiment: --experiment, else the training run's (registry), else $OPS_EXPERIMENT / name prefix
+        return ops.register_eval_pass(
+            run_id or lc.name,
+            args.run_name,
+            experiment=args.experiment,
+            task=task,
+            cluster="beaker",
+            job_id=job_id,
+            node=None,
+            ckpt_path=args.ckpt or None,
+            git_commit=getattr(git, "ref", None),
+            git_branch=getattr(git, "branch", None),
+            command=shlex.join(sys.argv),
+            expected_minutes=args.expected_minutes,
+        )
+    except Exception as e:  # noqa: BLE001 - never fail a launch over the registry
+        print(f"[ops] WARNING: registry write failed ({type(e).__name__}: {e}); continuing", flush=True)
+        return None
 
 
 def variant_from_run_name(run_name: str) -> str:
@@ -260,6 +315,15 @@ def main():
         help="extra env var for the on-node runner (repeatable), e.g. "
         "OLMO_LANDMARK_SPARSE_DECODE=1 to route landmark decode through the sparse path.",
     )
+    ap.add_argument(
+        "--experiment",
+        default=None,
+        help="ops registry experiment key (default: the training run's, else $OPS_EXPERIMENT, else "
+        "guessed from the run name's prefix, else 'unassigned').",
+    )
+    ap.add_argument(
+        "--expected-minutes", type=float, default=None, help="ops registry: `ops status` flags OVERRUN past 2x"
+    )
     ap.add_argument("--dry-run", action="store_true", help="build + print the job, do NOT submit.")
     args = ap.parse_args()
 
@@ -307,7 +371,10 @@ def main():
             dc_rungs=args.dc_rungs,
             extra_env=args.env,
         )
-        print(f"\n--- [{task}] {lc.name} ---")
+        # Each eval pass is its own ops run; the driver writes this id into the result's _meta.
+        run_id = eval_pass_id(lc)
+        lc.cmd[-1] = f"OPS_EVAL_RUN_ID={run_id} " + lc.cmd[-1]
+        print(f"\n--- [{task}] {lc.name} (ops run_id {run_id}) ---")
         print(f"    cmd: {lc.cmd[-1]}")
         if args.dry_run:
             print("    [dry-run] not submitting.")
@@ -316,6 +383,7 @@ def main():
         wl_id = getattr(workload, "id", None) or getattr(getattr(workload, "experiment", None), "id", None)
         print(f"    submitted: {wl_id}")
         print(f"SUBMITTED id={wl_id}")
+        register_eval(args, lc, task, wl_id, run_id=run_id)
     print("\n=== done ===")
 
 

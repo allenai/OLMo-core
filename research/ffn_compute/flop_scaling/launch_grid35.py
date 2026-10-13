@@ -20,8 +20,6 @@ Arms:
 from __future__ import annotations
 
 import argparse
-import csv
-import datetime as dt
 import os
 import subprocess
 import sys
@@ -36,7 +34,9 @@ BASE_TAG = os.environ.get("FS35_BASE_TAG", "")
 if os.environ.get("FS35_BASE") and not BASE_TAG:
     raise SystemExit("FS35_BASE set without FS35_BASE_TAG: runs would collide with the base-model runs")
 CKPTS = f"{WEKA}/ctc_suite/ckpts"
-LEDGER = f"{REPO}/research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv"
+# Launches are recorded in the ops run registry (ops/state/runs.jsonl) by beaker_ctc_suite.py itself
+# (--experiment below); LAUNCH_LEDGER.tsv is kept as history only and no longer written.
+EXPERIMENT = "flop_scaling"
 FFN_LADDER = "1,16,64,256,1024,9728"  # Qwen3.5-4B hidden is also 9728
 KV_FRAC = {"kv17": 1 / 6, "kv33": 1 / 3, "kvb17": 1 / 6, "kvb33": 1 / 3,
            # keep-fraction ablation with / without the +log(doc_len) slot logit bias (kvl* = bias on;
@@ -170,22 +170,22 @@ def main():
                        "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", data,
                        "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", str(args.num_gpus),
                        "--epochs", "1", "--lr", str(args.lr), "--cluster", args.cluster, "--wandb-group", args.wandb_group,
-                       "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + [args.mode]
+                       "--no-follow", "--no-compile", "--experiment", EXPERIMENT, "--arm", arm] + largs + (["--extra-args", extra] if extra else []) + [args.mode]
                 print(" ".join(cmd), flush=True)
                 res = subprocess.run(cmd, cwd=REPO, env=dict(os.environ, PYTHONPATH=f"{REPO}/src:{REPO}/research/common:{REPO}/recipes/eval/legacy_native"), capture_output=True, text=True)
                 out = res.stdout + res.stderr
+                for line in out.splitlines():  # the run-registry row is written by the launcher
+                    if line.startswith("[ops]"):
+                        print(f"  {line}", flush=True)
                 os.makedirs(f"{REPO}/research/ffn_compute/flop_scaling/launch_logs", exist_ok=True)
                 open(f"{REPO}/research/ffn_compute/flop_scaling/launch_logs/{name}.{args.mode}.log", "w").write(out)
                 ids = [l.split("id=")[1].split()[0] for l in out.splitlines() if "SUBMITTED id=" in l]
                 tail = (ids[-1] + " " if ids else "") + "\n".join(out.strip().splitlines()[-2:]).replace("\t", " ")[:200]
                 print(f"  -> rc={res.returncode}: {tail[:300]}", flush=True)
                 rows.append((name, task, arm, budget, res.returncode, tail))
-    if args.mode == "launch":
-        with open(LEDGER, "a") as f:
-            w = csv.writer(f, delimiter="\t")
-            for name, task, arm, budget, rc, tail in rows:
-                w.writerow(["beaker35", task, arm, budget, arm.split("-")[-1] if "-" in arm else "-", name, args.cluster,
-                            dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "LAUNCHED" if rc == 0 else "LAUNCH-FAILED", tail])
+    failed = [name for name, _task, _arm, _budget, rc, _tail in rows if rc != 0]
+    if failed:
+        print(f"LAUNCH-FAILED ({len(failed)}): {' '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

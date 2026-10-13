@@ -1,13 +1,13 @@
 """Write the run-evals ledger (records/eval_launches/<date>_sdcpt-q35-4b_ctcbench.yaml) from the
 wave TSV (run, task, job name, experiment id) and collect results from the Beaker logs.
 
-    python .../ctc_eval_ledger.py ledger <wave.tsv>     # ledger YAML + README row + EVAL_LEDGER rows
+    python .../ctc_eval_ledger.py ledger <wave.tsv>     # ledger YAML + README row + ops registry rows
     python .../ctc_eval_ledger.py collect <wave.tsv>    # f1 per rung from `[ladder:task@rung] f1=` lines
 
 Base/CPT checkpoints scored with --prompt-format raw on the 2k-32k figure rungs only (Prasann,
 2026-09-21: downstream ranking vs dev loss; no xlong / YaRN / OOD ladders for raw CPT models).
 """
-import json, os, re, subprocess, sys, datetime
+import json, os, re, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "../../.."))
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
@@ -61,11 +61,21 @@ def ledger(tsv):
            f"CTC-bench contra/nq/oolong 2k-32k, raw prompt, {len(rs)} jobs (submitted) | [yaml]({os.path.basename(LEDGER)}) |\n")
     if os.path.basename(LEDGER) not in open(readme).read():
         open(readme, "a").write(row)
-    ev = f"{HERE}/EVAL_LEDGER.tsv"
-    with open(ev, "a") as f:
+    # One ops registry row per eval job (EVAL_LEDGER.tsv is kept as history only). Never fails.
+    try:
+        sys.path.insert(0, f"{REPO}/ops")
+        from opslib import safe as ops_safe
+
+        git = ops_safe.registry.git_info(REPO)  # once, not per row (git over NFS)
         for r in rs:
-            f.write(f"CTC\t{r['run']}\t{ARM(r['run'])}\t{r['ex']}\t{datetime.datetime.now():%Y-%m-%d %H:%M}\t{r['task']} raw 2k-32k\n")
-    print(f"ledger {LEDGER}: {len(rs)} jobs; README row + EVAL_LEDGER rows appended")
+            ops_safe.register_launch(
+                **git, run_id=r["job"], experiment="softdetach", kind="eval", parent_run=r["run"],
+                task=r["task"], arm=ARM(r["run"]), cluster="beaker", job_id=r["ex"], ckpt_path=CKPT(r["run"]),
+                command=" ".join(sys.argv), notes=f"{r['task']} raw 2k-32k (wave {os.path.basename(tsv)})",
+            )
+    except Exception as e:  # noqa: BLE001
+        print(f"[ops] WARNING: registry rows not written ({type(e).__name__}: {e})", flush=True)
+    print(f"ledger {LEDGER}: {len(rs)} jobs; README row + ops registry rows appended")
 
 def collect(tsv):
     pat = re.compile(r"\[ladder:(\w+)@(\w+)\] f1=([0-9.]+) \(n=(\d+)")
