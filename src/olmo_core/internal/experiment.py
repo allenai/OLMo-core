@@ -1,7 +1,7 @@
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, cast
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import torch
 import torch.distributed as dist
@@ -105,6 +105,23 @@ class ExperimentConfig(Config):
     backend: Optional[str] = "cpu:gloo,cuda:nccl"
 
 
+@dataclass
+class TrainHooks:
+    """
+    Optional callbacks into :func:`train`, for recipes that must touch the built objects (e.g. a
+    research variant's ``enable_*`` calls on the model before FSDP wraps it). Each receives the
+    experiment config and the object just built. All default to ``None`` (no-op).
+
+    :param post_model: After ``config.model.build(init_device="meta")``, before the train module.
+    :param post_train_module: After the train module (the model is now parallelized).
+    :param post_trainer: After the trainer is built, before ``fit()``.
+    """
+
+    post_model: Optional[Callable[["ExperimentConfig", Any], None]] = None
+    post_train_module: Optional[Callable[["ExperimentConfig", Any], None]] = None
+    post_trainer: Optional[Callable[["ExperimentConfig", Any], None]] = None
+
+
 class SubCmd(StrEnum):
     launch = "launch"
     train = "train"
@@ -132,7 +149,7 @@ class SubCmd(StrEnum):
         else:
             raise NotImplementedError(self)
 
-    def run(self, config: ExperimentConfig):
+    def run(self, config: ExperimentConfig, train_hooks: Optional[TrainHooks] = None):
         if get_local_rank() == 0:
             print(config)
             print(
@@ -146,7 +163,7 @@ class SubCmd(StrEnum):
         elif self == SubCmd.dry_run:
             pass
         elif self == SubCmd.train:
-            train(config)
+            train(config, hooks=train_hooks)
             teardown_training_environment()
         elif self == SubCmd.train_single:
             if (dp_config := getattr(config.train_module, "dp_config", None)) is not None:
@@ -161,7 +178,7 @@ class SubCmd(StrEnum):
                     tp_config,
                 )
                 config.train_module.tp_config = None  # type: ignore
-            train(config)
+            train(config, hooks=train_hooks)
             teardown_training_environment()
         elif self == SubCmd.prep:
             prep(config)
@@ -432,15 +449,21 @@ def prep(config: ExperimentConfig):
     data_loader.reshuffle(epoch=1)
 
 
-def train(config: ExperimentConfig):
+def train(config: ExperimentConfig, hooks: Optional[TrainHooks] = None):
     # Set RNG states on all devices.
     seed_all(config.init_seed)
 
     # Build components.
     model = config.model.build(init_device="meta")
+    if hooks is not None and hooks.post_model is not None:
+        hooks.post_model(config, model)
     train_module = config.train_module.build(model)
+    if hooks is not None and hooks.post_train_module is not None:
+        hooks.post_train_module(config, train_module)
     data_loader = _build_data_loader(config, dp_process_group=train_module.dp_process_group)
     trainer = config.trainer.build(train_module, data_loader)
+    if hooks is not None and hooks.post_trainer is not None:
+        hooks.post_trainer(config, trainer)
 
     # Record the config to W&B/Comet and each checkpoint dir.
     config_dict = config.as_config_dict()
@@ -468,7 +491,7 @@ def eval_checkpoints(config: ExperimentConfig):
     trainer.eval_checkpoints()
 
 
-def main(*, config_builder: ConfigBuilder) -> None:
+def main(*, config_builder: ConfigBuilder, train_hooks: Optional[TrainHooks] = None) -> None:
     """
     Main entry point for running Ai2-internal experiments.
 
@@ -495,6 +518,7 @@ def main(*, config_builder: ConfigBuilder) -> None:
             )
             main(config_builder=config_builder)
 
+    :param train_hooks: Optional :class:`TrainHooks` passed to :func:`train`.
     """
 
     usage = f"""
@@ -525,4 +549,4 @@ $ [i]python {sys.argv[0]} {SubCmd.launch} run01 ai2/neptune --launch.num_nodes=2
 
     config: ExperimentConfig = config_builder(cli_context)
     cmd.prepare_environment(config)
-    cmd.run(config)
+    cmd.run(config, train_hooks=train_hooks)

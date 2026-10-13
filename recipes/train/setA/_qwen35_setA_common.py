@@ -32,14 +32,36 @@ DATA
   ``<|box_end|>``. Evaluate with the olmo-eval launcher's ``--doc-markers``
   (``CTC_SUITE_DOC_MARKERS=1``), which renders those markers token-identically (checked on real
   eval rows of all 11 tasks: ``recipes/eval/setA_audit/check_doc_marker_parity.py``).
+
+RESEARCH VARIANTS
+  ``SETA_VARIANT`` / ``SETA_VARIANT_OPTS`` (``launch_setA_sft.py --variant/--variant-opts``) apply a
+  research arm from ``recipes/train/variants.py`` on top of this dense recipe -- the same hooks
+  ``research_trainer/train_ctc_suite.py`` uses: model-config changes and router LR groups /
+  callbacks / data overrides here, ``enable_*`` calls and the tolerant base load through
+  :func:`setA_train_hooks`. Unset (``dense``) leaves the config byte-identical.
 """
 
-from dataclasses import replace
-from typing import Any, Dict
+import glob
+import json
+import math
+import os
+import sys
+from dataclasses import dataclass, replace
+from typing import Any, Dict, List, Optional
 
-from _qwen35_xlong5_dolci25_256k_common import build_qwen35_xlong5_experiment
-from _setA_defaults import SHARDS_DIR as _SHARDS_DIR
-from _setA_defaults import base_checkpoint_from_env, set_root_from_env, tasks_from_env
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # recipes/train
+
+import variants as V  # noqa: E402  (recipes/train/variants.py)
+from _qwen35_xlong5_dolci25_256k_common import build_qwen35_xlong5_experiment  # noqa: E402
+from _setA_defaults import DEFAULT_VARIANT  # noqa: E402
+from _setA_defaults import SHARDS_DIR as _SHARDS_DIR  # noqa: E402
+from _setA_defaults import (  # noqa: E402
+    base_checkpoint_from_env,
+    set_root_from_env,
+    tasks_from_env,
+    variant_from_env,
+    variant_opts_from_env,
+)
 
 from olmo_core.data.composable import (
     LongDocStrategy,
@@ -47,9 +69,9 @@ from olmo_core.data.composable import (
     PackingInstanceSourceConfig,
 )
 from olmo_core.distributed.parallel import DataParallelType
-from olmo_core.internal.experiment import CliContext, ExperimentConfig
-from olmo_core.train import Duration
-from olmo_core.train.callbacks import CheckpointerCallback, WandBCallback
+from olmo_core.internal.experiment import CliContext, ExperimentConfig, TrainHooks
+from olmo_core.train import Duration, LoadStrategy
+from olmo_core.train.callbacks import CheckpointerCallback, FlopMeterCallback, WandBCallback
 from olmo_core.train.train_module import TransformerDataParallelConfig
 
 # Defaults live in the import-free _setA_defaults.py (shared with launch_setA_sft.py); each is
@@ -101,12 +123,20 @@ def arm_geometry(arm: str) -> Dict[str, int]:
     return spec
 
 
-def build_setA_experiment(cli_context: CliContext, *, arm: str) -> ExperimentConfig:
+def build_setA_experiment(
+    cli_context: CliContext,
+    *,
+    arm: str,
+    variant: Optional[str] = None,
+    variant_opts: Optional[str] = None,
+) -> ExperimentConfig:
     """
-    Build one arm of the setA dense SFT pair.
+    Build one arm of the setA SFT pair (dense, or a research variant on top of it).
 
     :param cli_context: The CLI context supplied by :func:`olmo_core.internal.experiment.main`.
     :param arm: A key of :data:`ARMS`.
+    :param variant: A ``recipes/train/variants.py`` name (default: ``SETA_VARIANT``, else dense).
+    :param variant_opts: Its ``k=v,...`` options (default: ``SETA_VARIANT_OPTS``).
 
     :returns: The experiment config.
     """
@@ -179,4 +209,184 @@ def build_setA_experiment(cli_context: CliContext, *, arm: str) -> ExperimentCon
     wandb.entity = WANDB_ENTITY
     wandb.project = WANDB_PROJECT
     wandb.group = cli_context.run_name
+
+    name = variant if variant is not None else variant_from_env()
+    spec = variant_opts if variant_opts is not None else variant_opts_from_env()
+    global _PLAN
+    _PLAN = None
+    if name not in (DEFAULT_VARIANT, "full"):
+        _PLAN = apply_setA_variant(config, g, name, spec)
+    elif spec.strip():
+        raise ValueError(f"variant options {spec!r} given for the dense recipe")
     return config.merge(cli_context.overrides)
+
+
+# ----------------------------------------------------------------------------------------------
+# Research variants (recipes/train/variants.py) on the canonical recipe
+# ----------------------------------------------------------------------------------------------
+
+
+@dataclass
+class SetAVariantPlan:
+    """A resolved variant for one build: what :func:`setA_train_hooks` applies at train time."""
+
+    variant: Any  # V.Variant
+    options: Any  # V.VariantOptions
+    ctx: Any  # V.VariantContext
+    base_checkpoint: str
+
+
+#: Set by :func:`build_setA_experiment`; ``None`` for dense.
+_PLAN: Optional[SetAVariantPlan] = None
+
+
+def estimate_total_steps(tasks: List[str], data_root: str) -> Optional[int]:
+    """
+    Upper-bound the optimizer steps of one epoch from the shards' on-disk token counts.
+
+    It counts every token, including examples the 32k arm drops and BFD padding it never adds, so
+    it is exact only up to packing; pass ``total_steps=<prep's packed steps>`` for the real value.
+
+    :returns: ``ceil(tokens / TOKENS_PER_STEP)``, or ``None`` if a task has no readable shards.
+    """
+    total = 0
+    for task in tasks:
+        files = glob.glob(f"{data_root}/{task}/token_ids_part_*.npy")
+        if not files:
+            return None
+        itemsize = 4  # uint32: the Qwen3.5 vocab does not fit 16 bits
+        meta_path = f"{data_root}/{task}/metadata.json"
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                dtype = json.load(f).get("dtype") or "uint32"
+            itemsize = {"uint16": 2, "uint32": 4, "uint64": 8, "int32": 4, "int64": 8}[dtype]
+        total += sum(os.path.getsize(p) for p in files) // itemsize
+    return max(1, math.ceil(total / TOKENS_PER_STEP))
+
+
+def apply_setA_variant(
+    config: ExperimentConfig, g: Dict[str, int], name: str, spec: str
+) -> SetAVariantPlan:
+    """
+    Apply a research variant's config-time hooks to a built dense setA config, in place.
+
+    Config-time: model config (``apply_model_config``), router LR groups
+    (``optim_group_overrides``), train-module fields, the instance source (``data_overrides``,
+    BFD-matched), callbacks (``extra_callbacks`` + the method-aware flop meter), and for variants
+    that add parameters, a non-strict base load (the trainer's own load is turned off). The
+    ``enable_*`` calls happen at train time through :func:`setA_train_hooks`.
+
+    :param config: The dense config from :func:`build_setA_experiment`.
+    :param g: The arm geometry (:func:`arm_geometry`).
+    :param name: Variant name.
+    :param spec: ``k=v,...`` options; ``total_steps`` / ``seed`` are recipe keys.
+
+    :returns: The plan the train hooks apply.
+
+    :raises ValueError: An arm this recipe cannot run (see ``Variant.setA_blocker`` /
+        ``cp_blocker``) or an unknown / ignored option.
+    """
+    variant, opts, recipe = V.parse_variant_spec(name, spec)
+    if variant.setA_blocker:
+        raise ValueError(
+            f"variant {name!r} cannot run on the setA recipe: {variant.setA_blocker}. "
+            "Use recipes/train/research_trainer/train_ctc_suite.py."
+        )
+    if g["cp_degree"] > 1 and variant.cp_blocker:
+        raise ValueError(
+            f"variant {name!r} cannot run on a context-parallel arm (cp={g['cp_degree']}): "
+            f"{variant.cp_blocker}. Use the 32k arm."
+        )
+    seq = g["sequence_length"]
+    accum = g["grad_accum"]
+    total_steps = recipe.get("total_steps")
+    if total_steps is None and variant.needs_horizon:
+        total_steps = estimate_total_steps(TASKS, DATA_ROOT)
+        if total_steps is None:
+            raise ValueError(
+                f"variant {name!r} anneals over the run horizon, and the shards under {DATA_ROOT} "
+                "are not readable here: pass --variant-opts total_steps=<prep's packed steps>"
+            )
+        print(
+            f"[setA] {name}: horizon ESTIMATED at {total_steps} steps from on-disk token counts "
+            "(an upper bound; pass total_steps=<prep's packed steps> for the exact value)",
+            flush=True,
+        )
+    total_calls = max(1, (total_steps or 1) * accum)
+    ctx = V.VariantContext(
+        model_family="qwen3_5",
+        seed=recipe.get("seed", 0),
+        total_calls=total_calls,
+        calls_per_step=accum,
+        seq_len=seq,
+        mix_total_forwards=total_calls,  # chunked-mix: forwards per rank = steps x accum
+        vocab_size=config.model.vocab_size,
+        data_dir=None,
+    )
+
+    variant.apply_model_config(config.model, opts, ctx)
+    tm = config.train_module
+    tm.optim.group_overrides = list(tm.optim.group_overrides or []) + list(
+        variant.optim_group_overrides(opts)
+    )
+    for k, v in variant.train_module_overrides(opts, ctx).items():
+        setattr(tm, k, v)
+    override = variant.data_overrides(
+        opts,
+        ctx,
+        source_paths=[f"{DATA_ROOT}/{task}/token_ids_part_*.npy" for task in TASKS],
+        label_mask_paths=[f"{DATA_ROOT}/{task}/labels_mask_*.npy" for task in TASKS],
+        tokenizer=config.data_loader.tokenizer,
+        best_fit=True,
+    )
+    if override is not None:
+        override.label = "ctc_setA"
+        config.dataset = [override]
+
+    tr = config.trainer
+    for cb_name, cb in variant.extra_callbacks(opts, ctx).items():
+        tr.callbacks[cb_name] = cb
+    # Method-aware training FLOPs, as on every research_trainer arm (EOS == the pad id).
+    tr.callbacks["flop_meter"] = FlopMeterCallback(seq_len=seq, pad_id=ctx.ids.eos)
+    if variant.new_params:
+        # New router / gain / projector keys are absent from the base: the trainer's load is
+        # strict, so it only resumes from the save folder and the base is loaded non-strictly by
+        # the post_trainer hook (V.tolerant_base_load refuses a missing BACKBONE key).
+        tr.load_path = None
+        tr.load_strategy = LoadStrategy.if_available
+    if config.train_module.compile_model:
+        raise ValueError(f"variant {name!r}: the setA recipe is expected to run with compile off")
+    print(
+        f"[setA] variant={name} opts={V.options_to_kv(opts) or '(defaults)'} "
+        f"horizon={total_steps} steps x {accum} = {total_calls} calls",
+        flush=True,
+    )
+    return SetAVariantPlan(variant, opts, ctx, BASE_CHECKPOINT)
+
+
+def setA_train_hooks() -> TrainHooks:
+    """
+    The :class:`TrainHooks` that finish a variant at train time (no-ops for dense): the variant's
+    ``enable_*`` calls on the meta-device model, its train-module hooks, and the tolerant base load
+    for variants that add parameters.
+    """
+
+    def post_model(config: ExperimentConfig, model) -> None:
+        if _PLAN is None:
+            return
+        from olmo_core.distributed.utils import get_rank
+
+        _PLAN.ctx.rank = get_rank()
+        _PLAN.variant.post_build_model(model, _PLAN.options, _PLAN.ctx)
+
+    def post_train_module(config: ExperimentConfig, train_module) -> None:
+        if _PLAN is not None:
+            _PLAN.variant.post_build_train_module(train_module, _PLAN.options, _PLAN.ctx)
+
+    def post_trainer(config: ExperimentConfig, trainer) -> None:
+        if _PLAN is not None and _PLAN.variant.new_params:
+            V.tolerant_base_load(_PLAN.base_checkpoint, trainer.train_module.model, "")
+
+    return TrainHooks(
+        post_model=post_model, post_train_module=post_train_module, post_trainer=post_trainer
+    )

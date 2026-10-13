@@ -11,10 +11,16 @@ Every Beaker step of the setA dense SFT pair (pre-flight + training), in one fil
     python recipes/train/setA/launch_setA_sft.py 32k --tasks nq \
         --data-root /weka/.../ctc_sft_sets/<set> --base-checkpoint /weka/.../model_and_optim
 
+    # a research arm on the canonical recipe (recipes/train/variants.py; 32k arm for most)
+    python recipes/train/setA/launch_setA_sft.py 32k --variant ffnmoe \
+        --variant-opts "ffn_moe_target=0.3,total_steps=<prep's packed steps>"
+
 ``--tasks`` / ``--data-root`` / ``--base-checkpoint`` are exported to the Beaker job as the env vars
 ``SETA_TASKS`` / ``SETA_DATA_ROOT`` / ``SETA_BASE_CKPT``, which ``_qwen35_setA_common.py`` reads (the
 training scripts are driven by the olmo-core CLI, so they cannot take extra flags). A non-default
-task set is added to the run name (``q35-4b-dense-ctc-setA-nq-32k-<stamp>``).
+task set is added to the run name (``q35-4b-dense-ctc-setA-nq-32k-<stamp>``). ``--variant`` /
+``--variant-opts`` are exported as ``SETA_VARIANT`` / ``SETA_VARIANT_OPTS`` (validated here first) and
+replace ``dense`` in the run name (``q35-4b-ffnmoe-ctc-setA-32k-<stamp>``).
 
 Every job is pinned to a full pushed commit SHA (default: this checkout's HEAD, which must be on the
 remote). The data are the setA shards as built by ``recipes/data/ctc_sft/build_ctc_sft.py`` (see
@@ -33,17 +39,23 @@ from datetime import datetime
 HERE = os.path.dirname(os.path.abspath(__file__))
 REL = "recipes/train/setA"
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))  # recipes/train (variants.py, stdlib-only at import)
 
 from _setA_defaults import (  # noqa: E402  (stdlib-only; no torch on the login node)
     DEFAULT_BASE_CHECKPOINT,
     DEFAULT_SET_ROOT,
     DEFAULT_TASKS,
+    DEFAULT_VARIANT,
     ENV_BASE_CKPT,
     ENV_DATA_ROOT,
     ENV_TASKS,
+    ENV_VARIANT,
+    ENV_VARIANT_OPTS,
     parse_tasks,
     task_tag,
 )
+from variants import parse_variant_spec, setA_variant_names  # noqa: E402
+
 GANTRY = os.environ.get(
     "GANTRY", "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/gantry"
 )
@@ -54,6 +66,7 @@ TRAIN_INSTALL = (
     "'torch==2.9.1+cu128' 'triton==3.5.1'"
 )  # amandab's validated training install
 NODES = {"32k": 1, "256k": 1, "256k-2node": 2}
+CP_ARMS = {"256k", "256k-2node"}  # == ARMS entries with cp_degree > 1 (_qwen35_setA_common.py)
 CPU_CLUSTERS = [
     "ai2/jupiter-cirrascale-2",
     "ai2/neptune-cirrascale",
@@ -105,7 +118,29 @@ def main() -> None:
         default=DEFAULT_BASE_CHECKPOINT,
         help="model_and_optim dir loaded weights-only",
     )
+    ap.add_argument(
+        "--variant",
+        default=DEFAULT_VARIANT,
+        choices=[DEFAULT_VARIANT, *[n for n in setA_variant_names() if n not in ("dense", "full")]],
+        help="research arm from recipes/train/variants.py (default: dense)",
+    )
+    ap.add_argument(
+        "--variant-opts",
+        default="",
+        help="the variant's options, k=v,... (';'-separated if a value holds commas); field names "
+        "are train_ctc_suite's argparse dests, plus total_steps= (schedule horizon) and seed=",
+    )
     args = ap.parse_args()
+    if args.variant != DEFAULT_VARIANT:
+        try:
+            variant, _, _ = parse_variant_spec(args.variant, args.variant_opts)
+        except ValueError as exc:
+            ap.error(str(exc))
+        if args.step in CP_ARMS and variant.cp_blocker:
+            ap.error(f"--variant {args.variant} cannot run on the CP arm {args.step}: "
+                     f"{variant.cp_blocker}")
+    elif args.variant_opts:
+        ap.error("--variant-opts needs a --variant")
     tasks = parse_tasks(args.tasks)
     unknown = [t for t in tasks if t not in DEFAULT_TASKS]
     if unknown:
@@ -168,6 +203,10 @@ def main() -> None:
         "--env",
         f"{ENV_BASE_CKPT}={args.base_checkpoint}",
     ]
+    if args.variant != DEFAULT_VARIANT:
+        base += ["--env", f"{ENV_VARIANT}={args.variant}"]
+        if args.variant_opts:
+            base += ["--env", f"{ENV_VARIANT_OPTS}={args.variant_opts}"]
     if args.step == "prep":
         name = args.run_name or f"ctc-setA-sft-prep-{tag}{stamp}"
         cmd = [*base, "--name", name, "--gpus", "0", "--cpus", "32", "--shared-memory", "32GiB"]
@@ -176,7 +215,7 @@ def main() -> None:
         cmd += ["--", "python", f"{REL}/prep_setA_sft.py"]
     else:
         n = NODES[args.step]
-        name = args.run_name or f"q35-4b-dense-ctc-setA-{tag}{args.step}-{stamp}"
+        name = args.run_name or f"q35-4b-{args.variant}-ctc-setA-{tag}{args.step}-{stamp}"
         cmd = [
             *base,
             "--name",

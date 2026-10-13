@@ -6,7 +6,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)  # also holds amandab's 256k builder (_qwen35_xlong5_...)
 
-from _qwen35_setA_common import build_setA_experiment  # noqa: E402
+from _qwen35_setA_common import build_setA_experiment, setA_train_hooks  # noqa: E402
 
 from olmo_core.internal.experiment import main  # noqa: E402
 
@@ -17,4 +17,4 @@ def build_experiment_config(cli_context):
 
 
 if __name__ == "__main__":
-    main(config_builder=build_experiment_config)
+    main(config_builder=build_experiment_config, train_hooks=setA_train_hooks())

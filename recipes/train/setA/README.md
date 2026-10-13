@@ -61,6 +61,38 @@ Single-task debugging: `python $L prep --tasks nq` then `python $L 32k --tasks n
   the training data never contains. The r256k rung runs with YaRN x2 + chunked prefill by default:
   its prompts run to ~272k tokens and would otherwise be left-truncated.
 
+## Research variants on the canonical recipe
+
+`--variant <name> [--variant-opts k=v,...]` trains a research arm from `recipes/train/variants.py`
+on this recipe instead of dense; it is exported as `SETA_VARIANT` / `SETA_VARIANT_OPTS`, validated
+by the launcher first, and replaces `dense` in the run name (`q35-4b-ffnmoe-ctc-setA-32k-<stamp>`).
+The variant's hooks are the same ones `research_trainer/train_ctc_suite.py` calls, so an option
+means the same thing in both (option names = that trainer's argparse dests, e.g.
+`ffn_moe_target=0.3`; use `;` between options when a value holds commas).
+
+```bash
+python $L 32k --variant ffnmoe --variant-opts "ffn_moe_target=0.3,total_steps=<packed steps>"
+python $L 32k --variant chunked-mix --variant-opts "mix_start_p=0.8,total_steps=<packed steps>"
+python $L 256k --variant ffndrop --variant-opts "ffn_drop_max_rate=0.3"
+```
+
+| Variant | Changes vs dense | Arms |
+|---|---|---|
+| `chunked` / `chunked-mix` | document-chunked mask on the attention blocks (+ mask-mix curriculum) | 32k (no CP) |
+| `sparselandmark` | sparse-landmark mixer + landmark-packed windows (BFD); base needs a repaired landmark row | all |
+| `ffnmoe` | nested-width FFN router, router LR group, `ffn_moe` callback, non-strict base load | all |
+| `kvroute` | KV keep/drop router, router LR group, `kv_route` callback, non-strict base load | 32k (no CP) |
+| `flexcompute` | FFN + KV routers, optional joint budget (block skip is broken on this branch in both trainers: `BlockSkipHolder` rejects `compact=`) | 32k (no CP) |
+| `ffndrop` | drop-CPT random null-FFN token drop, `ffn_drop` callback | all |
+| `pooledkv`, `softtoken` | **not on setA**: they need one example per padded row; setA rows are BFD-packed | — |
+
+Every non-dense arm also gets the method-aware `flop_meter` callback. `total_steps=` sets the
+horizon the schedules anneal over (`prep` prints the packed steps per arm); without it the horizon
+is estimated from the shards' token counts, an upper bound. `seed=` sets the router / drop seeds
+(default 0, as in `train_ctc_suite.py`). Unset, the dense config is byte-identical to before
+(`recipes/train/check_variant_parity.py`). The recipes still legitimately differ in batch, LR, CP,
+AC and attention backend (flash_3 here, flash_2 there).
+
 ## Recipe source
 
 The recipe is **amandab's validated dense 256k SFT** (formerly `sft_xlong256k/`; its builder is

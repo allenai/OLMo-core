@@ -76,6 +76,20 @@ ffnmoe|softtoken|kvroute|flexcompute`), with local (`run_ctc_local.sbatch`), Lam
 (`beaker_ctc_suite.py`) launchers and HF → olmo-core base conversion. See its README. The setA SFT
 above does not use it.
 
+**Variants, one place.** What each research arm changes relative to dense (model config,
+`enable_*` calls, router LR groups, callbacks, data overrides, eval-side export) lives in
+`train/variants.py` as a registry of `Variant` objects with typed option dataclasses. Both trainers
+call it: `train_ctc_suite.py` builds the options from its argparse flags (the option fields are the
+argparse dest names), and the setA recipe takes `launch_setA_sft.py --variant <name>
+--variant-opts k=v,...` (see `train/setA/README.md`, "Research variants on the canonical recipe").
+`train/check_variant_parity.py` is the CPU-only proof that the two agree and that the refactor
+changed neither trainer's config; run it on a compute node:
+
+```bash
+# from a fresh `git archive` of HEAD (new) and of the pre-refactor commit 633919f00 (old) on /data
+PYTHONPATH=<new>/src python <new>/recipes/train/check_variant_parity.py --old-root <old> --new-root <new>
+```
+
 ## 3. Eval
 
 The current path is olmo-eval's CTC launcher (`~/projects/olmo-eval`, branch

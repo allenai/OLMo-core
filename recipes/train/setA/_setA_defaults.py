@@ -11,6 +11,8 @@ the launcher has exported the overrides with ``gantry --env``:
   ``<root>/shards_qwen35_256k/<task>/``.
 * ``SETA_BASE_CKPT``  -- the ``model_and_optim`` dir loaded weights-only
   (default :data:`DEFAULT_BASE_CHECKPOINT`).
+* ``SETA_VARIANT``    -- a research variant from ``recipes/train/variants.py`` (default ``dense``).
+* ``SETA_VARIANT_OPTS`` -- its options, ``k=v,...`` (``;``-separated if a value holds commas).
 
 The training scripts are driven by the olmo-core CLI (``<script> train <run-name> <cluster>``), which
 has no room for extra argparse flags, hence env vars rather than arguments.
@@ -48,6 +50,9 @@ DEFAULT_BASE_CHECKPOINT = (
 ENV_TASKS = "SETA_TASKS"
 ENV_DATA_ROOT = "SETA_DATA_ROOT"
 ENV_BASE_CKPT = "SETA_BASE_CKPT"
+ENV_VARIANT = "SETA_VARIANT"
+ENV_VARIANT_OPTS = "SETA_VARIANT_OPTS"
+DEFAULT_VARIANT = "dense"
 
 
 def parse_tasks(spec: str) -> List[str]:
@@ -79,6 +84,17 @@ def set_root_from_env() -> str:
 def base_checkpoint_from_env() -> str:
     """:returns: ``SETA_BASE_CKPT``, or :data:`DEFAULT_BASE_CHECKPOINT`."""
     return os.environ.get(ENV_BASE_CKPT) or DEFAULT_BASE_CHECKPOINT
+
+
+def variant_from_env() -> str:
+    """:returns: ``SETA_VARIANT``, or :data:`DEFAULT_VARIANT` (``full`` is spelled ``dense``)."""
+    v = (os.environ.get(ENV_VARIANT) or DEFAULT_VARIANT).strip()
+    return DEFAULT_VARIANT if v == "full" else v
+
+
+def variant_opts_from_env() -> str:
+    """:returns: ``SETA_VARIANT_OPTS`` (``""`` when unset)."""
+    return os.environ.get(ENV_VARIANT_OPTS, "")
 
 
 def task_tag(tasks: List[str]) -> str:
