@@ -10,7 +10,7 @@ records:
   - records/flop-scaling-report-2026-09-02.md
 results:
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ffndrop_cpt/pipeline_state.json
-  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ffndrop_cpt/pipeline.log
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core-legacy/debug/ffndrop_cpt/pipeline.log
   - research/ffn_compute/ffndrop/LAUNCH_LEDGER.tsv
   - research/ffn_compute/flop_scaling/LAUNCH_LEDGER.tsv
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/flop_scaling/results35.csv

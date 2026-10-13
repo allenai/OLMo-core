@@ -109,7 +109,7 @@ beaker job update-priority <JOB-id> urgent
 
 ## Interactive + agent sessions
 
-These live in the main checkout's `scripts/` (`/accounts/projects/berkeleynlp/prasann/projects/OLMo-core/scripts/`;
+These live in the main checkout's `scripts/` (`/accounts/projects/berkeleynlp/prasann/projects/OLMo-core-legacy/scripts/`;
 not ported to this branch):
 
 - `interactive_gpu_session.sh` — live dev shell on an AI2 GPU with weka (GPUS=N, LOCAL=1).

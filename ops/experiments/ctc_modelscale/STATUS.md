@@ -11,10 +11,10 @@ results:
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/LAUNCH_LEDGER.tsv
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/scalefam_grid_status.md
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_modelscale/results/
-  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_crossfamily/launches/
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core-legacy/debug/ctc_crossfamily/launches/
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_crossfamily/results/
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/debug/ctc_llama8b/LAUNCH_LEDGER.tsv
-  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/results/ctc_suite_llama_iid/all_results.jsonl
+  - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core-legacy/results/ctc_suite_llama_iid/all_results.jsonl
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/paperdraft/figures/data/ctc_scale_data.csv
   - /accounts/projects/berkeleynlp/prasann/projects/OLMo-core/paperdraft/figures/data/ctc_length_generalization_data.csv
 wandb_group:
