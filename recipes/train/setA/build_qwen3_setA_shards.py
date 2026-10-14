@@ -195,8 +195,17 @@ def main() -> None:
     print("MANIFEST convert", json.dumps(conv_args), "olmo_core_commit", man.get("olmo_core_commit"),
           flush=True)
     assert conv_args["marker_set"] == "qwen3_5", conv_args
-    shipped = f"{root}/{conv_args.get('shards_dir') or 'shards_' + conv_args['marker_set']}"
-    assert os.path.basename(shipped) == "shards_qwen35_256k", shipped
+    # The manifest predates the ``shards_dir`` / ``doc_markers`` fields: the build wrote
+    # ``shards_qwen3_5`` (since renamed ``shards_qwen35_256k``, the dir the 32k/256k runs read) with
+    # the converter's default document markers. Both are checked below: the Qwen3.5 re-render with
+    # these arguments must reproduce that shard token for token.
+    conv_args.setdefault("doc_markers", True)
+    shipped = f"{root}/shards_qwen35_256k"
+    for t in tasks:
+        meta35 = json.load(open(f"{shipped}/{t}/metadata.json"))
+        for k in ("tokenizer", "marker_set", "query_position", "cot_mode"):
+            assert meta35.get(k) == conv_args[k], (t, k, meta35.get(k), conv_args[k])
+        assert meta35.get("doc_markers", True) == conv_args["doc_markers"], (t, meta35)
     roster = {r["name"]: r for r in man["roster"]}
     ids35, ids3 = reserved_ids("qwen3_5"), reserved_ids("qwen3")
     kwargs = dict(
