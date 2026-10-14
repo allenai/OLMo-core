@@ -157,15 +157,24 @@ def compare(task: str, src_dir: str, dst_dir: str, ids) -> dict:
     a = read_shard(src_dir, ids.eos, markers)
     b = read_shard(dst_dir, ids.eos, markers)
     errs = []
-    if dm["num_instances"] != sm["num_instances"] or dm["num_dropped"] != sm["num_dropped"]:
-        errs.append(f"instances {sm['num_instances']}/{sm['num_dropped']} dropped -> "
-                    f"{dm['num_instances']}/{dm['num_dropped']}")
-    if a["len"].size != b["len"].size:
-        errs.append(f"EOS-split example count {a['len'].size} -> {b['len'].size}")
+    # Hashed IDs lengthen every example, so the converter's seq_len cap (262,144) can drop a few of
+    # the longest ones. Align old -> new in order (same marker count, not shorter); an unmatched old
+    # example is a drop, accepted only if it was already far past any training window we use.
+    keep_idx, dropped = align(a, b)
+    if keep_idx is None:
+        errs.append(f"cannot align {a['len'].size} old to {b['len'].size} new examples")
         return {"task": task, "errors": errs}
+    if dm["num_dropped"] - sm["num_dropped"] != len(dropped):
+        errs.append(f"converter dropped {dm['num_dropped'] - sm['num_dropped']} more, "
+                    f"alignment found {len(dropped)}")
+    short_drops = [int(a["len"][i]) for i in dropped if a["len"][i] <= DROP_OK_ABOVE]
+    if short_drops:
+        errs.append(f"{len(short_drops)} dropped examples were <= {DROP_OK_ABOVE:,} tokens")
     if a["len"].size != sm["num_instances"]:
         errs.append(f"shipped shard holds {a['len'].size} EOS-split examples, metadata says "
                     f"{sm['num_instances']}")
+    dropped_lens = a["len"][dropped] if dropped else np.zeros(0, dtype=np.int64)
+    a = {k: v[keep_idx] for k, v in a.items()}
     if not np.array_equal(a["markers"], b["markers"]):
         errs.append(f"marker tokens differ in {int((a['markers'] != b['markers']).sum())} examples")
     d = b["len"] - a["len"]
@@ -194,7 +203,37 @@ def compare(task: str, src_dir: str, dst_dir: str, ids) -> dict:
         "kept_tokens_at_32k": [int(a["len"][old_keep].sum()), int(b["len"][new_keep].sum())],
         "newly_over_32k": int((old_keep & ~new_keep).sum()),
         "newly_under_32k": int((~old_keep & new_keep).sum()),
+        "dropped_over_cap": len(dropped),
+        "dropped_min_old_len": int(dropped_lens.min()) if dropped_lens.size else None,
     }
+
+
+#: An example the hash build drops (over the converter's seq_len) must have been longer than this
+#: in seq mode, i.e. irrelevant to the 32k arm and far past the 32k window.
+DROP_OK_ABOVE = 200_000
+
+
+def align(a: dict, b: dict):
+    """
+    Match old (seq) examples to new (hash) ones in order: same marker count and not shorter.
+
+    :returns: ``(old indices kept, old indices dropped)``, or ``(None, None)`` if the new shard
+        has examples left over.
+    """
+    keep, dropped, j = [], [], 0
+    for i in range(a["len"].size):
+        if (
+            j < b["len"].size
+            and a["markers"][i] == b["markers"][j]
+            and b["len"][j] >= a["len"][i]
+        ):
+            keep.append(i)
+            j += 1
+        else:
+            dropped.append(i)
+    if j != b["len"].size:
+        return None, None
+    return np.asarray(keep, dtype=np.int64), dropped
 
 
 def main() -> None:
