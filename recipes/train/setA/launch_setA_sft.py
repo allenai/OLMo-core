@@ -59,6 +59,7 @@ from _setA_defaults import (  # noqa: E402  (stdlib-only; no torch on the login 
     ENV_BASE_CKPT,
     ENV_DATA_ROOT,
     ENV_MODEL,
+    ENV_SAVE_OVERWRITE,
     ENV_SHARDS_DIR,
     ENV_SMOKE_STEPS,
     ENV_TASKS,
@@ -170,6 +171,12 @@ def main() -> None:
         "holding the longest example of --shards-dir (its filter_report.json says)",
     )
     ap.add_argument(
+        "--resume-overwrite",
+        action="store_true",
+        help="relaunch into --run-name's existing save folder (auto-resumes from its latest complete "
+        "checkpoint) and let it replace a partial stepN left by a preemption mid-save",
+    )
+    ap.add_argument(
         "--smoke-steps",
         type=int,
         default=0,
@@ -275,6 +282,10 @@ def main() -> None:
         base += ["--env", f"{ENV_MODEL}={args.model}"]
     if args.smoke_steps:
         base += ["--env", f"{ENV_SMOKE_STEPS}={args.smoke_steps}"]
+    if args.resume_overwrite:
+        if not args.run_name:
+            ap.error("--resume-overwrite needs the --run-name of the run to resume")
+        base += ["--env", f"{ENV_SAVE_OVERWRITE}=1"]
     if args.shards_dir:
         base += ["--env", f"{ENV_SHARDS_DIR}={args.shards_dir}"]
     if args.window:

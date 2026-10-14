@@ -65,6 +65,9 @@ ENV_SMOKE_STEPS = "SETA_SMOKE_STEPS"
 #: data set cut to the baseline's examples (e.g. hashed doc ids: ``shards_qwen35_q35le32k`` at 65,536).
 ENV_SHARDS_DIR = "SETA_SHARDS_DIR"
 ENV_WINDOW = "SETA_WINDOW"
+#: ``1``: let a relaunch into an existing save folder replace stale step dirs (a preemption mid-save
+#: leaves a partial ``stepN``; the auto-resume from an earlier step then dies re-saving ``stepN``).
+ENV_SAVE_OVERWRITE = "SETA_SAVE_OVERWRITE"
 
 #: Qwen3-4B-Base converted to olmo-core (2026-07-23, HF-parity validated) with its marker rows
 #: repaired from trained delimiter donors (``fix_marker_embeddings.py``); audited by
@@ -139,6 +142,11 @@ def base_checkpoint_from_env() -> str:
     """:returns: ``SETA_BASE_CKPT``, or the model's base (:data:`DEFAULT_BASE_CHECKPOINT` for dense
     Qwen3.5-4B)."""
     return os.environ.get(ENV_BASE_CKPT) or MODELS[model_from_env()]["base_checkpoint"]
+
+
+def save_overwrite_from_env() -> bool:
+    """:returns: whether ``SETA_SAVE_OVERWRITE=1``."""
+    return os.environ.get(ENV_SAVE_OVERWRITE, "0") == "1"
 
 
 def smoke_steps_from_env() -> int:

@@ -67,10 +67,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import run_guards  # noqa: E402  (recipes/train/run_guards.py)
 import variants as V  # noqa: E402  (recipes/train/variants.py)
 from _qwen35_xlong5_dolci25_256k_common import build_qwen35_xlong5_experiment  # noqa: E402
-from _setA_defaults import DEFAULT_MODEL, DEFAULT_VARIANT, MODELS  # noqa: E402
-from _setA_defaults import (  # noqa: E402
+from _setA_defaults import (  # noqa: E402  # noqa: E402
+    DEFAULT_MODEL,
+    DEFAULT_VARIANT,
+    MODELS,
     base_checkpoint_from_env,
     model_from_env,
+    save_overwrite_from_env,
     set_root_from_env,
     shards_dir_from_env,
     smoke_steps_from_env,
@@ -235,7 +238,7 @@ def build_setA_experiment(
     tr.save_folder = (
         f"/weka/oe-training-default/ai2-llm/checkpoints/prasanns/{cli_context.run_name}"
     )
-    tr.save_overwrite = False
+    tr.save_overwrite = save_overwrite_from_env()  # SETA_SAVE_OVERWRITE=1 only for a resume relaunch
     tr.load_path = BASE_CHECKPOINT
     tr.load_optim_state = False
     tr.load_trainer_state = False
