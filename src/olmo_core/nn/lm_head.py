@@ -271,6 +271,11 @@ class LMHead(nn.Module):
                   If ``labels`` is provided, returns an ``LMOutputWithLoss`` named tuple containing the loss and optionally the logits.
         """
         B = x.shape[0]
+        if response_logits_only and labels is not None and loss_reduction == "none":
+            raise ValueError(
+                "loss_reduction='none' is not supported with response_logits_only: the selected "
+                "positions are flattened across the batch, so there is no (B, S) loss layout"
+            )
 
         h = self.norm(x) if self.norm is not None else x
         h, labels = _select_hidden_for_logits(
@@ -519,6 +524,11 @@ class NormalizedLMHead(LMHead):
         response_mask: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, LMOutputWithLoss]:
         B = x.shape[0]
+        if response_logits_only and labels is not None and loss_reduction == "none":
+            raise ValueError(
+                "loss_reduction='none' is not supported with response_logits_only: the selected "
+                "positions are flattened across the batch, so there is no (B, S) loss layout"
+            )
 
         x, labels = _select_hidden_for_logits(
             x,

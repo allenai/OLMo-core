@@ -458,7 +458,7 @@ class MultimodalLM(nn.Module):
                     "`loss_masks` is required when the LM uses `masked_dropout` "
                     "(response_residual_dropout)"
                 )
-            drop_mask = (loss_masks > 0).to(dtype=torch.bool)
+            drop_mask = loss_masks > 0
 
         assert (
             self.lm.embeddings is not None
@@ -466,10 +466,18 @@ class MultimodalLM(nn.Module):
 
         device = self.lm.device
         input_ids = input_ids.to(device)
+        if drop_mask is not None:
+            drop_mask = drop_mask.to(device)
         if labels is not None:
             labels = labels.to(device)
 
-        use_flex_attn = os.environ.get("OLMO2_FLEX_ATTN") == "1"
+        # Choose the mask representation from the LM's actual attention backend (not the
+        # environment), so a mismatched OLMO2_FLEX_ATTN can never silently drop the masks.
+        from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+        use_flex_attn = any(
+            isinstance(getattr(m, "backend", None), FlexAttentionBackend) for m in self.lm.modules()
+        )
         or_mask: Optional[torch.Tensor] = None
         and_mask: Optional[torch.Tensor] = None
         flex_attn_block_mask = None
@@ -562,8 +570,6 @@ class MultimodalLM(nn.Module):
 
         # Build flex BlockMask after vision so the mask is not resident during ViT.
         if flex_mask_kwargs is not None:
-            from olmo_core.nn.attention.backend import FlexAttentionBackend
-
             flex_attn_block_mask = FlexAttentionBackend.build_block_mask_from_vectors(
                 **flex_mask_kwargs
             )

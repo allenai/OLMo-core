@@ -9,8 +9,15 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 @contextmanager
-def vision_sdpa_context() -> Iterator[None]:
-    """Restrict SDPA to the flash and memory-efficient backends (never cuDNN / math)."""
+def vision_sdpa_context(device: Optional[torch.device] = None) -> Iterator[None]:
+    """Restrict SDPA to the flash and memory-efficient backends (never cuDNN / math) on CUDA.
+
+    Other devices (e.g. CPU, where only the math kernel handles dropout) keep PyTorch's default
+    kernel selection.
+    """
+    if device is not None and device.type != "cuda":
+        yield
+        return
     with sdpa_kernel([SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
         yield
 
@@ -24,7 +31,7 @@ def vision_scaled_dot_product_attention(
     is_causal: bool = False,
     dropout_p: float = 0.0,
 ) -> torch.Tensor:
-    with vision_sdpa_context():
+    with vision_sdpa_context(q.device):
         return F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, is_causal=is_causal, dropout_p=dropout_p
         )

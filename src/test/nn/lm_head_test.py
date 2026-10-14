@@ -292,7 +292,10 @@ def test_lm_head_response_logits_only(head_type, loss_implementation):
     )
     if output_narrow.logits is not None:
         torch.testing.assert_close(output_narrow.logits, ref_logits)
-    torch.testing.assert_close(output_narrow.loss, output_full.loss)
+    # The narrowed loss averages over response tokens only, so the reference must ignore the rest.
+    masked_labels = labels.masked_fill(~response_mask, -100)
+    output_ref = lm_head(inputs, labels=masked_labels)
+    torch.testing.assert_close(output_narrow.loss, output_ref.loss)
 
 
 @pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
@@ -327,3 +330,17 @@ def test_lm_head_num_flops_per_token(
         f"Estimated FLOPs ({estimated_flops_per_token}) differs too much from actual ({actual_flops_per_token}), "
         f"{relative_error=:.2%}, {tolerance=:.2%}"
     )
+
+
+@pytest.mark.parametrize("head_type", [LMHeadType.default, LMHeadType.normalized])
+def test_lm_head_response_logits_only_rejects_unreduced_loss(head_type):
+    lm_head = LMHeadConfig(name=head_type).build(d_model=16, vocab_size=32, init_device="cpu")
+    x = torch.randn(2, 4, 16)
+    labels = torch.randint(0, 32, (2, 4))
+    mask = torch.zeros(2, 4, dtype=torch.bool)
+    mask[0, [0, 1]] = True
+    mask[1, 2] = True  # 3 selected tokens over 2 rows: no (B, S) layout exists
+    with pytest.raises(ValueError, match="response_logits_only"):
+        lm_head(
+            x, labels=labels, response_logits_only=True, response_mask=mask, loss_reduction="none"
+        )
