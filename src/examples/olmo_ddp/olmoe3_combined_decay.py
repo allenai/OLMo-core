@@ -27,8 +27,15 @@ def equal(a, b):
 def mt_data(common, plan):
     """Use Tanush's frozen 100B mixture, tokenizer, seed and packing settings."""
     import olmo_core
-    from olmo_core.data import InstanceFilterConfig, NumpyDataLoaderConfig, NumpyFSLDatasetConfig
-    from olmo_core.data.source_mixture import SourceMixtureDatasetConfig, SourceMixtureList
+    from olmo_core.data import (
+        InstanceFilterConfig,
+        NumpyDataLoaderConfig,
+        NumpyFSLDatasetConfig,
+    )
+    from olmo_core.data.source_mixture import (
+        SourceMixtureDatasetConfig,
+        SourceMixtureList,
+    )
     from olmo_core.internal.experiment import DataComponents
 
     mix = (
@@ -175,6 +182,7 @@ def train_phase(args):
                 proof = dict(sampled_state_exact=True, rng_exact=True)
             expected = self._expected_data if transition else saved["data_loader"]
             assert equal(expected, self.trainer.data_loader.state_dict())
+            self._expected_data = expected
             assert self.step == start and self.trainer.global_train_tokens_seen == start * p.BATCH
             if transition:
                 assert self._transition_seen and self.trainer.epoch == 1
@@ -194,10 +202,13 @@ def train_phase(args):
             assert hero.MOUNT.is_mount() and hero.DOLMA_MOUNT.is_mount()
             assert Path(self.trainer.save_folder) == child.root
             assert self.trainer.global_train_tokens_seen == self.step * p.BATCH
-            expected_tokens = (
-                self.step - plan["switch_step"] if args.phase == "mt" else self.step
-            ) * p.BATCH
-            assert self.trainer.data_loader.tokens_processed == expected_tokens
+            p.validate_data_resume(
+                plan,
+                args.phase,
+                self._expected_data,
+                self.trainer.data_loader.state_dict(),
+                self.trainer.epoch,
+            )
             assert not (child.root / "STORAGE_PAUSED.json").exists()
             output = Path(self.output_dir)
             output.mkdir(parents=True, exist_ok=True)

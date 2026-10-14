@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 
 import olmoe3_hero_fixed_decay_example as fixed
@@ -55,8 +56,15 @@ def write_json(path, value):
     """Atomically write a JSON receipt on the same filesystem."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    # PIDs can coincide on different nodes writing the same shared directory.
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False
+    ) as handle:
+        tmp = Path(handle.name)
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     tmp.replace(path)
 
 
@@ -218,6 +226,17 @@ def transition_state(plan, saved, fresh_data):
     result["data_loader"]["epoch"] = 1
     result["epoch"] = 1
     return result
+
+
+def validate_data_resume(plan, phase, expected, actual, epoch):
+    """Require the exact saved cursor, including when PT or MT has wrapped an epoch."""
+    if (
+        actual != expected
+        or actual["epoch"] != epoch
+        or actual["seed"] != plan[f"{phase}_data_seed"]
+        or actual["tokens_processed"] != actual["batches_processed"] * BATCH
+    ):
+        raise ValueError("Restored data cursor differs from the saved phase/epoch state")
 
 
 def protect_checkpoint(plan, step):

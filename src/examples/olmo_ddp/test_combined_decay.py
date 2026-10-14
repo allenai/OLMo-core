@@ -3,6 +3,7 @@
 import copy
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -148,6 +149,32 @@ class CombinedDecayTest(unittest.TestCase):
         ]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 p.transition_state(self.plan, saved, dict(fresh, **{key: value}))
+
+    def test_epoch_two_cursor_is_preserved_without_rewinding(self):
+        for phase in ("pt", "mt"):
+            saved = dict(
+                seed=self.plan[f"{phase}_data_seed"],
+                epoch=2,
+                tokens_processed=2 * p.BATCH,
+                batches_processed=2,
+                dataset_fingerprint=phase,
+            )
+            p.validate_data_resume(self.plan, phase, saved, dict(saved), 2)
+            for change in (
+                dict(epoch=1),
+                dict(tokens_processed=0, batches_processed=0),
+                dict(seed=123),
+                dict(dataset_fingerprint="another-mixture"),
+            ):
+                with self.subTest(phase=phase, change=change), self.assertRaises(ValueError):
+                    p.validate_data_resume(self.plan, phase, saved, dict(saved, **change), 2)
+
+    def test_concurrent_receipts_do_not_collide(self):
+        target = self.root / "STOP.json"
+        with ThreadPoolExecutor(16) as pool:
+            list(pool.map(lambda rank: p.write_json(target, dict(rank=rank)), range(128)))
+        self.assertIn(p.fixed.read_json(target)["rank"], range(128))
+        self.assertFalse(list(self.root.glob("STOP.json.*.tmp")))
 
     def test_resume_before_at_and_after_switch(self):
         root = Path(self.plan["save_folder"])
