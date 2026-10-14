@@ -25,6 +25,7 @@ from olmo_core.nn.vision.connector import (
     ImageProjectorType,
     VisionConnectorConfig,
 )
+from olmo_core.nn.vision.crop_balance import balanced_encode
 from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
 from olmo_core.utils import move_to_device
 
@@ -376,6 +377,34 @@ class MultimodalLM(nn.Module):
         self._document_mode: Optional[bool] = cfg.document_mode
         self._recurrent_mixers: Optional[bool] = None
         self.sync_vit_crops: bool = cfg.sync_vit_crops
+        # Set by the train module (see :meth:`set_crop_balance_group`).
+        self._crop_balance_group: Optional[dist.ProcessGroup] = None
+        self._crop_balance_counts: List[List[int]] = []
+
+    def set_crop_balance_group(self, group: Optional[dist.ProcessGroup]) -> None:
+        """
+        Spread the vision encoder's crops evenly over the ranks of ``group`` in training forwards
+        (see :mod:`olmo_core.nn.vision.crop_balance`), or stop doing so with ``None``.
+
+        Every rank of ``group`` must run the same number of training forwards, together, and hold
+        its own replica of the vision encoder. Balancing replaces :attr:`sync_vit_crops`' padding
+        and barrier: every rank encodes the same number of crops to within one. Evaluation
+        forwards (``model.eval()``) encode their own crops as before.
+        """
+        self._crop_balance_group = group
+        self._crop_balance_counts = []
+
+    def _active_crop_balance_group(self) -> Optional[dist.ProcessGroup]:
+        return self._crop_balance_group if self.training else None
+
+    def pop_crop_balance_counts(self) -> List[List[int]]:
+        """
+        Every rank's crop count before balancing (a text-only micro-batch counts its one
+        placeholder crop) for each balanced encoder call since the previous pop, in call order;
+        empty without balancing.
+        """
+        counts, self._crop_balance_counts = self._crop_balance_counts, []
+        return counts
 
     def uses_document_boundaries(self) -> bool:
         """
@@ -613,7 +642,8 @@ class MultimodalLM(nn.Module):
             dest = [0]
         n_real = flat.shape[0]
 
-        if self.sync_vit_crops and is_distributed():
+        balance_group = self._active_crop_balance_group()
+        if balance_group is None and self.sync_vit_crops and is_distributed():
             # Same number of encoder forwards on every rank (FSDP all-gathers stay in lockstep).
             n_max = torch.tensor([n_real], device=device, dtype=torch.int32)
             dist.all_reduce(n_max, op=dist.ReduceOp.MAX)
@@ -623,15 +653,24 @@ class MultimodalLM(nn.Module):
 
         # ``VIT_CROP_MICROBATCH`` counts crops per batch row, as it did on the padded layout.
         chunk = microbatch * B
-        if chunk <= 0 or flat.shape[0] <= chunk:
-            features = self._vit_forward_features(flat)
-        else:
-            features = torch.cat(
+
+        def encode(crops: torch.Tensor) -> torch.Tensor:
+            if chunk <= 0 or crops.shape[0] <= chunk:
+                return self._vit_forward_features(crops)
+            return torch.cat(
                 [
-                    self._vit_forward_features(flat[start : start + chunk])
-                    for start in range(0, flat.shape[0], chunk)
+                    self._vit_forward_features(crops[start : start + chunk])
+                    for start in range(0, crops.shape[0], chunk)
                 ]
             )
+
+        if balance_group is not None:
+            # ``flat`` always holds at least one crop (a batch without any encodes a zero
+            # crop), so every rank encodes at least one and its encoder gets gradients.
+            features, counts = balanced_encode(encode, flat, balance_group)
+            self._crop_balance_counts.append(counts)
+        else:
+            features = encode(flat)
         features = features[:n_real]
         if features.shape[1] != N:
             raise OLMoConfigurationError(
@@ -689,8 +728,9 @@ class MultimodalLM(nn.Module):
         self._record_input_diagnostic("connector output RMS", image_features)
 
         # ViT may run extra crop microbatches when ``n_crops`` differs across DP ranks;
-        # sync before the LM forward so all-gather collectives stay aligned.
-        if self.sync_vit_crops and is_distributed():
+        # sync before the LM forward so all-gather collectives stay aligned. Balanced encoding
+        # already ran in step on every rank.
+        if self.sync_vit_crops and is_distributed() and self._active_crop_balance_group() is None:
             barrier()
 
         # Keep only valid pooled rows (a row is padding iff *all* its patch indices are -1,

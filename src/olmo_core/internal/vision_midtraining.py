@@ -209,6 +209,11 @@ class MixedMidtrainingRecipeConfig(Config):
     compile_loss: bool = True
     """Run the chunked weighted loss's per-chunk math as static-shape ``torch.compile`` graphs
     (see :attr:`~olmo_core.nn.vision.MultimodalLMConfig.compile_loss`) instead of eagerly."""
+    balance_vit_crops: bool = False
+    """Spread each micro-batch's image crops evenly over all ranks for the vision encoder (see
+    :attr:`~olmo_core.train.train_module.transformer.multimodal_train_module.MultimodalOLMoDDPTrainModuleConfig.balance_vit_crops`).
+    The same features and summed gradients, without every rank waiting for the one that holds
+    the most crops."""
 
 
 @dataclass
@@ -561,6 +566,7 @@ def _build_train_module(
     text_only: bool,
     text: dict | None = None,
     padding_input_token_id: int | None = None,
+    balance_vit_crops: bool = False,
 ) -> MultimodalOLMoDDPTrainModuleConfig:
     """
     :param padding_input_token_id: With a token id (the merged stage passes EOS), padding slots
@@ -569,6 +575,8 @@ def _build_train_module(
         FIM tokens of the text mix) are near zero, and the embedding norm amplifies their
         gradients by about ``1/sqrt(eps)``; in the LM's clip group they would set the clipping
         of every LM parameter.
+    :param balance_vit_crops: Spread each micro-batch's crops evenly over all ranks for the
+        vision encoder (see :attr:`MixedMidtrainingRecipeConfig.balance_vit_crops`).
     """
     optim_settings, module_settings = text_train_settings(text)
     # Two sequences per micro-batch for the vision tower's memory, or the text run's own
@@ -656,6 +664,7 @@ def _build_train_module(
             default=scheduler,
         ),
         padding_input_token_id=padding_input_token_id,
+        balance_vit_crops=balance_vit_crops,
         **module_settings,
     )
 
@@ -1152,6 +1161,7 @@ def build_config(
             text_only=recipe.text_loss_share == 1.0,
             text=text,
             padding_input_token_id=tokenizer.eos_token_id if text_source is not None else None,
+            balance_vit_crops=recipe.balance_vit_crops,
         ),
         trainer=_build_trainer(cli, recipe, budget, text, token_ids),
         recipe=recipe,
