@@ -56,21 +56,39 @@ def test_transition_optimizer_hyperparameters_rejects_unexpected_loaded_lr():
     parameter = torch.nn.Parameter(torch.tensor([1.0]))
     optimizer = torch.optim.AdamW([parameter], lr=1e-3, weight_decay=0.333)
 
-    with pytest.raises(RuntimeError, match="loaded LR"):
+    with pytest.raises(RuntimeError, match="matches neither"):
         transition_optimizer_hyperparameters(
             optimizer,
             source_lr=5e-4,
-            target_lr=1e-3,
+            target_lr=2e-3,
             source_weight_decay=0.333,
             target_weight_decay=0.333,
         )
+
+
+def test_transition_accepts_an_optimizer_already_at_the_target_coordinate():
+    # OLMoDDPOptimizer takes lr / weight decay from the new config on load, so the loaded
+    # groups already carry the target values; the transition must accept that.
+    parameter = torch.nn.Parameter(torch.tensor([1.0]))
+    optimizer = torch.optim.AdamW([parameter], lr=1e-3, weight_decay=0.3)
+    adjusted = transition_optimizer_hyperparameters(
+        optimizer,
+        source_lr=2e-3,
+        target_lr=1e-3,
+        source_weight_decay=0.1,
+        target_weight_decay=0.3,
+    )
+    assert adjusted == 1
+    assert optimizer.param_groups[0]["lr"] == 1e-3
+    assert optimizer.param_groups[0][INITIAL_LR_FIELD] == 1e-3
+    assert optimizer.param_groups[0]["weight_decay"] == 0.3
 
 
 def test_transition_optimizer_hyperparameters_rejects_unexpected_weight_decay():
     parameter = torch.nn.Parameter(torch.tensor([1.0]))
     optimizer = torch.optim.AdamW([parameter], lr=5e-4, weight_decay=0.1)
 
-    with pytest.raises(RuntimeError, match="neither zero nor expected"):
+    with pytest.raises(RuntimeError, match="neither zero"):
         transition_optimizer_hyperparameters(
             optimizer,
             source_lr=5e-4,

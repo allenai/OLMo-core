@@ -36,42 +36,54 @@ def transition_optimizer_hyperparameters(
     weight decay remain unregularized; every group using ``source_weight_decay`` transitions
     to ``target_weight_decay``.
 
+    Optimizers that take their hyperparameters from the current config rather than the
+    checkpoint (e.g. :class:`~olmo_core.optim.moe_optimizer.OLMoDDPOptimizer`) already hold the
+    target values after loading. Those groups are accepted as-is, since the only thing the
+    transition must preserve is the loaded optimizer state.
+
     :param optim: The optimizer whose parameter groups are updated in place.
-    :param source_lr: The LR every group is expected to have been loaded with.
+    :param source_lr: The LR the source checkpoint was trained with.
     :param target_lr: The LR to install (also recorded as the group's initial LR so the
         scheduler continues from the new value).
-    :param source_weight_decay: The weight decay regularized groups are expected to have.
+    :param source_weight_decay: The weight decay regularized groups were trained with.
     :param target_weight_decay: The weight decay to install on those groups.
 
-    :returns: The number of regularized parameter groups that were transitioned.
+    :returns: The number of regularized parameter groups now at the target weight decay.
 
-    :raises RuntimeError: If any group's loaded LR or weight decay does not match the source
-        values, or if no regularized group was found.
+    :raises RuntimeError: If any group's loaded LR or weight decay matches neither the source
+        nor the target values, or if no regularized group was found.
     """
-    transitioned_weight_decay_groups = 0
+
+    def close(a: float, b: float) -> bool:
+        return math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-12)
+
+    regularized_groups = 0
     for group_idx, group in enumerate(optim.param_groups):
         loaded_lr = float(group["lr"])
-        if not math.isclose(loaded_lr, source_lr, rel_tol=0.0, abs_tol=1e-12):
+        if not (close(loaded_lr, source_lr) or close(loaded_lr, target_lr)):
             raise RuntimeError(
-                f"optimizer group {group_idx} loaded LR {loaded_lr} != expected source LR "
-                f"{source_lr}"
+                f"optimizer group {group_idx} loaded LR {loaded_lr} matches neither the source "
+                f"LR {source_lr} nor the target LR {target_lr}"
             )
         loaded_weight_decay = float(group.get("weight_decay", 0.0))
-        if math.isclose(loaded_weight_decay, source_weight_decay, rel_tol=0.0, abs_tol=1e-12):
+        if close(loaded_weight_decay, source_weight_decay) or close(
+            loaded_weight_decay, target_weight_decay
+        ):
             group["weight_decay"] = target_weight_decay
-            transitioned_weight_decay_groups += 1
-        elif not math.isclose(loaded_weight_decay, 0.0, rel_tol=0.0, abs_tol=1e-12):
+            regularized_groups += 1
+        elif not close(loaded_weight_decay, 0.0):
             raise RuntimeError(
                 f"optimizer group {group_idx} loaded weight decay {loaded_weight_decay} is "
-                f"neither zero nor expected source weight decay {source_weight_decay}"
+                f"neither zero, the source weight decay {source_weight_decay}, nor the target "
+                f"weight decay {target_weight_decay}"
             )
         group["lr"] = target_lr
         group[INITIAL_LR_FIELD] = target_lr
-    if transitioned_weight_decay_groups == 0:
+    if regularized_groups == 0:
         raise RuntimeError(
-            "optimizer hyperparameter transition found no source weight-decay parameter group"
+            "optimizer hyperparameter transition found no regularized parameter group"
         )
-    return transitioned_weight_decay_groups
+    return regularized_groups
 
 
 @dataclass
