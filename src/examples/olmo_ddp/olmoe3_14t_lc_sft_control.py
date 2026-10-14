@@ -145,10 +145,11 @@ def train_spec(template, r, commit):
 
 
 def config_spec(template, commit, stage=None):
-    """Validate on one Rhea slot before allocating the 64-GPU training group."""
+    """Validate on one Holmes GPU before allocating the 64-GPU training group."""
     s = cpu_spec(template, commit, "config", template)
     t = s["tasks"][0]
-    t["resources"] = dict(cpuCount=8, memory="32 GiB", sharedMemory="2 GiB")
+    t["resources"] = dict(gpuCount=1, cpuCount=8, memory="32 GiB", sharedMemory="2 GiB")
+    t["constraints"] = dict(hostname=hosts_for(template))
     t["context"].update(minRuntime="1h", autoResume=True)
     if stage is None:
         t["arguments"] = [
@@ -161,7 +162,7 @@ def config_spec(template, commit, stage=None):
         ]
     else:
         t["arguments"] = ["python", p.SCRIPT, "validate", p.run(stage).run_id]
-    s["description"] = p.CAMPAIGN + ": native/config/tokenizer validation on Rhea"
+    s["description"] = p.CAMPAIGN + ": native/config/tokenizer validation on one Holmes GPU"
     return s
 
 
@@ -312,7 +313,7 @@ def watch():
                             continue
                         sw, ss = ensure_validation(
                             c,
-                            r.run_id + "-source-check-" + commit[:8],
+                            r.run_id + "-source-check-holmes-" + commit[:8],
                             lambda: config_spec(template, commit, "sft"),
                         )
                         if ss != "STATUS_SUCCEEDED":
