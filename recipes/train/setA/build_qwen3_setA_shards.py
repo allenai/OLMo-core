@@ -41,6 +41,7 @@ import multiprocessing as mp
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -259,6 +260,12 @@ def main() -> None:
     assert len(sc3["nn"]) == 1 and len(sc35["nn"]) == 1, (sc3, sc35)
     sc3["nn"], sc35["nn"] = sc3["nn"][0], sc35["nn"][0]
     print(f"scaffold ids qwen3={sc3} qwen3.5={sc35}", flush=True)
+    # Workers load the tokenizers from local copies: one pool per task x --jobs workers each
+    # calling the Hub (11 x 32 x 2 requests) gets rate-limited (HTTP 429) part-way through.
+    tok_dir = tempfile.mkdtemp(prefix="setA_tok_")
+    tok3_local, tok35_local = f"{tok_dir}/qwen3", f"{tok_dir}/qwen35"
+    t3.save_pretrained(tok3_local)
+    t35.save_pretrained(tok35_local)
 
     conv = _load_converter()
     out_root = f"{root}/{args.out_dir}"
@@ -275,7 +282,7 @@ def main() -> None:
         t0 = time.time()
         res = []
         with mp.Pool(args.jobs, initializer=_init,
-                     initargs=(conv_args["tokenizer"], args.tokenizer, kw)) as pool:
+                     initargs=(tok35_local, tok3_local, kw)) as pool:
             for i, x in enumerate(pool.imap(_render, rows, chunksize=4)):
                 res.append(x)
                 if i + 1 in (1, 2, 5, 10, 100) or (i + 1) % 5000 == 0:
