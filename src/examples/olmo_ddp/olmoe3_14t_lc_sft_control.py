@@ -23,6 +23,8 @@ from olmoe3_qkgain_control import (
 
 TRAIN_TEMPLATE = "01M33PEVEBAN6RNAG80FFDK8CK"
 IB_DOWN = {496, 511, 523, 549, 550}
+EVAL_CLUSTERS = ["ai2/jupiter", "ai2/ceres", "ai2/saturn"]
+SFT_EVAL_DEPLOYMENT = "jupiter-ceres-saturn"
 
 
 def pin(source, destination):
@@ -227,6 +229,7 @@ def evaluation_specs(b, r, commit):
         result = e.eval_specs(b, r, commit)
     for s in result.values():
         t = s["tasks"][0]
+        t["constraints"] = dict(cluster=EVAL_CLUSTERS.copy())
         t["arguments"][0] = (
             t["arguments"][0]
             .replace("olmoe3_qkgain_eval.py ", f"olmoe3_14t_lc_sft.py base-eval {r.run_id} ")
@@ -362,7 +365,11 @@ def watch():
                             eval_cache[r.stage] = evaluation_specs(b, r, commit)
                         row["evals"] = {}
                         for kind, spec in eval_cache[r.stage].items():
-                            ew, es = ensure_saved(ec, r.run_id + "-" + kind, lambda spec=spec: spec)
+                            name = r.run_id + "-" + kind
+                            # Preserve the original immutable submissions when widening placement.
+                            if r.stage == "sft":
+                                name += "-" + SFT_EVAL_DEPLOYMENT
+                            ew, es = ensure_saved(ec, name, lambda spec=spec: spec)
                             row["evals"][kind] = dict(
                                 id=ew.experiment.id if ew else None, status=es
                             )
