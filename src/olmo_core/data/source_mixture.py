@@ -507,6 +507,12 @@ class SourceMixtureDatasetConfig(Config):
                 if not eligible_indices:
                     break
 
+                # Exhaust earlier occurrences before spending capacity on repetitions.
+                repetition_idx = min(idx // path_count for idx in eligible_indices)
+                eligible_indices = [
+                    idx for idx in eligible_indices if idx // path_count == repetition_idx
+                ]
+
                 # Refill evenly after a path reaches its capacity.
                 base = additional_instances_needed // len(eligible_indices)
                 if base:
