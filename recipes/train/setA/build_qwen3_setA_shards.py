@@ -116,9 +116,10 @@ def read_shard(d: str, eos: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     return all_ids, all_mask, ends
 
 
-def first_labels(mask: np.ndarray, ends: np.ndarray) -> np.ndarray:
+def first_labels(mask: np.ndarray, ends: np.ndarray, starts=None) -> np.ndarray:
     """:returns: index of the first labeled token of every example (-1 if none)."""
-    starts = np.concatenate([[0], ends[:-1]])
+    if starts is None:
+        starts = np.concatenate([[0], ends[:-1]])
     out = np.full(ends.size, -1, dtype=np.int64)
     lab = np.flatnonzero(mask)
     if lab.size == 0:
@@ -140,6 +141,48 @@ def scaffold_check(ids: np.ndarray, starts_lab: np.ndarray, name: str,
         got = ids[starts_lab + off]
         n_bad = int((got != want).sum())
         assert n_bad == 0, f"{name}: {n_bad}/{got.size} examples differ at label-start{off:+d}"
+
+
+#: Unrendered pieces skipped before a rendered row counts as not found (a rejected row spans 1-2).
+MAX_SKIP_PIECES = 16
+
+
+def locate_rows(ids, mask, piece_ends, lens, digests):
+    """
+    Find each re-rendered row in a shard, in order, by its length and digest.
+
+    Rows the re-render rejects (``lens < 0``) may still be in an older shard; a shard span that the
+    next rendered row does not match is skipped piece by piece (EOS-split) until it does.
+
+    :returns: ``(present row indices, their starts, their ends, skipped (start, end) piece spans,
+        rows whose digest never matched)``.
+    """
+    present, starts, ends, skipped, bad = [], [], [], [], []
+    piece_ends = np.asarray(piece_ends)
+    p = 0
+    for r in np.flatnonzero(np.asarray(lens) >= 0):
+        n = int(lens[r])
+        q, hops = p, []
+        while q + n <= ids.size and _digest(ids[q:q + n], mask[q:q + n]) != digests[r]:
+            if len(hops) == MAX_SKIP_PIECES:
+                break
+            nxt = int(piece_ends[np.searchsorted(piece_ends, q, side="right")])  # next piece end
+            hops.append((q, nxt))
+            q = nxt
+        if q + n > ids.size or len(hops) == MAX_SKIP_PIECES:  # not found: report, stay at p
+            bad.append(int(r))
+            continue
+        skipped += hops
+        present.append(int(r))
+        starts.append(q)
+        ends.append(q + n)
+        p = q + n
+    while p < ids.size:  # trailing spans with no rendered row
+        nxt = int(piece_ends[np.searchsorted(piece_ends, p, side="right")])
+        skipped.append((p, nxt))
+        p = nxt
+    return (np.asarray(present, dtype=np.int64), np.asarray(starts, dtype=np.int64),
+            np.asarray(ends, dtype=np.int64), skipped, bad)
 
 
 def write_parts(out: str, ids: np.ndarray, mask: np.ndarray, ends: np.ndarray) -> int:
@@ -301,24 +344,31 @@ def main() -> None:
             ("qwen35", f"{shipped}/{task}", ids35.eos, l35, 1),
             ("qwen3", f"{full_root}/{task}", ids3.eos, l3, 3),
         ):
-            ids, mask, piece_ends = read_shard(d, eos)
-            present = np.flatnonzero(lens >= 0)
-            row_ends = np.cumsum(lens[present])
-            assert row_ends.size and row_ends[-1] == ids.size, (
-                f"{task}/{name}: shard has {ids.size} tokens, the rows that render under seq-len "
-                f"{int(row_ends[-1]) if row_ends.size else 0}")
-            assert np.all(ids[row_ends - 1] == eos), f"{task}/{name}: a row does not end at EOS"
-            row_starts = np.concatenate([[0], row_ends[:-1]])
-            bad_rows = [int(row) for k, row in enumerate(present)
-                        if _digest(ids[row_starts[k]:row_ends[k]], mask[row_starts[k]:row_ends[k]])
-                        != res[row][dig_i]]
+            ids, mask, all_piece_ends = read_shard(d, eos)
+            present, row_starts, row_ends, skipped, bad_rows = locate_rows(
+                ids, mask, all_piece_ends, lens, [x[dig_i] for x in res])
             info[f"{name}_rerender_mismatches"] = len(bad_rows)
             if bad_rows:  # recorded, and fails the job at the end
                 failures.append(f"{task}/{name}: {len(bad_rows)} rows differ from the "
                                 f"re-render (rows {bad_rows[:5]})")
                 print("  MISMATCH", failures[-1], flush=True)
-            piece_row = np.searchsorted(row_ends, piece_ends, side="left")  # index into present
-            fl = first_labels(mask, piece_ends)
+            # Shard spans no re-rendered row explains: rows the current converter rejects (an EOS
+            # inside the text; the shipped build predates that guard). Harmless only if every such
+            # piece is past the baseline window, so the 32k arm never trained on it.
+            skipped_pieces = [int(e - s_) for s_, e in skipped]
+            info[f"{name}_unrendered_pieces"] = len(skipped_pieces)
+            if any(n <= CAP for n in skipped_pieces):
+                failures.append(f"{task}/{name}: an unrendered shard piece is <= {CAP} tokens")
+                print("  UNRENDERED", failures[-1], flush=True)
+            # the pieces inside located rows (a row holds >= 1 EOS-split piece)
+            k = np.searchsorted(row_ends, all_piece_ends, side="left")
+            inside = k < row_ends.size
+            inside[inside] &= row_starts[k[inside]] < all_piece_ends[inside]
+            piece_ends = all_piece_ends[inside]
+            piece_row = k[inside]  # index into present
+            piece_starts = np.maximum(
+                np.concatenate([[0], piece_ends[:-1]]), row_starts[piece_row])
+            fl = first_labels(mask, piece_ends, piece_starts)
             labeled = fl >= 0
             last_piece = np.concatenate([piece_row[1:] != piece_row[:-1], [True]])
             n_lab = np.bincount(piece_row[labeled], minlength=present.size)
@@ -338,7 +388,7 @@ def main() -> None:
             info[f"{name}_pieces"] = int(piece_ends.size)
             info[f"{name}_tokens"] = int(ids.size)
             in_row = np.arange(piece_ends.size) - np.searchsorted(piece_row, piece_row, side="left")
-            shards[name] = dict(ids=ids, mask=mask, ends=piece_ends, fl=fl,
+            shards[name] = dict(ids=ids, mask=mask, ends=piece_ends, starts=piece_starts, fl=fl,
                                 key=present[piece_row] * 1_000_000 + in_row)
         print(f"  [{task}] qwen35 shard vs re-render: {info['qwen35_examples']:,} rows, "
               f"{info['qwen35_rerender_mismatches']} differ; qwen3 shard vs re-render: "
@@ -348,13 +398,12 @@ def main() -> None:
         # ---- filter + label alignment: keep a Qwen3 piece iff its Qwen3.5 counterpart is within
         # the baseline window (the packer's exclude rule, applied to the baseline's own pieces) ----
         a, b = shards["qwen35"], shards["qwen3"]
-        a_len = np.diff(np.concatenate([[0], a["ends"]]))
+        a_len = a["ends"] - a["starts"]
         keep_keys = a["key"][a_len <= CAP]
         pos = np.searchsorted(b["key"], keep_keys)
         if not (pos < b["key"].size).all() or not np.array_equal(b["key"][pos], keep_keys):
             raise SystemExit(f"{task}: a kept Qwen3.5 piece has no Qwen3 counterpart")
-        ids, mask, ends, fl = b["ids"], b["mask"].copy(), b["ends"], b["fl"]
-        starts = np.concatenate([[0], ends[:-1]])
+        ids, mask, ends, starts, fl = b["ids"], b["mask"].copy(), b["ends"], b["starts"], b["fl"]
         lab = fl[pos][fl[pos] >= 0]
         mask[lab] = False  # <think>
         mask[lab + 1] = False  # \n\n
