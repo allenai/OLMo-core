@@ -11,6 +11,12 @@ Every Beaker step of the setA dense SFT pair (pre-flight + training), in one fil
     python recipes/train/setA/launch_setA_sft.py 32k --tasks nq \
         --data-root /weka/.../ctc_sft_sets/<set> --base-checkpoint /weka/.../model_and_optim
 
+    # the full-attention Qwen3-4B-Base arm (length generalization): data, base audit, prep, train
+    python recipes/train/setA/launch_setA_sft.py shards --model qwen3-4b      # CPU: Qwen3 shards
+    python recipes/train/setA/launch_setA_sft.py base-audit --model qwen3-4b  # CPU: base audit
+    python recipes/train/setA/launch_setA_sft.py prep --model qwen3-4b
+    python recipes/train/setA/launch_setA_sft.py 32k --model qwen3-4b [--smoke-steps 20]
+
     # a research arm on the canonical recipe (recipes/train/variants.py; 32k arm for most)
     python recipes/train/setA/launch_setA_sft.py 32k --variant ffnmoe \
         --variant-opts "ffn_moe_target=0.3,total_steps=<prep's packed steps>"
@@ -20,7 +26,11 @@ Every Beaker step of the setA dense SFT pair (pre-flight + training), in one fil
 training scripts are driven by the olmo-core CLI, so they cannot take extra flags). A non-default
 task set is added to the run name (``q35-4b-dense-ctc-setA-nq-32k-<stamp>``). ``--variant`` /
 ``--variant-opts`` are exported as ``SETA_VARIANT`` / ``SETA_VARIANT_OPTS`` (validated here first) and
-replace ``dense`` in the run name (``q35-4b-ffnmoe-ctc-setA-32k-<stamp>``).
+replace ``dense`` in the run name (``q35-4b-ffnmoe-ctc-setA-32k-<stamp>``). ``--model`` (default
+``qwen35-4b``) is exported as ``SETA_MODEL`` only when it is not the default, so the dense Qwen3.5
+command is unchanged; ``qwen3-4b`` runs ``Qwen3-4B-dense-ctc-setA-32k-SFT.py`` as
+``q3-4b-dense-ctc-setA-32k-<stamp>`` (see ``_setA_defaults.MODELS``). ``--smoke-steps N`` is a short
+run of the exact config (``SETA_SMOKE_STEPS``; run name ``...-smoke<N>-<stamp>``, its own save folder).
 
 Every job is pinned to a full pushed commit SHA (default: this checkout's HEAD, which must be on the
 remote). The data are the setA shards as built by ``recipes/data/ctc_sft/build_ctc_sft.py`` (see
@@ -42,15 +52,18 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))  # recipes/train (variants.py, stdlib-only at import)
 
 from _setA_defaults import (  # noqa: E402  (stdlib-only; no torch on the login node)
-    DEFAULT_BASE_CHECKPOINT,
+    DEFAULT_MODEL,
     DEFAULT_SET_ROOT,
     DEFAULT_TASKS,
     DEFAULT_VARIANT,
     ENV_BASE_CKPT,
     ENV_DATA_ROOT,
+    ENV_MODEL,
+    ENV_SMOKE_STEPS,
     ENV_TASKS,
     ENV_VARIANT,
     ENV_VARIANT_OPTS,
+    MODELS,
     parse_tasks,
     task_tag,
 )
@@ -66,6 +79,13 @@ TRAIN_INSTALL = (
     "'torch==2.9.1+cu128' 'triton==3.5.1'"
 )  # amandab's validated training install
 NODES = {"32k": 1, "256k": 1, "256k-2node": 2}
+#: CPU steps besides ``prep``, for one model: the script each runs.
+CPU_STEPS = {
+    "shards": ("qwen3-4b", f"{REL}/build_qwen3_setA_shards.py"),
+    "base-audit": ("qwen3-4b", f"{REL}/audit_qwen3_base.py"),
+}
+#: Training script per (model, arm); default: the Qwen3.5 script of the arm.
+TRAIN_SCRIPTS = {("qwen3-4b", "32k"): "Qwen3-4B-dense-ctc-setA-32k-SFT.py"}
 CP_ARMS = {"256k", "256k-2node"}  # == ARMS entries with cp_degree > 1 (_qwen35_setA_common.py)
 CPU_CLUSTERS = [
     "ai2/jupiter-cirrascale-2",
@@ -98,7 +118,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("step", choices=["prep", *NODES])
+    ap.add_argument("step", choices=["prep", *CPU_STEPS, *NODES])
     ap.add_argument("--ref", default=None, help="full pushed SHA for prep/train (default HEAD)")
     ap.add_argument("--run-name", default=None)
     ap.add_argument("--dry-run", action="store_true")
@@ -109,14 +129,29 @@ def main() -> None:
         "debugging, e.g. --tasks nq",
     )
     ap.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        choices=sorted(MODELS),
+        help="qwen35-4b (default: the dense Qwen3.5-4B recipe) or qwen3-4b (full-attention "
+        "Qwen3-4B-Base, 32k arm only)",
+    )
+    ap.add_argument(
         "--data-root",
         default=DEFAULT_SET_ROOT,
-        help="set root; shards are read from <root>/shards_qwen35_256k/<task>/",
+        help="set root; shards are read from <root>/<the model's shards dir>/<task>/ "
+        "(shards_qwen35_256k for qwen35-4b)",
     )
     ap.add_argument(
         "--base-checkpoint",
-        default=DEFAULT_BASE_CHECKPOINT,
-        help="model_and_optim dir loaded weights-only",
+        default=None,
+        help="model_and_optim dir loaded weights-only (default: the model's base)",
+    )
+    ap.add_argument(
+        "--smoke-steps",
+        type=int,
+        default=0,
+        help="smoke run: stop after N steps (the real run's LR schedule), its own run name / save "
+        "folder (...-smoke<N>-<stamp>)",
     )
     ap.add_argument(
         "--variant",
@@ -131,6 +166,16 @@ def main() -> None:
         "are train_ctc_suite's argparse dests, plus total_steps= (schedule horizon) and seed=",
     )
     args = ap.parse_args()
+    if args.base_checkpoint is None:
+        args.base_checkpoint = MODELS[args.model]["base_checkpoint"]
+    if args.step in NODES and args.step not in MODELS[args.model]["windows"]:
+        ap.error(f"--model {args.model} has no {args.step} arm")
+    if args.step in CPU_STEPS and CPU_STEPS[args.step][0] != args.model:
+        ap.error(f"{args.step} is a --model {CPU_STEPS[args.step][0]} step")
+    if args.smoke_steps and args.step not in NODES:
+        ap.error("--smoke-steps is for a training arm")
+    if args.model != DEFAULT_MODEL and args.variant != DEFAULT_VARIANT:
+        ap.error(f"--model {args.model} runs the dense recipe only")
     if args.variant != DEFAULT_VARIANT:
         try:
             variant, _, _ = parse_variant_spec(args.variant, args.variant_opts)
@@ -203,19 +248,36 @@ def main() -> None:
         "--env",
         f"{ENV_BASE_CKPT}={args.base_checkpoint}",
     ]
+    if args.model != DEFAULT_MODEL:
+        base += ["--env", f"{ENV_MODEL}={args.model}"]
+    if args.smoke_steps:
+        base += ["--env", f"{ENV_SMOKE_STEPS}={args.smoke_steps}"]
     if args.variant != DEFAULT_VARIANT:
         base += ["--env", f"{ENV_VARIANT}={args.variant}"]
         if args.variant_opts:
             base += ["--env", f"{ENV_VARIANT_OPTS}={args.variant_opts}"]
-    if args.step == "prep":
-        name = args.run_name or f"ctc-setA-sft-prep-{tag}{stamp}"
+    mtag = "" if args.model == DEFAULT_MODEL else f"{MODELS[args.model]['run_prefix']}-"
+    if args.step == "prep" or args.step in CPU_STEPS:
+        script = f"{REL}/prep_setA_sft.py" if args.step == "prep" else CPU_STEPS[args.step][1]
+        name = args.run_name or f"ctc-setA-sft-{args.step}-{mtag}{tag}{stamp}"
         cmd = [*base, "--name", name, "--gpus", "0", "--cpus", "32", "--shared-memory", "32GiB"]
+        if args.step == "shards":
+            cmd += ["--memory", "200GiB"]
         for c in CPU_CLUSTERS:
             cmd += ["--cluster", c]
-        cmd += ["--", "python", f"{REL}/prep_setA_sft.py"]
+        cmd += ["--", "python", script]
+        if args.step == "shards":
+            cmd += ["--set-root", args.data_root, "--tasks", ",".join(tasks), "--jobs", "32"]
+        elif args.step == "base-audit":
+            cmd += ["--base", args.base_checkpoint,
+                    "--out-json", f"{args.data_root}/shards_qwen3_q35le32k/base_audit.json"]
     else:
         n = NODES[args.step]
-        name = args.run_name or f"q35-4b-{args.variant}-ctc-setA-{tag}{args.step}-{stamp}"
+        smoke = f"smoke{args.smoke_steps}-" if args.smoke_steps else ""
+        prefix = MODELS[args.model]["run_prefix"]
+        name = args.run_name or (
+            f"{prefix}-{args.variant}-ctc-setA-{tag}{args.step}-{smoke}{stamp}"
+        )
         cmd = [
             *base,
             "--name",
@@ -238,7 +300,10 @@ def main() -> None:
             cmd += ["--host-networking", "--synchronized-start-timeout", "90m"]
         cmd += [
             "--",
-            f"{REL}/Qwen3.5-4B-dense-ctc-setA-{args.step}-SFT.py",
+            f"{REL}/"
+            + TRAIN_SCRIPTS.get(
+                (args.model, args.step), f"Qwen3.5-4B-dense-ctc-setA-{args.step}-SFT.py"
+            ),
             "train",
             name,
             "ai2/jupiter-cirrascale-2",

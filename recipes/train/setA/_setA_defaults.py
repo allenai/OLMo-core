@@ -13,6 +13,12 @@ the launcher has exported the overrides with ``gantry --env``:
   (default :data:`DEFAULT_BASE_CHECKPOINT`).
 * ``SETA_VARIANT``    -- a research variant from ``recipes/train/variants.py`` (default ``dense``).
 * ``SETA_VARIANT_OPTS`` -- its options, ``k=v,...`` (``;``-separated if a value holds commas).
+* ``SETA_MODEL``      -- the model (default ``qwen35-4b``, the dense Qwen3.5-4B recipe); see
+  :data:`MODELS`. ``qwen3-4b`` is the full-attention Qwen3-4B-Base arm of the length-generalization
+  experiment. It changes the shards dir, the default base, the window of its one arm (``32k``) and
+  the run-name prefix.
+* ``SETA_SMOKE_STEPS`` -- a smoke run: stop after this many steps (``hard_stop``, so the LR schedule
+  is the full run's), log every step and add a GPU-memory monitor. Unset for real runs.
 
 The training scripts are driven by the olmo-core CLI (``<script> train <run-name> <cluster>``), which
 has no room for extra argparse flags, hence env vars rather than arguments.
@@ -53,6 +59,42 @@ ENV_BASE_CKPT = "SETA_BASE_CKPT"
 ENV_VARIANT = "SETA_VARIANT"
 ENV_VARIANT_OPTS = "SETA_VARIANT_OPTS"
 DEFAULT_VARIANT = "dense"
+ENV_MODEL = "SETA_MODEL"
+ENV_SMOKE_STEPS = "SETA_SMOKE_STEPS"
+
+#: Qwen3-4B-Base converted to olmo-core (2026-07-23, HF-parity validated) with its marker rows
+#: repaired from trained delimiter donors (``fix_marker_embeddings.py``); audited by
+#: ``audit_qwen3_base.py``.
+QWEN3_4B_BASE_CHECKPOINT = (
+    "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/bases/"
+    "qwen3-4b-base-trainedmark/model_and_optim"
+)
+
+DEFAULT_MODEL = "qwen35-4b"
+#: Per-model recipe constants. Everything not listed here is the dense Qwen3.5-4B recipe.
+#:
+#: * ``shards_dir`` -- under the set root. ``shards_qwen3_q35le32k`` holds the setA rows
+#:   re-tokenized with Qwen3 (``build_qwen3_setA_shards.py``) and cut to exactly the examples the
+#:   Qwen3.5 32k arm kept (Qwen3.5 length <= 32,768).
+#: * ``windows`` -- the packing window of each arm the model runs. For ``qwen3-4b`` the arm is still
+#:   called ``32k`` (it is the 32k arm's example set), but Qwen3 tokenizes the same text longer, so
+#:   the smallest power-of-two window that holds its longest kept example is 65,536.
+MODELS = {
+    "qwen35-4b": dict(
+        run_prefix="q35-4b",
+        shards_dir=SHARDS_DIR,
+        base_checkpoint=DEFAULT_BASE_CHECKPOINT,
+        marker_set="qwen3_5",
+        windows={"32k": 32_768, "256k": 262_144, "256k-2node": 262_144},
+    ),
+    "qwen3-4b": dict(
+        run_prefix="q3-4b",
+        shards_dir="shards_qwen3_q35le32k",
+        base_checkpoint=QWEN3_4B_BASE_CHECKPOINT,
+        marker_set="qwen3",
+        windows={"32k": 65_536},
+    ),
+}
 
 
 def parse_tasks(spec: str) -> List[str]:
@@ -81,9 +123,23 @@ def set_root_from_env() -> str:
     return os.environ.get(ENV_DATA_ROOT) or DEFAULT_SET_ROOT
 
 
+def model_from_env() -> str:
+    """:returns: ``SETA_MODEL``, or :data:`DEFAULT_MODEL`."""
+    m = (os.environ.get(ENV_MODEL) or DEFAULT_MODEL).strip()
+    if m not in MODELS:
+        raise ValueError(f"{ENV_MODEL}={m!r}; expected one of {sorted(MODELS)}")
+    return m
+
+
 def base_checkpoint_from_env() -> str:
-    """:returns: ``SETA_BASE_CKPT``, or :data:`DEFAULT_BASE_CHECKPOINT`."""
-    return os.environ.get(ENV_BASE_CKPT) or DEFAULT_BASE_CHECKPOINT
+    """:returns: ``SETA_BASE_CKPT``, or the model's base (:data:`DEFAULT_BASE_CHECKPOINT` for dense
+    Qwen3.5-4B)."""
+    return os.environ.get(ENV_BASE_CKPT) or MODELS[model_from_env()]["base_checkpoint"]
+
+
+def smoke_steps_from_env() -> int:
+    """:returns: ``SETA_SMOKE_STEPS`` (0 = not a smoke run)."""
+    return int(os.environ.get(ENV_SMOKE_STEPS) or 0)
 
 
 def variant_from_env() -> str:

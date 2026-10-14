@@ -26,10 +26,12 @@ from _qwen35_setA_common import (  # noqa: E402
     ARMS,
     BASE_CHECKPOINT,
     DATA_ROOT,
+    MODEL,
     TASKS,
     arm_geometry,
     build_setA_experiment,
 )
+from _setA_defaults import MODELS  # noqa: E402
 
 from olmo_core.data.document_chunk_landmark import reserved_ids  # noqa: E402
 from olmo_core.internal.experiment import CliContext, SubCmd, prep  # noqa: E402
@@ -65,11 +67,13 @@ def scan_task(task: str, windows: dict, marker_ids: tuple, eos: int) -> dict:
 def main():
     """Fail before GPU submission if an input is missing or not the marker-wrapped build."""
     prepare_cli_environment()
-    ids = reserved_ids("qwen3_5")
+    marker_set = MODELS[MODEL]["marker_set"]
+    ids = reserved_ids(marker_set)
     windows = {arm: spec["sequence_length"] for arm, spec in ARMS.items()}
 
     # resolved from SETA_TASKS / SETA_DATA_ROOT / SETA_BASE_CKPT (launch_setA_sft.py flags)
-    print(f"SETA tasks={','.join(TASKS)} data_root={DATA_ROOT} base={BASE_CHECKPOINT}", flush=True)
+    print(f"SETA model={MODEL} tasks={','.join(TASKS)} data_root={DATA_ROOT} base={BASE_CHECKPOINT}",
+          flush=True)
     bad = []
     stats = {}
     for task in TASKS:
@@ -78,8 +82,8 @@ def main():
             bad.append(f"{task}: no metadata.json under {DATA_ROOT}")
             continue
         meta = json.load(open(meta_path))
-        if meta.get("marker_set") != "qwen3_5":
-            bad.append(f"{task}: marker_set {meta.get('marker_set')!r} != 'qwen3_5'")
+        if meta.get("marker_set") != marker_set:
+            bad.append(f"{task}: marker_set {meta.get('marker_set')!r} != {marker_set!r}")
         if not meta.get("doc_markers", True):
             bad.append(f"{task}: built WITHOUT document markers; the eval flag expects them")
         stats[task] = scan_task(task, windows, (ids.doc_start, ids.doc_end), ids.eos)
@@ -129,7 +133,7 @@ def main():
             CliContext(
                 script=__file__,
                 cmd=SubCmd.prep,
-                run_name=f"q35-dense-ctc-setA-{arm}-prep",
+                run_name=f"{MODELS[MODEL]['run_prefix'][:-3]}-dense-ctc-setA-{arm}-prep",
                 cluster="ai2/jupiter-cirrascale-2",
                 overrides=[],
             ),

@@ -33,6 +33,19 @@ DATA
   (``CTC_SUITE_DOC_MARKERS=1``), which renders those markers token-identically (checked on real
   eval rows of all 11 tasks: ``recipes/eval/setA_audit/check_doc_marker_parity.py``).
 
+QWEN3-4B ARM (``SETA_MODEL=qwen3-4b``, ``launch_setA_sft.py --model qwen3-4b``)
+  The same recipe on the full-attention Qwen3-4B-Base (length-generalization experiment). Only what
+  the architecture / tokenizer forces changes; :func:`_apply_model` lists it. Model
+  ``TransformerConfig.qwen3_4B`` (flash_3, fused-linear loss, as the Qwen3.5 recipe), Qwen3 tokenizer
+  (EOS 151643, ``bos=None`` as above), base ``qwen3-4b-base-trainedmark`` (marker rows repaired),
+  shards ``shards_qwen3_q35le32k`` (the 32k arm's examples, re-tokenized), and the ``32k`` arm's
+  window 65,536 (Qwen3 tokenizes the same text longer) with grad-accum 2 instead of 4, so a step is
+  still 1,048,576 tokens. Only the ``32k`` arm and the dense variant exist for it.
+
+SMOKE RUNS
+  ``SETA_SMOKE_STEPS=N`` stops after N steps (``hard_stop``: the LR schedule is the real run's),
+  logs every step and adds a GPU-memory monitor. Unset, the config is unchanged.
+
 RESEARCH VARIANTS
   ``SETA_VARIANT`` / ``SETA_VARIANT_OPTS`` (``launch_setA_sft.py --variant/--variant-opts``) apply a
   research arm from ``recipes/train/variants.py`` on top of this dense recipe -- the same hooks
@@ -54,16 +67,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) 
 import run_guards  # noqa: E402  (recipes/train/run_guards.py)
 import variants as V  # noqa: E402  (recipes/train/variants.py)
 from _qwen35_xlong5_dolci25_256k_common import build_qwen35_xlong5_experiment  # noqa: E402
-from _setA_defaults import DEFAULT_VARIANT  # noqa: E402
-from _setA_defaults import SHARDS_DIR as _SHARDS_DIR  # noqa: E402
+from _setA_defaults import DEFAULT_MODEL, DEFAULT_VARIANT, MODELS  # noqa: E402
 from _setA_defaults import (  # noqa: E402
     base_checkpoint_from_env,
+    model_from_env,
     set_root_from_env,
+    smoke_steps_from_env,
     tasks_from_env,
     variant_from_env,
     variant_opts_from_env,
 )
 
+from olmo_core.data import TokenizerConfig
 from olmo_core.data.composable import (
     LongDocStrategy,
     NumpyDocumentSourceConfig,
@@ -71,15 +86,25 @@ from olmo_core.data.composable import (
 )
 from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.internal.experiment import CliContext, ExperimentConfig, TrainHooks
+from olmo_core.nn.attention import AttentionBackendName
+from olmo_core.nn.lm_head import LMLossImplementation
+from olmo_core.nn.transformer import TransformerConfig
 from olmo_core.train import Duration, LoadStrategy
-from olmo_core.train.callbacks import CheckpointerCallback, FlopMeterCallback, WandBCallback
+from olmo_core.train.callbacks import (
+    CheckpointerCallback,
+    FlopMeterCallback,
+    GPUMemoryMonitorCallback,
+    WandBCallback,
+)
 from olmo_core.train.train_module import TransformerDataParallelConfig
 
 # Defaults live in the import-free _setA_defaults.py (shared with launch_setA_sft.py); each is
 # overridable by env var -- SETA_DATA_ROOT, SETA_TASKS, SETA_BASE_CKPT -- which launch_setA_sft.py's
 # --data-root / --tasks / --base-checkpoint export to the Beaker job.
+#: The model (``SETA_MODEL``): ``qwen35-4b`` (the dense Qwen3.5-4B recipe) or ``qwen3-4b``.
+MODEL = model_from_env()
 SET_ROOT = set_root_from_env()
-SHARDS_DIR = _SHARDS_DIR
+SHARDS_DIR = MODELS[MODEL]["shards_dir"]
 DATA_ROOT = f"{SET_ROOT}/{SHARDS_DIR}"
 
 #: The tasks trained on: the 11 setA tasks unless ``SETA_TASKS`` names others (e.g. ``nq`` alone
@@ -104,6 +129,12 @@ ARMS: Dict[str, Dict[str, Any]] = {
     # amandab's validated geometry exactly (2 nodes, CP=4, DP=4, no accumulation).
     "256k-2node": dict(sequence_length=262_144, num_nodes=2, cp_degree=4),
 }
+if MODEL != DEFAULT_MODEL:
+    # The model's arms only, at its own windows (no CP: every window here fits one GPU).
+    ARMS = {
+        arm: dict(ARMS[arm], sequence_length=seq) for arm, seq in MODELS[MODEL]["windows"].items()
+    }
+    assert all(spec["cp_degree"] == 1 for spec in ARMS.values())
 
 
 def arm_geometry(arm: str) -> Dict[str, int]:
@@ -114,6 +145,8 @@ def arm_geometry(arm: str) -> Dict[str, int]:
 
     :returns: sequence_length, num_nodes, cp_degree, dp_degree, windows_per_step, grad_accum.
     """
+    if arm not in ARMS:
+        raise ValueError(f"model {MODEL!r} has no {arm!r} arm; it has {sorted(ARMS)}")
     spec = dict(ARMS[arm])
     world = spec["num_nodes"] * GPUS_PER_NODE
     dp = world // spec["cp_degree"]
@@ -145,7 +178,9 @@ def build_setA_experiment(
     seq = g["sequence_length"]
     # amandab's validated 256k model / optimizer / FSDP / CP / AC settings; overrides applied last.
     config = build_qwen35_xlong5_experiment(replace(cli_context, overrides=[]), arm="qboth")
-    tokenizer = config.data_loader.tokenizer  # Qwen3.5 with bos=None: every EOS ends a document
+    if MODEL != DEFAULT_MODEL:
+        _apply_model(config, MODEL)
+    tokenizer = config.data_loader.tokenizer  # bos=None: every EOS ends a document
 
     sources = [
         NumpyDocumentSourceConfig(
@@ -211,15 +246,48 @@ def build_setA_experiment(
     wandb.project = WANDB_PROJECT
     wandb.group = cli_context.run_name
 
+    smoke = smoke_steps_from_env()
+    if smoke:
+        tr.hard_stop = Duration.steps(smoke)  # the full run's LR schedule, cut short
+        tr.metrics_collect_interval = 1
+        tr.callbacks["gpu_memory_monitor"] = GPUMemoryMonitorCallback()
+
     name = variant if variant is not None else variant_from_env()
     spec = variant_opts if variant_opts is not None else variant_opts_from_env()
     global _PLAN
     _PLAN = None
     if name not in (DEFAULT_VARIANT, "full"):
+        if MODEL != DEFAULT_MODEL:
+            raise ValueError(f"variant {name!r}: the {MODEL} arm runs the dense recipe only")
         _PLAN = apply_setA_variant(config, g, name, spec)
     elif spec.strip():
         raise ValueError(f"variant options {spec!r} given for the dense recipe")
     return config.merge(cli_context.overrides)
+
+
+def _apply_model(config: ExperimentConfig, model: str) -> None:
+    """
+    Swap amandab's Qwen3.5-4B model and tokenizer for another model's, in place. Everything else she
+    sets (optimizer, schedule, AC, FSDP, flash_3, fused-linear loss, compile off) is kept.
+
+    ``qwen3-4b`` -- what the architecture forces, and nothing more:
+
+    * ``TransformerConfig.qwen3_4B``: 36 full-attention layers (no GDN), 32 query / 8 KV heads of
+      128, RoPE theta 1e6, qk-norm, untied ``lm_head`` (HF Qwen3-4B ties it; the converted base
+      carries the tied matrix in both places and they train apart, as for every olmo-core Qwen3).
+      ``attn_backend=flash_3`` and ``fused_linear`` loss as in the Qwen3.5 recipe.
+    * ``TokenizerConfig.qwen3()`` (vocab 151,936; EOS = ``<|endoftext|>`` 151643) with
+      ``bos_token_id=None``, for the same reason as Qwen3.5: every EOS is a document boundary.
+    """
+    if model != "qwen3-4b":
+        raise ValueError(f"unknown setA model {model!r}")
+    tokenizer_config = TokenizerConfig.qwen3()
+    config.model = TransformerConfig.qwen3_4B(
+        vocab_size=tokenizer_config.padded_vocab_size(),
+        attn_backend=AttentionBackendName.flash_3,
+    )
+    config.model.lm_head.loss_implementation = LMLossImplementation.fused_linear
+    config.data_loader.tokenizer = replace(tokenizer_config, bos_token_id=None)
 
 
 # ----------------------------------------------------------------------------------------------
