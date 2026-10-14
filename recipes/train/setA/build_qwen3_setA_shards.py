@@ -135,7 +135,7 @@ def scaffold_check(ids: np.ndarray, starts_lab: np.ndarray, name: str,
     """Assert ``ids[label_start + off] == want`` for every example and every ``(off, want)``."""
     bad = int((starts_lab < 0).sum())
     assert bad == 0, f"{name}: {bad} examples without any label"
-    for off, want in before:
+    for off, want in expect:
         got = ids[starts_lab + off]
         n_bad = int((got != want).sum())
         assert n_bad == 0, f"{name}: {n_bad}/{got.size} examples differ at label-start{off:+d}"
@@ -225,8 +225,11 @@ def main() -> None:
         if args.skip_convert:
             assert os.path.exists(f"{out}/metadata.json"), f"--skip-convert: no build at {out}"
             continue
+        if os.path.exists(f"{out}/metadata.json"):  # the converter writes it last: a finished build
+            print(f"[1] reusing the finished build at {out}", flush=True)
+            continue
         if os.path.exists(out) and os.listdir(out):
-            raise SystemExit(f"{out} exists and is not empty; pass --skip-convert to reuse it")
+            raise SystemExit(f"{out} holds a partial build (no metadata.json); remove it first")
         cmd = [sys.executable, CONVERTER, "--emit", "dense", "--task", r["spec"],
                "--chunk-by", r["chunk_by"], "--marker-set", "qwen3", "--tokenizer", args.tokenizer,
                "--query-position", conv_args["query_position"], "--cot-mode",
