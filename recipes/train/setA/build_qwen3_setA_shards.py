@@ -292,82 +292,101 @@ def main() -> None:
         l35 = np.array([x[0] if x[0] is not None else -1 for x in res], dtype=np.int64)
         l3 = np.array([x[2] if x[2] is not None else -1 for x in res], dtype=np.int64)
 
-        # verify against the shipped Qwen3.5 build and the fresh Qwen3 build, example by example
+        # verify against the shipped Qwen3.5 build and the fresh Qwen3 build, row by row. A row is
+        # one EOS-terminated render, but a few rows (25 in rerank) carry an EOS inside their text,
+        # so a shard holds >= 1 EOS-split PIECE per row -- the unit the packer sees and filters.
         info: Dict[str, Any] = {"rows": len(rows)}
+        shards: Dict[str, Dict[str, np.ndarray]] = {}
         for name, d, eos, lens, dig_i in (
             ("qwen35", f"{shipped}/{task}", ids35.eos, l35, 1),
             ("qwen3", f"{full_root}/{task}", ids3.eos, l3, 3),
         ):
-            ids, mask, ends = read_shard(d, eos)
-            starts = np.concatenate([[0], ends[:-1]])
+            ids, mask, piece_ends = read_shard(d, eos)
             present = np.flatnonzero(lens >= 0)
-            assert present.size == ends.size, (
-                f"{task}/{name}: {present.size} rows render under seq-len, shard has {ends.size}")
-            assert np.array_equal(lens[present], ends - starts), f"{task}/{name}: length mismatch"
+            row_ends = np.cumsum(lens[present])
+            assert row_ends.size and row_ends[-1] == ids.size, (
+                f"{task}/{name}: shard has {ids.size} tokens, the rows that render under seq-len "
+                f"{int(row_ends[-1]) if row_ends.size else 0}")
+            assert np.all(ids[row_ends - 1] == eos), f"{task}/{name}: a row does not end at EOS"
+            row_starts = np.concatenate([[0], row_ends[:-1]])
             bad_rows = [int(row) for k, row in enumerate(present)
-                        if _digest(ids[starts[k]:ends[k]], mask[starts[k]:ends[k]])
+                        if _digest(ids[row_starts[k]:row_ends[k]], mask[row_starts[k]:row_ends[k]])
                         != res[row][dig_i]]
             info[f"{name}_rerender_mismatches"] = len(bad_rows)
-            if bad_rows:  # recorded, and fails the job at the end (lengths already agree)
-                failures.append(f"{task}/{name}: {len(bad_rows)} examples differ from the "
+            if bad_rows:  # recorded, and fails the job at the end
+                failures.append(f"{task}/{name}: {len(bad_rows)} rows differ from the "
                                 f"re-render (rows {bad_rows[:5]})")
                 print("  MISMATCH", failures[-1], flush=True)
-            fl = first_labels(mask, ends)
+            piece_row = np.searchsorted(row_ends, piece_ends, side="left")  # index into present
+            fl = first_labels(mask, piece_ends)
+            labeled = fl >= 0
+            last_piece = np.concatenate([piece_row[1:] != piece_row[:-1], [True]])
+            n_lab = np.bincount(piece_row[labeled], minlength=present.size)
+            if not (n_lab == 1).all() or (labeled & ~last_piece).any():
+                failures.append(f"{task}/{name}: labels not exactly on each row's last piece")
+                print("  LABELS", failures[-1], flush=True)
             if name == "qwen35":  # baseline: labels start at </think> \n\n, after <think> \n\n
-                try:
-                    scaffold_check(ids, fl, f"{task}/{name}",
-                                   [(-2, sc35["think"]), (-1, sc35["nn"]), (0, sc35["end"]),
-                                    (1, sc35["nn"])])
-                except AssertionError as exc:
-                    failures.append(str(exc))
-                    print("  SCAFFOLD", exc, flush=True)
-            info[f"{name}_examples"] = int(ends.size)
+                expect = [(-2, sc35["think"]), (-1, sc35["nn"]), (0, sc35["end"]), (1, sc35["nn"])]
+            else:
+                expect = [(0, sc3["think"]), (1, sc3["nn"]), (2, sc3["end"]), (3, sc3["nn"])]
+            try:
+                scaffold_check(ids, fl[labeled], f"{task}/{name}", expect)
+            except AssertionError as exc:
+                failures.append(str(exc))
+                print("  SCAFFOLD", exc, flush=True)
+            info[f"{name}_examples"] = int(present.size)
+            info[f"{name}_pieces"] = int(piece_ends.size)
             info[f"{name}_tokens"] = int(ids.size)
-            if name == "qwen3":
-                scaffold_check(ids, fl, f"{task}/{name}",
-                               [(0, sc3["think"]), (1, sc3["nn"]), (2, sc3["end"]),
-                                (3, sc3["nn"])])
-                q3 = (ids, mask, starts, ends, fl, present)
-        print(f"  [{task}] qwen35 shard vs re-render: {info['qwen35_examples']:,} ex, "
+            in_row = np.arange(piece_ends.size) - np.searchsorted(piece_row, piece_row, side="left")
+            shards[name] = dict(ids=ids, mask=mask, ends=piece_ends, fl=fl,
+                                key=present[piece_row] * 1_000_000 + in_row)
+        print(f"  [{task}] qwen35 shard vs re-render: {info['qwen35_examples']:,} rows, "
               f"{info['qwen35_rerender_mismatches']} differ; qwen3 shard vs re-render: "
-              f"{info['qwen3_examples']:,} ex, {info['qwen3_rerender_mismatches']} differ",
+              f"{info['qwen3_examples']:,} rows, {info['qwen3_rerender_mismatches']} differ",
               flush=True)
 
-        # ---- filter + label alignment ----
-        ids, mask, starts, ends, fl, present = q3
-        keep_rows = np.flatnonzero((l35 >= 0) & (l35 <= CAP))
-        assert np.all(l3[keep_rows] >= 0), f"{task}: a kept row is missing from the Qwen3 build"
-        pos_in_shard = np.searchsorted(present, keep_rows)
-        assert np.array_equal(present[pos_in_shard], keep_rows)
-        mask = mask.copy()
-        mask[fl[pos_in_shard]] = False  # <think>
-        mask[fl[pos_in_shard] + 1] = False  # \n\n
-        sel_ids = np.concatenate([ids[starts[k]:ends[k]] for k in pos_in_shard])
-        sel_mask = np.concatenate([mask[starts[k]:ends[k]] for k in pos_in_shard])
-        sel_lens = ends[pos_in_shard] - starts[pos_in_shard]
+        # ---- filter + label alignment: keep a Qwen3 piece iff its Qwen3.5 counterpart is within
+        # the baseline window (the packer's exclude rule, applied to the baseline's own pieces) ----
+        a, b = shards["qwen35"], shards["qwen3"]
+        a_len = np.diff(np.concatenate([[0], a["ends"]]))
+        keep_keys = a["key"][a_len <= CAP]
+        pos = np.searchsorted(b["key"], keep_keys)
+        if not (pos < b["key"].size).all() or not np.array_equal(b["key"][pos], keep_keys):
+            raise SystemExit(f"{task}: a kept Qwen3.5 piece has no Qwen3 counterpart")
+        ids, mask, ends, fl = b["ids"], b["mask"].copy(), b["ends"], b["fl"]
+        starts = np.concatenate([[0], ends[:-1]])
+        lab = fl[pos][fl[pos] >= 0]
+        mask[lab] = False  # <think>
+        mask[lab + 1] = False  # \n\n
+        sel_ids = np.concatenate([ids[starts[k]:ends[k]] for k in pos])
+        sel_mask = np.concatenate([mask[starts[k]:ends[k]] for k in pos])
+        sel_lens = ends[pos] - starts[pos]
         sel_ends = np.cumsum(sel_lens)
+        keep_rows = np.unique(keep_keys // 1_000_000)
         out = f"{out_root}/{task}"
-        if os.path.exists(out) and os.listdir(out):
-            raise SystemExit(f"{out} exists and is not empty")
+        if os.path.exists(out):  # this script's own output from an earlier attempt: replace it
+            for f in os.listdir(out):
+                os.remove(os.path.join(out, f))
         n_parts = write_parts(out, sel_ids, sel_mask, sel_ends)
         np.save(f"{out}/kept_rows.npy", keep_rows)
         meta = json.load(open(f"{full_root}/{task}/metadata.json"))
         meta.update(
-            num_instances=int(keep_rows.size), num_dropped=int(len(rows) - keep_rows.size),
+            num_instances=int(pos.size), num_dropped=int(b["key"].size - pos.size),
             num_tokens=int(sel_ids.size), num_loss_tokens=int(sel_mask.sum()),
             max_example_len=int(sel_lens.max()), min_example_len=int(sel_lens.min()),
             filtered_from=f"{full_root}/{task}",
-            filter=f"keep a row iff its Qwen3.5 render ({conv_args['tokenizer']}, manifest args, "
-                   f"incl. EOS) is <= {CAP} tokens: the baseline 32k arm's example set",
+            filter=f"keep an EOS-split piece iff its Qwen3.5 counterpart ({conv_args['tokenizer']}, "
+                   f"manifest args, incl. EOS) is <= {CAP} tokens: the baseline 32k arm's pieces",
             label_mask_aligned="unlabeled <think> \\n\\n at the label start: labels begin at "
                                "</think>, as in the Qwen3.5 baseline shards",
         )
         json.dump(meta, open(f"{out}/metadata.json", "w"), indent=2)
+        kept_q35 = a_len[a_len <= CAP]
         info.update(
-            kept=int(keep_rows.size), kept_q35_tokens=int(l35[keep_rows].sum()),
+            kept=int(pos.size), kept_rows=int(keep_rows.size), kept_q35_tokens=int(kept_q35.sum()),
             kept_q3_tokens=int(sel_ids.size), kept_q3_max_len=int(sel_lens.max()),
-            kept_q35_max_len=int(l35[keep_rows].max()), loss_tokens=int(sel_mask.sum()),
-            q3_over_q35_token_ratio=float(sel_ids.size / max(1, l35[keep_rows].sum())),
+            kept_q35_max_len=int(kept_q35.max()), loss_tokens=int(sel_mask.sum()),
+            q3_over_q35_token_ratio=float(sel_ids.size / max(1, kept_q35.sum())),
             q3_dropped_by_converter=int((l3 < 0).sum()), parts=n_parts,
         )
         report["tasks"][task] = info
