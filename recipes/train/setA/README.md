@@ -61,6 +61,46 @@ Single-task debugging: `python $L prep --tasks nq` then `python $L 32k --tasks n
   the training data never contains. The r256k rung runs with YaRN x2 + chunked prefill by default:
   its prompts run to ~272k tokens and would otherwise be left-truncated.
 
+## Qwen3-4B-Base arm (`--model qwen3-4b`, length generalization)
+
+The same recipe on the full-attention `Qwen/Qwen3-4B-Base` (native context 32,768), trained on
+exactly the baseline `32k` arm's examples and evaluated at 64k/128k with YaRN. `--model` is exported
+as `SETA_MODEL` only when it is not the default, so every Qwen3.5 command and config is unchanged
+(launcher dry-runs and `build_setA_experiment(...).as_dict()` for all three arms byte-identical).
+
+```bash
+python $L shards --model qwen3-4b       # CPU: Qwen3 shards (build_qwen3_setA_shards.py)
+python $L base-audit --model qwen3-4b   # CPU: marker audit + provenance (audit_qwen3_base.py)
+python $L prep --model qwen3-4b
+python $L 32k --model qwen3-4b --smoke-steps 20   # then without --smoke-steps
+```
+
+What differs from the Qwen3.5 `32k` arm, and why (everything else is `_apply_model`'s untouched
+inheritance from amandab's builder):
+
+| | Qwen3.5 32k | Qwen3-4B 32k | Why |
+|---|---|---|---|
+| model | `qwen3_5_4B` (24 GDN + 8 attn) | `qwen3_4B` (36 attn, 32q/8kv x 128, theta 1e6, untied head) | the arm |
+| base | `q35-4b-dense-256k-fix/step2385` (256k CPT) | `ctc_suite/bases/qwen3-4b-base-trainedmark` (HF base + marker repair) | the arm |
+| tokenizer | Qwen3.5 (EOS 248044) | Qwen3 (EOS 151643), `bos=None` likewise | the model |
+| shards | `shards_qwen35_256k` | `shards_qwen3_q35le32k`: same rows, same converter args, cut to Qwen3.5 length <= 32,768 | same examples |
+| window / grad-accum | 32,768 / 4 | 65,536 / 2 (1,048,576 tokens/step either way) | a few kept examples are > 32,768 Qwen3 tokens; the packer needs a power of two |
+
+RoPE positions restart at every packed example (`cu_doc_lens`), so the larger window does not
+show the model positions past its longest example.
+
+**Label mask.** The converter labels everything after the template's generation prompt. Qwen3.5-4B's
+ends `<think>\n`, so the baseline's labels start at `</think>`; Qwen3's ends `assistant\n`, which
+would also label `<think> \n\n`. `build_qwen3_setA_shards.py` unlabels those two tokens (asserted on
+every row), so the labeled span is the baseline's: `</think> \n\n <answer> <|im_end|> \n`.
+
+**Eval tokenizer.** Qwen3's template renders a generation prompt as `<|im_start|>assistant\n` (a
+token prefix of the training sequence, so olmo-eval's preflight passes it) but the training sequence
+continues `<think>\n\n</think>\n\n` before the answer. Evaluate with
+`/weka/.../prasanns/hf_tokenizers/Qwen3-4B-Base-nothink` (written by `audit_qwen3_base.py`: the
+generation prompt closes the empty thinking block unless `enable_thinking=True`, as Qwen3.5-0.8B's
+does). `check_qwen3_chat_parity.py` checks both on real eval rows.
+
 ## Research variants on the canonical recipe
 
 `--variant <name> [--variant-opts k=v,...]` trains a research arm from `recipes/train/variants.py`
