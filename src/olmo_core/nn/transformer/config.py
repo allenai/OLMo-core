@@ -353,6 +353,13 @@ class TransformerConfig(ModelConfig):
     :meth:`~olmo_core.nn.transformer.Transformer.enable_document_chunk_attention` after the model is
     built. Requires the model be uniformly a document-chunked variant and rules out context parallelism.
     """
+    rope_reset: Optional[Dict[str, Any]] = None
+    """
+    Restart RoPE positions at every document marker and at the trailing query. A dict of
+    ``{"doc_start_id", "doc_end_id", "eos_id"}`` passed to
+    :meth:`~olmo_core.nn.transformer.Transformer.enable_rope_reset` after the model is built.
+    Rules out context parallelism.
+    """
     summary_token_attention: Optional[Dict[str, Any]] = None
     """
     Enable runtime ``summary_roles`` construction for
@@ -478,6 +485,9 @@ class TransformerConfig(ModelConfig):
 
         if self.document_chunk_attention is not None:
             model.enable_document_chunk_attention(**self.document_chunk_attention)
+
+        if self.rope_reset is not None:
+            model.enable_rope_reset(**self.rope_reset)
 
         if self.summary_token_attention is not None:
             model.enable_summary_token_attention(**self.summary_token_attention)

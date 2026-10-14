@@ -59,6 +59,7 @@ from ..layer_norm import LayerNormConfig
 from ..lm_head import LMHeadConfig, LMLossImplementation, LMOutputWithLoss
 from ..moe import MoEBase
 from ..rope import RoPEBuffers, RotaryEmbeddingBase
+from ..rope_reset import build_rope_reset_position_ids
 from ..utils import selective_checkpointing_context_fn
 from .block import (
     MoETransformerBlock,
@@ -142,6 +143,8 @@ class Transformer(nn.Module):
         # set, ``_prepare_inputs`` reconstructs per-token ``chunk_ids`` from the boundary tokens and
         # forwards them to every block (for :class:`DocumentLandmarkAttention`).
         self._document_chunk_attention: Optional[Dict[str, Any]] = None
+        # Document-level RoPE position resets (see ``enable_rope_reset``).
+        self._rope_reset: Optional[Dict[str, int]] = None
         # Soft-token document pooling ("B1"): set by ``enable_pooled_soft_tokens``.
         self._pooled_soft_tokens: Optional[Dict[str, Any]] = None
         self.pooled_projector: Optional[nn.Module] = None
@@ -321,6 +324,48 @@ class Transformer(nn.Module):
             "pad_id": None if pad_id is None else int(pad_id),
             "mix": mix,
         }
+
+    def enable_rope_reset(self, doc_start_id: int, doc_end_id: int, eos_id: int) -> None:
+        """
+        Restart RoPE positions at every document and at the trailing query.
+
+        When enabled, :meth:`forward` derives ``position_ids`` from the token ids with
+        :func:`~olmo_core.nn.rope_reset.build_rope_reset_position_ids` whenever the caller passes
+        none: each ``doc_start_id`` marker and the first token after an example's last
+        ``doc_end_id`` restart at the position of that example's first ``doc_start_id``. Attention
+        masking is unchanged. With a KV cache the caller must pass ``position_ids`` itself (the
+        generation module does), since a decode step cannot see the prompt's markers. Not
+        supported with context parallelism.
+
+        :param doc_start_id: The document-start marker id (``<|box_start|>``).
+        :param doc_end_id: The document-end marker id (``<|box_end|>``).
+        :param eos_id: The EOS id; the token after an EOS starts a new example.
+        """
+        self._rope_reset = {
+            "doc_start_id": int(doc_start_id),
+            "doc_end_id": int(doc_end_id),
+            "eos_id": int(eos_id),
+        }
+
+    def _warmup_rope_for_positions(self, position_ids: torch.Tensor) -> None:
+        """
+        Grow every RoPE sin/cos cache to cover ``position_ids``.
+
+        :meth:`RotaryEmbedding.forward` indexes explicit positions into whatever cached buffer
+        exists (sizing it from the data would break ``torch.compile``), so a buffer first built for
+        a short sequence would be indexed out of bounds by a later, larger position. This runs
+        eagerly, outside the compiled blocks.
+        """
+        needed = int(position_ids.max().item()) + 1
+        for block in self.blocks.values():
+            rope = getattr(getattr(block, "attention", None), "rope", None)
+            if rope is not None and hasattr(rope, "warmup_cache"):
+                rope.warmup_cache(needed, self.device)
+
+    @property
+    def rope_reset(self) -> Optional[Dict[str, int]]:
+        """The :meth:`enable_rope_reset` config, or ``None`` when positions are plain."""
+        return self._rope_reset
 
     def enable_pooled_soft_tokens(
         self,
@@ -1906,9 +1951,21 @@ class Transformer(nn.Module):
 
         # Explicit per-token positions (soft-token pooling: kept tokens keep their ORIGINAL
         # positions so RoPE geometry matches full-attention inference). Threaded to every block.
-        if (position_ids := kwargs.pop("position_ids", None)) is not None:
+        position_ids = kwargs.pop("position_ids", None)
+        if position_ids is None and self._rope_reset is not None:
+            if any(
+                getattr(block.attention, "kv_cache_manager", None) is not None
+                for block in self.blocks.values()
+            ):
+                raise RuntimeError(
+                    "rope_reset with a KV cache needs explicit 'position_ids' (a decode step cannot "
+                    "see the prompt's document markers); use the generation module"
+                )
+            position_ids = build_rope_reset_position_ids(input_ids, **self._rope_reset)
+        if position_ids is not None:
             if self._cp_load_balancer is not None:
                 raise NotImplementedError("position_ids is not supported with context parallelism")
+            self._warmup_rope_for_positions(position_ids)
             all_block_kwargs["position_ids"] = move_to_device(position_ids, self.device)
         # Soft-token aux matching: the position-causal masked-attention bias + the shared per-layer
         # capture dict (each Attention appends its q/k/v slices for the matching loss).

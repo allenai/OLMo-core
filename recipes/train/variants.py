@@ -810,6 +810,24 @@ class FFNDrop(Variant):
         }
 
 
+class RopeReset(Variant):
+    """Dense attention with RoPE positions restarted at every document and at the trailing query
+    (:meth:`~olmo_core.nn.transformer.Transformer.enable_rope_reset`). Set on the model config,
+    so the checkpoint's ``config.json`` carries it and the eval's generation module applies the
+    same positions. GDN blocks have no positions and are unaffected."""
+
+    name = "rope-reset"
+    cp_blocker = "explicit position_ids are not sequence-sharded (Transformer refuses them under CP)"
+
+    def apply_model_config(self, cfg, o, ctx):
+        ids = ctx.ids
+        cfg.rope_reset = {
+            "doc_start_id": ids.doc_start,
+            "doc_end_id": ids.doc_end,
+            "eos_id": ids.eos,
+        }
+
+
 # -- soft tokens -------------------------------------------------------------------------------
 
 
@@ -1119,6 +1137,7 @@ VARIANTS: Dict[str, Variant] = {
         KVRoute(),
         FlexCompute(),
         FFNDrop(),
+        RopeReset(),
     )
 }
 #: setA spells the dense arm ``dense``.

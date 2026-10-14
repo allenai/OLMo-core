@@ -45,6 +45,7 @@ from olmo_core.nn.attention import (
     SparseLandmarkAttention,
     landmark_gate_analysis,
 )
+from olmo_core.nn.rope_reset import build_rope_reset_position_ids
 from olmo_core.nn.transformer import Transformer, TransformerConfig
 from olmo_core.train.train_module.transformer.common import parallelize_model
 from olmo_core.train.train_module.transformer.config import (
@@ -531,6 +532,20 @@ class TransformerGenerationModule(GenerationModule):
                         attn._gate_log_layer_idx = int(block_idx)  # type: ignore[attr-defined]
                 landmark_gate_analysis.start_example(orig_input_ids.shape[1])
             self._maybe_enable_sparse_decode()
+        # Document-level RoPE resets (``Transformer.enable_rope_reset``): positions come from the
+        # whole prompt's markers, so compute them once here and hand each forward its slice --
+        # prefill chunks and single-token decode steps cannot see the markers themselves.
+        rope_reset = getattr(self.model, "rope_reset", None)
+        prompt_position_ids: Optional[torch.Tensor] = None
+        if rope_reset is not None:
+            if landmark_active:
+                raise OLMoConfigurationError("rope_reset is not supported with landmark attention")
+            prompt_position_ids = build_rope_reset_position_ids(
+                input_ids,
+                valid_mask=None if attention_mask is None else attention_mask.to(self.device),
+                **rope_reset,
+            )
+
         finished = torch.zeros(batch_size, dtype=torch.bool, device=self.device)
         stop_tokens = (
             torch.tensor(generation_config.stop_token_ids, device=self.device, dtype=torch.int32)
@@ -639,11 +654,22 @@ class TransformerGenerationModule(GenerationModule):
             # Forward pass - handles both prefill and decode phases. Single-token decode steps fall
             # through ``_prefill_forward`` as one plain forward; only a multi-token prefill longer
             # than ``prefill_chunk_size`` is actually sliced.
+            position_ids = None
+            if prompt_position_ids is not None:
+                n_new = generated.shape[1] - prompt_len
+                decoded = prompt_position_ids[:, -1:] + torch.arange(
+                    1, n_new + 1, device=self.device
+                )
+                position_ids = torch.cat([prompt_position_ids, decoded], dim=1)[
+                    :, -input_ids_for_model.shape[1] :
+                ]
+
             forward_start_time = time.perf_counter()
             next_token_logits = self._prefill_forward(  # (batch_size, seq_len=1, vocab_size)
                 input_ids_for_model,
                 cache_leftpad=cache_leftpad if generation_config.use_cache else None,
                 chunk_size=generation_config.prefill_chunk_size,
+                position_ids=position_ids,
             )
 
             # Landmark-gate analysis: flush this decode step's opened gates as one record (no-op on
@@ -807,6 +833,7 @@ class TransformerGenerationModule(GenerationModule):
         *,
         cache_leftpad: Optional[torch.Tensor],
         chunk_size: Optional[int],
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Run the prefill forward, optionally in chunks to bound activation memory.
@@ -819,21 +846,30 @@ class TransformerGenerationModule(GenerationModule):
         :param cache_leftpad: Per-row left-padding offsets, recorded on the first chunk only
             (``KVCacheManager.record_leftpad`` ignores ``None``, so the value persists).
         :param chunk_size: Tokens per chunk, or ``None`` for a single forward.
+        :param position_ids: Optional explicit RoPE positions, shape ``(batch_size, seq_len)``,
+            sliced alongside ``input_ids`` (``rope_reset`` models).
 
         :returns: Logits for the final prompt position, shape ``(batch_size, 1, vocab_size)``.
         """
         seq_len = input_ids.shape[1]
         chunk_size = self._align_prefill_chunk_size(chunk_size)
         if not chunk_size or seq_len <= chunk_size:
-            return self.model(input_ids, logits_to_keep=1, cache_leftpad=cache_leftpad)
+            pos_kwargs = {} if position_ids is None else {"position_ids": position_ids}
+            return self.model(input_ids, logits_to_keep=1, cache_leftpad=cache_leftpad, **pos_kwargs)
 
         logits = None
         for start in range(0, seq_len, chunk_size):
+            pos_kwargs = (
+                {}
+                if position_ids is None
+                else {"position_ids": position_ids[:, start : start + chunk_size]}
+            )
             logits = self.model(
                 input_ids[:, start : start + chunk_size],
                 logits_to_keep=1,
                 # Only the first chunk carries the left-pad offsets; later chunks must not reset it.
                 cache_leftpad=cache_leftpad if start == 0 else None,
+                **pos_kwargs,
             )
         assert logits is not None
         return logits

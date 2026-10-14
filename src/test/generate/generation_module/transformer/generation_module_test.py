@@ -387,6 +387,78 @@ def test_generation_module_chunked_prefill_matches_one_shot(
 @requires_gpu
 @requires_fla
 @requires_flash_attn_2
+@pytest.mark.parametrize(
+    "use_cache,chunk_size,n_pad",
+    [(True, None, 0), (True, 5, 0), (True, 7, 3), (True, None, 3)],
+    ids=["cache", "cache-chunked", "cache-chunked-leftpad", "cache-leftpad"],
+)
+def test_generation_module_rope_reset_cache_matches_recompute(use_cache, chunk_size, n_pad):
+    """
+    A rope_reset model must generate the same thing with a KV cache (one-shot or chunked
+    prefill, left-padded or not) as without one. Without a cache every step re-runs the whole
+    sequence, so the positions are those training would derive from the markers; with a cache the
+    generation module must hand each prefill chunk and decode step its slice of those positions.
+    """
+    from olmo_core.nn.rope_reset import build_rope_reset_position_ids
+
+    device = torch.device("cuda")
+    S, E, pad_id = 10, 11, 0
+    seed_all(0)
+    transformer_config = small_hybrid_gdn_transformer_config(use_flash=True, dtype=DType.bfloat16)
+    transformer_config.rope_reset = dict(doc_start_id=S, doc_end_id=E, eos_id=1)
+    model = transformer_config.build()
+    assert model.rope_reset is not None
+
+    def gen(cache, chunk, ids):
+        seed_all(0)
+        module = TransformerGenerationModule(
+            model=model,
+            generation_config=GenerationConfig(
+                max_new_tokens=10,
+                do_sample=False,
+                eos_token_id=1,
+                pad_token_id=pad_id,
+                use_cache=cache,
+                prefill_chunk_size=chunk,
+            ),
+            device=device,
+        )
+        return module.generate_batch(
+            ids,
+            attention_mask=(ids != pad_id),
+            return_logits=True,
+            completions_only=True,
+        )
+
+    g = torch.Generator().manual_seed(0)
+    body = lambda n: torch.randint(20, 500, (n,), generator=g).tolist()  # noqa: E731
+    prompt = body(6) + [S] + body(5) + [E, S] + body(7) + [E, S] + body(3) + [E] + body(4)
+    ids = torch.tensor([[pad_id] * n_pad + prompt], device=device)
+    pos = build_rope_reset_position_ids(
+        ids, doc_start_id=S, doc_end_id=E, eos_id=1, valid_mask=ids != pad_id
+    )
+    assert int(pos.max()) < len(prompt) - 10  # the resets really shrink the position range
+
+    ref_ids, ref_logits, _ = gen(False, None, torch.tensor([prompt], device=device))
+    out_ids, out_logits, _ = gen(use_cache, chunk_size, ids)
+    assert isinstance(ref_logits, torch.Tensor) and isinstance(out_logits, torch.Tensor)
+    steps = ref_logits.shape[1]
+    diff = (ref_ids[0] != out_ids[0]).nonzero()
+    split = int(diff[0]) if len(diff) else steps
+    torch.testing.assert_close(
+        out_logits[0, : split + (split < steps)],
+        ref_logits[0, : split + (split < steps)],
+        atol=BF16_ATOL,
+        rtol=BF16_RTOL,
+    )
+    if split < steps:
+        top2 = ref_logits[0, split].float().topk(2).values
+        assert float(top2[0] - top2[1]) < NEAR_TIE_MARGIN
+
+
+@requires_gpu
+@requires_fla
+@requires_flash_attn_2
 @pytest.mark.parametrize("chunk_size", [3, 4, 5, 7, 8])
 @pytest.mark.parametrize("batch_size", [1, 2])
 @pytest.mark.parametrize("fuse_qkv", [False, True])
