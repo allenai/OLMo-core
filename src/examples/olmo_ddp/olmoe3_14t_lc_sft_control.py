@@ -145,10 +145,11 @@ def train_spec(template, r, commit):
 
 
 def config_spec(template, commit, stage=None):
-    """Use the training image to validate both configs without allocating GPUs."""
+    """Validate on one Rhea slot before allocating the 64-GPU training group."""
     s = cpu_spec(template, commit, "config", template)
     t = s["tasks"][0]
     t["resources"] = dict(cpuCount=8, memory="32 GiB", sharedMemory="2 GiB")
+    t["context"].update(minRuntime="1h", autoResume=True)
     if stage is None:
         t["arguments"] = [
             "bash",
@@ -160,8 +161,35 @@ def config_spec(template, commit, stage=None):
         ]
     else:
         t["arguments"] = ["python", p.SCRIPT, "validate", p.run(stage).run_id]
-    s["description"] = p.CAMPAIGN + ": native/config/tokenizer validation; no GPUs"
+    s["description"] = p.CAMPAIGN + ": native/config/tokenizer validation on Rhea"
     return s
+
+
+def ensure_validation(c, name, make):
+    """Retry node-health cancellations, preserving application failures and manual stops."""
+    from google.protobuf.json_format import MessageToDict
+
+    w, state = ensure_saved(c, name, make)
+    if w is None or state != "STATUS_CANCELED":
+        return w, state
+    jobs = list(c.beaker.job.list(task=w.experiment.tasks[0], limit=1))
+    if not jobs:
+        return w, state
+    job = jobs[0]
+    reason = MessageToDict(job).get("status", {}).get("canceledCode")
+    if reason != "CANCELATION_CODE_NODE_UNHEALTHY":
+        return w, state
+    root = c.automation / "validation-restarts" / name
+    receipt = root / (job.id + ".json")
+    # Save intent first: a lost API response must not cause duplicate restarts.
+    if receipt.exists() or len(list(root.glob("*.json"))) >= 10:
+        return w, state
+    row = dict(job=job.id, reason=reason, phase="restarting", time=time.time())
+    atomic_json(receipt, row)
+    restarted = c.beaker.workload.restart_tasks(w)
+    atomic_json(receipt, dict(row, phase="restarted"))
+    log("VALIDATION_NODE_FAILURE_RECOVERED", name=name, job=job.id)
+    return restarted, status(restarted)
 
 
 def watcher_spec(template, commit):
@@ -263,7 +291,7 @@ def watch():
         while True:
             rows = {}
             try:
-                gate, gs = ensure_saved(
+                gate, gs = ensure_validation(
                     c, p.CAMPAIGN + "-config-" + commit[:8], lambda: config_spec(template, commit)
                 )
                 rows["config"] = dict(id=gate.experiment.id if gate else None, status=gs)
@@ -282,7 +310,7 @@ def watch():
                         if not lc_done:
                             rows[r.stage] = dict(waiting="successful LC endpoint")
                             continue
-                        sw, ss = ensure_saved(
+                        sw, ss = ensure_validation(
                             c,
                             r.run_id + "-source-check-" + commit[:8],
                             lambda: config_spec(template, commit, "sft"),
@@ -292,6 +320,7 @@ def watch():
                                 waiting="LC -> SFT source validation",
                                 validation=ss,
                                 id=sw.experiment.id if sw else None,
+                                needs_attention=ss in ("STATUS_FAILED", "STATUS_CANCELED"),
                             )
                             continue
                     if not admit:
