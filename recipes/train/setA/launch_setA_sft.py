@@ -74,10 +74,18 @@ GANTRY = os.environ.get(
 )
 
 IMAGE = "tylerr/olmo-core-tch291cu128-2025-11-25"  # == OLMoCoreBeakerImage.stable
+#: The baseline's resolved environment (amandab's validated training install as it resolved on the
+#: 2026-09-23 setA runs: torch 2.9.1 / fla 0.4.1). This branch sits on upstream v3.0.0, whose
+#: pyproject pins torch>=2.10 (and fla 0.5.2 + torch 2.13 for the ``fla`` extra), so a plain
+#: ``pip install -e '.[...]' torch==2.9.1`` fails to resolve and installs nothing. Install the repo
+#: without dependencies and pin the baseline's versions explicitly instead.
 TRAIN_INSTALL = (
-    "python -m pip install -e '.[beaker,eval,fla,wandb,transformers]' "
-    "'torch==2.9.1+cu128' 'triton==3.5.1'"
-)  # amandab's validated training install
+    "python -m pip install --no-deps -e . && python -m pip install "
+    "'torch==2.9.1+cu128' 'triton==3.5.1' 'flash-linear-attention==0.4.1' 'fla-core==0.4.1' "
+    "'dataclass-extensions==0.5.0' 'ai2-olmo-eval==0.9.0' 'beaker-gantry==3.7.0' "
+    "'beaker-py==2.8.0' 'datasets==3.6.0' cached-path filelock requests packaging pyyaml rich "
+    "safetensors importlib_resources bettermap pandas"
+)
 NODES = {"32k": 1, "256k": 1, "256k-2node": 2}
 #: CPU steps besides ``prep``, for one model: the script each runs.
 CPU_STEPS = {
