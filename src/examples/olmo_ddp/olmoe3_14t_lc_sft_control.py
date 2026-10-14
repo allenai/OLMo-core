@@ -3,6 +3,7 @@
 import fcntl
 import hashlib
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -83,6 +84,53 @@ def hosts_for(template):
         for h in template["tasks"][0]["constraints"]["hostname"]
         if int(h.split(".")[0].rsplit("-", 1)[-1]) not in IB_DOWN
     ]
+
+
+def verify_startup(r):
+    """Record real finite updates, all-rank source restores, and the first complete save."""
+    proof = p.AUTO / "startup" / (r.stage + ".json")
+    if proof.exists():
+        return json.loads(proof.read_text())
+    metrics = r.root / "audit/metrics.jsonl"
+    if not metrics.exists():
+        return None
+    steps = {}
+    with metrics.open() as stream:
+        for line in stream:
+            if not line.endswith("\n"):
+                break
+            row = json.loads(line)
+            if all(key in row for key in ("train/CE loss", "optim/total grad norm")):
+                assert all(
+                    math.isfinite(float(row[key]))
+                    for key in ("train/CE loss", "optim/total grad norm")
+                )
+                if row["step"] > 0:
+                    steps[row["step"]] = row
+            if len(steps) >= 5:
+                break
+    checkpoint = r.root / "step10"
+    if len(steps) < 5 or not (checkpoint / ".metadata.json").exists():
+        return None
+    if not all((checkpoint / "resume_audit" / f"rank{i}.json").exists() for i in range(64)):
+        return None
+    p.base.validate_checkpoint(checkpoint, 10, r.batch, r.gpus)
+    for rank in range(64):
+        restore = json.loads((r.root / "audit" / f"restore-0-rank{rank}.json").read_text())
+        assert restore["passed"] and restore["fresh_stage"]
+        assert restore["source"] == str(r.source)
+    row = dict(
+        passed=True,
+        run=r.run_id,
+        gpus=r.gpus,
+        finite_steps=list(steps),
+        first_checkpoint=str(checkpoint),
+        source=str(r.source),
+        metrics=list(steps.values()),
+    )
+    atomic_json(proof, row)
+    log("TRAINING_STARTUP_VERIFIED", run=r.run_id, finite_steps=list(steps))
+    return row
 
 
 def train_spec(template, r, commit):
@@ -170,7 +218,13 @@ def watch():
     p.AUTO.mkdir(parents=True, exist_ok=True)
     lock = (p.AUTO / "LOCK").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    commit = os.environ["GIT_REF"]
+    # Controller-only updates must not change an already submitted training specification.
+    previous_plan = p.AUTO / "plan.json"
+    commit = (
+        json.loads(previous_plan.read_text())["commit"]
+        if previous_plan.exists()
+        else os.environ["GIT_REF"]
+    )
     with Beaker.from_env(check_for_upgrades=False) as b:
         c = control(b, commit, p.AUTO)
         ec = control(b, commit, p.AUTO / "evals", p.base.EVAL_WORKSPACE)
@@ -196,6 +250,7 @@ def watch():
             p.AUTO / "plan.json",
             dict(
                 commit=commit,
+                controller_commit=os.environ["GIT_REF"],
                 runs=[r.as_dict() for r in p.runs()],
                 workspace=p.base.WORKSPACE,
                 retries=10,
@@ -255,6 +310,9 @@ def watch():
                         ):
                             list(b.workload.cancel(w))
                         continue
+                    startup = verify_startup(r)
+                    if startup:
+                        row["startup_verified"] = True
                     if state != "STATUS_SUCCEEDED":
                         continue
                     verify_native(r)
@@ -285,7 +343,13 @@ def watch():
             except Exception as exc:
                 rows["controller_error"] = f"{type(exc).__name__}: {exc}"
             atomic_json(
-                p.AUTO / "status.json", dict(updated_at=time.time(), commit=commit, runs=rows)
+                p.AUTO / "status.json",
+                dict(
+                    updated_at=time.time(),
+                    commit=commit,
+                    controller_commit=os.environ["GIT_REF"],
+                    runs=rows,
+                ),
             )
             if rows != previous:
                 log("LC_SFT_STATUS", runs=rows)
