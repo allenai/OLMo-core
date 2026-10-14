@@ -59,10 +59,12 @@ from _setA_defaults import (  # noqa: E402  (stdlib-only; no torch on the login 
     ENV_BASE_CKPT,
     ENV_DATA_ROOT,
     ENV_MODEL,
+    ENV_SHARDS_DIR,
     ENV_SMOKE_STEPS,
     ENV_TASKS,
     ENV_VARIANT,
     ENV_VARIANT_OPTS,
+    ENV_WINDOW,
     MODELS,
     parse_tasks,
     task_tag,
@@ -153,6 +155,19 @@ def main() -> None:
         "--base-checkpoint",
         default=None,
         help="model_and_optim dir loaded weights-only (default: the model's base)",
+    )
+    ap.add_argument(
+        "--shards-dir",
+        default=None,
+        help="shard dir under --data-root (default: the model's); e.g. shards_qwen35_q35le32k, a "
+        "re-rendered set cut to the baseline 32k arm's examples",
+    )
+    ap.add_argument(
+        "--window",
+        type=int,
+        default=0,
+        help="the 32k arm's packing window (default: the model's); use the smallest power of two "
+        "holding the longest example of --shards-dir (its filter_report.json says)",
     )
     ap.add_argument(
         "--smoke-steps",
@@ -260,6 +275,12 @@ def main() -> None:
         base += ["--env", f"{ENV_MODEL}={args.model}"]
     if args.smoke_steps:
         base += ["--env", f"{ENV_SMOKE_STEPS}={args.smoke_steps}"]
+    if args.shards_dir:
+        base += ["--env", f"{ENV_SHARDS_DIR}={args.shards_dir}"]
+    if args.window:
+        if args.step not in ("prep", "32k"):
+            ap.error("--window applies to the 32k arm (and its prep) only")
+        base += ["--env", f"{ENV_WINDOW}={args.window}"]
     if args.variant != DEFAULT_VARIANT:
         base += ["--env", f"{ENV_VARIANT}={args.variant}"]
         if args.variant_opts:

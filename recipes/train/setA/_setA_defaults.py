@@ -61,6 +61,10 @@ ENV_VARIANT_OPTS = "SETA_VARIANT_OPTS"
 DEFAULT_VARIANT = "dense"
 ENV_MODEL = "SETA_MODEL"
 ENV_SMOKE_STEPS = "SETA_SMOKE_STEPS"
+#: Optional overrides of the model's shard dir and of the 32k arm's packing window, for a re-rendered
+#: data set cut to the baseline's examples (e.g. hashed doc ids: ``shards_qwen35_q35le32k`` at 65,536).
+ENV_SHARDS_DIR = "SETA_SHARDS_DIR"
+ENV_WINDOW = "SETA_WINDOW"
 
 #: Qwen3-4B-Base converted to olmo-core (2026-07-23, HF-parity validated) with its marker rows
 #: repaired from trained delimiter donors (``fix_marker_embeddings.py``); audited by
@@ -168,3 +172,13 @@ def task_tag(tasks: List[str]) -> str:
         return "_".join(tasks)
     digest = hashlib.sha1(",".join(sorted(tasks)).encode()).hexdigest()[:6]
     return f"{len(tasks)}tasks-{digest}"
+
+
+def shards_dir_from_env(model: str) -> str:
+    """:returns: ``SETA_SHARDS_DIR``, else the model's ``shards_dir``."""
+    return os.environ.get(ENV_SHARDS_DIR) or MODELS[model]["shards_dir"]
+
+
+def window_from_env() -> int:
+    """:returns: ``SETA_WINDOW`` (the 32k arm's packing window override; 0 = the model's own)."""
+    return int(os.environ.get(ENV_WINDOW) or 0)

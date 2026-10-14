@@ -72,10 +72,12 @@ from _setA_defaults import (  # noqa: E402
     base_checkpoint_from_env,
     model_from_env,
     set_root_from_env,
+    shards_dir_from_env,
     smoke_steps_from_env,
     tasks_from_env,
     variant_from_env,
     variant_opts_from_env,
+    window_from_env,
 )
 
 from olmo_core.data import TokenizerConfig
@@ -104,7 +106,7 @@ from olmo_core.train.train_module import TransformerDataParallelConfig
 #: The model (``SETA_MODEL``): ``qwen35-4b`` (the dense Qwen3.5-4B recipe) or ``qwen3-4b``.
 MODEL = model_from_env()
 SET_ROOT = set_root_from_env()
-SHARDS_DIR = MODELS[MODEL]["shards_dir"]
+SHARDS_DIR = shards_dir_from_env(MODEL)  # SETA_SHARDS_DIR overrides the model's
 DATA_ROOT = f"{SET_ROOT}/{SHARDS_DIR}"
 
 #: The tasks trained on: the 11 setA tasks unless ``SETA_TASKS`` names others (e.g. ``nq`` alone
@@ -135,6 +137,10 @@ if MODEL != DEFAULT_MODEL:
         arm: dict(ARMS[arm], sequence_length=seq) for arm, seq in MODELS[MODEL]["windows"].items()
     }
     assert all(spec["cp_degree"] == 1 for spec in ARMS.values())
+if window_from_env():
+    # A re-rendered set cut to the baseline 32k arm's examples (SETA_SHARDS_DIR) whose longest
+    # example no longer fits 32,768: same examples, a larger packing window, same tokens per step.
+    ARMS = {"32k": dict(ARMS["32k"], sequence_length=window_from_env())}
 
 
 def arm_geometry(arm: str) -> Dict[str, int]:
