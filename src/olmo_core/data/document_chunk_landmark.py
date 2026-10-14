@@ -464,6 +464,7 @@ def segment_prompt_to_chunks(
     free_pad_repeat: int = 0,
     repeat_doc_text: int = 1,
     summary_every_k: int = 0,
+    doc_id_style: str = "seq",
 ) -> Tuple[List[ChunkSegment], List[int], List[bool]]:
     """
     Render a task prompt with document boundaries marked by special tokens, tokenize, and split it
@@ -489,6 +490,11 @@ def segment_prompt_to_chunks(
         ``k+1``, which is exactly what the ``"summary_attention"`` mask's arithmetic assumes, so a
         mismatch silently rebinds every chunk role. The *bandwidth* / *relay* knobs are NOT here --
         they live on the attention config, so one tokenized shard serves every rung of the ladder.
+    :param doc_id_style: ``"seq"`` (default) shows documents as ``1..N``, unchanged. ``"hash"``
+        relabels every document id in the prompt and the (id-only) answer to a distinct random
+        5-digit id seeded from the example (:mod:`olmo_core.data.corpus_reasoning_prompts.doc_id_hash`;
+        the eval's ``CTC_SUITE_DOC_ID_STYLE=hash`` applies the identical relabel). **Must match
+        between training and eval.**
 
     :returns: ``(segments, ids, mask)`` -- the segment list (for the landmark emitter), the flat token
         ids (markers included; for the dense emitter), and the per-token loss mask.
@@ -519,6 +525,22 @@ def segment_prompt_to_chunks(
         cot_mode=cot_mode,
         use_titles=use_titles,
     )
+    if doc_id_style == "hash":
+        # Relabel AFTER rendering and BEFORE wrapping: the wrap locates documents by their text,
+        # which relabelling does not touch, so the chunk layout is the sequential one's.
+        from olmo_core.data.corpus_reasoning_prompts.doc_id_hash import (
+            hash_doc_ids,
+            relabel_answer,
+            relabel_prompt,
+            shows_doc_ids,
+        )
+
+        if shows_doc_ids(example, task):
+            hashed = hash_doc_ids(example)
+            prompt = relabel_prompt(prompt, example, task, hashed)
+            answer = relabel_answer(answer, example, task, hashed)
+    elif doc_id_style != "seq":
+        raise ValueError(f"doc_id_style must be 'seq' or 'hash', got {doc_id_style!r}")
     if summary_every_k > 0 and chunk_by != "document":
         raise ValueError(
             f"summary_every_k requires chunk_by='document' (got chunk_by={chunk_by!r}); the "

@@ -120,6 +120,7 @@ def tokenize_example(
     n_summary_tokens: int = 5,
     ids_set: ReservedIds = RESERVED_IDS["qwen3"],
     doc_markers: bool = True,
+    doc_id_style: str = "seq",
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Tokenize one unified example into a document-chunked instance, or ``None`` to skip.
 
@@ -130,6 +131,8 @@ def tokenize_example(
         template, same tokenizer, same EOS -- with the boundary strings empty, producing a
         marker-free stream for a plain full-attention baseline. The only difference between the two
         outputs is the 2 marker tokens per document.
+    :param doc_id_style: ``"seq"`` (default, byte-identical to before) or ``"hash"`` (distinct
+        random 5-digit document ids; see ``segment_prompt_to_chunks``).
     """
     segments, ids, _mask = segment_prompt_to_chunks(
         tok,
@@ -148,6 +151,7 @@ def tokenize_example(
         free_pad_repeat=free_pad_repeat,
         repeat_doc_text=repeat_doc_text,
         summary_every_k=summary_every_k,
+        doc_id_style=doc_id_style,
     )
     # Ids the converter inserts; if any already occur in a rendered prompt, the example is ambiguous.
     # The summary id matters more than most: roles are derived by counting summary RUNS, so a stray
@@ -368,6 +372,16 @@ def main() -> None:
         "one for the standard arm.",
     )
     p.add_argument(
+        "--doc-id-style",
+        default="seq",
+        choices=["seq", "hash"],
+        help="'seq' (default): documents are shown as 1..N, byte-identical to every existing shard. "
+        "'hash': every document id in the prompt and the answer is a distinct random 5-digit id "
+        "seeded from the example (olmo_core.data.corpus_reasoning_prompts.doc_id_hash). Needs "
+        "id-only answers (--cot-mode none). MUST match the eval (CTC_SUITE_DOC_ID_STYLE=hash, "
+        "launch_ctc_suite.py --doc-id-style hash).",
+    )
+    p.add_argument(
         "--emit-gold-sidecar",
         action="store_true",
         help="Also write gold_fingerprints.json {content_fingerprint -> [gold chunk idx]} aligned to "
@@ -482,6 +496,7 @@ def main() -> None:
         repeat_doc_text=args.repeat_doc_text,
         summary_every_k=args.summary_every_k,
         doc_markers=not args.no_doc_markers,
+        doc_id_style=args.doc_id_style,
     )
     n_proc = args.num_proc if args.num_proc > 0 else min(8, os.cpu_count() or 1)
     pool = None
@@ -559,6 +574,8 @@ def main() -> None:
         "max_example_len": int(max(lengths)) if lengths else 0,
         "min_example_len": int(min(lengths)) if lengths else 0,
     }
+    if args.doc_id_style != "seq":  # absent for seq, so a seq build's metadata is unchanged
+        meta["doc_id_style"] = args.doc_id_style
     meta_path = os.path.join(args.out_dir, "metadata.json")
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)

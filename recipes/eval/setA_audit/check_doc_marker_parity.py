@@ -22,6 +22,15 @@ the model was never trained on.)
 For real eval rows of every setA task plus the two held-out rows (same specs as their twins).
 
     python recipes/eval/setA_audit/check_doc_marker_parity.py --olmo-eval ../olmo-eval --rungs r2k r8k
+
+``--doc-id-style hash`` checks hashed document ids (converter ``--doc-id-style hash`` vs olmo-eval
+``CTC_SUITE_DOC_ID_STYLE=hash``) the same way, and additionally:
+
+* the two copies of ``doc_id_hash.py`` (OLMo-core, olmo-eval) are byte-identical;
+* round trip: the training target (rendered with hashed ids by the converter's code path) is fed
+  through the eval's real scoring path (``_score_output``: stop rules, inverse id map, the spec's
+  parser and grader) and must score exactly what the sequential target scores on the same row;
+* the hashed target fits the row's decode budget (5-digit ids cost more tokens than ``1..N``).
 """
 
 import argparse
@@ -48,6 +57,9 @@ def main() -> None:
     ap.add_argument("--train-tokenizer", default="Qwen/Qwen3.5-4B",
                     help="the tokenizer the SFT shards were built with (build_ctc_sft.py --tokenizer)")
     ap.add_argument("--dataset", default="PrasannSinghal/ctc-suite-eval")
+    ap.add_argument("--doc-id-style", choices=["seq", "hash"], default="seq")
+    ap.add_argument("--rerank-decode-tokens", type=int, default=160,
+                    help="the rerank decode cap launch_ctc_suite.py sets (RERANK_DECODE_TOKENS)")
     args = ap.parse_args()
     sys.path.insert(0, os.path.join(os.path.abspath(args.olmo_eval), "src"))
 
@@ -63,6 +75,22 @@ def main() -> None:
     import olmo_eval.evals.tasks.ctc_suite as S
     from olmo_core.data.document_chunk_landmark import reserved_ids, segment_prompt_to_chunks
     from olmo_eval.evals.tasks.ctc_suite.doc_markers import add_doc_markers
+
+    hashed = args.doc_id_style == "hash"
+    if hashed:
+        import hashlib
+
+        from olmo_core.data.corpus_reasoning_prompts import build_prompt
+        from olmo_core.data.corpus_reasoning_prompts import doc_id_hash as train_hash
+        from olmo_eval.common.types import Instance, LMOutput
+        from olmo_eval.evals.tasks.ctc_suite import doc_id_hash as eval_hash
+
+        digests = {m.__name__: hashlib.sha256(open(m.__file__, "rb").read()).hexdigest()
+                   for m in (train_hash, eval_hash)}
+        if len(set(digests.values())) != 1:
+            sys.exit(f"doc_id_hash.py copies differ: {digests}")
+        print(f"doc_id_hash.py identical in both repos (sha256 {next(iter(digests.values()))[:12]})")
+        rt_bad = rt_total = budget_bad = 0
 
     eval_tok = AutoTokenizer.from_pretrained(args.eval_tokenizer)
     train_tok = AutoTokenizer.from_pretrained(args.train_tokenizer)
@@ -81,6 +109,8 @@ def main() -> None:
                 continue
             for i, ex in enumerate(rows):
                 body = spec.build_prompt(ex, query_position=S.QUERY_POSITION, use_alpaca=False)
+                if hashed:
+                    body = eval_hash.relabel_prompt(body, ex, spec.name)
                 body = add_doc_markers(body, ex, spec.name)
                 text = eval_tok.apply_chat_template([{"role": "user", "content": body}],
                                                     tokenize=False, add_generation_prompt=True)
@@ -88,7 +118,8 @@ def main() -> None:
                 _, tr, mask = segment_prompt_to_chunks(
                     train_tok, ex, builder[task]["spec"], query_position="both", cot_mode="none",
                     chunk_by=builder[task]["chunk_by"], item_regex=r"\|\|", include_answer=True,
-                    use_titles=False, doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end)
+                    use_titles=False, doc_start_id=ids_set.doc_start, doc_end_id=ids_set.doc_end,
+                    doc_id_style=args.doc_id_style)
                 total += 1
                 n_mark = sum(t in (ids_set.doc_start, ids_set.doc_end) for t in ev)
                 rest, rest_mask = tr[len(ev):], mask[len(ev):]
@@ -107,8 +138,46 @@ def main() -> None:
                 elif i == 0:
                     print(f"  ok {row}@{rung}: {len(ev):,} tok, {n_mark} marker tokens, "
                           f"then trained answer {train_tok.decode(rest[:16])!r}")
+                if hashed:
+                    rt_total += 1
+                    _, seq_ans = build_prompt(ex, task=builder[task]["spec"], query_position="both",
+                                              use_alpaca=False, cot_mode="none", use_titles=False)
+                    hash_ans = train_hash.relabel_answer(seq_ans, ex, builder[task]["spec"])
+                    trained = train_tok.decode(rest)
+                    meta = {"example": ex, "doc_id_style": "hash"}
+                    _, got = S._score_output(spec, Instance(question="", metadata=meta),
+                                             LMOutput(text=hash_ans))
+                    _, want = S._score_output(spec, Instance(question="", metadata={"example": ex}),
+                                              LMOutput(text=seq_ans))
+                    budget = S._decode_budget(rr, spec)
+                    if spec.name == "rerank":
+                        budget = min(budget, args.rerank_decode_tokens)
+                    n_ans = len(eval_tok(hash_ans, add_special_tokens=False)["input_ids"])
+                    n_seq = len(eval_tok(seq_ans, add_special_tokens=False)["input_ids"])
+                    p = spec.primary_metric
+                    if not trained.startswith(hash_ans):
+                        rt_bad += 1
+                        print(f"  RT-MISMATCH {row}@{rung}#{i}: trained target "
+                              f"{trained[:60]!r} != hashed answer {hash_ans[:60]!r}")
+                    elif got != want:
+                        rt_bad += 1
+                        print(f"  RT-SCORE {row}@{rung}#{i}: hashed {got} vs seq {want}")
+                    elif i == 0:
+                        print(f"     round trip {row}@{rung}: {p}={got[p]:.3f} (== seq), answer "
+                              f"{n_ans} tok (seq {n_seq}) / budget {budget}: {hash_ans[:48]!r}")
+                    # rerank is graded on its first 10 ids only; the cap is sized for those
+                    need = n_ans if spec.name != "rerank" else len(eval_tok(
+                        ", ".join(hash_ans.split(", ")[:10]), add_special_tokens=False)["input_ids"])
+                    if need + 1 > budget:  # + the stop / EOS token
+                        budget_bad += 1
+                        print(f"  BUDGET {row}@{rung}#{i}: hashed gold needs {need} tok (seq "
+                              f"{n_seq}) > decode budget {budget}")
     print(f"\n{total - bad}/{total} eval prompts are exact token prefixes of their training sequence, "
-          f"ending where the labeled answer starts")
+          f"ending where the labeled answer starts (doc ids: {args.doc_id_style})")
+    if hashed:
+        print(f"{rt_total - rt_bad}/{rt_total} hashed training targets score exactly their "
+              f"sequential target through the eval's scorer; {budget_bad} exceed the decode budget")
+        bad += rt_bad + budget_bad
     sys.exit(1 if bad else 0)
 
 
