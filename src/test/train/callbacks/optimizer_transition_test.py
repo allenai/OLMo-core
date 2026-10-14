@@ -120,7 +120,11 @@ def test_callback_applies_once_and_records_state():
     optim = callback.trainer.train_module.optim
     assert optim.param_groups[0]["lr"] == 1e-3
     assert optim.param_groups[0]["weight_decay"] == 0.3
-    assert callback.state_dict() == {"applied": True}
+    assert callback.state_dict() == {
+        "applied": True,
+        "target_lr": 1e-3,
+        "target_weight_decay": 0.3,
+    }
 
     # A resume after the transition must not re-apply it.
     optim.param_groups[0]["lr"] = 2e-3
@@ -133,3 +137,22 @@ def test_callback_rejects_step_zero_and_unexpected_step():
         _callback_with_trainer(global_step=0).pre_train()
     with pytest.raises(RuntimeError, match="expected checkpoint step 10"):
         _callback_with_trainer(global_step=42, expected_step=10).pre_train()
+
+
+def test_callback_state_from_a_different_transition_does_not_suppress_this_one():
+    # A run branching from a checkpoint written by another moved run inherits that run's
+    # callback state on load; only a record for the *same* target coordinate counts as applied.
+    callback = _callback_with_trainer(global_step=42)
+    callback.load_state_dict({"applied": True, "target_lr": 5e-4, "target_weight_decay": 0.1})
+    callback.pre_train()
+    assert callback.trainer.train_module.optim.param_groups[0]["lr"] == 1e-3
+
+    legacy = _callback_with_trainer(global_step=42)
+    legacy.load_state_dict({"applied": True})  # no target recorded: do not trust it
+    legacy.pre_train()
+    assert legacy.trainer.train_module.optim.param_groups[0]["lr"] == 1e-3
+
+    same = _callback_with_trainer(global_step=42)
+    same.load_state_dict({"applied": True, "target_lr": 1e-3, "target_weight_decay": 0.3})
+    same.pre_train()
+    assert same.trainer.train_module.optim.param_groups[0]["lr"] == 5e-4  # untouched

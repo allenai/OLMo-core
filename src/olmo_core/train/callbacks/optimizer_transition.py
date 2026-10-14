@@ -93,8 +93,10 @@ class OptimizerHyperparameterTransitionCallback(Callback):
 
     The transition runs in :meth:`pre_train`, i.e. after the trainer has loaded its initial
     checkpoint, and is recorded in the callback state so a later resume does not re-apply it.
-    Works with any train module exposing a single ``optim`` attribute (e.g. the transformer and
-    OLMoDDP train modules).
+    The record carries the target coordinate: a run that branches from a checkpoint written by
+    a *different* transition (a chain of moved runs) inherits that callback state on load and
+    must still apply its own move. Works with any train module exposing a single ``optim``
+    attribute (e.g. the transformer and OLMoDDP train modules).
     """
 
     source_lr: float
@@ -109,10 +111,33 @@ class OptimizerHyperparameterTransitionCallback(Callback):
     _applied: bool = False
 
     def state_dict(self) -> Dict[str, Any]:
-        return {"applied": self._applied}
+        return {
+            "applied": self._applied,
+            "target_lr": self.target_lr,
+            "target_weight_decay": self.target_weight_decay,
+        }
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        self._applied = bool(state_dict.get("applied", False))
+        applied = bool(state_dict.get("applied", False))
+        same_target = (
+            "target_lr" in state_dict
+            and math.isclose(float(state_dict["target_lr"]), self.target_lr, rel_tol=1e-6)
+            and math.isclose(
+                float(state_dict.get("target_weight_decay", float("nan"))),
+                self.target_weight_decay,
+                rel_tol=1e-6,
+            )
+        )
+        if applied and not same_target:
+            log.info(
+                "Loaded optimizer transition state for a different target coordinate "
+                "(lr=%s, wd=%s); this run's transition to lr=%s, wd=%s will still be applied",
+                state_dict.get("target_lr"),
+                state_dict.get("target_weight_decay"),
+                self.target_lr,
+                self.target_weight_decay,
+            )
+        self._applied = applied and same_target
 
     def pre_train(self):
         if self._applied:
