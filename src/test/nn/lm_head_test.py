@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import pytest
 import torch
@@ -263,7 +263,7 @@ def test_lm_head_response_logits_only(head_type, loss_implementation):
 
     fused = loss_implementation == LMLossImplementation.fused_linear
     # Liger's fused kernel needs the bias-free head (as in test_lm_head_fused_linear_loss).
-    kwargs = {"bias": False} if fused else {}
+    kwargs: Dict[str, Any] = {"bias": False} if fused else {}
     config = LMHeadConfig(name=head_type, loss_implementation=loss_implementation, **kwargs)
     lm_head = config.build(d_model=d_model, vocab_size=vocab_size, init_device="cuda")
 
