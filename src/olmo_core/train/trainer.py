@@ -699,6 +699,14 @@ class Trainer:
         # on another rank, leading to a deadlock.
         self.run_bookkeeping_op(self._check_if_canceled)
 
+    def _load_path_is_within_save_folder(self) -> bool:
+        """Whether the explicit ``load_path`` names a checkpoint inside ``save_folder``."""
+        if self.load_path is None:
+            return False
+        load_path = str(self.load_path).rstrip("/")
+        save_folder = str(self.save_folder).rstrip("/")
+        return load_path == save_folder or load_path.startswith(save_folder + "/")
+
     def _load_initial_checkpoint(self) -> None:
         """Load the checkpoint selected by the configured resume policy."""
         if (
@@ -711,12 +719,25 @@ class Trainer:
         # In explicit-preference mode ``load_path`` is authoritative. Load it directly so an
         # explicit checkpoint directory cannot be treated as an optional container lookup and
         # silently replaced by a newer endpoint in ``save_folder``.
+        #
+        # The one exception is a run branched from *another* run's checkpoint (``load_path``
+        # outside ``save_folder``) that already wrote checkpoints of its own: those are strictly
+        # later on this same run, so a restart (e.g. after preemption) resumes from them rather
+        # than re-running from the branch point and colliding with the existing checkpoints.
         if self.prefer_explicit_load_path and self.load_path is not None:
-            self.load_checkpoint(
-                self.load_path,
-                reset_data_loader_state=self.reset_data_loader_state_on_load_path,
-            )
-            self.train_module.validate_load_path_checkpoint()
+            if not self._load_path_is_within_save_folder() and self.maybe_load_checkpoint(
+                self.save_folder, load_trainer_state=True, load_optim_state=True
+            ):
+                log.info(
+                    f"Resumed from this run's own checkpoint in '{self.save_folder}' instead of "
+                    f"the explicit load path ('{self.load_path}')"
+                )
+            else:
+                self.load_checkpoint(
+                    self.load_path,
+                    reset_data_loader_state=self.reset_data_loader_state_on_load_path,
+                )
+                self.train_module.validate_load_path_checkpoint()
 
         if not self.checkpoint_loaded:
             # Try loading from the save folder first. The save folder is used for continuing
