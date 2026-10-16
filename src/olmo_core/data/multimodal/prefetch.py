@@ -60,12 +60,20 @@ def prefetch_map(
 
         inner = fn
 
+        slow_s = float(__import__("os").environ.get("OLMO_LOADER_SLOW_S", "10"))
+
         def fn(item):  # type: ignore[no-redef]
             t = time.perf_counter()
             try:
                 return inner(item)
             finally:
-                stats["work_s"] = stats.get("work_s", 0.0) + time.perf_counter() - t
+                dt = time.perf_counter() - t
+                stats["work_s"] = stats.get("work_s", 0.0) + dt
+                if dt > slow_s:
+                    stats.setdefault("slow", []).append((dt, item))
+                    __import__("logging").getLogger(__name__).warning(
+                        "[loader-profile] slow example: %.1fs for %r", dt, item
+                    )
 
     futures: deque = deque()
     try:

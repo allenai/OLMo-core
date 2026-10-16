@@ -104,6 +104,7 @@ def main() -> None:
         f"rank batch = {loader.rank_batch_size // config.data_loader.sequence_length} sequences",
         flush=True,
     )
+    print("sources:", ", ".join(f"{i}={n}" for i, n in enumerate(loader.dataset_names)), flush=True)
     it = loader._rank_refs_from_cursor(0)
     refs = [next(it) for _ in range(n_refs)]
     cold = latency_pass(loader, refs, "cold")

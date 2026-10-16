@@ -731,7 +731,9 @@ class MixtureDataLoader(DataLoaderBase):
             n += 1
             if n % _PROFILE_EVERY == 0:
                 d = {
-                    k: stats.get(k, 0) - window_start.get(k, 0) for k in stats if k != "next_max_s"
+                    k: stats.get(k, 0) - window_start.get(k, 0)
+                    for k in stats
+                    if k != "next_max_s" and isinstance(stats[k], (int, float))
                 }
                 ready, blocked = d.get("ready", 0), d.get("blocked", 0)
                 log.info(
