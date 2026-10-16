@@ -199,6 +199,13 @@ class MixedMidtrainingRecipeConfig(Config):
     thread-free loader's; see
     :attr:`~olmo_core.data.multimodal.mixture_data_loader.MixtureDataLoaderConfig.batch_prefetch_depth`).
     ``0`` packs and collates on the trainer's thread."""
+    batch_prefetch_process: bool = False
+    """Build those batches in a forked child process instead of on a thread of the trainer (see
+    :attr:`~olmo_core.data.multimodal.mixture_data_loader.MixtureDataLoaderConfig.batch_prefetch_process`),
+    whose interpreter lock the batch building otherwise shares with the training step; same
+    batches and checkpoints. The queued batches take ``/dev/shm``: about three batches per rank,
+    6.4 GB each at 8 GPUs on the 90/10 stage, so small runs may need a larger
+    ``--launch.shared_memory``."""
     visual_data: str = "midtraining"
     """Visual sources: ``midtraining`` (Rustin's eight groups), ``stage1_v3`` (the Molmo2
     Stage-1 v3 mixture, as alignment's perception and joint use it: one sampled annotation per
@@ -551,6 +558,7 @@ def _build_data_loader(
         prefetch_workers=workers,
         prefetch_max_in_flight=recipe.prefetch_max_in_flight,
         batch_prefetch_depth=recipe.batch_prefetch_depth,
+        batch_prefetch_process=recipe.batch_prefetch_process,
         max_consecutive_data_errors=0,
         max_total_data_errors=0,
     ).merge(cli.overrides, prefix="data_loader")

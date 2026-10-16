@@ -31,6 +31,7 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    Union,
 )
 
 import numpy as np
@@ -41,7 +42,7 @@ from olmo_core.distributed.utils import get_rank, get_world_size
 from olmo_core.exceptions import OLMoConfigurationError
 
 from ..data_loader import DataLoaderBase, DataLoaderConfig
-from .batch_prefetch import BatchPrefetcher, BatchPrefetchStats
+from .batch_prefetch import BatchPrefetcher, BatchPrefetchStats, BatchProcessPrefetcher
 from .collator import MultimodalCollator
 from .packing import (
     _select_buffered_pack_indices,
@@ -114,6 +115,10 @@ class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
     """Collated rank batches to build ahead on one background thread (``0``, the default, packs
     and collates on the caller's thread). See :class:`MixtureDataLoader`: the yielded batches,
     their order and the checkpointed state are those of the thread-free loader."""
+    batch_prefetch_process: bool = False
+    """Build the ``batch_prefetch_depth`` batches ahead in a forked child process instead of on a
+    thread (see :class:`~olmo_core.data.multimodal.batch_prefetch.BatchProcessPrefetcher`); off
+    by default."""
     max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS
     max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS
     allow_legacy_state_without_dataset_fingerprints: bool = False
@@ -180,6 +185,7 @@ class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
                 False if self.defer_packed_image_copy is None else self.defer_packed_image_copy
             ),
             batch_prefetch_depth=self.batch_prefetch_depth,
+            batch_prefetch_process=self.batch_prefetch_process,
             max_consecutive_data_errors=self.max_consecutive_data_errors,
             max_total_data_errors=self.max_total_data_errors,
             dp_world_size=dp_world_size,
@@ -337,6 +343,11 @@ class MixtureDataLoader(DataLoaderBase):
         takes the batch, and closing the iterator rewinds the loader to the last consumed state,
         so a checkpoint resumes on the batch after the last one trained on, with or without
         prefetching. ``0`` (the default) keeps everything on the caller's thread.
+    :param batch_prefetch_process: Run that producer in a child process forked from this one
+        (:class:`~olmo_core.data.multimodal.batch_prefetch.BatchProcessPrefetcher`), so its
+        Python work does not hold this process's interpreter lock; the batches, their order and
+        the checkpointed state are the same. Requires a positive
+        ``batch_prefetch_depth``.
     :param allow_legacy_state_without_dataset_fingerprints: Allow restoring version 3 or 4
         buffered-packing cursor state, which predates per-source content fingerprints. This
         remains enabled by default for existing recipes and emits a warning. New recipes that
@@ -372,6 +383,7 @@ class MixtureDataLoader(DataLoaderBase):
         prefetch_max_in_flight: int | None = None,
         defer_packed_image_copy: bool = False,
         batch_prefetch_depth: int = 0,
+        batch_prefetch_process: bool = False,
         max_consecutive_data_errors: int = DEFAULT_MAX_CONSECUTIVE_DATA_ERRORS,
         max_total_data_errors: int = DEFAULT_MAX_TOTAL_DATA_ERRORS,
         dp_world_size: int = 1,
@@ -421,6 +433,10 @@ class MixtureDataLoader(DataLoaderBase):
             or batch_prefetch_depth < 0
         ):
             raise OLMoConfigurationError("batch_prefetch_depth must be a non-negative integer")
+        if batch_prefetch_process and batch_prefetch_depth <= 0:
+            raise OLMoConfigurationError(
+                "batch_prefetch_process requires a positive batch_prefetch_depth"
+            )
         self.datasets = list(datasets)
         if dataset_names is None:
             self.dataset_names = [str(i) for i in range(len(datasets))]
@@ -459,6 +475,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.prefetch_max_in_flight = prefetch_max_in_flight
         self.defer_packed_image_copy = defer_packed_image_copy
         self.batch_prefetch_depth = batch_prefetch_depth
+        self.batch_prefetch_process = batch_prefetch_process
         self.batch_prefetch_stats = BatchPrefetchStats()
         self.max_consecutive_data_errors = max_consecutive_data_errors
         self.max_total_data_errors = max_total_data_errors
@@ -696,12 +713,21 @@ class MixtureDataLoader(DataLoaderBase):
             return
         # Before the first batch is taken, the consumed state is the state we start from.
         self._prefetch_consumed_state = self._sync_state_dict()
-        prefetcher = BatchPrefetcher(
-            self._iter_batches_sync,
-            self._sync_state_dict,
-            depth=self.batch_prefetch_depth,
-            stats=self.batch_prefetch_stats,
-        )
+        prefetcher: Union[BatchPrefetcher, BatchProcessPrefetcher]
+        if self.batch_prefetch_process:
+            prefetcher = BatchProcessPrefetcher(
+                self._iter_batches_sync,
+                self._sync_state_dict,
+                depth=self.batch_prefetch_depth,
+                stats=self.batch_prefetch_stats,
+            )
+        else:
+            prefetcher = BatchPrefetcher(
+                self._iter_batches_sync,
+                self._sync_state_dict,
+                depth=self.batch_prefetch_depth,
+                stats=self.batch_prefetch_stats,
+            )
         try:
             for batch, state_after in prefetcher:
                 self._prefetch_consumed_state = state_after
