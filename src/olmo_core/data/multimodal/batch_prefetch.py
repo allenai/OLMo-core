@@ -298,6 +298,7 @@ def _produce_in_child(make_batches, snapshot_state, out, stop) -> None:
     import torch
 
     torch.set_num_threads(1)
+    _disable_numpy_hugepages()
 
     def put(item) -> bool:
         while not stop.is_set():
@@ -350,3 +351,26 @@ def _pin_large_tensors(batch: Any) -> Any:
         )
         for key, value in batch.items()
     }
+
+
+def _disable_numpy_hugepages() -> None:
+    """
+    Stop NumPy from asking the kernel for transparent huge pages, as it does for arrays of 4 MiB
+    and more.
+
+    With THP ``defrag`` set to ``madvise``, a page fault in such an array may compact memory
+    synchronously. Once a node's page cache had fragmented its free memory, that stalled batch
+    building for minutes in the large fresh arrays of packing and collation.
+    """
+    try:
+        from numpy._core.multiarray import (  # type: ignore[attr-defined]
+            _set_madvise_hugepage,
+        )
+    except ImportError:  # NumPy 1
+        try:
+            from numpy.core.multiarray import (  # type: ignore[attr-defined,no-redef]
+                _set_madvise_hugepage,
+            )
+        except ImportError:
+            return
+    _set_madvise_hugepage(False)

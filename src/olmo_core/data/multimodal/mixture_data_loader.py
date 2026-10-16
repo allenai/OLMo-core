@@ -346,7 +346,8 @@ class MixtureDataLoader(DataLoaderBase):
     :param batch_prefetch_process: Run that producer in a child process forked from this one
         (:class:`~olmo_core.data.multimodal.batch_prefetch.BatchProcessPrefetcher`), so its
         Python work does not hold this process's interpreter lock; the batches, their order and
-        the checkpointed state are the same. Requires a positive
+        the checkpointed state are the same. The collator there builds compact images in shared
+        memory, which the batches are handed over through. Requires a positive
         ``batch_prefetch_depth``.
     :param allow_legacy_state_without_dataset_fingerprints: Allow restoring version 3 or 4
         buffered-packing cursor state, which predates per-source content fingerprints. This
@@ -716,7 +717,7 @@ class MixtureDataLoader(DataLoaderBase):
         prefetcher: Union[BatchPrefetcher, BatchProcessPrefetcher]
         if self.batch_prefetch_process:
             prefetcher = BatchProcessPrefetcher(
-                self._iter_batches_sync,
+                self._iter_batches_in_child,
                 self._sync_state_dict,
                 depth=self.batch_prefetch_depth,
                 stats=self.batch_prefetch_stats,
@@ -740,6 +741,12 @@ class MixtureDataLoader(DataLoaderBase):
             # ahead state); rewind to the last batch the caller actually took.
             assert consumed is not None
             self.load_state_dict({**consumed, "batches_processed": self.batches_processed})
+
+    def _iter_batches_in_child(self) -> Iterable[Dict[str, Any]]:
+        """:meth:`_iter_batches_sync` in a prefetch child process, with this process's copy of the
+        collator building compact images in shared memory: queueing a batch then copies none."""
+        self.collator.shared_memory_images = True
+        yield from self._iter_batches_sync()
 
     def _iter_batches_sync(self) -> Iterable[Dict[str, Any]]:
         """Pack and collate on the calling thread (the order every mode reproduces)."""

@@ -70,11 +70,21 @@ def _loader(
     fail_at=None,
     max_errors=0,
     process=False,
+    compact=False,
 ):
+    collator = MultimodalCollator(pad_token_id=0, pad_sequence_length=64, batch_metadata=True)
+    if compact:
+        collator = MultimodalCollator(
+            pad_token_id=0,
+            pad_sequence_length=64,
+            batch_metadata=True,
+            image_dtype=torch.bfloat16,
+            compact_images=True,
+        )
     return MixtureDataLoader(
         [_Dataset(100, fail_at=fail_at), _Dataset(200)],
         [0.4, 0.6],
-        MultimodalCollator(pad_token_id=0, pad_sequence_length=64, batch_metadata=True),
+        collator,
         work_dir=path,
         global_batch_size=8 * 64,
         seed=31,
@@ -151,6 +161,15 @@ def test_prefetched_batches_match_the_synchronous_order(tmp_path, grouped, worke
     _assert_equal(actual_state, expected_state)
     assert loader.batch_prefetch_stats.batches_consumed == 12
     assert loader.batch_prefetch_stats.batches_produced >= 12
+    assert _no_prefetch_threads()
+
+
+def test_process_prefetch_hands_compact_images_over_in_shared_memory(tmp_path):
+    expected, _ = _take(_loader(tmp_path, compact=True), 6)
+    actual, _ = _take(_loader(tmp_path, depth=2, process=True, compact=True), 6)
+    _assert_equal(actual, expected)
+    assert any(batch["images"].shape[0] for batch in actual)
+    assert all(batch["images"].is_shared() for batch in actual if batch["images"].shape[0])
     assert _no_prefetch_threads()
 
 

@@ -555,6 +555,8 @@ def _build_data_loader(
         image_dtype=DType.bfloat16,
         # Only the real crops are collated and copied (no padding to the batch's crop maximum).
         compact_images=True,
+        # Packed crops go straight into the collated batch, not through a per-pack copy.
+        defer_packed_image_copy=True,
         prefetch_workers=workers,
         prefetch_max_in_flight=recipe.prefetch_max_in_flight,
         batch_prefetch_depth=recipe.batch_prefetch_depth,
