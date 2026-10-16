@@ -564,8 +564,16 @@ class MultimodalLM(nn.Module):
         return int(vit + connector)
 
     def _vit_crop_microbatch(self) -> int:
-        """Max crops per ViT forward (0 = no chunking). Env: ``VIT_CROP_MICROBATCH``."""
-        raw = os.environ.get("VIT_CROP_MICROBATCH", "16")
+        """
+        Max crops per ViT forward per batch row (0, the default: no chunking). Env:
+        ``VIT_CROP_MICROBATCH``.
+
+        Chunks bound the encoder's working memory (under activation checkpointing, one block's
+        recomputed activations for one chunk instead of all crops: about 10 GB at 400 crops), but
+        small ones leave the GPU waiting on kernel launches: with 16-crop chunks it sat idle for
+        about 38% of the encoder's time on B300s.
+        """
+        raw = os.environ.get("VIT_CROP_MICROBATCH", "0")
         return int(raw)
 
     def _vit_forward_features(self, images: torch.Tensor) -> torch.Tensor:
