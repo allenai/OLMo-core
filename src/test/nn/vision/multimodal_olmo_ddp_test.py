@@ -1,11 +1,13 @@
 """
 Tests for :class:`~olmo_core.nn.vision.MultimodalOLMoDDPModel`: it is built for an OLMoDDP
-language model, keeps the plain multimodal forward, and computes the float-weighted response-only
-objective through the language model's ``input_embeddings`` / ``router_loss_div_factor`` hooks.
+language model, keeps the plain multimodal forward, computes the float-weighted response-only
+objective through the language model's ``input_embeddings`` / ``router_loss_div_factor`` hooks,
+and shares its vision encoder's crops among ranks in training forwards.
 """
 
 import pytest
 import torch
+import torch.distributed as dist
 
 import olmo_core.nn.vision.chunked_loss as chunked_loss
 from olmo_core.config import DType
@@ -28,6 +30,7 @@ from olmo_core.nn.vision import (
     VisionEncoderConfig,
     VisionEncoderType,
 )
+from olmo_core.testing import run_distributed_test
 
 _D_MODEL = 16
 _VOCAB = 64
@@ -512,3 +515,62 @@ def test_compiled_chunked_loss_matches_the_eager_chunked_loss(with_images: bool)
     # One graph per chunk function: the padded last chunk has the same shape as the others.
     counters = torch._dynamo.utils.counters
     assert counters["stats"]["unique_graphs"] - graphs_before == 2, dict(counters["stats"])
+
+
+def _compact_crops(n_crops: int):
+    """``n_crops`` compact crops of the tiny tower (4 patches), one pooled row per crop."""
+    images = torch.randn(n_crops, 4, 14 * 14 * 3)
+    if n_crops == 0:
+        pooled = torch.full((1, 1, 4), -1, dtype=torch.long)
+    else:
+        pooled = torch.arange(4 * n_crops, dtype=torch.long).view(1, n_crops, 4)
+    return images, pooled, torch.tensor([n_crops])
+
+
+def _run_balanced_crops_match_each_rank_encoding_its_own():
+    rank = dist.get_rank()
+    n_crops = [5, 0, 2][rank]  # rank 1 holds text only and encodes a placeholder crop
+    torch.manual_seed(10 + rank)
+    images, pooled, crop_counts = _compact_crops(n_crops)
+    group = dist.new_group()
+
+    results = []
+    for balance in (False, True):
+        model = _model().train()
+        model.set_crop_balance_group(group if balance else None)
+        features = model.encode_images(images, pooled, crop_counts)
+        assert features.shape[0] == n_crops
+        torch.manual_seed(20 + rank)
+        (features * torch.randn_like(features)).sum().backward()
+        vision_grads = []
+        for param in model.vision.parameters():
+            assert param.grad is not None
+            grad = param.grad.detach().clone()
+            dist.all_reduce(grad)
+            vision_grads.append(grad)
+        connector_grads = [p.grad.detach().clone() for p in model.connector.parameters()]
+        results.append((features.detach(), vision_grads + connector_grads))
+        assert model.pop_crop_balance_counts() == ([[5, 1, 2]] if balance else [])
+        assert model.pop_crop_balance_counts() == []
+
+    (unbalanced, unbalanced_grads), (balanced, balanced_grads) = results
+    torch.testing.assert_close(balanced, unbalanced)
+    for got, want in zip(balanced_grads, unbalanced_grads):
+        torch.testing.assert_close(got, want)
+
+
+def test_balanced_crops_match_each_rank_encoding_its_own():
+    # Spawned: forked children of a test worker that already ran CPU kernels can hang in OpenMP.
+    run_distributed_test(
+        _run_balanced_crops_match_each_rank_encoding_its_own, world_size=3, start_method="spawn"
+    )
+
+
+def test_crops_are_balanced_only_in_training_forwards():
+    model = _model()
+    group = object()
+    model.set_crop_balance_group(group)  # type: ignore[arg-type]
+    assert model.train()._active_crop_balance_group() is group
+    assert model.eval()._active_crop_balance_group() is None
+    model.set_crop_balance_group(None)
+    assert model.train()._active_crop_balance_group() is None

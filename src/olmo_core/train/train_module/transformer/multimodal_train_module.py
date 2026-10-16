@@ -827,6 +827,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
       :meth:`_batch_auxiliary_loss_kwargs`;
     * freezing by parameter-name pattern, row-restricted embedding gradients, activation
       checkpointing of the vision tower and connector, and per-source data/optimizer diagnostics;
+    * optionally, the vision encoder's crops shared evenly among ranks (``balance_vit_crops``);
     * checkpoints that also carry the *frozen* parameters (``frozen_model.*`` entries), and loads
       that accept both those checkpoints and native text checkpoints (``module.<name>.main``
       entries without the ``lm.`` prefix), leaving freshly initialized components untouched;
@@ -857,6 +858,7 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         loss_group_weights: Optional[Dict[str, float]] = None,
         trim_microbatch_image_padding: bool = False,
         padding_input_token_id: Optional[int] = None,
+        balance_vit_crops: bool = False,
         **kwargs,
     ):
         from olmo_core.nn.vision import MultimodalOLMoDDPModel
@@ -927,6 +929,14 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self._load_expansions: Dict[str, torch.Tensor] = {}
         self._load_metadata: Optional[Metadata] = None
         super().__init__(model, *args, **kwargs)
+
+        # Every rank holds the whole vision encoder and its own sequences (no TP, CP or PP here),
+        # so any rank can encode any crop. The crop exchange gets its own communicator so that it
+        # never queues behind the gradient all-reduces MultiGroupDDP launches during the backward.
+        if balance_vit_crops and is_distributed():
+            group = dist.new_group(group_desc="vit_crop_balance")
+            self.multimodal_model.set_crop_balance_group(group)
+            log.info(f"Balancing vision encoder crops over {get_world_size()} ranks")
 
         # OLMoDDP materializes meta-device weights inside ``super().__init__`` with ``to_empty``,
         # which replaces Parameter objects. Install gradient hooks only on the final materialized
@@ -1055,6 +1065,19 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             dist.all_reduce(value, group=self.dp_process_group)
             return value.clamp_min(1) / get_world_size(self.dp_process_group)
         return value.clamp_min(1)
+
+    def _record_crop_balance_metrics(self, crop_counts: List[List[int]]) -> None:
+        """
+        Record the most crops any rank encoded in each micro-batch, summed over the step, with
+        balancing and as it would have been without. The counts come from every rank, so they
+        need no reduction.
+        """
+        balanced = sum(math.ceil(sum(counts) / len(counts)) for counts in crop_counts)
+        unbalanced = sum(max(counts) for counts in crop_counts)
+        self.record_metric("encoder crops per rank", float(balanced), None, namespace="vision")
+        self.record_metric(
+            "encoder crops per rank unbalanced", float(unbalanced), None, namespace="vision"
+        )
 
     def _record_data_metrics(self, batch: Dict[str, Any]) -> None:
         """Record packing and supervision density without synchronizing CUDA."""
@@ -1275,6 +1298,9 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             if collect_diagnostics:
                 self.multimodal_model.set_input_diagnostics(False)
             raise
+        crop_counts = self.multimodal_model.pop_crop_balance_counts()
+        if crop_counts and not dry_run:
+            self._record_crop_balance_metrics(crop_counts)
         if collect_diagnostics:
             diagnostics = self.multimodal_model.pop_input_diagnostics(
                 reduce_across_process_group=is_distributed(),
@@ -1907,6 +1933,12 @@ class MultimodalOLMoDDPTrainModuleConfig(OLMoDDPTrainModuleConfig):
     collator's pad id, e.g. EOS. Padding is never predicted either way; a pad embedding row the
     LM never trained is near zero, and the embedding norm turns the router losses' gradient at
     those slots into a huge gradient on that row. Requires the collator's batch metadata."""
+
+    balance_vit_crops: bool = False
+    """Share each micro-batch's image crops evenly among all ranks for the vision encoder (see
+    :mod:`olmo_core.nn.vision.crop_balance`). The language model keeps its ranks in step, so
+    without this every rank waits for the one holding the most crops. Features and summed
+    gradients are unchanged up to floating-point rounding."""
 
     def _build_train_module(self, **kwargs) -> MultimodalOLMoDDPTrainModule:
         return MultimodalOLMoDDPTrainModule(**kwargs)
