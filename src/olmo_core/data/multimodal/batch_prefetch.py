@@ -295,10 +295,15 @@ class BatchProcessPrefetcher(Iterator[Tuple[Any, Any]]):
 
 def _produce_in_child(make_batches, snapshot_state, out, stop) -> None:
     """The body of a :class:`BatchProcessPrefetcher` child: produce and queue until stopped."""
+    import multiprocessing
+
     import torch
 
     torch.set_num_threads(1)
     _disable_numpy_hugepages()
+    # The loader may fork example workers here (``prefetch_processes``), which multiprocessing
+    # refuses in a daemonic process; this process shuts them down itself when it is closed.
+    multiprocessing.current_process()._config["daemon"] = False  # type: ignore[attr-defined]
 
     def put(item) -> bool:
         while not stop.is_set():

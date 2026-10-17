@@ -109,6 +109,10 @@ class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
     Defaults to ``max(2 * prefetch_workers, 4)`` when prefetching is enabled.
     This bounds prepared-example read-ahead without changing packing or resume state.
     """
+    prefetch_processes: bool = False
+    """Load examples in ``prefetch_workers`` forked processes instead of threads (see
+    :func:`~olmo_core.data.multimodal.prefetch.prefetch_map`), so a page fault on a
+    memory-mapped source stalls one worker rather than all of them; off by default."""
     defer_packed_image_copy: bool | None = None
     """Copy packed float32 images directly into the final batch; disabled by default."""
     batch_prefetch_depth: int = 0
@@ -181,6 +185,7 @@ class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
             est_tokens_per_example=self.est_tokens_per_example,
             prefetch_workers=self.prefetch_workers,
             prefetch_max_in_flight=self.prefetch_max_in_flight,
+            prefetch_processes=self.prefetch_processes,
             defer_packed_image_copy=(
                 False if self.defer_packed_image_copy is None else self.defer_packed_image_copy
             ),
@@ -197,6 +202,18 @@ class MixtureDataLoaderConfig(DataLoaderConfig["MixtureDataLoader"]):
             source_groups=self.source_groups,
             group_sequence_quotas=self.group_sequence_quotas,
         )
+
+
+def _portable_error(error: Exception) -> Exception:
+    """``error`` if it survives pickling (to cross from a worker process), else a
+    :class:`RuntimeError` carrying its type and message."""
+    import pickle
+
+    try:
+        pickle.loads(pickle.dumps(error))
+        return error
+    except Exception:
+        return RuntimeError(f"{type(error).__name__}: {error}")
 
 
 class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
@@ -218,6 +235,7 @@ class _OrderedExampleStream(Iterator[Tuple[ExampleRef, Dict[str, Any]]]):
                 loader._rank_refs_from_cursor(refs_consumed),
                 num_workers=loader.prefetch_workers,
                 max_in_flight=loader.prefetch_max_in_flight,
+                processes=loader.prefetch_processes,
             )
         )
 
@@ -333,6 +351,12 @@ class MixtureDataLoader(DataLoaderBase):
         ``defer_packed_image_copy`` apply only to this mode.
     :param prefetch_max_in_flight: Maximum prepared examples in flight per source group.
         Defaults to ``max(2 * prefetch_workers, 4)``. Ignored when prefetching is disabled.
+    :param prefetch_processes: Load examples in ``prefetch_workers`` processes forked from the
+        loader's (like :class:`torch.utils.data.DataLoader` workers) instead of threads. A thread
+        that page-faults on a memory-mapped source (Arrow tables, numpy memmaps) keeps the
+        interpreter lock until the page arrives, which on a network file system can stall every
+        loading thread for seconds; in a process it stalls only that worker. The examples, their
+        order and the checkpointed state are the same. Requires positive ``prefetch_workers``.
     :param defer_packed_image_copy: Copy packed float32 images directly into the final batch.
     :param batch_prefetch_depth: With a positive depth, packing and collation run on one
         background thread that keeps up to this many finished rank batches queued, so the
@@ -382,6 +406,7 @@ class MixtureDataLoader(DataLoaderBase):
         est_tokens_per_example: int = 1400,
         prefetch_workers: int = 0,
         prefetch_max_in_flight: int | None = None,
+        prefetch_processes: bool = False,
         defer_packed_image_copy: bool = False,
         batch_prefetch_depth: int = 0,
         batch_prefetch_process: bool = False,
@@ -426,6 +451,8 @@ class MixtureDataLoader(DataLoaderBase):
             or prefetch_max_in_flight <= 0
         ):
             raise OLMoConfigurationError("prefetch_max_in_flight must be a positive integer")
+        if prefetch_processes and prefetch_workers <= 0:
+            raise OLMoConfigurationError("prefetch_processes requires positive prefetch_workers")
         if not isinstance(defer_packed_image_copy, bool):
             raise OLMoConfigurationError("defer_packed_image_copy must be a boolean")
         if (
@@ -474,6 +501,7 @@ class MixtureDataLoader(DataLoaderBase):
         self.est_tokens_per_example = est_tokens_per_example
         self.prefetch_workers = prefetch_workers
         self.prefetch_max_in_flight = prefetch_max_in_flight
+        self.prefetch_processes = prefetch_processes
         self.defer_packed_image_copy = defer_packed_image_copy
         self.batch_prefetch_depth = batch_prefetch_depth
         self.batch_prefetch_process = batch_prefetch_process
@@ -550,6 +578,7 @@ class MixtureDataLoader(DataLoaderBase):
                     est_tokens_per_example=self.est_tokens_per_example,
                     prefetch_workers=self.prefetch_workers,
                     prefetch_max_in_flight=self.prefetch_max_in_flight,
+                    prefetch_processes=self.prefetch_processes,
                     defer_packed_image_copy=self.defer_packed_image_copy,
                     max_consecutive_data_errors=self.max_consecutive_data_errors,
                     max_total_data_errors=self.max_total_data_errors,
@@ -843,11 +872,11 @@ class MixtureDataLoader(DataLoaderBase):
         return out
 
     def _try_load_ref(self, ref: ExampleRef) -> LoadedExample:
-        """Load one specific ref without mutating error counters in a worker thread."""
+        """Load one specific ref without mutating error counters in a worker thread or process."""
         try:
             return ref, self._try_load_example(ref), None
         except Exception as error:
-            return ref, None, error
+            return ref, None, _portable_error(error) if self.prefetch_processes else error
 
     def _rank_refs_from_cursor(self, refs_consumed: int = 0) -> Iterator[ExampleRef]:
         """Yield this rank's slice of Molmo2's continuous global reference stream.
@@ -953,6 +982,7 @@ class MixtureDataLoader(DataLoaderBase):
                 itertools.cycle(rank_refs),
                 num_workers=self.prefetch_workers,
                 max_in_flight=self.prefetch_max_in_flight,
+                processes=self.prefetch_processes,
             )
         )
         try:

@@ -1,5 +1,6 @@
-"""CPU tests for whole-batch prefetching on a background thread or in a child process: identical
-batch order, a checkpoint that describes consumed batches only, error propagation and shutdown."""
+"""CPU tests for whole-batch prefetching on a background thread or in a child process, and for
+example loading in worker processes: identical batch order, a checkpoint that describes consumed
+batches only, error propagation and shutdown."""
 
 import copy
 import multiprocessing
@@ -71,6 +72,7 @@ def _loader(
     max_errors=0,
     process=False,
     compact=False,
+    example_processes=False,
 ):
     collator = MultimodalCollator(pad_token_id=0, pad_sequence_length=64, batch_metadata=True)
     if compact:
@@ -95,6 +97,7 @@ def _loader(
         pack_image_weight=30.0,
         continuous_stream=continuous,
         prefetch_workers=workers,
+        prefetch_processes=example_processes,
         batch_prefetch_depth=depth,
         batch_prefetch_process=process,
         max_consecutive_data_errors=max_errors,
@@ -147,6 +150,14 @@ def _no_prefetch_threads():
     return not threads and not processes
 
 
+def _no_worker_processes(timeout=10.0):
+    """No example worker process (nor any other child) is alive, allowing ``timeout`` to exit."""
+    deadline = time.monotonic() + timeout
+    while multiprocessing.active_children() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not multiprocessing.active_children()
+
+
 @pytest.mark.parametrize("process", [False, True])
 @pytest.mark.parametrize("grouped", [False, True])
 @pytest.mark.parametrize("workers", [0, 4])
@@ -162,6 +173,70 @@ def test_prefetched_batches_match_the_synchronous_order(tmp_path, grouped, worke
     assert loader.batch_prefetch_stats.batches_consumed == 12
     assert loader.batch_prefetch_stats.batches_produced >= 12
     assert _no_prefetch_threads()
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+@pytest.mark.parametrize("depth, process", [(0, False), (2, False), (2, True)])
+def test_example_worker_processes_match_the_synchronous_order(tmp_path, grouped, depth, process):
+    """Examples loaded in forked worker processes give the synchronous loader's batches and state,
+    with batches built on the caller's thread, a thread or a child process."""
+    expected, expected_state = _take(_loader(tmp_path, grouped=grouped), 12)
+    loader = _loader(
+        tmp_path, depth=depth, workers=3, grouped=grouped, process=process, example_processes=True
+    )
+    actual, actual_state = _take(loader, 12)
+    _assert_equal(actual, expected)
+    _assert_equal(actual_state, expected_state)
+    assert _no_prefetch_threads() and _no_worker_processes()
+
+
+@pytest.mark.parametrize("max_errors", [0, 50])
+def test_example_worker_process_errors_match_the_synchronous_loader(tmp_path, max_errors):
+    """A source error in a worker process is skipped or raised exactly as on the caller's thread."""
+    sync = _loader(tmp_path, fail_at=3, max_errors=max_errors)
+    loader = _loader(tmp_path, workers=3, fail_at=3, max_errors=max_errors, example_processes=True)
+    if max_errors:
+        expected, expected_state = _take(sync, 12)
+        actual, actual_state = _take(loader, 12)
+        _assert_equal(actual, expected)
+        _assert_equal(actual_state, expected_state)
+    else:
+        for candidate in (sync, loader):
+            candidate.reshuffle(epoch=1)
+            iterator = iter(candidate)
+            with pytest.raises(ValueError, match="synthetic failure"):
+                for _ in range(40):
+                    next(iterator)
+            iterator.close()
+    assert _no_worker_processes()
+
+
+def test_example_worker_processes_resume_the_synchronous_stream(tmp_path):
+    """A checkpoint saved with examples loaded in worker processes resumes the synchronous
+    loader's stream."""
+    reference, _ = _take(_loader(tmp_path), 9)
+    _, state = _take(_loader(tmp_path, depth=2, workers=3, example_processes=True), 3)
+    resumed = _loader(tmp_path)
+    resumed.load_state_dict(state)
+    following, _ = _take(resumed, 6)
+    _assert_equal(following, reference[3:])
+    assert _no_worker_processes()
+
+
+def test_example_worker_processes_require_workers(tmp_path):
+    with pytest.raises(OLMoConfigurationError, match="prefetch_processes"):
+        _loader(tmp_path, workers=0, example_processes=True)
+    config = MixtureDataLoaderConfig(
+        global_batch_size=128,
+        sequence_length=16,
+        work_dir=str(tmp_path),
+        prefetch_workers=4,
+        prefetch_processes=True,
+    )
+    assert MixtureDataLoaderConfig.from_dict(config.as_config_dict()) == config
+    assert not MixtureDataLoaderConfig(
+        global_batch_size=128, sequence_length=16, work_dir="x"
+    ).prefetch_processes
 
 
 def test_process_prefetch_hands_compact_images_over_in_shared_memory(tmp_path):
