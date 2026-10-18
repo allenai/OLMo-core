@@ -181,12 +181,14 @@ def test_document_mode_isolates_packed_examples_through_kda():
         alone = model(b)
         packed_logits = model(packed, example_ids=example_ids)[:, 40:]
         leaked = model(packed)[:, 40:]  # one document: state carries over from example A
-    # The tiny model's logits are about 1e-3 in size, so the bounds are relative to them.
+    # The tiny model's logits are about 5e-3 in size and its state carries little over, so the
+    # bounds are relative to them: isolation is exact up to rounding, while the unisolated
+    # packing measurably leaks (about 0.5% of the logits' scale on a B300).
     scale = float(alone.abs().max())
     isolation_error = float((packed_logits - alone).abs().max())
     leak = float((leaked - alone).abs().max())
-    assert isolation_error <= 1e-3 * scale, (isolation_error, scale)
-    assert leak > 1e-2 * scale and leak > 10 * isolation_error, (leak, isolation_error, scale)
+    assert isolation_error <= 1e-4 * scale, (isolation_error, scale)
+    assert leak > 1e-3 * scale and leak > 10 * isolation_error, (leak, isolation_error, scale)
 
 
 def test_document_mode_accepts_packer_subsegment_ids_without_branches():

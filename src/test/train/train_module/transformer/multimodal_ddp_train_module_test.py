@@ -782,19 +782,13 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
     unfrozen_hybrid._require_optimizer()._check_model_param_main_param_the_same()
 
     # Frozen expert weights under expert parallelism are a documented limitation of this
-    # layer: they cannot be checkpointed, so a model with frozen LM blocks refuses to save.
-    frozen_blocks = _build_multimodal_ddp_train_module_for_checkpoint(
-        freeze_lm_head=True,
-        freeze_lm_blocks=True,
-    )
-    assert all(
-        not param.requires_grad for param in frozen_blocks.multimodal_model.lm.blocks.parameters()
-    )
+    # layer: expert sharding re-creates them as trainable parameters, so a model whose freeze
+    # patterns cover the routed experts is refused at construction.
     with pytest.raises(NotImplementedError, match="frozen expert-parallel"):
-        frozen_blocks._frozen_model_param_state_dict()
-    with pytest.raises(NotImplementedError, match="frozen expert-parallel"):
-        frozen_blocks.save_state_dict_direct(hybrid_dir)
-    del frozen_blocks
+        _build_multimodal_ddp_train_module_for_checkpoint(
+            freeze_lm_head=True,
+            freeze_lm_blocks=True,
+        )
 
     hybrid = _build_multimodal_ddp_train_module_for_checkpoint(freeze_lm_head=True)
     multimodal = hybrid.multimodal_model

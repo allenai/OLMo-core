@@ -937,6 +937,23 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
         self._load_metadata: Optional[Metadata] = None
         super().__init__(model, *args, **kwargs)
 
+        # Expert parallelism re-creates the routed experts' parameters while it shards them, as
+        # trainable parameters, so a freeze pattern that covers them no longer holds. Refuse it
+        # instead of training "frozen" experts.
+        if self.freeze_params:
+            unfrozen = [
+                name
+                for name, param in self.multimodal_model.named_parameters()
+                if param.requires_grad
+                and any(fnmatch(name, pattern) for pattern in self.freeze_params)
+            ]
+            if unfrozen:
+                raise NotImplementedError(
+                    "Training with frozen expert-parallel expert weights is not supported: expert "
+                    f"sharding made {len(unfrozen)} frozen parameter(s) trainable again, e.g. "
+                    f"{unfrozen[:3]}; freeze them with expert parallelism off"
+                )
+
         # Every rank holds the whole vision encoder and its own sequences (no TP, CP or PP here),
         # so any rank can encode any crop. The crop exchange gets its own communicator so that it
         # never queues behind the gradient all-reduces MultiGroupDDP launches during the backward.
