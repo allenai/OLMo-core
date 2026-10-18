@@ -26,6 +26,22 @@ def vision_sdpa_backends(*, cudnn_first: bool = False) -> List:
     return [SDPBackend.CUDNN_ATTENTION, *backends] if cudnn_first else backends
 
 
+CUDNN_FIRST_MIN_VERSION = 92000
+"""The oldest cuDNN that :func:`vision_scaled_dot_product_attention` puts first on SM100. cuDNN
+9.10.2 builds no execution plan there for the ViT's attention (16 heads of 72, bfloat16, with or
+without gradients), and PyTorch does not fall back; 9.20.0 runs all of it (B300, 2026-10-18)."""
+
+
+def cudnn_first_supported(device: torch.device) -> bool:
+    """Whether cuDNN's attention goes first on ``device``: an SM100 or newer GPU with a cuDNN of at
+    least :data:`CUDNN_FIRST_MIN_VERSION`."""
+    return (
+        device.type == "cuda"
+        and torch.cuda.get_device_capability(device)[0] >= 10
+        and (torch.backends.cudnn.version() or 0) >= CUDNN_FIRST_MIN_VERSION
+    )
+
+
 @contextmanager
 def vision_sdpa_context(*, cudnn_first: bool = False) -> Iterator[None]:
     backends = vision_sdpa_backends(cudnn_first=cudnn_first)
@@ -53,11 +69,9 @@ def vision_scaled_dot_product_attention(
     :param cudnn_first_on_sm100: On Blackwell (SM100 and newer) GPUs, try cuDNN's attention
         first. PyTorch's flash attention is slow there for the ViT's head dimension (72); cuDNN
         runs the ViT's unmasked self-attention in about a third of the time with the same accuracy
-        against a float32 reference.
+        against a float32 reference. Older cuDNNs are skipped (:func:`cudnn_first_supported`).
     """
-    cudnn_first = (
-        cudnn_first_on_sm100 and q.is_cuda and torch.cuda.get_device_capability(q.device)[0] >= 10
-    )
+    cudnn_first = cudnn_first_on_sm100 and cudnn_first_supported(q.device)
     with vision_sdpa_context(cudnn_first=cudnn_first):
         return F.scaled_dot_product_attention(
             q,
