@@ -733,7 +733,9 @@ def _build_multimodal_ddp_train_module_for_checkpoint(
     config = MultimodalOLMoDDPTrainModuleConfig(
         rank_microbatch_size=8,
         max_sequence_length=8,
-        optim=OLMoDDPOptimizerConfig(lr=1e-3),
+        # The multimodal train module needs its optimizer for partial master syncs
+        # (reset_image_token_rows, vision loads).
+        optim=MultimodalOLMoDDPOptimizerConfig(lr=1e-3),
         freeze_params=freeze_params or None,
         dp_config=TransformerDataParallelConfig(name=DataParallelType.ddp),
         ep_config=TransformerExpertParallelConfig(degree=2),
