@@ -181,8 +181,12 @@ def test_document_mode_isolates_packed_examples_through_kda():
         alone = model(b)
         packed_logits = model(packed, example_ids=example_ids)[:, 40:]
         leaked = model(packed)[:, 40:]  # one document: state carries over from example A
-    torch.testing.assert_close(packed_logits, alone, rtol=1e-3, atol=1e-3)
-    assert not torch.allclose(leaked, alone, rtol=1e-3, atol=1e-3)
+    # The tiny model's logits are about 1e-3 in size, so the bounds are relative to them.
+    scale = float(alone.abs().max())
+    isolation_error = float((packed_logits - alone).abs().max())
+    leak = float((leaked - alone).abs().max())
+    assert isolation_error <= 1e-3 * scale, (isolation_error, scale)
+    assert leak > 1e-2 * scale and leak > 10 * isolation_error, (leak, isolation_error, scale)
 
 
 def test_document_mode_accepts_packer_subsegment_ids_without_branches():

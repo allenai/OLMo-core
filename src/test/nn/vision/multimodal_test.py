@@ -582,12 +582,17 @@ class TestCompactImages:
         assert compact.shape[0] == sum(counts)
         padded_features = self.model.encode_images(images, idx)
         compact_features = self.model.encode_images(compact, idx, crop_counts)
-        torch.testing.assert_close(compact_features, padded_features, rtol=0, atol=0)
+        # The compact path pools only the valid rows (#924), a differently shaped computation, so
+        # the two agree to float32 rounding rather than bitwise.
+        tol = dict(rtol=1e-5, atol=1e-6 * float(padded_features.abs().max()))
+        torch.testing.assert_close(compact_features, padded_features, **tol)
         padded_out = self.model(input_ids, images=images, pooled_patches_idx=idx)
         compact_out = self.model(
             input_ids, images=compact, pooled_patches_idx=idx, image_crop_counts=crop_counts
         )
-        torch.testing.assert_close(compact_out, padded_out, rtol=0, atol=0)
+        torch.testing.assert_close(
+            compact_out, padded_out, rtol=1e-5, atol=1e-6 * float(padded_out.abs().max())
+        )
 
     def test_compact_crops_reach_the_encoder_without_a_gather(self, monkeypatch):
         counts = [2, 0, 1]

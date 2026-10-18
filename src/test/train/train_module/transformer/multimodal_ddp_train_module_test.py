@@ -758,7 +758,9 @@ def _run_native_checkpoint_into_multimodal(native_dir, hybrid_dir):
                 expert_idx += 1
                 mutated_expert_names.add(name)
     assert mutated_expert_names
-    native_optim._copy_model_params_to_main_params(mutated_expert_names)
+    # The text optimizer refreshes every main parameter (only the multimodal one takes names);
+    # only the experts changed, so this refreshes exactly them.
+    native_optim._copy_model_params_to_main_params()
     expected_lm = {name: param.detach().clone() for name, param in native_model.named_parameters()}
     native.save_state_dict_direct(native_dir)
 
