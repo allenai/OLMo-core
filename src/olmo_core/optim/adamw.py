@@ -25,6 +25,10 @@ def adamw_step(
 ):
     beta1, beta2 = betas
 
+    # A zero multiplier does not suppress NaN/Inf. Select safe gradients before any
+    # moment arithmetic, including squaring (finite gradients can overflow there).
+    grad = torch.where(step_factor != 0, grad, 0.0)
+
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
@@ -39,6 +43,8 @@ def adamw_step(
     step_size = lr / bias_correction1
 
     denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
+    # A fresh skipped update with eps=0 would otherwise evaluate 0/0 below.
+    denom.masked_fill_(step_factor == 0, 1.0)
 
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
@@ -70,7 +76,7 @@ def foreach_adamw_step(
     # Perform step weight decay.
     torch._foreach_mul_(params, 1 - step_factor * (lr * weight_decay))
 
-    grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
+    grads = [torch.where(step_factor != 0, g.type_as(ea), 0.0) for g, ea in zip(grads, exp_avgs)]
 
     # Decay the first and second moment running average coefficient.
     # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
@@ -94,6 +100,8 @@ def foreach_adamw_step(
     denoms = torch._foreach_sqrt(exp_avg_sqs)
     torch._foreach_div_(denoms, bias_corrections2.sqrt().unbind())
     torch._foreach_add_(denoms, eps)
+    for denom in denoms:
+        denom.masked_fill_(step_factor == 0, 1.0)
 
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())

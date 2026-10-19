@@ -90,21 +90,35 @@ class SkipStepOptimizer(Optimizer):
 
         The tensor can be used within the optimizer's step computation to essentially skip a step
         without a host-device sync.
-        """
-        if len(self._losses) < max(2, self.rolling_interval_length // 2):
-            return move_to_device(torch.tensor(1.0), self.device)
 
-        loss_std, loss_mean = torch.std_mean(torch.stack(self._losses[:-1]))
-        assert self.latest_loss is not None
-        if self._grad_norms:
-            assert self.latest_grad_norm is not None
-            grad_norm_std, grad_norm_mean = torch.std_mean(torch.stack(self._grad_norms[:-1]))
-            step_factor = torch.logical_and(
-                (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std,
-                (self.latest_grad_norm - grad_norm_mean) <= self.sigma_factor * grad_norm_std,
-            )
-        else:
-            step_factor = (self.latest_loss - loss_mean) <= self.sigma_factor * loss_std
+        Nonfinite metrics are rejected even during warmup and excluded from future
+        statistics. With one finite historical sample its standard deviation is treated
+        as zero; with none, only the current sample's finiteness is checked.
+        """
+        step_factor = move_to_device(torch.tensor(True), self.device)
+        warming_up = len(self._losses) < max(2, self.rolling_interval_length // 2)
+        for history in (self._losses, self._grad_norms):
+            if not history:
+                continue
+            latest = history[-1]
+            # Nonfinite samples must be skipped even during warmup. Keep the history's
+            # fixed shape, but exclude these samples from subsequent statistics so a
+            # single bad batch cannot prevent recovery until the window rolls over.
+            step_factor = step_factor & latest.isfinite()
+            if warming_up or len(history) < 2:
+                continue
+            values = torch.stack(history[:-1])
+            finite = values.isfinite()
+            safe_values = torch.where(finite, values, 0.0)
+            count = finite.sum()
+            # Scale before summing/squaring to avoid overflow for large finite history.
+            scale = safe_values.abs().max().clamp_min(1.0)
+            normalized = safe_values / scale
+            mean = normalized.sum() / count.clamp_min(1)
+            residuals = torch.where(finite, normalized - mean, 0.0)
+            std = (residuals.square().sum() / (count - 1).clamp_min(1)).sqrt()
+            within_bounds = (latest / scale - mean) <= self.sigma_factor * std
+            step_factor = step_factor & ((count == 0) | within_bounds)
 
         return step_factor.float()
 

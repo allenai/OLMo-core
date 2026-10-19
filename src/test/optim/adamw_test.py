@@ -12,6 +12,7 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim.adamw import SkipStepAdamW
 from olmo_core.testing import DEVICES
 from olmo_core.utils import cuda_sync_debug_mode
 
@@ -125,6 +126,56 @@ def test_skip_step_adamw_foreach(device: torch.device, dtype: Optional[DType]):
 _LRS = [1e-3, 5e-4]
 _WDS = [0.0, 1e-2]
 _BETAS = [(0.9, 0.999), (0.7, 0.95)]
+
+
+@pytest.mark.parametrize("foreach", [False, True])
+@pytest.mark.parametrize("bad_value", [1e3, 1e20, float("inf"), float("nan")])
+@pytest.mark.parametrize("accepted_steps", [0, 1, 8])
+@pytest.mark.parametrize("eps", [0.0, 1e-8])
+def test_skip_step_adamw_preserves_state_and_recovers(foreach, bad_value, accepted_steps, eps):
+    p = nn.Parameter(torch.ones(3))
+    optim = SkipStepAdamW([p], foreach=foreach, rolling_interval_length=8, eps=eps)
+    # The reference sees only accepted updates, so it must remain identical after
+    # the skipped update and after the next accepted update, including bias correction.
+    ref_p = nn.Parameter(p.detach().clone())
+    ref = torch.optim.AdamW([ref_p], lr=1e-3, weight_decay=1e-2, foreach=False, eps=eps)
+    for _ in range(accepted_steps):
+        optim.latest_loss = torch.tensor(1.0)
+        optim.latest_grad_norm = torch.tensor(1.0)
+        p.grad = torch.ones_like(p)
+        ref_p.grad = torch.ones_like(ref_p)
+        optim.step()
+        ref.step()
+    state_before = copy.deepcopy(optim.state[p])
+    if not state_before:
+        # Lazy initialization on a fresh skipped step may allocate zero buffers.
+        state_before = dict(
+            step=torch.zeros(()), exp_avg=torch.zeros_like(p), exp_avg_sq=torch.zeros_like(p)
+        )
+    param_before = p.detach().clone()
+    # Finite outlier detection intentionally waits for warmup. Nonfinite metrics
+    # must be rejected immediately, even on the very first sample.
+    if accepted_steps < 4 and torch.isfinite(torch.tensor(bad_value)):
+        optim.latest_loss = torch.tensor(float("inf"))
+    else:
+        optim.latest_loss = torch.tensor(bad_value)
+    optim.latest_grad_norm = torch.tensor(bad_value)
+    p.grad = torch.full_like(p, bad_value)
+    optim.step()
+    assert optim.step_skipped.item() == 1.0
+    torch.testing.assert_close(p, param_before, rtol=0, atol=0)
+    for key, value in state_before.items():
+        torch.testing.assert_close(optim.state[p][key], value, rtol=0, atol=0)
+    optim.latest_loss = torch.tensor(1.0)
+    optim.latest_grad_norm = torch.tensor(1.0)
+    p.grad = torch.ones_like(p)
+    ref_p.grad = torch.ones_like(ref_p)
+    optim.step()
+    ref.step()
+    assert optim.step_skipped.item() == 0.0
+    torch.testing.assert_close(p, ref_p)
+    for key in ("exp_avg", "exp_avg_sq", "step"):
+        torch.testing.assert_close(optim.state[p][key], ref.state[ref_p][key])
 
 
 @pytest.mark.parametrize("device", DEVICES)
