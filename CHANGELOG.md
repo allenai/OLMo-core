@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Preserve SkipStepAdamW parameters and moment buffers on skipped nonfinite/overflowing gradients, reject nonfinite loss/gradient norms during warmup, and exclude nonfinite history from future skip decisions.
+- Mask ignored labels in unreduced z-loss and preserve an explicitly zero z-loss coefficient in loss wrappers and LM heads.
+- Build Torch attention masks after Ulysses gathers the full sequence, fixing sliding-window shape errors and causal-mask broadcasting for single-token shards.
+
 ### Added
 
 - Added Ulysses context parallelism for `KimiDeltaAttention` (`apply_cp`), mirroring the `GatedDeltaNet` all-to-all head/sequence exchange, with the in-kernel gate parameters sliced to each rank's heads.
