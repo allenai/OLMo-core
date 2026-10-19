@@ -36,7 +36,8 @@ REF="${REF:-6e3a4e309347430bc0b222ea256f5c2acbe90a7e}"   # the summary-mask-mode
 STEP_DIR="${STEP_DIR:-step1772}"
 # The locally-installed `gantry` (v3.2.0) predates --min-runtime; pin the newer CLI via uvx.
 GANTRY_BIN="${GANTRY_BIN:-uvx --from beaker-gantry@3.7.0 gantry}"
-# CLAUDE.md/standing preference: default to no minRuntime (unallocated, always-preemptible).
+# SUPERSEDED 2026-10-19: set MIN_RUNTIME=1h -- on jupiter, urgent minRuntime=0 jobs effectively never
+# schedule (CLAUDE.md "minRuntime"). Old note: default to no minRuntime (unallocated, always-preemptible).
 # Only set MIN_RUNTIME (e.g. `MIN_RUNTIME=10m`) when explicitly asked for a specific launch --
 # do not change this default.
 MIN_RUNTIME="${MIN_RUNTIME:-}"

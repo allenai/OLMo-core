@@ -41,6 +41,11 @@ ME = os.environ.get("USER", "prasann")
 BEAKER_ME = "prasanns"
 BEAKER = os.path.expanduser("~/.local/bin/beaker")
 PARTITIONS = ["jsteinhardt", "berkeleynlp"]
+# berkeleynlp is for small-scale debugging only, at --qos=normal only (Prasann, 2026-10-16; memory:
+# berkeleynlp-debug-only). It is never recommended unless --debug. Enforced by ops/hooks/bash_guard.py.
+RESTRICTED_QOS = {"berkeleynlp": {"normal"}}
+DEBUG_ONLY_PARTITIONS = {"berkeleynlp"}
+DEBUG_ONLY_NOTE = "berkeleynlp: small-scale debugging only, --qos=normal only (preemptible by everyone)"
 # Users whose jobs we never preempt without asking Prasann first (memory: do-not-preempt-rhys).
 ASK_FIRST = {"rhys_gould"}
 # Beaker GPU clusters worth considering (name -> note). Order = display order.
@@ -154,7 +159,8 @@ def slurm_snapshot() -> dict:
                      "format=Partition,QOS"]).splitlines():
         part, qs = (line.split("|") + [""])[:2]
         if part in PARTITIONS:
-            assoc[part] = [q for q in qs.split(",") if q and q not in SKIP_QOS]
+            assoc[part] = [q for q in qs.split(",") if q and (
+                q in RESTRICTED_QOS[part] if part in RESTRICTED_QOS else q not in SKIP_QOS)]
 
     sq = json.loads(run(["squeue", "-p", ",".join(PARTITIONS), "--json"]))["jobs"]
     running, pending = [], []
@@ -513,6 +519,9 @@ def render_text(res: dict) -> str:
         L.append("")
         L.append(c(f"BEST PLACE PER REQUEST SIZE  (ranked by start + {RUN_HOURS:g}h-on-H200 "
                    "runtime scaled by GPU speed)", "h"))
+        L.append(c(f"  {DEBUG_ONLY_NOTE}; "
+                   + ("included (--debug)" if DEBUG else "left out (pass --debug for a small debug job)"),
+                   "dim"))
         for r in res["recommend"]:
             L.append(f"  {r['gpus']:>3} GPU  {cell(r['status'], r['eta_s'])} {r['where']:<46} "
                      f"done ~{dur(r['done_s']):<6} " + c(r["why"], "dim"))
@@ -565,6 +574,8 @@ def render_text(res: dict) -> str:
     elif bk:
         L.append("")
         L.append(c("BEAKER  (A100+ clusters, urgent + unallocated from ai2/flex2; ETA = time to schedule)", "h"))
+        L.append(c("  ETAs assume the job sets minRuntime (default 1h): on jupiter an urgent minRuntime=0 job "
+                   "effectively never schedules (memory: beaker-min-runtime)", "dim"))
         L.append(f"  {'cluster':<16}{'gpu':<6}{'x/H200':<7}" + "".join(
             f"{str(g) + ' GPU':<11}" for g in REQ_SIZES) + "  slots  (free/preemptable/total)")
         for b in bk:
@@ -606,6 +617,7 @@ def recommend(res: dict) -> list[dict]:
 
     Ties within 15 min fall back to our routing policy (jsteinhardt > berkeleynlp > Beaker),
     then to GPU speed. Runtime comes from --hours (expected wall-clock on H200s).
+    Debug-only partitions (berkeleynlp) are left out unless --debug is passed.
     """
     out = []
     order = {"free": 0, "preempt": 1, "wait": 2, "capped": 3}
@@ -615,6 +627,8 @@ def recommend(res: dict) -> list[dict]:
         sl = res.get("slurm")
         if isinstance(sl, dict) and "options" in sl:
             for o in sl["options"]:
+                if o["partition"] in DEBUG_ONLY_PARTITIONS and not DEBUG:
+                    continue
                 if o["gpus"] == G and o["status"] in order:
                     sp = SPEED.get((o.get("gpu_type") or "H200").upper(), 1.0)
                     risk = 0 if o.get("preempt_risk") == "none" else 1
@@ -691,10 +705,11 @@ DEFAULT_HTML = ("visualizations/compute_avail.html" if os.path.isdir("visualizat
                 else os.path.expanduser("~/.cache/where-to-run/compute_avail.html"))
 RUN_HOURS = 4.0
 BEAKER_ANY = False
+DEBUG = False
 
 
 def main() -> None:
-    global REQ_SIZES, USE_COLOR, RUN_HOURS, BEAKER_ANY
+    global REQ_SIZES, USE_COLOR, RUN_HOURS, BEAKER_ANY, DEBUG
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-g", "--gpus", type=int, action="append", help="request size(s); repeatable")
     ap.add_argument("--hours", type=float, default=RUN_HOURS,
@@ -709,12 +724,15 @@ def main() -> None:
     ap.add_argument("--color", action="store_true", help="force ANSI colors")
     ap.add_argument("--beaker-any", action="store_true",
                     help="recommend any Beaker cluster, not just jupiter")
+    ap.add_argument("--debug", action="store_true",
+                    help="small-scale debugging job: also recommend berkeleynlp (debug-only partition)")
     ap.add_argument("--no-beaker", action="store_true")
     ap.add_argument("--no-local", action="store_true")
     a = ap.parse_args()
     REQ_SIZES = sorted(set(a.gpus)) if a.gpus else REQ_SIZES
     RUN_HOURS = a.hours
     BEAKER_ANY = a.beaker_any
+    DEBUG = a.debug
     USE_COLOR = (USE_COLOR or a.color or bool(a.html)) and not a.plain and not a.json
     gtype = None if a.gpu_type.lower() == "any" else a.gpu_type
 
@@ -738,6 +756,7 @@ def main() -> None:
             except Exception as e:  # noqa: BLE001
                 res["beaker"] = dict(error=str(e)[:300])
     res["recommend"] = recommend(res)
+    res["policy_notes"] = [DEBUG_ONLY_NOTE]
     res["elapsed_s"] = round(time.time() - NOW, 2)
 
     if a.json:

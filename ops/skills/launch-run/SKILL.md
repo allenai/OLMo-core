@@ -35,7 +35,8 @@ were one skipped box.
   `git -C <repo>` / `cd <repo> && ...` in the same call. Launch from the repo and branch that holds
   the code (OLMo-core vs olmo-eval).
 - [ ] **Beaker/gantry:** the commit is **pushed** (gantry runs the pushed commit; `allow_dirty` ships
-  nothing). `priority=urgent` exactly (not lower, not `immediate`); workspace `ai2/flex2`, budget
+  nothing). `priority=urgent` exactly (not lower, not `immediate`); **`minRuntime` set (default 1h;
+  `0` never schedules on jupiter)**; workspace `ai2/flex2`, budget
   `ai2/oe-other` (unallocated); cluster ai2/jupiter. Final checkpoint not written twice.
 - [ ] **Local slurm:** interpreter `/data/prasann/conda/envs/<env>/bin/python` (node-local; never
   bare `torchrun`, use `$PY -m torch.distributed.run`); `--output`, logs, HOME, TMPDIR, triton and

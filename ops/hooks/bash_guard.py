@@ -14,6 +14,10 @@ DENY:
   (iv)  bare ``torchrun`` (resolves to the NFS system miniforge).
   (v)   foreground polling: ``while``/``until`` loops containing ``sleep``, ``for`` loops sleeping >= 30 s,
         and ``sleep N`` (N >= 30) as a foreground command.
+  (vi)  srun/sbatch on the ``berkeleynlp`` partition at any QOS other than ``normal`` (including no
+        ``--qos``, which defaults to preemptive_high_sewonm there). The partition/QOS come from the command
+        line or, for ``sbatch script``, from the script's ``#SBATCH`` header (command line wins).
+        Every berkeleynlp launch also gets "small-scale debugging only" advice (Prasann, 2026-10-16).
 
 The parser is deliberately conservative: heredoc bodies are dropped, quoted strings are only
 descended into for ``bash -c`` / ``sh -c`` / ``sbatch --wrap``, and any parse failure allows the command.
@@ -195,7 +199,7 @@ class Findings:
 MSG = {
     "tests": "DENIED: test suites/type checks are CPU-heavy and must not run on the login node "
              "(radagast). Run them on a compute node: `srun --partition=berkeleynlp "
-             "--qos=preemptive_high_sewonm --nodelist=horton --cpus-per-task=16 --mem=64G --time=00:30:00 "
+             "--qos=normal --nodelist=horton --cpus-per-task=16 --mem=64G --time=00:30:00 "
              "/data/prasann/conda/envs/corpus-reasoning-olmo/bin/python -m pytest ...`.",
     "nfs_py": "DENIED: this job launch uses an NFS interpreter ({path}); imports page GBs over ~5 MB/s "
               "NFS and the job parks in D state (nfs_wait_bit_killable) for 18+ min. Use the node-local "
@@ -210,6 +214,10 @@ MSG = {
     "loop": "DENIED: foreground polling loop (while/until/for + sleep). It blocks the session and leaves "
             "orphaned watchers. Take ONE snapshot with `" + OPS + " status` (cached, <15 s), use the "
             "Monitor tool, or run the wait with run_in_background=true (and give it an exit bound).",
+    "berkeleynlp": "DENIED: berkeleynlp launch at --qos={qos}. Rule (Prasann, 2026-10-16): berkeleynlp is "
+                   "for small-scale debugging only and must run at `--qos=normal` (never preemptive / "
+                   "preemptive_high_sewonm; no --qos defaults to preemptive_high_sewonm there). Real runs "
+                   "go to jsteinhardt, Lambda or Beaker (see the where-to-run skill).",
     "sleep": "DENIED: foreground `sleep {n}` (>= 30 s). Don't wait in the foreground: take one snapshot "
              "with `" + OPS + " status`, use the Monitor tool, or use run_in_background=true.",
 }
@@ -222,6 +230,8 @@ ADVICE_NET_COPY = ("Note: copying/inspecting via /net/<node>/ inside a job runs 
 # commands that may legitimately touch /net/<node>/ inside a job (one-off staging copies, inspection)
 NET_COPY_OK = {"rsync", "cp", "ls", "df", "du", "stat", "head", "tail", "cat", "wc", "grep", "find", "test",
                "[", "echo", "mkdir", "readlink", "realpath", "md5sum", "sha256sum", "tar"}
+ADVICE_BERKELEYNLP = ("berkeleynlp is for small-scale debugging only (short smoke tests, a few GPUs); "
+                      "anything bigger goes to jsteinhardt, Lambda or Beaker.")
 ADVICE_LAUNCH = ("Launching a job: register it (`" + OPS + " register --run-id <run> --experiment <exp> "
                  "--cluster <slurm|beaker|lambda> --job-id <id> --expected-minutes N --log-path <log>`), "
                  "smoke-test first, log to node-local /data (never --output on /accounts or /scratch), "
@@ -335,6 +345,8 @@ def analyze(cmd, f, ctx, depth=0):
                 else:
                     plain_opts.append(o)
             _scan_job_words(plain_opts, f, jctx)
+            script = payload[0] if head == "sbatch" and wrap is None and payload else None
+            _check_partition_qos(plain_opts, script, f, ctx.get("cwd"))
             if head == "sbatch":
                 f.add_advise(ADVICE_LAUNCH)
                 if wrap is not None:
@@ -383,6 +395,53 @@ def _scan_job_words(words, f, ctx, net_ok=False):
                 f.add_advise(ADVICE_NET_COPY)
             else:
                 f.add_deny(MSG["net"].format(path=t[:80]))
+
+
+def _opt_value(opts, longs, shorts):
+    """Last value of a slurm option given as --long=V, --long V, -s V or -sV (None if absent)."""
+    val = None
+    for j, o in enumerate(opts):
+        for lo in longs:
+            if o.startswith(lo + "="):
+                val = o[len(lo) + 1:]
+            elif o == lo and j + 1 < len(opts):
+                val = opts[j + 1]
+        for sh in shorts:
+            if o == sh and j + 1 < len(opts):
+                val = opts[j + 1]
+            elif o.startswith(sh) and len(o) > len(sh) and not o.startswith("--"):
+                val = o[len(sh):]
+    return val
+
+
+def _script_header_opts(path, cwd):
+    """``#SBATCH`` option words from an sbatch script (empty on any read problem)."""
+    try:
+        p = path if os.path.isabs(path) else os.path.join(cwd or os.getcwd(), path)
+        if not os.path.isfile(p) or os.path.getsize(p) > 200_000:
+            return []
+        words = []
+        with open(p, errors="replace") as fh:
+            for line in fh:
+                m = re.match(r"^#SBATCH\s+(.*)$", line.strip())
+                if m:
+                    words += shlex.split(m.group(1).split(" #")[0])
+        return words
+    except Exception:
+        return []
+
+
+def _check_partition_qos(opts, script, f, cwd):
+    """(vi) berkeleynlp: debugging only, and only at --qos=normal."""
+    hdr = _script_header_opts(script, cwd) if script else []
+    part = _opt_value(opts, ["--partition"], ["-p"]) or _opt_value(hdr, ["--partition"], ["-p"])
+    if not part or "berkeleynlp" not in part.split(","):
+        return
+    qos = _opt_value(opts, ["--qos"], ["-q"]) or _opt_value(hdr, ["--qos"], ["-q"])
+    if qos != "normal":
+        f.add_deny(MSG["berkeleynlp"].format(qos=qos or "<default: preemptive_high_sewonm>"))
+    else:
+        f.add_advise(ADVICE_BERKELEYNLP)
 
 
 def _is_inspection_srun(opts):

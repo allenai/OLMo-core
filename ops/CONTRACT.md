@@ -108,6 +108,6 @@ ops exp index | ops exp show NAME | ops exp new NAME | ops exp stale [--days 7]
 - stdlib only; fast; every external command (squeue, sacct, beaker, ssh) gets a timeout and a
   graceful "unavailable" fallback, never a hang.
 - Login node = light work only. `python3 -m unittest discover -s ops/tests` must finish < 10 s;
-  anything heavier goes to `srun --partition=berkeleynlp --qos=preemptive_high_sewonm --nodelist=horton --cpus-per-task=4 --mem=8G --time=00:10:00`.
+  anything heavier goes to `srun --partition=berkeleynlp --qos=normal --nodelist=horton --cpus-per-task=4 --mem=8G --time=00:10:00`.
 - Record repo-side follow-ups (things that must change in launchers/trainer/CLAUDE.md/records after
   the refactor) in `ops/INCORPORATE.d/<your-topic>.md` — precise file + change, not prose.

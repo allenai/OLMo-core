@@ -42,8 +42,17 @@ CASES = [
     ("cd repo && make type-check", LOGIN, False, "deny", "login node"),
     ("python -m unittest discover -s src/test", LOGIN, False, "deny", "login node"),
     ("pytest -v src/test/nn/moe", NODE, False, "allow", None),  # on a compute node: fine
+    ("srun --partition=berkeleynlp --qos=normal --nodelist=horton --cpus-per-task=16 --mem=64G "
+     f"{DATA_PY} -m pytest -q src/test/nn", LOGIN, False, "advise", "debugging only"),
+
+    # ---- (vi) berkeleynlp: debugging only, --qos=normal only
     ("srun --partition=berkeleynlp --qos=preemptive_high_sewonm --nodelist=horton --cpus-per-task=16 --mem=64G "
-     f"{DATA_PY} -m pytest -q src/test/nn", LOGIN, False, "allow", None),
+     f"{DATA_PY} -m pytest -q src/test/nn", LOGIN, False, "deny", "--qos=preemptive_high_sewonm"),
+    ("srun -p berkeleynlp -q preemptive -w horton --gres=gpu:H200:1 nvidia-smi", LOGIN, False, "deny", "--qos=preemptive"),
+    ("srun -p berkeleynlp -w horton --gres=gpu:H200:1 nvidia-smi", LOGIN, False, "deny", "default: preemptive_high_sewonm"),
+    ("sbatch --partition=berkeleynlp --qos=normal --output=/data/prasann/t.log --wrap 'nvidia-smi'", LOGIN, False,
+     "advise", "debugging only"),
+    ("srun -p jsteinhardt --qos=preemptive_high -w cubbins --gres=gpu:H200:1 nvidia-smi", LOGIN, False, "allow", None),
     ("sbatch --parsable --job-name=flopdrop-gputests --partition=jsteinhardt --output=/data/prasann/t.log "
      "--wrap \"set -e; cd /data/prasann/x && " + DATA_PY + " -m pytest -q src/test\"", LOGIN, False, "advise", "register"),
     ("cd ops && python3 -m unittest discover -s tests -t .", LOGIN, False, "allow", None),
@@ -142,6 +151,19 @@ class TestBashGuard(unittest.TestCase):
                 self.assertEqual(got, expected, f"deny={f.deny} advise={f.advise}")
                 if needle:
                     self.assertIn(needle, " ".join(f.deny if expected == "deny" else f.advise))
+
+    def test_sbatch_script_berkeleynlp_qos(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "smoke.sbatch"
+            p.write_text("#!/bin/bash\n#SBATCH --partition=berkeleynlp\n#SBATCH --qos=preemptive_high_sewonm\n"
+                         "nvidia-smi\n")
+            f = bg.check(f"sbatch {p.name}", LOGIN, False, d)
+            self.assertTrue(any("berkeleynlp" in x for x in f.deny), f.deny)
+            # the command line overrides the header
+            f = bg.check(f"sbatch --qos=normal {p.name}", LOGIN, False, d)
+            self.assertEqual(f.deny, [])
+            self.assertIn("debugging only", " ".join(f.advise))
 
     def test_sbatch_script_scan_is_advisory(self):
         import tempfile

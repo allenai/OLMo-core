@@ -91,6 +91,9 @@ pipeline — nodes/QOS, the NFS-vs-`/data` rule, env setup, the weka-free traini
 known traps — is documented in `local_cluster.md`. Read it before touching any `*local*.sbatch`
 launcher or debugging a hung/crashed local run.
 
+**berkeleynlp partition = small-scale debugging only, `--qos=normal` only** (2026-10-16; global
+rule in `~/.claude/CLAUDE.md`, hook-enforced). jsteinhardt and Lambda are unaffected.
+
 **`/scratch` IS NFS — it is not a fast local disk.** Both `/accounts` (home, this repo) and
 `/scratch` are shared NFS: `/scratch` writes at roughly 5 MB/s, and importing from an NFS conda env
 costs a ~5–60 s tax per process. The ONLY node-local fast storage is the target node's `/data`
@@ -194,6 +197,13 @@ mechanics: `docs/claude/upstream-olmo-core.md`. Gantry runs the **pushed** commi
 job (`ops register --cluster beaker --job-id <id>`) and check it with `ops status` / `ops stall <id>`.
 
 **Job priority — ALWAYS `urgent`, never lower.** Every Beaker/gantry job (training, eval, data build) must launch at `priority="urgent"` — exactly `urgent`: never `normal`/`high`/`low`, and not `immediate` either. Lower-priority jobs pend behind capacity; `urgent` preempts to get nodes. Set `BeakerLaunchConfig.priority = "urgent"`, pass `--priority urgent` to launchers, or bump a live job with `beaker job update-priority <job-id> urgent`. If you add or edit a launcher, make `urgent` its default.
+
+**minRuntime — ALWAYS set it (default `1h`).** On jupiter, urgent jobs with `minRuntime=0` effectively
+never schedule: on 2026-10-19, ~2,250 urgent 1–7-GPU jobs had scheduled in the last 3 days (median
+wait under a minute) and none of them had `minRuntime=0`, while every pending `0s` job was days old.
+`beaker_ctc_suite.py --min-runtime` and the legacy multirung eval launcher (`BEAKER_MIN_RUNTIME`) default to
+1h; for gantry pass `--min-runtime 1h`, for `BeakerLaunchConfig` set `min_runtime="1h"`. A job stuck
+pending at `0s` must be cancelled and relaunched. Memory: [[beaker-min-runtime]].
 
 **Allocation — ALWAYS unallocated.** Beaker capacity is split into per-budget *allocations*
 (`beaker allocation list ai2/jupiter-cirrascale-2 --budget ai2/oe-other`: 14%/168 slots on

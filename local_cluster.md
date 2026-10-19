@@ -10,17 +10,18 @@ in `recipes/` and `research/<family>/` — local launchers are the `*local*.sbat
 | Node | GPUs | Partition | Notes |
 |---|---|---|---|
 | `hermione` | none | — | Login/head node. 6 cores, ~7.5 GB RAM. Edit + submit only; heavy imports OOM. |
-| `horton` | 8×H200 | `berkeleynlp` | QOS `preemptive_high_sewonm`. |
+| `horton` | 8×H200 | `berkeleynlp` | Debugging only, QOS `normal` (2026-10-16 rule below). |
 | `mooney`, `cubbins`, `sneetches` | 8×H200 each | `jsteinhardt` (`--account=site`) | Main training/eval nodes. All have a fast env on node-local `/data`. |
 | `mcfuzz` | 8×H200 | `jsteinhardt` | Usable but NO `/data/prasann` yet (admin must create) → falls back to slow NFS env. |
 | `lorax` | H200 | `berkeleynlp` | Frequently draining (`sinfo -R`). Rarely used. |
 
 **QOS / preemption (jsteinhardt), lowest → highest:** `normal` < `preemptive` (no GPU cap) <
 `preemptive_high` (8 GPU/user cap). Higher preempts (requeues) lower.
-**On the `berkeleynlp` partition (horton/lorax)** the same rules apply but our high QOS is
-`preemptive_high_sewonm` with a **4 GPU/user cap** — default to it there just like
-`preemptive_high` on jsteinhardt, preempting lower-QOS jobs freely.
-**DIRECTIVE: default to `preemptive_high` and preempt freely** — don't wait for idle GPUs or
+**On the `berkeleynlp` partition (horton/thidwick/lorax): small-scale debugging only, and only at
+`--qos=normal`** (Prasann, 2026-10-16). Never `preemptive` or `preemptive_high_sewonm` there; an
+srun/sbatch with no `--qos` defaults to `preemptive_high_sewonm`, so always pass the flag. The ops
+bash hook denies anything else. Real runs go to jsteinhardt, Lambda or Beaker.
+**DIRECTIVE (jsteinhardt): default to `preemptive_high` and preempt freely** — don't wait for idle GPUs or
 downsize to fit; only jobs at equal/higher QOS (incl. reserved `preemptive_high_<lab>`) are off
 limits. Use plain `preemptive` only when running more than 8 GPUs of sweep arms in parallel (it has
 no cap but can itself get preempted — give those jobs a retry wrapper).

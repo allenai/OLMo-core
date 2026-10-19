@@ -18,6 +18,7 @@ One command from any directory, ~4 s, stdlib python (never use an NFS conda env 
 python3 ~/.claude/skills/where-to-run/compute_avail.py                       # 1/2/4/8 GPUs
 python3 ~/.claude/skills/where-to-run/compute_avail.py -g 8 -g 16 --hours 12 # sizes + H200 runtime
 python3 ~/.claude/skills/where-to-run/compute_avail.py --json                # agents: parse this
+python3 ~/.claude/skills/where-to-run/compute_avail.py --debug -g 1          # small debug job: berkeleynlp allowed (normal)
 python3 ~/.claude/skills/where-to-run/compute_avail.py --html                # + HTML view
 ```
 
@@ -35,7 +36,13 @@ factor*.
 
 Scope is deliberately narrow: only **A100-or-better** GPUs (local RTX/A4000 boxes and Beaker
 L40S/A6000 clusters like neptune are dropped), and only local QOS **≥ `preemptive`** (`normal`
-is never shown — it is preemptible by everything).
+is never shown — it is preemptible by everything), except on berkeleynlp (below).
+
+**berkeleynlp: small-scale debugging only, `--qos=normal` only (Prasann, 2026-10-16).** Never run
+real training/eval work there, and never use `preemptive` / `preemptive_high_sewonm` on it (an
+srun/sbatch with no `--qos` defaults to `preemptive_high_sewonm`). The script shows berkeleynlp only
+at `normal` and recommends it only with `--debug`. The ops bash hook denies any other QOS there.
+jsteinhardt and Lambda are unaffected.
 
 **A100s: check with Prasann before using one.** The script never picks an A100 (local balrog,
 Beaker saturn/prometheus) when an H100/H200/B200 can fit at all, and every A100 pick or
@@ -48,7 +55,7 @@ hesitate. (Preempting `preemptive` holders at `preemptive_high*` is also fine; i
 ## Reading it
 
 - **BEST PLACE PER REQUEST SIZE** — the pick plus two runners-up. The `where` string is directly
-  usable: `berkeleynlp --qos=preemptive_high_sewonm -w lorax` → `#SBATCH --partition / --qos /
+  usable: `jsteinhardt --qos=preemptive_high -w cubbins` → `#SBATCH --partition / --qos /
   --nodelist`. For Beaker it names the cluster (launch urgent from ai2/flex2, as always).
 - Status glyphs: `●` free now · `◐` needs preemption, starts in minutes · `○ ≤X` must wait; X is
   an **upper bound** from the blocking jobs' scheduled end times (slurm jobs usually end early)
@@ -72,8 +79,8 @@ hesitate. (Preempting `preemptive` holders at `preemptive_high*` is also fine; i
 ## Policy it already encodes (don't re-derive)
 
 - A100 options always rank last. Then, ties within 15 min: no preempt-risk > free-now (incl.
-  preempting `normal`) over preempting `preemptive` > jsteinhardt > berkeleynlp > Beaker, then
-  GPU speed — i.e. the job-routing-policy memory.
+  preempting `normal`) over preempting `preemptive` > jsteinhardt > berkeleynlp (only with
+  `--debug`) > Beaker, then GPU speed — i.e. the job-routing-policy memory.
 - Beaker recommendations are **jupiter only** (standing GPU directive). Other clusters show as
   "(info only)"; `--beaker-any` lets them win. Titan/B200 is untested with our image.
 - `rhys_gould`'s jobs are never counted as preemptable; nodes they hold get an "ask first" note —
