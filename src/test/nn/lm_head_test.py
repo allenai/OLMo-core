@@ -29,11 +29,48 @@ def test_lm_head_builder_config():
         LMHeadConfig(name=LMHeadType.normalized, bias=True).build(d_model=64, vocab_size=128)
 
 
+@pytest.mark.parametrize("name", [LMHeadType.default, LMHeadType.normalized])
+@pytest.mark.parametrize("multiplier", [None, 0.0, 1e-3])
+@pytest.mark.parametrize("reduction", ["sum", "mean", "none"])
+def test_lm_head_z_coefficient_and_mask(name, multiplier, reduction):
+    torch.manual_seed(0)
+    head = LMHeadConfig(name=name, bias=False if name == LMHeadType.default else None).build(
+        d_model=8, vocab_size=16
+    )
+    x = torch.randn(1, 3, 8, requires_grad=True)
+    labels = torch.tensor([[1, -100, 2]])
+    output = head(x, labels=labels, loss_reduction=reduction, z_loss_multiplier=multiplier)
+    logits = head(x)
+    assert isinstance(logits, torch.Tensor)
+    expected_ce = torch.nn.functional.cross_entropy(
+        logits.view(-1, 16).float(), labels.view(-1), reduction=reduction
+    )
+    expected_z = logits.float().logsumexp(-1).square().masked_fill(labels == -100, 0.0)
+    if reduction == "none":
+        expected_ce = expected_ce.view(labels.shape)
+    elif reduction == "sum":
+        expected_z = expected_z.sum()
+    else:
+        expected_z = expected_z.sum() / (labels != -100).sum()
+    if multiplier is None:
+        assert output.z_loss is None
+        expected_loss = expected_ce
+    else:
+        expected_z = expected_z * multiplier
+        torch.testing.assert_close(output.z_loss, expected_z)
+        expected_loss = expected_ce + expected_z
+    torch.testing.assert_close(output.loss, expected_loss)
+    actual_grad = torch.autograd.grad(output.loss.sum(), x, retain_graph=True)[0]
+    expected_grad = torch.autograd.grad(expected_loss.sum(), x)[0]
+    torch.testing.assert_close(actual_grad, expected_grad)
+
+
 @requires_gpu
+@pytest.mark.parametrize("z_loss_multiplier", [0.0, 1e-3])
 def test_lm_head_fused_linear_loss(
+    z_loss_multiplier: float,
     d_model: int = 256,
     vocab_size: int = 1024,
-    z_loss_multiplier: float = 1e-3,
     loss_reduction: str = "sum",
 ):
     seed_all(42)

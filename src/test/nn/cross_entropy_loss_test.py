@@ -11,6 +11,27 @@ from olmo_core.testing import requires_multi_gpu, run_distributed_test
 from olmo_core.utils import get_default_device
 
 
+@pytest.mark.parametrize("multiplier", [None, 0.0, 1e-3])
+@pytest.mark.parametrize("reduction", ["sum", "mean", "none"])
+def test_cross_entropy_loss_z_coefficient(multiplier, reduction):
+    logits = torch.zeros(1, 2, 4, requires_grad=True)
+    ce, z = CrossEntropyLoss(reduction=reduction, z_loss_multiplier=multiplier)(
+        logits, torch.tensor([[1, -100]])
+    )
+    if multiplier is None:
+        assert z is None
+        return
+    assert z is not None
+    expected = torch.tensor(4.0).log().square() * multiplier
+    if reduction == "none":
+        torch.testing.assert_close(z, torch.stack([expected, expected * 0]).view(1, 2))
+    else:
+        torch.testing.assert_close(z, expected)
+    (ce + z).sum().backward()
+    assert logits.grad is not None
+    torch.testing.assert_close(logits.grad[:, 1], torch.zeros_like(logits.grad[:, 1]))
+
+
 def compute_loss(
     loss_fn: CrossEntropyLoss,
     logits: torch.Tensor,
