@@ -125,8 +125,8 @@ def test_launch_uses_standard_experiment_command_and_preset(monkeypatch, phase):
     assert launch.follow is False
     secrets = {entry.name: entry.secret for entry in launch.env_secrets}
     assert len(secrets) == len(launch.env_secrets)
-    assert secrets["BEAKER_TOKEN"] == "jasonr_BEAKER_TOKEN"
-    assert secrets["WANDB_API_KEY"] == "jasonr_WANDB_API_KEY"
+    assert secrets["BEAKER_TOKEN"] == "RUSTINS_BEAKER_TOKEN"
+    assert secrets["WANDB_API_KEY"] == "OTHER_WANDB_API_KEY"
     assert launch.aws_config_secret is launch.aws_credentials_secret is None
     assert build_launch.call_args.kwargs["step_timeout"] is None
     assert build_launch.call_args.kwargs["step_soft_timeout"] is None

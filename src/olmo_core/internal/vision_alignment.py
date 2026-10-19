@@ -19,12 +19,7 @@ from olmo_core.distributed.parallel import DataParallelType
 from olmo_core.distributed.utils import barrier, get_local_rank
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.io import is_url, normalize_path, resource_path
-from olmo_core.launch.beaker import (
-    BeakerEnvSecret,
-    BeakerEnvVar,
-    BeakerLaunchConfig,
-    BeakerWekaBucket,
-)
+from olmo_core.launch.beaker import BeakerEnvVar, BeakerLaunchConfig, BeakerWekaBucket
 from olmo_core.launch.beaker_presets import get_preset
 from olmo_core.nn.attention import AttentionConfig
 from olmo_core.nn.attention.kda import KimiDeltaAttentionConfig
@@ -1160,10 +1155,6 @@ def _build_trainer(
 
 _ALIGNMENT_WORKSPACE = "ai2/oe-olmo3p5-mt"
 _ALIGNMENT_BUDGET = "ai2/oe-other"
-_ALIGNMENT_SECRETS = [
-    BeakerEnvSecret(name="BEAKER_TOKEN", secret="jasonr_BEAKER_TOKEN", required=True),
-    BeakerEnvSecret(name="WANDB_API_KEY", secret="jasonr_WANDB_API_KEY", required=True),
-]
 
 
 _STAGE1_V3_POST_SETUP = "pip install -U 'datasets>=4,<6' pypdfium2 h5py"
@@ -1259,11 +1250,7 @@ def _build_launch(
         )
     launch.min_runtime = "8h"
     launch.follow = False
-    launch.env_secrets = [
-        secret
-        for secret in launch.env_secrets
-        if secret.name not in {"BEAKER_TOKEN", "WANDB_API_KEY"}
-    ] + [secret.copy() for secret in _ALIGNMENT_SECRETS]
+    # Beaker and W&B secrets stay the launching user's, as the launch config names them.
     launch.aws_config_secret = None
     launch.aws_credentials_secret = None
     return launch
