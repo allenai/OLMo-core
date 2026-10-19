@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Added `InitMethod.nanochat`, the nanochat initialization based on the spectral condition for feature learning: each weight matrix uses `std = 1/√fan_in · min(1, √(fan_out/fan_in))`, embeddings use `std = 1.0`, and depthwise convolutions use `std = 1/√kernel_size`. It covers attention, KDA, Gated DeltaNet, dense feed-forward, MoE, and OLMoDDP MoE-v2 blocks.
+
 ### Changed
 
 - Raised the minimum supported PyTorch version to 2.10.0. Updated the stable Beaker images to PyTorch 2.10 with CUDA 12.8 and PyTorch 2.11 with CUDA 13.0, and expanded CI coverage to include PyTorch 2.10 and 2.11 with CUDA 12.8 and Docker builds through PyTorch 2.12 with CUDA 13.0.

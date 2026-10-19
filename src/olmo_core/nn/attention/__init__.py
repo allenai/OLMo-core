@@ -1141,10 +1141,28 @@ class Attention(SequenceMixer):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ) -> None:
-        from olmo_core.nn.transformer.init import InitMethod, init_linear
+        from olmo_core.nn.transformer.init import (
+            InitMethod,
+            init_linear,
+            init_linear_nanochat,
+            nanochat_std,
+        )
 
         if self.ssmax_scale is not None:
             nn.init.ones_(self.ssmax_scale)
+
+        if init_method == InitMethod.nanochat:
+            for w in (self.w_q, self.w_k, self.w_v, self.w_g, self.w_out):
+                if w is not None:
+                    init_linear_nanochat(w, generator=generator)
+            if self.sinks is not None:
+                nn.init.normal_(
+                    self.sinks,
+                    mean=0.0,
+                    std=nanochat_std(self.w_out.in_features, self.w_out.out_features),
+                    generator=generator,
+                )
+            return
 
         # Compute std for Q/K/V initialization
         if init_method == InitMethod.fan_in:
@@ -1545,7 +1563,19 @@ class FusedAttention(SequenceMixer):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ) -> None:
-        from olmo_core.nn.transformer.init import InitMethod, init_linear
+        from olmo_core.nn.transformer.init import (
+            InitMethod,
+            init_fused_linear_nanochat,
+            init_linear,
+            init_linear_nanochat,
+        )
+
+        if init_method == InitMethod.nanochat:
+            init_fused_linear_nanochat(
+                self.w_qkv, [self.w_qkv.out_features // 3] * 3, generator=generator
+            )
+            init_linear_nanochat(self.w_out, generator=generator)
+            return
 
         # Compute std for fused QKV initialization
         if init_method == InitMethod.fan_in:
@@ -1901,7 +1931,21 @@ class FusedAttentionV2(Attention):
         std: float = 0.02,
         generator: Optional[torch.Generator] = None,
     ) -> None:
-        from olmo_core.nn.transformer.init import InitMethod, init_linear
+        from olmo_core.nn.transformer.init import (
+            InitMethod,
+            init_fused_linear_nanochat,
+            init_linear,
+            init_linear_nanochat,
+        )
+
+        if init_method == InitMethod.nanochat:
+            init_fused_linear_nanochat(
+                self.w_qkv, (self.q_dim, self.kv_dim, self.kv_dim), generator=generator
+            )
+            for w in (self.w_g, self.w_out):
+                if w is not None:
+                    init_linear_nanochat(w, generator=generator)
+            return
 
         if init_method == InitMethod.fan_in:
             std = self.w_qkv.in_features**-0.5
