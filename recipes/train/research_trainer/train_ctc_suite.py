@@ -1997,10 +1997,13 @@ def parse_args() -> argparse.Namespace:
             )
         if opts.st_keep_token_k <= 0:
             ap.error(f"--st-keep-token-rule {opts.st_keep_token_rule} needs --st-keep-token-k > 0.")
-        if opts.st_header_extra_tokens > 0:
+        # first_last / rule ON TOP of a fixed real prefix is the devloss grid's gold_fl20p8
+        # construction (the prefix keeps the `Document [N]:` id; the K budget then applies to the
+        # rest of the body). Only `first` duplicates the prefix flag.
+        if opts.st_header_extra_tokens > 0 and opts.st_keep_token_rule == "first":
             ap.error(
-                "--st-keep-token-rule and --st-header-extra-tokens both choose real body tokens; "
-                "pass only one (--st-keep-token-rule first IS --st-header-extra-tokens)."
+                "--st-keep-token-rule first IS --st-header-extra-tokens; pass only one "
+                "(first_last / rule may be combined with a --st-header-extra-tokens prefix)."
             )
         if opts.st_keep_token_rule == "rule":
             from olmo_core.nn.pooled_soft_token import parse_keep_token_weights

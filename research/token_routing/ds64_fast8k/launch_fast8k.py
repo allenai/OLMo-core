@@ -90,7 +90,8 @@ NODES = 1
 #: ~1.1-1.4x its nominal length once the markers and the query are added).
 SEQ_LEN = int(os.environ.get("F8K_SEQ_LEN", "12288"))
 SOFT_BACKEND = os.environ.get("F8K_SOFT_BACKEND", "flash_2")
-CLUSTER = os.environ.get("F8K_CLUSTER", "ai2/ceres-cirrascale,ai2/saturn-cirrascale,ai2/jupiter-cirrascale-2")
+# jupiter only (2026-10-19): saturn is A100 (ask Prasann first), and Beaker GPU work goes to jupiter.
+CLUSTER = os.environ.get("F8K_CLUSTER", "ai2/jupiter-cirrascale-2")
 EVAL_CLUSTER = os.environ.get("F8K_EVAL_CLUSTER", CLUSTER)
 WANDB_GROUP = os.environ.get("F8K_WANDB_GROUP", f"f8k-q35-{SCALE}")
 
@@ -156,6 +157,12 @@ ARM_EXTRA.update({
     "sc5": f"--st-keep-mode smallcat_keep --st-keep-smallcat 5 --st-keep-decoy-cats 1 {_CAT}",
     "gw3": f"--st-keep-mode gold_plus_wholecats --st-keep-cats 3 {_CAT}",
     "gw5": f"--st-keep-mode gold_plus_wholecats --st-keep-cats 5 {_CAT}",
+    # The devloss grid's task-general rule `gold_fl20p8_noslot` as a TRAINING construction
+    # (2026-10-19, flopdrop final-figures plan, LR ablation): gold docs whole, an 8-token real prefix
+    # per document (keeps the `Document [N]:` id), first_last 20% of the rest of every body, and the
+    # pooled remainder DROPPED (no slot). Same model path and config keys as the grid's scheme.
+    "gfl20p8ns": ("--st-keep-mode gold_plus_random --st-keep-frac 0.0 --st-header-extra-tokens 8 "
+                  "--st-keep-token-rule first_last --st-keep-token-k 0.2 --st-drop-slots"),
 })
 ARM_MICRO = {}          # every arm at micro 2: the FLOP audit (09-15 10:30) requires identical
 DEFAULT_MICRO = 2       # gpus/micro across any pair that will be compared at matched FLOPs.
@@ -199,14 +206,26 @@ PARITY_ARMS = {"dense": ["cc00"], "cc00": ["cc00"], "kvgb50": ["kvgb50", "cc00"]
                "sc3": ["cc00"], "sc5": ["cc00"], "gw3": ["cc00"], "gw5": ["cc00"],
                # the keep-token rule selects WITHIN a document, which is not one of
                # outlier_slot_probe's conditions either -- score against the common reference only
-               "rk08": ["cc00"], "rk16": ["cc00"]}
+               "rk08": ["cc00"], "rk16": ["cc00"],
+               # gold-forced + within-document selection: not an outlier_slot_probe condition either
+               "gfl20p8ns": ["cc00"]}
 PARITY_RUNGS = os.environ.get("F8K_PARITY_RUNGS", "8k,32k")
 PARITY_ROWS = os.environ.get("F8K_PARITY_ROWS", "200")
 PARITY_GEN_ROWS = os.environ.get("F8K_PARITY_GEN_ROWS", "32")
 
 
+#: Default LR of every fast2k/fast8k/ds64 run. A run at any other --lr carries an `-lr<value>` tag,
+#: so an LR ablation never collides with (or silently resumes into) the default-LR run.
+DEFAULT_LR = 5e-6
+LR_TAG = ""
+#: Campaign suffix (env F8K_SUFFIX, e.g. "-lra"): gives a campaign fresh run names AND fresh weka
+#: save folders, so it can never auto-resume into an older run's checkpoint. When set, the LR tag is
+#: always added (default LR included), so every run in the campaign is named alike.
+SUFFIX = os.environ.get("F8K_SUFFIX", "")
+
+
 def run_name(task, arm, budget):
-    return f"f8k-{task}-{arm}-{budget}"
+    return f"f8k-{task}-{arm}-{budget}{SUFFIX}{LR_TAG}"
 
 
 def resolve(arm):
@@ -292,7 +311,14 @@ def do_launch(args, mode):
 RUNGS = {"outlier": {"8k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_8192.jsonl",
                      "2k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl"},
          "nq": {"8k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_8192.jsonl",
-                "2k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_2048.jsonl"}}
+                "2k": f"{W}/outlier_lengthmix/eval_rungs/nq/rung_2048.jsonl"},
+         # 2026-10-19 (LR ablation): the ds64 orchestrator's files for the other two tasks.
+         "contradiction": {
+             "8k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl",
+             "2k": f"{W}/_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl"},
+         "oolong": {
+             "8k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx8192_spliteval.jsonl",
+             "2k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx2048_spliteval.jsonl"}}
 TASK_KEY = {"nq": "nq", "outlier": "outlier", "oolong": "oolong", "contradiction": "contra"}
 
 
@@ -419,7 +445,8 @@ def main():
     ap.add_argument("--task", default=TASK)
     ap.add_argument("--arms", default="dense")
     ap.add_argument("--budgets", default=",".join(BUDGETS))
-    ap.add_argument("--lr", type=float, default=5e-6)
+    ap.add_argument("--lr", type=float, default=DEFAULT_LR,
+                    help="peak LR; any non-default value tags run names with -lr<value> (all modes)")
     ap.add_argument("--wandb-group", default=WANDB_GROUP)
     ap.add_argument("--runs", default="", help="eval/parity: comma run names (default = all)")
     ap.add_argument("--parity-arms", default="", help="override the PARITY_ARMS conditions")
@@ -429,6 +456,8 @@ def main():
     ap.add_argument("--force", action="store_true", help="relaunch even if state.json has it")
     ap.add_argument("mode", choices=["launch", "dry_run", "eval", "parity", "status"])
     args = ap.parse_args()
+    global LR_TAG
+    LR_TAG = "" if (args.lr == DEFAULT_LR and not SUFFIX) else f"-lr{args.lr:g}"
     if args.mode in ("launch", "dry_run"):
         do_launch(args, args.mode)
     elif args.mode == "eval":
