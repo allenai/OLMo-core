@@ -25,6 +25,10 @@ def adamw_step(
 ):
     beta1, beta2 = betas
 
+    # A zero multiplier does not suppress NaN/Inf. Select safe gradients before any
+    # moment arithmetic, including squaring (finite gradients can overflow there).
+    grad = torch.where(step_factor != 0, grad, 0.0)
+
     # Perform step weight decay.
     p.mul_(1 - step_factor * (lr * weight_decay))
 
@@ -39,6 +43,8 @@ def adamw_step(
     step_size = lr / bias_correction1
 
     denom = (exp_avg_sq.sqrt() / bias_correction2.sqrt()).add_(eps)
+    # A fresh skipped update with eps=0 would otherwise evaluate 0/0 below.
+    denom.masked_fill_(step_factor == 0, 1.0)
 
     update = -step_size * torch.div(exp_avg, denom)
     update.mul_(step_factor)
@@ -71,19 +77,32 @@ def foreach_adamw_step(
     torch._foreach_mul_(params, 1 - step_factor * (lr * weight_decay))
 
     grads = [g.type_as(ea) for g, ea in zip(grads, exp_avgs)]
+    skipped = step_factor == 0
 
     # Decay the first and second moment running average coefficient.
     # foreach_lerp_ has issues when DTensor is enabled (see https://github.com/pytorch/pytorch/issues/132017).
     # Implement the lerp(a, b, w) = a + w * (b - a) with basic _foreach_mul_/add_ ops instead:
     w1 = step_factor * (1 - beta1)
     torch._foreach_mul_(exp_avgs, 1.0 - w1)
-    torch._foreach_add_(exp_avgs, torch._foreach_mul(grads, w1))
-
-    grad_squares = torch._foreach_mul(grads, grads)
+    weighted_grads = torch._foreach_mul(grads, w1)
+    # Sanitize the existing scratch buffers in place. Keeping a separate masked
+    # gradient list would retain another full gradient shard on accepted steps too.
+    # A late multiplication by zero alone cannot suppress NaN/Inf.
+    for weighted_grad in weighted_grads:
+        weighted_grad.masked_fill_(skipped, 0.0)
+    torch._foreach_add_(exp_avgs, weighted_grads)
+    del weighted_grad, weighted_grads
 
     w2 = step_factor * (1 - beta2)
     torch._foreach_mul_(exp_avg_sqs, 1.0 - w2)
-    torch._foreach_add_(exp_avg_sqs, torch._foreach_mul(grad_squares, w2))
+    grad_squares = torch._foreach_mul(grads, grads)
+    for grad_square in grad_squares:
+        # Even a finite gradient can overflow when squared. Clear rejected values
+        # before weighting/accumulation, without modifying the original gradients.
+        grad_square.masked_fill_(skipped, 0.0)
+    torch._foreach_mul_(grad_squares, w2)
+    torch._foreach_add_(exp_avg_sqs, grad_squares)
+    del grad_square, grad_squares
 
     steps_t = torch.stack(steps)
     bias_corrections1 = 1 - torch.pow(beta1, steps_t + 1)
@@ -94,6 +113,8 @@ def foreach_adamw_step(
     denoms = torch._foreach_sqrt(exp_avg_sqs)
     torch._foreach_div_(denoms, bias_corrections2.sqrt().unbind())
     torch._foreach_add_(denoms, eps)
+    for denom in denoms:
+        denom.masked_fill_(skipped, 1.0)
 
     updates = torch._foreach_div(exp_avgs, denoms)
     torch._foreach_mul_(updates, (-step_factor * step_sizes).unbind())

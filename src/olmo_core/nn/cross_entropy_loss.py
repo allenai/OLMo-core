@@ -54,7 +54,9 @@ class _CELossFnWrapper(nn.Module):
             ignore_index=self.ignore_index,
             reduction=self.reduction,
             compute_z_loss=self.z_loss_multiplier is not None,
-            z_loss_multiplier=self.z_loss_multiplier or 1e-4,
+            z_loss_multiplier=self.z_loss_multiplier
+            if self.z_loss_multiplier is not None
+            else 1e-4,
         )
 
         if self.reduction == "none":

@@ -3,7 +3,28 @@ import torch
 from torch import nn
 
 from olmo_core.optim import SkipStepAdamWConfig
+from olmo_core.optim.adamw import SkipStepAdamW
 from olmo_core.testing import DEVICES
+
+
+@pytest.mark.parametrize("metric", ["latest_loss", "latest_grad_norm"])
+@pytest.mark.parametrize("bad_value", [float("nan"), float("inf"), -float("inf")])
+def test_skip_step_nonfinite_warmup_and_empty_finite_history(metric, bad_value):
+    optim = SkipStepAdamW([nn.Parameter(torch.ones(1))], rolling_interval_length=2)
+    setattr(optim, metric, torch.tensor(bad_value))
+    assert optim.get_step_factor().item() == 0.0
+    # No finite history yet: do not use undefined std/mean to reject the next batch.
+    setattr(optim, metric, torch.tensor(1.0))
+    assert optim.get_step_factor().item() == 1.0
+
+
+def test_skip_step_large_finite_history():
+    optim = SkipStepAdamW([nn.Parameter(torch.ones(1))], rolling_interval_length=4)
+    for value in (1e20, 2e20, 3e20):
+        optim.latest_loss = torch.tensor(value)
+    assert optim.get_step_factor().item() == 1.0
+    optim.latest_loss = torch.tensor(1e30)
+    assert optim.get_step_factor().item() == 0.0
 
 
 class MyModel(nn.Module):

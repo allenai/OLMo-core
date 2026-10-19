@@ -258,7 +258,7 @@ class LMHead(nn.Module):
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
+                z_loss_multiplier=z_loss_multiplier if z_loss_multiplier is not None else 1e-4,
             )
             if z_loss is not None:
                 loss = ce_loss + z_loss
@@ -274,7 +274,7 @@ class LMHead(nn.Module):
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
+                z_loss_multiplier=z_loss_multiplier if z_loss_multiplier is not None else 1e-4,
                 accum_dtype=torch.float32,  # https://github.com/linkedin/Liger-Kernel/issues/512
             )
             if z_loss is not None:
@@ -504,7 +504,7 @@ class NormalizedLMHead(LMHead):
                 ignore_index=ignore_index,
                 reduction=loss_reduction,
                 compute_z_loss=z_loss_multiplier is not None,
-                z_loss_multiplier=z_loss_multiplier or 1e-4,
+                z_loss_multiplier=z_loss_multiplier if z_loss_multiplier is not None else 1e-4,
             )
             if z_loss is not None:
                 loss = ce_loss + z_loss
