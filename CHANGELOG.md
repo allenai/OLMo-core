@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Preserve SkipStepAdamW parameters and moment buffers on skipped nonfinite/overflowing gradients, reject nonfinite loss/gradient norms during warmup, and exclude nonfinite history from future skip decisions.
+- Reuse foreach AdamW scratch buffers for skipped-gradient sanitization instead of retaining a second gradient set; release moment-update scratch before allocating denominators and updates.
 - Mask ignored labels in unreduced z-loss and preserve an explicitly zero z-loss coefficient in loss wrappers and LM heads.
 - Build Torch attention masks after Ulysses gathers the full sequence, fixing sliding-window shape errors and causal-mask broadcasting for single-token shards.
 

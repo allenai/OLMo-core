@@ -1,4 +1,5 @@
 import copy
+import json
 from itertools import product
 from typing import Optional
 
@@ -12,8 +13,8 @@ from olmo_core.distributed.checkpoint import (
     save_model_and_optim_state,
 )
 from olmo_core.optim import AdamWConfig, OptimGroupOverride, SkipStepAdamWConfig
-from olmo_core.optim.adamw import SkipStepAdamW
-from olmo_core.testing import DEVICES
+from olmo_core.optim.adamw import SkipStepAdamW, foreach_adamw_step
+from olmo_core.testing import DEVICES, requires_gpu
 from olmo_core.utils import cuda_sync_debug_mode
 
 
@@ -161,9 +162,11 @@ def test_skip_step_adamw_preserves_state_and_recovers(foreach, bad_value, accept
         optim.latest_loss = torch.tensor(bad_value)
     optim.latest_grad_norm = torch.tensor(bad_value)
     p.grad = torch.full_like(p, bad_value)
+    grad_before = p.grad.clone()
     optim.step()
     assert optim.step_skipped.item() == 1.0
     torch.testing.assert_close(p, param_before, rtol=0, atol=0)
+    torch.testing.assert_close(p.grad, grad_before, rtol=0, atol=0, equal_nan=True)
     for key, value in state_before.items():
         torch.testing.assert_close(optim.state[p][key], value, rtol=0, atol=0)
     optim.latest_loss = torch.tensor(1.0)
@@ -176,6 +179,77 @@ def test_skip_step_adamw_preserves_state_and_recovers(foreach, bad_value, accept
     torch.testing.assert_close(p, ref_p)
     for key in ("exp_avg", "exp_avg_sq", "step"):
         torch.testing.assert_close(optim.state[p][key], ref.state[ref_p][key])
+
+
+@pytest.mark.parametrize("step_factor", [0.0, 1.0])
+def test_foreach_adamw_temporary_memory(tmp_path, step_factor):
+    """Bound live scratch storage without depending on a particular foreach implementation."""
+    from torch.profiler import ProfilerActivity, profile
+
+    params = [torch.ones(16384) for _ in range(8)]
+    grads = [torch.full_like(p, 1e20 if step_factor == 0 else 1.0) for p in params]
+    exp_avgs = [torch.ones_like(p) for p in params]
+    exp_avg_sqs = [torch.ones_like(p) for p in params]
+    steps = [torch.tensor(1.0) for _ in params]
+    factor = torch.tensor(step_factor)
+    gradient_bytes = sum(g.numel() * g.element_size() for g in grads)
+    with profile(
+        activities=[ProfilerActivity.CPU], profile_memory=True, record_shapes=True, with_stack=True
+    ) as prof:
+        foreach_adamw_step(
+            params,
+            grads,
+            exp_avgs,
+            exp_avg_sqs,
+            steps,
+            lr=1e-3,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=0.01,
+            step_factor=factor,
+        )
+    timeline = tmp_path / "memory.json"
+    prof.export_memory_timeline(str(timeline), device="cpu")
+    _, sizes = json.loads(timeline.read_text())
+    # The first row contains pre-existing inputs/state. Allow two full scratch sets
+    # (denominators + updates) and small scalar/list bookkeeping, but no retained
+    # masked-gradient set. This catches the previous implementation on accepted steps.
+    totals = [sum(row) for row in sizes]
+    peak_extra = max(totals) - totals[0]
+    assert peak_extra <= 2 * gradient_bytes + 4096
+    assert all(torch.isfinite(p).all() for p in params)
+
+
+@requires_gpu
+@pytest.mark.parametrize("step_factor", [0.0, 1.0])
+def test_foreach_adamw_cuda_temporary_memory(step_factor):
+    params = [torch.ones(65536, device="cuda") for _ in range(8)]
+    grads = [torch.full_like(p, 1e20 if step_factor == 0 else 1.0) for p in params]
+    exp_avgs = [torch.ones_like(p) for p in params]
+    exp_avg_sqs = [torch.ones_like(p) for p in params]
+    steps = [torch.tensor(1.0, device="cuda") for _ in params]
+    factor = torch.tensor(step_factor, device="cuda")
+    gradient_bytes = sum(g.numel() * g.element_size() for g in grads)
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated()
+    torch.cuda.reset_peak_memory_stats()
+    with cuda_sync_debug_mode(debug_mode="error"):
+        foreach_adamw_step(
+            params,
+            grads,
+            exp_avgs,
+            exp_avg_sqs,
+            steps,
+            lr=1e-3,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            weight_decay=0.01,
+            step_factor=factor,
+        )
+    torch.cuda.synchronize()
+    peak_extra = torch.cuda.max_memory_allocated() - allocated
+    # Allow small CUDA allocation-rounding/scalar overhead, but not another shard.
+    assert peak_extra <= 2 * gradient_bytes + 128 * 1024
 
 
 @pytest.mark.parametrize("device", DEVICES)
