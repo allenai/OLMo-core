@@ -323,24 +323,6 @@ class TorchAttentionBackend(AttentionBackend):
         if kv_cache_manager is not None:
             raise RuntimeError(f"'{self.__class__.__name__}' doesn't support KV caching")
 
-        attn_mask: Optional[torch.Tensor] = None
-        if self.window_size != (-1, -1):
-            attn_mask = self._get_sliding_window_mask(
-                seq_len_q=q.shape[1],
-                seq_len_kv=k.shape[1],
-                device=q.device,
-                window_size=self.window_size,
-            )
-        elif sinks is not None:
-            # The sink path applies softmax manually (see below), so it needs an explicit causal
-            # mask rather than relying on SDPA's ``is_causal``.
-            attn_mask = self._get_sliding_window_mask(
-                seq_len_q=q.shape[1],
-                seq_len_kv=k.shape[1],
-                device=q.device,
-                window_size=(-1, -1),
-            )
-
         if any(
             opt is not None
             for opt in (
@@ -362,6 +344,19 @@ class TorchAttentionBackend(AttentionBackend):
             # [B, T/CP, H, D] -> [B, T, H/CP, D]
             q = all_to_all_single_cp2hp(q, self.cp_pg)
             k, v = all_to_all_cp2hp([k, v], self.cp_pg)
+
+        # Ulysses gathers the full sequence above. Masks must describe that sequence,
+        # not the pre-exchange local shard (a 1x1 local mask would silently broadcast).
+        attn_mask: Optional[torch.Tensor] = None
+        if self.window_size != (-1, -1) or sinks is not None:
+            # The sink path applies softmax manually, so it also needs an explicit
+            # causal mask rather than relying on SDPA's ``is_causal``.
+            attn_mask = self._get_sliding_window_mask(
+                seq_len_q=q.shape[1],
+                seq_len_kv=k.shape[1],
+                device=q.device,
+                window_size=self.window_size,
+            )
 
         # NOTE: PyTorch's SDPA doesn't support GQA, so we have to do this.
         n_rep = self.n_heads // self.n_kv_heads
