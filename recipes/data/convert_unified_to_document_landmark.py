@@ -374,6 +374,14 @@ def main() -> None:
         "the emitted shards, for gold-document gradient masking (olmo_core.nn.attention.gold_grad_mask). "
         "Dense layout only (the landmark repacking breaks the chunk-index == Claim-id-1 alignment).",
     )
+    p.add_argument(
+        "--gold-sidecar-empty-for-missing",
+        action="store_true",
+        help="With --emit-gold-sidecar: write {fingerprint: []} for rows WITHOUT gold_doc_indices "
+        "(e.g. oolong) instead of leaving them out. A row missing from the sidecar is a fingerprint "
+        "miss at train time, which keeps EVERY document real (the row trains uncompressed); an empty "
+        "entry means 'no gold documents', so a gold-keep rule compresses the row like any other.",
+    )
     args = p.parse_args()
 
     if args.emit == "landmark" and args.seq_len % (args.mem_freq + 1) != 0:
@@ -508,6 +516,10 @@ def main() -> None:
             if entry is not None:
                 gold_table[entry[0]] = entry[1]
                 n_gold += 1
+            elif args.gold_sidecar_empty_for_missing:
+                from olmo_core.nn.attention.gold_grad_mask import content_fingerprint
+
+                gold_table[content_fingerprint(ids.tolist())] = []
         tok_buf.append(ids)
         mask_buf.append(mask)
         kept += 1

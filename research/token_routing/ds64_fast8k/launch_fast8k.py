@@ -73,7 +73,10 @@ BUDGETS = ["8M", "16M", "20M"]
 #: rows per budget/slice -- ``compose_fast8k.py`` writes these; the build job prints them and the
 #: shard's ``fast8k_stats.json`` carries the realised ``shard_num_instances``. P1/P2 are the
 #: two-phase arm's DISJOINT windows: 85% then the remaining 15% of the 16M budget.
-EXAMPLES = {"8M": 977, "16M": 1953, "20M": 2441, "P1": 1660, "P2": 293}
+EXAMPLES = {"8M": 977, "16M": 1953, "20M": 2441, "P1": 1660, "P2": 293,
+            "64M": 4 * 1953}  # mt4 = the four 16M task shards merged (merge_tasks.py)
+#: Multi-task shard (task name "mt4"): one training job covers all four tasks; eval runs per task.
+MT4_TASKS = ["contradiction", "nq", "outlier", "oolong"]
 #: 16, not fast2k's 32: an 8k row carries ~4x the tokens of a 2k row, so 16 rows/step is ~141k real
 #: tokens/step -- the same order as fast2k's 32 x 2.2k -- and it keeps the smallest budget at 61
 #: steps rather than 30. Keep GLOBAL_BATCH % (micro * ngpu) == 0.
@@ -161,7 +164,9 @@ ARM_EXTRA.update({
     # (2026-10-19, flopdrop final-figures plan, LR ablation): gold docs whole, an 8-token real prefix
     # per document (keeps the `Document [N]:` id), first_last 20% of the rest of every body, and the
     # pooled remainder DROPPED (no slot). Same model path and config keys as the grid's scheme.
-    "gfl20p8ns": ("--st-keep-mode gold_plus_random --st-keep-frac 0.0 --st-header-extra-tokens 8 "
+    # --st-n-random 0, NOT --st-keep-frac 0.0: the fraction path floors at one random non-gold doc
+    # kept whole (pooled_doc_kv: max(1, round(frac * n_non_gold))); the grid keeps gold only.
+    "gfl20p8ns": ("--st-keep-mode gold_plus_random --st-n-random 0 --st-header-extra-tokens 8 "
                   "--st-keep-token-rule first_last --st-keep-token-k 0.2 --st-drop-slots"),
 })
 ARM_MICRO = {}          # every arm at micro 2: the FLOP audit (09-15 10:30) requires identical
@@ -339,23 +344,30 @@ def do_eval(args):
         if r.get("state") != "DONE" and not args.force:
             print(f"[wait] {name} train={r.get('state')} -- eval deferred")
             continue
-        task = r["task"]
-        files = {task: RUNGS[task]}
-        cmd = [sys.executable, "-u", EVAL_LAUNCHER, name, EVAL_CLUSTER,
-               "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", f"{CKPTS}/{name}",
-               "--query-position", "after", "--cot-mode", "none", "--tokenizer", TOKENIZER,
-               "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
-               # >= the 8k rung's prompt + generation, with headroom: a --max-length BELOW the
-               # prompt truncates it away and the run scores exactly 0.000 (records/ memory
-               # "Goldgrad eval MAXLEN truncation bug"). 20000 covers an 8k-rung outlier row.
-               "--max-length", "20000", "--batch-size", "8",
-               "--dc-rung-files", json.dumps(files), "--dc-rungs", ",".join(RUNGS[task])]
-        rc, out = sh(cmd)
-        ex = parse_id(out)
-        _log(name, "eval", out)
-        st["evals"][name] = {"ex": ex, "state": "S" if ex else "LAUNCH-FAILED"}
-        save_state(st)
-        print(f"eval {name} -> {ex or 'FAILED: ' + out[-300:]}", flush=True)
+        # A multi-task (mt4) checkpoint is scored once PER TASK, as `<run>-ev<task>`.
+        tasks = MT4_TASKS if r["task"] == "mt4" else [r["task"]]
+        for task in tasks:
+            ename = f"{name}-ev{task}" if r["task"] == "mt4" else name
+            if ename != name and st["evals"].get(ename, {}).get("ex") and not args.force:
+                print(f"[skip] eval {ename} already launched ({st['evals'][ename]['ex']})")
+                continue
+            files = {task: RUNGS[task]}
+            cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, EVAL_CLUSTER,
+                   "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", f"{CKPTS}/{name}",
+                   "--query-position", "after", "--cot-mode", "none", "--tokenizer", TOKENIZER,
+                   "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
+                   # >= the 8k rung's prompt + generation, with headroom: a --max-length BELOW the
+                   # prompt truncates it away and the run scores exactly 0.000 (records/ memory
+                   # "Goldgrad eval MAXLEN truncation bug"). 20000 covers an 8k-rung outlier row.
+                   "--max-length", "20000", "--batch-size", "8",
+                   "--dc-rung-files", json.dumps(files), "--dc-rungs", ",".join(RUNGS[task])]
+            rc, out = sh(cmd)
+            ex = parse_id(out)
+            _log(ename, "eval", out)
+            st["evals"][ename] = {"ex": ex, "state": "S" if ex else "LAUNCH-FAILED", "train_run": name,
+                                  "task": task}
+            save_state(st)
+            print(f"eval {ename} -> {ex or 'FAILED: ' + out[-300:]}", flush=True)
 
 
 def do_parity(args):

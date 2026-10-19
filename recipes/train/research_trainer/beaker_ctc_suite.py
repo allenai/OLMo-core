@@ -172,6 +172,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--wandb-group", default=None, help="default: ctc-suite-<task>")
     ap.add_argument("--priority", default="urgent", help="ALWAYS urgent per project directive")
     ap.add_argument(
+        "--min-runtime",
+        default="1h",
+        help="Beaker minRuntime (guaranteed runtime before preemption). Default 1h: on jupiter, urgent "
+        "jobs with minRuntime=0 effectively never schedule (2026-10-19: 0 of ~2,250 urgent 1-7-GPU "
+        "jobs scheduled in 3 days had minRuntime=0; every pending 0s job was days old). Pass '0' only "
+        "to opt back into always-preemptible.",
+    )
+    ap.add_argument(
         "--no-follow",
         dest="follow",
         action="store_false",
@@ -388,6 +396,7 @@ def main() -> None:
         num_gpus=opts.num_gpus,
     )
     launch_config.priority = opts.priority
+    launch_config.min_runtime = None if opts.min_runtime in ("", "0", "0s") else opts.min_runtime
     launch_config.allow_dirty = opts.allow_dirty
     # Doc-chunked attention's FlexAttention/eager mask path needs headroom beyond what the default
     # caching allocator leaves reachable at 40960 tokens (same fragmentation fix as the proven

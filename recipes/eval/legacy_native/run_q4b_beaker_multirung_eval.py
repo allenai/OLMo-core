@@ -37,6 +37,7 @@ Usage::
 """
 
 import argparse
+import os
 import re
 import shlex
 import sys
@@ -190,6 +191,11 @@ def build_eval_launch_config(
     launch_config.torchrun = False  # the runner issues its own torchrun(s)
     launch_config.allow_dirty = True  # ship the (uncommitted) launcher via an ephemeral ref
     launch_config.priority = priority
+    # Beaker minRuntime (2026-10-19): on jupiter, urgent jobs with minRuntime=0 effectively never
+    # schedule (0 of ~2,250 urgent 1-7-GPU jobs scheduled in 3 days had it). Override with
+    # BEAKER_MIN_RUNTIME (empty or "0" = always-preemptible).
+    _mr = os.environ.get("BEAKER_MIN_RUNTIME", "1h")
+    launch_config.min_runtime = None if _mr in ("", "0", "0s") else _mr
     launch_config.step_soft_timeout = (
         None  # we submit with follow=False (don't block on many evals);
     )

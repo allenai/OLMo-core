@@ -36,7 +36,8 @@ def main() -> None:
     s = G.SCHEMES["gold_fl20p8_noslot"]
     checks = {
         "gold kept (gold_plus_random)": (o.st_keep_mode == "gold_plus_random") == (s["keep"] == "gold"),
-        "no random extra docs": o.st_keep_frac == s["frac"] == 0.0,
+        # gold only: n_random 0 and no fraction (the fraction path floors at one extra doc)
+        "no random extra docs": o.st_keep_frac is None and o.st_n_random == 0 and s["frac"] == 0.0,
         "not gold-blind": not o.st_gold_blind,
         "8-token prefix": o.st_header_extra_tokens == s["extra"] == 8,
         "first_last rule": o.st_keep_token_rule == s["rule"] == "first_last",
