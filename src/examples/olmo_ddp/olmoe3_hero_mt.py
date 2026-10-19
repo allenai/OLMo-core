@@ -104,7 +104,9 @@ class MTAudit(hero.HeroAudit):
             assert self.trainer.data_loader.tokens_processed == 0
             current = hero.state_sample(self.trainer)
             keys = {
-                k for k in current["tensors"] if k.startswith("model_param/") or k.endswith(".main")
+                k
+                for k in current["tensors"]
+                if k.startswith("model_param/") or k.endswith(".main")
             }
             keys.update(self.trainer.train_module._persistent_model_buffer_state_dict())
             halved = verify_halved_transfer(self.trainer, r.source, current, keys)
