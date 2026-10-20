@@ -53,8 +53,10 @@ LROOT=/accounts/projects/sewonm/prasann/ctc_suite
 REPO=$LROOT/OLMo-core
 NGPU="${NGPU:-8}"
 TASK="${TASK:?set TASK=<suite task name> (e.g. contradiction)}"
-DATA_SRC="${DATA_SRC:?set DATA_SRC=<shard dir NAME under $LROOT/data, e.g. contradiction_n20_docdense_nocot_qwen35>}"
-VARIANT="${VARIANT:?set VARIANT=full|chunked|chunked-mix}"
+# DATA_DIR (absolute, e.g. node-local /tmp/prasann/...) overrides DATA_SRC -- Lambda /accounts is often at quota.
+[ -n "${DATA_DIR:-}" ] || DATA_SRC="${DATA_SRC:?set DATA_SRC=<shard dir NAME under $LROOT/data> or DATA_DIR=<abs shard dir>}"
+VARIANT="${VARIANT:?set VARIANT=full|chunked|chunked-mix|softtoken|...}"
+EXTRA="${EXTRA:-}"   # extra train_ctc_suite flags, expanded unquoted (e.g. the --st-* token-drop flags)
 SCALE="${SCALE:-0.8b}"
 SEQ_LEN="${SEQ_LEN:-2048}"
 EPOCHS="${EPOCHS:-1}"
@@ -67,7 +69,7 @@ SEED="${SEED:-0}"
 # 77.7GB allocated -- 0.8B's default shard_degree=1/no-AC only fits 141GB H200). Force full AC +
 # FSDP param sharding on lambda. Empty -> trainer default (auto).
 ACT_CKPT="${ACT_CKPT:-full}"              # full | none | auto
-SHARD_DEGREE="${SHARD_DEGREE:-8}"         # FSDP shard_degree across the 8 A100s
+SHARD_DEGREE="${SHARD_DEGREE:-$NGPU}"     # FSDP shard_degree = the GPUs this job holds
 ATTN_BACKEND="${ATTN_BACKEND:-flash_2}"   # A100 = sm80, flash_2 verified importable + supported
 RUN="${RUN:-ctc-${TASK}-${VARIANT}-${SCALE}-lambda}"
 WANDB_GROUP="${WANDB_GROUP:-ctc-suite-${TASK}}"
@@ -115,7 +117,7 @@ fi
 # eval to the training host (log banner prints HOST). Data is READ-only from NFS, doesn't grow quota.
 SAVE_ROOT="${SAVE_ROOT:-$LROOT/ckpts}"
 WORK_ROOT="${WORK_ROOT:-$LROOT}"
-DATA_LOCAL="$LROOT/data/$DATA_SRC"
+DATA_LOCAL="${DATA_DIR:-$LROOT/data/$DATA_SRC}"
 [ -f "$DATA_LOCAL/metadata.json" ] || { echo "FATAL: $DATA_LOCAL/metadata.json missing -- stage the shard first"; exit 3; }
 WORK_LOCAL=$WORK_ROOT/cache-$SLURM_JOB_ID
 mkdir -p "$WORK_LOCAL"
@@ -139,5 +141,5 @@ MASTER_PORT=$((29000 + RANDOM % 1000))
   ${ACT_CKPT:+--activation-checkpointing "$ACT_CKPT"} \
   ${SHARD_DEGREE:+--shard-degree "$SHARD_DEGREE"} \
   --save-checkpoint --no-compile \
-  $MAXARG
+  $MAXARG $EXTRA
 echo "=== DONE $(date '+%F %T')  rc=$? ==="

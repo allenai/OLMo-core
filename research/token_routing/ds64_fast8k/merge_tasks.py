@@ -22,11 +22,42 @@ MUST_AGREE = ("marker_set", "doc_start_id", "doc_end_id", "query_position")
 SUMMED = ("num_instances", "num_tokens", "num_loss_tokens", "num_dropped")
 
 
+def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask):
+    """First ``n_rows`` rows of a source (all parts concatenated), written as one part each."""
+    import numpy as np
+
+    # converter parts are RAW `ndarray.tofile` dumps (no .npy header): dtype comes from metadata.json
+    tok = np.concatenate([np.fromfile(t, dtype=meta.get("dtype", "uint32")) for t in toks])
+    msk = np.concatenate([np.fromfile(m, dtype=meta.get("mask_dtype", "bool")) for m in masks])
+    if tok.shape != msk.shape:
+        raise SystemExit(f"token/mask length mismatch {tok.shape} vs {msk.shape}")
+    want = int(meta["num_instances"])
+    eos = None
+    for cand in (248044, 248046, 151643, 151645):  # Qwen3.5 / Qwen3 endoftext, im_end
+        if int((tok == cand).sum()) == want:
+            eos = cand
+            break
+    if eos is None:
+        raise SystemExit(f"no EOS candidate occurs exactly num_instances={want} times; refusing to split")
+    ends = np.flatnonzero(tok == eos)
+    if n_rows > len(ends):
+        raise SystemExit(f"--rows-per-src {n_rows} > {len(ends)} rows")
+    cut = int(ends[n_rows - 1]) + 1
+    np.ascontiguousarray(tok[:cut]).tofile(dst_tok)
+    np.ascontiguousarray(msk[:cut]).tofile(dst_mask)
+    lens = np.diff(np.concatenate([[-1], ends[:n_rows]]))
+    return {"num_instances": n_rows, "num_tokens": cut, "num_loss_tokens": int(np.asarray(msk[:cut]).sum()),
+            "max_example_len": int(lens.max()), "min_example_len": int(lens.min()), "subset_eos_id": eos}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--src", nargs="+", required=True)
     ap.add_argument("--name", default="mt4", help="task name written to metadata.json")
+    ap.add_argument("--rows-per-src", type=int, default=0,
+                    help="keep only the first N rows of each source (a small screening subset); rows are "
+                    "split at the EOS id, which must occur exactly num_instances times per source")
     a = ap.parse_args()
     if os.path.exists(os.path.join(a.out, "metadata.json")):
         raise SystemExit(f"{a.out} already has metadata.json; refusing to overwrite")
@@ -42,8 +73,16 @@ def main() -> None:
         for t, m in zip(toks, masks):
             if t.rsplit("_", 1)[-1] != m.rsplit("_", 1)[-1]:
                 raise SystemExit(f"unaligned parts {t} / {m}")
-            shutil.copy2(t, os.path.join(a.out, f"token_ids_part_t{i}_{os.path.basename(t)[len('token_ids_part_'):]}"))
-            shutil.copy2(m, os.path.join(a.out, f"labels_mask_t{i}_{os.path.basename(m)[len('labels_mask_'):]}"))
+        dt = os.path.join(a.out, f"token_ids_part_t{i}_000.npy")
+        dm = os.path.join(a.out, f"labels_mask_t{i}_000.npy")
+        if a.rows_per_src:
+            meta = dict(meta)
+            meta.update(_subset(toks, masks, meta, a.rows_per_src, dt, dm))
+        else:
+            for k, (t, m) in enumerate(zip(toks, masks)):
+                shutil.copy2(t, dt.replace("_000.npy", f"_{k:03d}.npy"))
+                shutil.copy2(m, dm.replace("_000.npy", f"_{k:03d}.npy"))
+        metas[-1] = meta
         side = json.load(open(os.path.join(src, "gold_fingerprints.json")))
         clash = [k for k in side if k in gold and gold[k] != side[k]]
         if clash:
