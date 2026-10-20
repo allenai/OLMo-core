@@ -1094,6 +1094,13 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
     seed_all(12536 + opts.seed)
     model = plan["model_config"].build(init_device="meta")
+    if os.environ.get("OLMO_FLA_LENGTH_AUTOTUNE") != "1":
+        # FLA's GDN kernels key their Triton autotune on a length-derived NB, so every unseen
+        # sequence width costs ~25-50 s of compiles (A100, measured 2026-10-20). Fixed-width dense
+        # rows never notice; data-dependent widths (softtoken compaction) stalled on it.
+        from olmo_core.nn.attention.fla_autotune import freeze_fla_length_autotune
+
+        print(f"[ctc-suite] FLA length autotune frozen on {freeze_fla_length_autotune()} kernel(s)")
     ids = RESERVED_IDS[opts.model_family]
     # Forwards per rank over the whole run = steps x grad-accum: the horizon the ffnmoe schedules
     # (target / exploration / layer curriculum) and the softtoken mixing curriculum anneal over.
@@ -1647,6 +1654,14 @@ def parse_args() -> argparse.Namespace:
         "the compacted row and the kept tokens keep their original positions. Slot-less compaction "
         "has no slot K/V / GDN write to detach (detach flags become no-ops). Motivated by the "
         "eval-side grid, where gold_fl20p8_noslot == gold_fl20p8 on every cell (2026-09-22).",
+    )
+    ap.add_argument(
+        "--st-pad-multiple",
+        type=int,
+        default=256,
+        help="softtoken: round each compacted micro-batch's width up to a multiple of this. The "
+        "width is data-dependent and FLA's GDN kernels re-autotune (~25-50 s on an A100) at every "
+        "width they have not seen -- the 2026-10-20 fast8k Lambda stalls. 1 = exact width.",
     )
     ap.add_argument(
         "--st-slot-mode",

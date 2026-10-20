@@ -362,6 +362,7 @@ class Transformer(nn.Module):
         slot_stop_ids: Optional[Sequence[int]] = None,
         slot_centroid: str = "row",
         cat_keep: Optional[Dict[str, Any]] = None,
+        pad_multiple: int = 1,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -474,6 +475,9 @@ class Transformer(nn.Module):
             on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
             attention K/V and GDN writes are detached, and its own query/FFN path is then a dead
             end. ``False`` = the pre-2026-09-08 behaviour (GDN co-adaptation through slots).
+        :param pad_multiple: Round the compacted width up to a multiple of this. The width is
+            data-dependent and FLA's GDN kernels autotune at every new one (~25-50 s); ``1`` keeps
+            the exact width.
         """
         if self._document_chunk_attention is not None:
             raise OLMoConfigurationError(
@@ -602,6 +606,9 @@ class Transformer(nn.Module):
             # compacted row (pooled_soft_token.compact_pooled_rows). Slot-less training then has
             # nothing to detach: the detach paths see zero slot columns and are no-ops.
             "drop_slots": bool(drop_slots),
+            # Round the compacted width up to a multiple of this (compact_pooled_rows): bounds the
+            # distinct widths FLA's GDN kernels autotune for. 1 = exact width (historical).
+            "pad_multiple": int(pad_multiple),
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -1279,6 +1286,7 @@ class Transformer(nn.Module):
             add_shadows=cfg["aux_match_weight"] > 0.0,
             max_shadows_per_row=cfg["aux_max_shadows"],
             drop_slots=bool(cfg.get("drop_slots", False)),
+            pad_multiple=int(cfg.get("pad_multiple", 1)),
         )
         if pre_free_chunk_ids is not None:
             cfg["_keep_token_calls"] += 1

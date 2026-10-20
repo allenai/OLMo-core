@@ -85,6 +85,26 @@ def test_compact_pooled_rows_basic():
     assert sorted(new_lab[0][new_lab[0] != IGN].tolist()) == sorted(lab[0][lab[0] != IGN].tolist())
 
 
+@pytest.mark.parametrize("drop_slots", [False, True])
+def test_compact_pad_multiple_only_appends_pad(drop_slots):
+    ids = _row(n_docs=3, pad=4)
+    x = torch.tensor([ids])
+    lab = torch.tensor([_shifted_labels(ids)])
+    cids = _chunk_ids(ids)
+    keep = torch.tensor([[True, False, True]])
+    kw = dict(placeholder_id=PLACEHOLDER, pad_token_id=EOS, ignore_index=IGN, drop_slots=drop_slots)
+    ref = compact_pooled_rows(x, lab, cids, keep, **kw)
+    cb = compact_pooled_rows(x, lab, cids, keep, pad_multiple=16, **kw)
+    T2 = ref.input_ids.shape[1]
+    assert cb.input_ids.shape[1] % 16 == 0 and cb.input_ids.shape[1] >= T2
+    assert torch.equal(cb.input_ids[:, :T2], ref.input_ids)
+    assert torch.equal(cb.labels[:, :T2], ref.labels)
+    assert torch.equal(cb.position_ids[:, :T2], ref.position_ids)
+    assert (cb.input_ids[:, T2:] == EOS).all() and (cb.labels[:, T2:] == IGN).all()
+    assert (cb.position_ids[:, T2:] == len(ids) - 1).all()
+    assert torch.equal(cb.soft_cols, ref.soft_cols) and torch.equal(cb.row_lens, ref.row_lens)
+
+
 def test_forward_no_markers_is_identity_path():
     model = _model()
     x = torch.randint(5, 800, (2, 16))

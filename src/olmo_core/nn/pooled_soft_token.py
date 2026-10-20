@@ -144,6 +144,7 @@ def compact_pooled_rows(
     add_shadows: bool = False,
     max_shadows_per_row: int = 8,
     drop_slots: bool = False,
+    pad_multiple: int = 1,
 ) -> CompactedBatch:
     """
     Compact a padded batch by dropping pooled documents' tokens (and original PAD), inserting one
@@ -153,6 +154,11 @@ def compact_pooled_rows(
     from the compacted row (kept tokens still carry their original positions), so the model sees
     the real tokens with nothing standing in for the rest. ``soft_*`` come back empty. The default
     is bit-identical to the historical behaviour.
+
+    ``pad_multiple > 1`` rounds the compacted width ``T'`` up to a multiple of it (extra columns
+    are ordinary right-pad: pad id, position ``T - 1``, no label). The width is data-dependent, and
+    FLA's Gated DeltaNet kernels pay a Triton autotune (~25-50 s on an A100) at every width they
+    have not seen; bucketing bounds the number of distinct widths. ``1`` keeps the exact width.
 
     :param input_ids: ``(B, T)`` token ids.
     :param labels: Optional ``(B, T)`` already-shifted labels aligned with ``input_ids`` (the value
@@ -292,6 +298,8 @@ def compact_pooled_rows(
             rows_lab.append(row_lab)
 
     T2 = max(len(r) for r in rows_ids)
+    if pad_multiple > 1:
+        T2 = -(-T2 // pad_multiple) * pad_multiple
     new_ids = torch.full((B, T2), pad_token_id, dtype=input_ids.dtype, device=device)
     new_pos = torch.full((B, T2), T - 1, dtype=torch.long, device=device)
     new_lab = (
