@@ -475,9 +475,15 @@ class MultimodalLM(nn.Module):
         # environment), so a mismatched OLMO2_FLEX_ATTN can never silently drop the masks.
         from olmo_core.nn.attention.backend import FlexAttentionBackend
 
-        use_flex_attn = any(
-            isinstance(getattr(m, "backend", None), FlexAttentionBackend) for m in self.lm.modules()
-        )
+        backends = [m.backend for m in self.lm.modules() if getattr(m, "backend", None) is not None]
+        use_flex_attn = any(isinstance(b, FlexAttentionBackend) for b in backends)
+        if use_flex_attn and not all(isinstance(b, FlexAttentionBackend) for b in backends):
+            raise OLMoConfigurationError(
+                "MultimodalLM does not support mixing FlexAttention with other attention "
+                "backends across blocks: the flex block mask and the dense or/and masks are "
+                "mutually exclusive, so the non-flex blocks would silently lose packed-example "
+                "isolation and bidirectional image attention."
+            )
         or_mask: Optional[torch.Tensor] = None
         and_mask: Optional[torch.Tensor] = None
         flex_attn_block_mask = None

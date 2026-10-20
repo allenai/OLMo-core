@@ -271,3 +271,16 @@ def test_vision_sdpa_cpu_dropout():
     q = torch.randn(1, 2, 4, 8)
     out = vision_scaled_dot_product_attention(q, q, q, dropout_p=0.1)
     assert out.shape == q.shape
+
+
+def test_mixed_flex_and_torch_backends_are_rejected():
+    from olmo_core.exceptions import OLMoConfigurationError
+    from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+    model = _tiny_multimodal_cfg().build(init_device="cpu").eval()
+    blocks = list(model.lm.blocks.values())
+    assert len(blocks) >= 2
+    blocks[0].attention.backend = FlexAttentionBackend(head_dim=8, n_heads=4)  # type: ignore[assignment]
+    input_ids, images, idx = _make_inputs(batch=1, seq_len=16)
+    with pytest.raises(OLMoConfigurationError, match="mixing FlexAttention"):
+        model(input_ids, images=images, pooled_patches_idx=idx)
