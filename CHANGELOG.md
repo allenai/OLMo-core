@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Preserve the requested index dtype when expanding shuffled chunks, preventing `SamplingInstanceSource` from duplicating and dropping training samples when `sequence_length` is shorter than `max_sequence_length`.
+
 ### Added
 
 - Added Ulysses context parallelism for `KimiDeltaAttention` (`apply_cp`), mirroring the `GatedDeltaNet` all-to-all head/sequence exchange, with the in-kernel gate parameters sliced to each rank's heads.
