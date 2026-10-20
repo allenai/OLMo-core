@@ -28,5 +28,22 @@ for t in a.tasks.split(","):
         parts = sorted(os.path.basename(x) for x in glob.glob(os.path.join(a.root, d, t, "*.npy")))
         print(f"   {d}: rows={m.get('num_instances')} tokens={m.get('num_tokens')} dropped={m.get('num_dropped')} "
               f"max_len={m.get('max_example_len')} parts={len(parts)} first={parts[:1]} last={parts[-1:]}")
+    gold_frac, n = 0.0, 0
+    side = json.load(open(os.path.join(a.root, a.new_dir, t, "gold_fingerprints.json")))
+    vals = list(side.values())[:5000]
+    with open(p) as f:
+        for i, line in enumerate(f):
+            if i >= 5000:
+                break
+            e = json.loads(line)
+            e = e["ex"] if "ex" in e and "documents" not in e else e
+            nd = len(e.get("documents") or [])
+            if i < len(vals) and nd:
+                g = vals[i]
+                k = len({x for y in g for x in (y if isinstance(y, list) else [y])})
+                gold_frac += k / nd
+                n += 1
+    print(f"   sidecar: mean gold docs / docs = {gold_frac / max(1, n):.3f} over {n} rows "
+          f"(dict order == row order: {len(side)} entries)")
     print(f"   per_task rows in jsonl: {sum(1 for _ in open(p))}  mtime jsonl={os.path.getmtime(p):.0f} "
           f"ref meta mtime={os.path.getmtime(os.path.join(a.root, a.ref_dir, t, 'metadata.json')):.0f}")

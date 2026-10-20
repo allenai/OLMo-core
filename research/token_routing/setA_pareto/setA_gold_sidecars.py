@@ -15,8 +15,8 @@ Writes ``<root>/<--out-dir>/<task>/`` plus ``<root>/<--out-dir>/sidecar_report.j
 
 import argparse
 import concurrent.futures as cf
-import filecmp
 import glob
+import hashlib
 import json
 import os
 import subprocess
@@ -41,25 +41,32 @@ def _cmd(root: str, conv: dict, task: dict, out_dir: str, num_proc: int, repo: s
     return cmd
 
 
+def _stream_sha(d: str, prefix: str) -> str:
+    """sha256 of every ``<prefix>*.npy`` part in ``d`` concatenated in sorted order: the converter's
+    part boundaries depend on --num-proc, the row stream does not."""
+    h = hashlib.sha256()
+    for f in sorted(glob.glob(os.path.join(d, f"{prefix}*.npy"))):
+        with open(f, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 24), b""):
+                h.update(chunk)
+    return h.hexdigest()
+
+
 def _one(job):
-    root, conv, task, ref_dir, out_dir, num_proc, repo = job
+    root, conv, task, ref_dir, out_dir, num_proc, repo, reconvert = job
     t0 = time.time()
     rec = {"task": task["name"], "out": out_dir}
-    if not os.path.exists(os.path.join(out_dir, "gold_fingerprints.json")):
+    side_path = os.path.join(out_dir, "gold_fingerprints.json")
+    if reconvert and os.path.exists(side_path):
+        os.remove(side_path)
+    if not os.path.exists(side_path):
         os.makedirs(out_dir, exist_ok=True)
         p = subprocess.run(_cmd(root, conv, task, out_dir, num_proc, repo), capture_output=True, text=True)
         if p.returncode != 0:
             rec.update(status="CONVERT_FAILED", tail=(p.stdout + p.stderr).strip().splitlines()[-5:])
             return rec
-    ref = sorted(os.path.basename(f) for f in glob.glob(os.path.join(ref_dir, "*_part_*.npy"))
-                 + glob.glob(os.path.join(ref_dir, "labels_mask_*.npy")))
-    new = sorted(os.path.basename(f) for f in glob.glob(os.path.join(out_dir, "*_part_*.npy"))
-                 + glob.glob(os.path.join(out_dir, "labels_mask_*.npy")))
-    ref, new = sorted(set(ref)), sorted(set(new))
-    if ref != new:
-        rec.update(status="PART_LIST_DIFFERS", ref=ref, new=new)
-        return rec
-    diff = [f for f in ref if not filecmp.cmp(os.path.join(ref_dir, f), os.path.join(out_dir, f), shallow=False)]
+    diff = [p for p in ("token_ids_", "labels_mask_") if _stream_sha(ref_dir, p) != _stream_sha(out_dir, p)]
+    ref = glob.glob(os.path.join(ref_dir, "*.npy"))
     m_ref = json.load(open(os.path.join(ref_dir, "metadata.json")))
     m_new = json.load(open(os.path.join(out_dir, "metadata.json")))
     side = json.load(open(os.path.join(out_dir, "gold_fingerprints.json")))
@@ -67,7 +74,7 @@ def _one(job):
     nonempty = sum(1 for v in side.values() if v)
     rec.update(
         status="OK" if not diff and m_ref["num_instances"] == n_rows else "BYTES_DIFFER",
-        parts=len(ref), differing_parts=diff, rows=n_rows, rows_ref=m_ref["num_instances"],
+        parts=len(ref), differing_streams=diff, rows=n_rows, rows_ref=m_ref["num_instances"],
         sidecar_entries=len(side), sidecar_nonempty=nonempty,
         # entries < rows only if two rows share identical content (one fingerprint)
         rows_without_entry=n_rows - len(side), seconds=round(time.time() - t0),
@@ -81,6 +88,7 @@ def main() -> None:
     ap.add_argument("--ref-dir", default="", help="shipped shard dir name (default: manifest shards_dir)")
     ap.add_argument("--out-dir", default="", help="new shard dir name (default: <ref-dir>_gold)")
     ap.add_argument("--tasks", default="", help="comma list; default every task with rows")
+    ap.add_argument("--reconvert", default="", help="comma list of tasks whose sidecar is rebuilt")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--num-proc", type=int, default=4, help="converter workers per task")
     ap.add_argument("--repo", default=os.path.abspath(os.path.join(os.path.dirname(__file__), *[os.pardir] * 3)))
@@ -94,7 +102,8 @@ def main() -> None:
     roster = [t for t in man["roster"] if man["per_task"].get(t["name"], {}).get("rows")
               and (want is None or t["name"] in want)]
     jobs = [(a.root, conv, t, os.path.join(a.root, ref_name, t["name"]),
-             os.path.join(a.root, out_name, t["name"]), a.num_proc, a.repo) for t in roster]
+             os.path.join(a.root, out_name, t["name"]), a.num_proc, a.repo,
+             t["name"] in set(a.reconvert.split(","))) for t in roster]
     print(f"{len(jobs)} tasks: {[t['name'] for t in roster]} -> {out_name}", flush=True)
     t0, recs = time.time(), []
     with cf.ProcessPoolExecutor(max_workers=a.jobs) as pool:

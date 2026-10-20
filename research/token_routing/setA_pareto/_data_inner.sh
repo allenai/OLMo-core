@@ -16,18 +16,20 @@ merge() {  # merge <set root> <shard dir name> <out name>
 }
 case "$MODE" in
 gold)
-  ROOT=$SETS/setA_max20_evaliid
+  # seed 42 = the shipped setA (ref = shards_qwen35_256k); another seed = that seed's expansion build
+  # (expand mode below), whose own shards are the reference. Output setA32k_s<seed>g.
+  if [ "$SEED" = 42 ]; then ROOT=$SETS/setA_max20_evaliid; else ROOT=$SETS/setA_seed$SEED/setA_max20_evaliid; fi
   # setA's manifest predates the shards_dir field, so name both dirs explicitly (the shipped shards
   # are shards_qwen35_256k; the first run of this job wrote its conversions to shards_qwen3_5_gold,
   # which the script reuses rather than re-tokenizing)
   $PYB research/token_routing/setA_pareto/setA_gold_sidecars.py --root $ROOT --jobs 11 --num-proc 3 \
-    --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold
+    --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold --reconvert qdmatch_nq
   rc=$?
   $PYB research/token_routing/setA_pareto/inspect_rows.py --root $ROOT --new-dir shards_qwen3_5_gold \
-    --ref-dir shards_qwen35_256k --tasks qdmatch_nq,reorder,oolong,rerank,nq
-  cp $ROOT/shards_qwen3_5_gold/sidecar_report.json $OUT/reports/sidecar_report_s42.json 2>/dev/null
+    --ref-dir shards_qwen35_256k --tasks nq,hotpotqa,qdmatch_nq,outlier,oolong,contradiction,xabsence,reorder,rerank,strmatch,grouping
+  cp $ROOT/shards_qwen3_5_gold/sidecar_report.json $OUT/reports/sidecar_report_s$SEED.json 2>/dev/null
   if [ $rc -ne 0 ]; then echo "!!! sidecar check failed (rc=$rc): tokens differ from the shipped shards; not merging"; exit 1; fi
-  merge $ROOT shards_qwen3_5_gold setA32k_s42 || exit 1
+  merge $ROOT shards_qwen3_5_gold setA32k_s${SEED}g || exit 1
   ;;
 expand)
   POOLS=""
@@ -51,7 +53,7 @@ expand)
   cp $ROOT/manifest.json $OUT/reports/manifest_s$SEED.json
   $PYB research/token_routing/setA_pareto/expansion_overlap.py --new $ROOT --ref $SETS/setA_max20_evaliid \
     --buckets 2k 4k 8k 16k 32k --out $OUT/reports/overlap_s$SEED.json
-  merge $ROOT shards_qwen35_256k setA32k_s$SEED || exit 1
+  echo "expansion built; now run: data_beaker.sh gold $SEED (sidecars incl. qdmatch gold_pairs + merge)"
   ;;
 *) echo "unknown MODE=$MODE"; exit 2 ;;
 esac

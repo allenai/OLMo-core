@@ -179,7 +179,7 @@ def tokenize_example(
 def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict, task: Optional[str] = None):
     """
     Build the ``(content_fingerprint, sorted gold chunk indices)`` sidecar entry for one emitted
-    instance, or ``None`` if the example has no ``gold_doc_indices``.
+    instance, or ``None`` if the example has no ``gold_doc_indices`` (or qdmatch ``gold_pairs``).
 
     The fingerprint is over the emitted content ids (which end with the single real EOS; the loader
     right-pads afterwards), so it matches ``content_fingerprint_from_row(input_ids, eos)`` at train
@@ -194,10 +194,16 @@ def _gold_fingerprint_entry(out_ids: np.ndarray, example: dict, task: Optional[s
     )
 
     gdi = example.get("gold_doc_indices")
+    base = gold_index_base_for_task(task)
+    if not gdi and example.get("gold_pairs"):
+        # qdmatch: gold is ``gold_pairs`` = ORDERED 1-based ``[query position, document position]``
+        # pairs into ``documents`` (queries and passages are both documents there), so both members
+        # of every pair are gold chunks (ctc/src/ctc/tasks/qdmatch/generate.py).
+        gdi, base = example["gold_pairs"], 1
     if not gdi:
         return None
     fp = content_fingerprint(out_ids.tolist())
-    return fp, sorted(gold_chunks_from_gold_doc_indices(gdi, base=gold_index_base_for_task(task)))
+    return fp, sorted(gold_chunks_from_gold_doc_indices(gdi, base=base))
 
 
 def iter_examples(patterns: List[str], limit: int) -> List[dict]:

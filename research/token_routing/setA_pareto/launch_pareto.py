@@ -30,7 +30,7 @@ REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 LAUNCHER = f"{REPO}/recipes/train/research_trainer/beaker_ctc_suite.py"
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 DATA = {
-    "s42": f"{W}/ctc_sft_sets/setA_pareto/setA32k_s42",
+    "s42": f"{W}/ctc_sft_sets/setA_pareto/setA32k_s42g",
     "mix": f"{W}/ctc_sft_sets/setA_pareto/setA32k_mix",  # s42 + s43 + s44 (merge_tasks.py)
 }
 #: canonical setA SFT base (marker audit PASSED, records/ctc-fast-suite-eval.md)
