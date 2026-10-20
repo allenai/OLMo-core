@@ -491,10 +491,13 @@ class Transformer(nn.Module):
                 raise OLMoConfigurationError(
                     f"keep_token_rule={keep_token_rule!r} needs keep_token_k > 0"
                 )
-            if header_extra_tokens > 0:
+            # first_last / rule on top of a fixed real prefix is the devloss grid's gold_fl20p8
+            # (the prefix keeps the doc id; the K budget applies to the rest of the body). Only
+            # 'first' duplicates the prefix.
+            if header_extra_tokens > 0 and keep_token_rule == "first":
                 raise OLMoConfigurationError(
-                    "keep_token_rule and header_extra_tokens both select real body tokens; set "
-                    "only one (keep_token_rule='first' IS header_extra_tokens)."
+                    "keep_token_rule='first' IS header_extra_tokens; set only one (first_last / "
+                    "rule may be combined with a header_extra_tokens prefix)."
                 )
         if keep_token_rule == "rule" and keep_token_tables is None:
             raise OLMoConfigurationError(

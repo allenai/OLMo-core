@@ -249,3 +249,17 @@ def test_keep_token_rule_first_last_through_the_trainer_path():
     assert r_fl.count(DIGITS[1]) == 0
     # and it needs no feature tables at all
     assert fl.soft_rows.numel() == len(DOCS)
+
+
+def test_first_last_with_prefix_is_accepted_and_matches_the_grid_config_path():
+    """``first_last`` + ``header_extra_tokens`` (the devloss grid's gold_fl20p8) is accepted by
+    ``enable_pooled_soft_tokens`` and compacts exactly like the grid, which sets the same config keys
+    on ``model._pooled_soft_tokens`` directly (it never went through this validation)."""
+    ids = _row([[200 + i, STOP, *range(20, 36)] for i in range(3)])  # 16-token bodies
+    via_enable = _model(keep_token_rule="first_last", keep_token_k=0.25, header_extra_tokens=4)
+    via_cfg = _model(keep_token_rule="first_last", keep_token_k=0.25)
+    via_cfg._pooled_soft_tokens["header_extra_tokens"] = 4
+    a, b = _compact(via_enable, ids), _compact(via_cfg, ids)
+    assert _same(a, b)
+    # and the prefix really adds tokens over first_last alone
+    assert int(a.row_lens.sum()) > int(_compact(_model(keep_token_rule="first_last", keep_token_k=0.25), ids).row_lens.sum())
