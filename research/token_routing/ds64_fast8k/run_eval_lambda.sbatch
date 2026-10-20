@@ -42,7 +42,7 @@ mkdir -p "$ROOT/weka_stub/checkpoints/prasanns/_eval_bundle"
 # scipy/scikit-learn (outlier/rerank metrics) were installed offline from wheels on 2026-10-20;
 # lambda has no pypi, so the runner's own pip fallback cannot fetch them
 "$ENV/bin/python" -c "import scipy, sklearn" || { echo "FATAL: scipy/sklearn missing from $ENV"; exit 4; }
-FILES="{\"$KEY\": {\"8k\": \"$ROOT/eval/$R8\", \"2k\": \"$ROOT/eval/$R2\"}}"
+FILES="{\"$TASK\": {\"8k\": \"$ROOT/eval/$R8\", \"2k\": \"$ROOT/eval/$R2\"}}"
 echo "=== LAMBDA fast8k eval host=$(hostname) RUN=$RUN TASK=$TASK CKPT=$CKPT NGPU=$NGPU $(date '+%F %T') ==="
 cd "$REPO"
 RUN="$RUN" TASK="$KEY" VARIANT=docchunk STEP='' CKPT="$CKPT" EVAL_OUT_DIR="$RUN_DIR/eval" \
@@ -51,6 +51,15 @@ RUN="$RUN" TASK="$KEY" VARIANT=docchunk STEP='' CKPT="$CKPT" EVAL_OUT_DIR="$RUN_
   DC_RUNG_FILES="$FILES" DC_RUNGS=8k,2k WEKA_LLM="$ROOT/weka_stub" RESULTS="$ROOT/eval_results" REPO="$REPO" \
   bash recipes/eval/legacy_native/run_beaker_multirung_eval.sh
 rc=$?
+# a ladder whose rung files were not found writes an EMPTY result with rc=0 (2026-10-20: the
+# override was keyed "contra" while the ladder looks up "contradiction"); fail loudly instead
+"$ENV/bin/python" - "$RUN_DIR/eval/${KEY}_multirung.json" <<'PY' || rc=5
+import json, sys
+d = json.load(open(sys.argv[1]))
+n = d.get("_meta", {}).get("eval_size") or {}
+print("eval_size per rung:", n)
+sys.exit(0 if n and all(v for v in n.values()) else 1)
+PY
 mkdir -p "$LROOT/eval_results/$RUN" && cp "$RUN_DIR"/eval/*.json "$LROOT/eval_results/$RUN/" 2>/dev/null
 echo "=== DONE rc=$rc $(date '+%F %T') ==="
 exit $rc
