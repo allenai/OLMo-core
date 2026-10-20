@@ -922,8 +922,11 @@ class MultimodalOLMoDDPTrainModule(OLMoDDPTrainModule):
             if not kwargs.get("compile_model"):
                 raise OLMoConfigurationError("compile_vision requires compile_model")
             # The language model's ``apply_compile`` (from ``compile_model``) leaves the vision
-            # encoder eager; compile its blocks here, after activation checkpointing.
-            model.vision.apply_compile()
+            # encoder eager; compile its blocks here, after activation checkpointing. In place
+            # (``Module.compile``), so parameter and optimizer-state names stay those checkpoints
+            # hold; wrapping in ``torch.compile`` would add ``_orig_mod`` to them.
+            for block in model.vision.blocks:
+                block.compile()
             log.info("Compiled the vision encoder blocks")
         self.response_logits_only = response_logits_only
         self.loss_group_weights = _validate_loss_group_weights(loss_group_weights)
