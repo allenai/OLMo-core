@@ -381,6 +381,10 @@ def main() -> None:
     ap.add_argument("--external-pools", default="",
                     help="dir holding the train pools of the external generators "
                          f"({', '.join(v[0] for v in EXTERNAL.values())})")
+    ap.add_argument("--gold-sidecar", action="store_true",
+                    help="with --convert: also write gold_fingerprints.json per task shard (an empty "
+                         "entry for rows without gold documents), for the soft-token / token-drop "
+                         "arms. Token and mask bytes are unchanged.")
     ap.add_argument("--check", action="store_true",
                     help="re-hash an existing build against its manifest and report drift")
     # this file is <repo>/recipes/data/ctc_sft/build_ctc_sft.py -> four levels up
@@ -517,7 +521,8 @@ def main() -> None:
         "convert": ({"marker_set": args.marker_set, "tokenizer": args.tokenizer,
                      "seq_len": args.seq_len, "query_position": args.query_position,
                      "cot_mode": args.cot_mode, "doc_markers": not args.no_doc_markers,
-                     "shards_dir": args.shards_dir} if args.convert else None),
+                     "shards_dir": args.shards_dir, "gold_sidecar": args.gold_sidecar}
+                    if args.convert else None),
     }
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
@@ -657,7 +662,8 @@ def _convert_one(job):
               "--tokenizer", args.tokenizer, "--query-position", args.query_position,
               "--cot-mode", args.cot_mode, "--seq-len", str(args.seq_len),
               "--input-jsonl", src, "--out-dir", d]
-             + (["--no-doc-markers"] if args.no_doc_markers else []))
+             + (["--no-doc-markers"] if args.no_doc_markers else [])
+             + (["--emit-gold-sidecar", "--gold-sidecar-empty-for-missing"] if args.gold_sidecar else []))
     meta_path = os.path.join(d, "metadata.json")
     if p.returncode != 0 or not os.path.exists(meta_path):
         tail = (p.stdout + p.stderr).strip().splitlines()

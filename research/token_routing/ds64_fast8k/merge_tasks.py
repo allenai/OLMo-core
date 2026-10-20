@@ -19,11 +19,13 @@ import os
 import shutil
 
 MUST_AGREE = ("marker_set", "doc_start_id", "doc_end_id", "query_position")
-SUMMED = ("num_instances", "num_tokens", "num_loss_tokens", "num_dropped")
+SUMMED = ("num_instances", "num_tokens", "num_loss_tokens", "num_dropped",
+          "rows_over_max_len_dropped")
 
 
-def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask):
-    """First ``n_rows`` rows of a source (all parts concatenated), written as one part each."""
+def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask, max_len=0):
+    """First ``n_rows`` rows of a source (all parts concatenated; 0 = all), keeping only rows of at
+    most ``max_len`` tokens when ``max_len`` > 0, written as one part each."""
     import numpy as np
 
     # converter parts are RAW `ndarray.tofile` dumps (no .npy header): dtype comes from metadata.json
@@ -40,14 +42,30 @@ def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask):
     if eos is None:
         raise SystemExit(f"no EOS candidate occurs exactly num_instances={want} times; refusing to split")
     ends = np.flatnonzero(tok == eos)
-    if n_rows > len(ends):
-        raise SystemExit(f"--rows-per-src {n_rows} > {len(ends)} rows")
-    cut = int(ends[n_rows - 1]) + 1
-    np.ascontiguousarray(tok[:cut]).tofile(dst_tok)
-    np.ascontiguousarray(msk[:cut]).tofile(dst_mask)
-    lens = np.diff(np.concatenate([[-1], ends[:n_rows]]))
-    return {"num_instances": n_rows, "num_tokens": cut, "num_loss_tokens": int(np.asarray(msk[:cut]).sum()),
-            "max_example_len": int(lens.max()), "min_example_len": int(lens.min()), "subset_eos_id": eos}
+    starts = np.concatenate([[0], ends[:-1] + 1])
+    lens = ends - starts + 1
+    keep_rows = np.ones(len(ends), dtype=bool) if not max_len else lens <= max_len
+    idx = np.flatnonzero(keep_rows)
+    if n_rows:
+        if n_rows > len(idx):
+            raise SystemExit(f"--rows-per-src {n_rows} > {len(idx)} rows")
+        idx = idx[:n_rows]
+    sel = np.zeros(len(tok), dtype=bool)
+    if len(idx) == len(ends) and not n_rows:
+        sel[:] = True
+    else:
+        # mark selected rows' token spans via a +1/-1 difference array
+        d = np.zeros(len(tok) + 1, dtype=np.int32)
+        np.add.at(d, starts[idx], 1)
+        np.add.at(d, ends[idx] + 1, -1)
+        sel = np.cumsum(d[:-1]) > 0
+    np.ascontiguousarray(tok[sel]).tofile(dst_tok)
+    np.ascontiguousarray(msk[sel]).tofile(dst_mask)
+    kl = lens[idx]
+    return {"num_instances": int(len(idx)), "num_tokens": int(sel.sum()),
+            "num_loss_tokens": int(np.asarray(msk[sel]).sum()),
+            "max_example_len": int(kl.max()), "min_example_len": int(kl.min()), "subset_eos_id": eos,
+            "rows_over_max_len_dropped": int((~keep_rows).sum()), "subset_max_len": int(max_len)}
 
 
 def main() -> None:
@@ -58,6 +76,9 @@ def main() -> None:
     ap.add_argument("--rows-per-src", type=int, default=0,
                     help="keep only the first N rows of each source (a small screening subset); rows are "
                     "split at the EOS id, which must occur exactly num_instances times per source")
+    ap.add_argument("--max-row-len", type=int, default=0,
+                    help="drop rows longer than this many tokens (e.g. 32768 for a 32k window; the "
+                    "trainer refuses a --seq-len below a shard's max_example_len)")
     a = ap.parse_args()
     if os.path.exists(os.path.join(a.out, "metadata.json")):
         raise SystemExit(f"{a.out} already has metadata.json; refusing to overwrite")
@@ -75,9 +96,9 @@ def main() -> None:
                 raise SystemExit(f"unaligned parts {t} / {m}")
         dt = os.path.join(a.out, f"token_ids_part_t{i}_000.npy")
         dm = os.path.join(a.out, f"labels_mask_t{i}_000.npy")
-        if a.rows_per_src:
+        if a.rows_per_src or a.max_row_len:
             meta = dict(meta)
-            meta.update(_subset(toks, masks, meta, a.rows_per_src, dt, dm))
+            meta.update(_subset(toks, masks, meta, a.rows_per_src, dt, dm, a.max_row_len))
         else:
             for k, (t, m) in enumerate(zip(toks, masks)):
                 shutil.copy2(t, dt.replace("_000.npy", f"_{k:03d}.npy"))
