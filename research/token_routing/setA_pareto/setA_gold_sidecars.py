@@ -88,6 +88,9 @@ def main() -> None:
     ap.add_argument("--ref-dir", default="", help="shipped shard dir name (default: manifest shards_dir)")
     ap.add_argument("--out-dir", default="", help="new shard dir name (default: <ref-dir>_gold)")
     ap.add_argument("--tasks", default="", help="comma list; default every task with rows")
+    ap.add_argument("--accept-differ", default="",
+                    help="comma list of tasks allowed to differ from the shipped shards (reported as "
+                    "OK_DIFFERS): the sidecar still describes exactly the NEW shard's rows")
     ap.add_argument("--reconvert", default="", help="comma list of tasks whose sidecar is rebuilt")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--num-proc", type=int, default=4, help="converter workers per task")
@@ -115,9 +118,14 @@ def main() -> None:
                   f"| {el:.0f}s, ETA {el / i * (len(jobs) - i):.0f}s", flush=True)
             if rec["status"] != "OK":
                 print("   ", json.dumps(rec)[:800], flush=True)
+    ok_differ = set(filter(None, a.accept_differ.split(",")))
+    for r in recs:
+        if r["status"] == "BYTES_DIFFER" and r["task"] in ok_differ and r.get("rows") == r.get("rows_ref"):
+            r["status"] = "OK_DIFFERS"
+    bad = [r["task"] for r in recs if r["status"] not in ("OK", "OK_DIFFERS")]
     json.dump(recs, open(os.path.join(a.root, out_name, "sidecar_report.json"), "w"), indent=1)
-    bad = [r["task"] for r in recs if r["status"] != "OK"]
-    print("ALL_OK" if not bad else f"FAILED: {bad}", flush=True)
+    print("ALL_OK" if not bad else f"FAILED: {bad}",
+          f"(accepted differing: {sorted(r['task'] for r in recs if r['status'] == 'OK_DIFFERS')})", flush=True)
     sys.exit(1 if bad else 0)
 
 

@@ -23,7 +23,7 @@ gold)
   # are shards_qwen35_256k; the first run of this job wrote its conversions to shards_qwen3_5_gold,
   # which the script reuses rather than re-tokenizing)
   $PYB research/token_routing/setA_pareto/setA_gold_sidecars.py --root $ROOT --jobs 11 --num-proc 3 \
-    --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold --reconvert qdmatch_nq
+    --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold --reconvert qdmatch_nq ${ACCEPT_DIFFER:+--accept-differ $ACCEPT_DIFFER}
   rc=$?
   $PYB research/token_routing/setA_pareto/inspect_rows.py --root $ROOT --new-dir shards_qwen3_5_gold \
     --ref-dir shards_qwen35_256k --tasks nq,hotpotqa,qdmatch_nq,outlier,oolong,contradiction,xabsence,reorder,rerank,strmatch,grouping
