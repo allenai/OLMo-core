@@ -17,11 +17,15 @@ merge() {  # merge <set root> <shard dir name> <out name>
 case "$MODE" in
 gold)
   ROOT=$SETS/setA_max20_evaliid
-  $PYB research/token_routing/setA_pareto/setA_gold_sidecars.py --root $ROOT --jobs 11 --num-proc 3
+  # setA's manifest predates the shards_dir field, so name both dirs explicitly (the shipped shards
+  # are shards_qwen35_256k; the first run of this job wrote its conversions to shards_qwen3_5_gold,
+  # which the script reuses rather than re-tokenizing)
+  $PYB research/token_routing/setA_pareto/setA_gold_sidecars.py --root $ROOT --jobs 11 --num-proc 3 \
+    --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold
   rc=$?
-  cp $ROOT/shards_qwen35_256k_gold/sidecar_report.json $OUT/reports/sidecar_report_s42.json 2>/dev/null
-  echo "sidecar rc=$rc (non-zero = bytes differ from the shipped shards; see report)"
-  merge $ROOT shards_qwen35_256k_gold setA32k_s42 || exit 1
+  cp $ROOT/shards_qwen3_5_gold/sidecar_report.json $OUT/reports/sidecar_report_s42.json 2>/dev/null
+  if [ $rc -ne 0 ]; then echo "!!! sidecar check failed (rc=$rc): tokens differ from the shipped shards; not merging"; exit 1; fi
+  merge $ROOT shards_qwen3_5_gold setA32k_s42 || exit 1
   ;;
 expand)
   POOLS=""
