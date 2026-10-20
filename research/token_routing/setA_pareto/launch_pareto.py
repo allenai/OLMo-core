@@ -13,7 +13,7 @@ both PACK whole examples (so neither pays for padding):
 
 FLOPs come from ``flop_meter/actual_pflops`` with per-example accounting (each example charged at
 its own -- for bar, compacted -- length). A budget is a ``--max-tokens`` point with its own full
-schedule (warmup 3%? no: the trainer's default schedule) over ORIGINAL (pre-compaction) tokens.
+schedule (the trainer's default) over ORIGINAL (pre-compaction) tokens.
 
     python research/token_routing/setA_pareto/launch_pareto.py --arms dense,bar --smoke dry_run
     python research/token_routing/setA_pareto/launch_pareto.py --arms dense,bar --smoke launch
@@ -86,11 +86,13 @@ def main() -> None:
                 "--seq-len", str(seq_len), "--global-batch", str(gb), "--micro-batch-instances", "1",
                 "--epochs", "1", "--lr", str(lr), "--cluster", "ai2/jupiter-cirrascale-2",
                 "--wandb-group", "setA-pareto", "--priority", "urgent", "--min-runtime", "1h",
-                "--no-follow", "--no-compile", "--experiment", "setA_pareto", "--arm", arm,
+                "--no-follow", "--experiment", "setA_pareto", "--arm", arm,
             ]
+            if variant == "softtoken":
+                # data-dependent compacted shapes; dense keeps torch.compile (its best wall-clock)
+                cmd.append("--no-compile")
             if a.smoke:
                 cmd += ["--max-steps", "3"]
-                extra += " --skip-marker-audit"
             else:
                 extra += f" --max-tokens {tokens(b)}"
             if a.expected_minutes:
