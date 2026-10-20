@@ -23,6 +23,8 @@ gold)
   $PYB research/token_routing/setA_pareto/setA_gold_sidecars.py --root $ROOT --jobs 11 --num-proc 3 \
     --ref-dir shards_qwen35_256k --out-dir shards_qwen3_5_gold
   rc=$?
+  $PYB research/token_routing/setA_pareto/inspect_rows.py --root $ROOT --new-dir shards_qwen3_5_gold \
+    --ref-dir shards_qwen35_256k --tasks qdmatch_nq,reorder,oolong,rerank,nq
   cp $ROOT/shards_qwen3_5_gold/sidecar_report.json $OUT/reports/sidecar_report_s42.json 2>/dev/null
   if [ $rc -ne 0 ]; then echo "!!! sidecar check failed (rc=$rc): tokens differ from the shipped shards; not merging"; exit 1; fi
   merge $ROOT shards_qwen3_5_gold setA32k_s42 || exit 1
