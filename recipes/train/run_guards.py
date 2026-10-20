@@ -259,6 +259,41 @@ def _fix_marker_module():
     return module
 
 
+def _load_embedding_out_of_process(base_checkpoint: str):
+    """Read the input embedding in a CHILD process.
+
+    ``fix_marker_embeddings.load_keys`` (OLMo-core's distcp ``load_keys``) refuses to run once a
+    torch.distributed process group exists ("'load_keys' cannot be called in a distributed
+    context"), and the start-of-run guard runs inside torchrun after the group is up -- so before
+    this, every multi-GPU launch died at the audit (2026-10-19, tokdrop_lr). A fresh interpreter has
+    no process group; it saves the row to a temp file that this process loads back.
+    """
+    import subprocess
+    import tempfile
+
+    import torch
+
+    fix = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "fix_marker_embeddings.py"
+    )
+    code = (
+        "import importlib.util, sys, torch\n"
+        "spec = importlib.util.spec_from_file_location('fme', sys.argv[1])\n"
+        "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n"
+        "torch.save(next(iter(m.load_keys(sys.argv[2], [m.EMB_KEY]))).float(), sys.argv[3])\n"
+    )
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("RANK", "LOCAL_RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "MASTER_ADDR",
+                        "MASTER_PORT", "GROUP_RANK", "ROLE_RANK", "TORCHELASTIC_RUN_ID")}
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "emb.pt")
+        r = subprocess.run([sys.executable, "-c", code, fix, base_checkpoint, out],
+                           env=env, capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0:
+            raise RuntimeError(f"embedding read failed (rc={r.returncode}): {r.stderr[-1500:]}")
+        return torch.load(out)
+
+
 def check_marker_embeddings(
     emb,
     family: str,
@@ -318,8 +353,13 @@ def audit_base_checkpoint(
     """
     try:
         if load_embedding is None:
-            fme = _fix_marker_module()
-            emb = next(iter(fme.load_keys(base_checkpoint, [fme.EMB_KEY]))).float()
+            import torch.distributed as dist
+
+            if dist.is_available() and dist.is_initialized():
+                emb = _load_embedding_out_of_process(base_checkpoint)
+            else:
+                fme = _fix_marker_module()
+                emb = next(iter(fme.load_keys(base_checkpoint, [fme.EMB_KEY]))).float()
         else:
             emb = load_embedding(base_checkpoint)
         report = check_marker_embeddings(emb, family, markers, base_checkpoint=base_checkpoint)
