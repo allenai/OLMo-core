@@ -507,6 +507,54 @@ def bar(used: int, pre: int, total: int, width: int = 16) -> str:
     return c("█" * u, "dim") + c("▒" * p, "preempt") + c("░" * f, "free")
 
 
+# ----------------------------------------------------------------------------- Lambda (ssh lambda)
+#: Lambda fair-share policy (OLMo-core lambda_cluster.md): at most 8 GPUs on preemptive_high and 8 on
+#: preemptive at once; anything beyond goes at normal. A100s: ask Prasann before using (memory a100-ask-first).
+LAMBDA_CAPS = {"preemptive_high": 8, "preemptive": 8}
+LAMBDA_ME = os.environ.get("LAMBDA_USER", "prasann")
+
+
+def lambda_snapshot() -> dict:
+    """Per-node GPU allocation + running/pending jobs on the Lambda A100 cluster (one ssh call)."""
+    out = run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "lambda",
+               "scontrol show node -o; echo ===JOBS; scontrol show job -o"], timeout=30)
+    nodes_txt, _, jobs_txt = out.partition("===JOBS")
+
+    def kv(line: str) -> dict:
+        return dict(t.split("=", 1) for t in line.split() if "=" in t)
+
+    def gpus(tres: str) -> int:
+        m = re.search(r"gres/gpu(?::[^=,]+)?=(\d+)", tres or "")
+        return int(m.group(1)) if m else 0
+
+    nodes = {}
+    for line in nodes_txt.strip().splitlines():
+        d = kv(line)
+        tot = re.search(r"gpu(?::[^:,]+)?:(\d+)", d.get("Gres", ""))
+        nodes[d.get("NodeName")] = dict(name=d.get("NodeName"), state=d.get("State", "?").lower(),
+                                        total=int(tot.group(1)) if tot else 0,
+                                        alloc=gpus(d.get("AllocTRES", "")), holders={})
+    mine: dict[str, int] = {}
+    pending: dict[str, int] = {}
+    for line in jobs_txt.strip().splitlines():
+        d = kv(line)
+        user = d.get("UserId", "?").split("(")[0]
+        state, qos = d.get("JobState"), d.get("QOS", "?")
+        if state == "PENDING":
+            pending[user] = pending.get(user, 0) + 1
+            continue
+        if state != "RUNNING":
+            continue
+        g = gpus(d.get("AllocTRES", ""))
+        if user == LAMBDA_ME:
+            mine[qos] = mine.get(qos, 0) + g
+        for n in expand_nodes(d.get("NodeList", "")):
+            if n in nodes and g:
+                h = nodes[n]["holders"]
+                h[f"{user}({qos})"] = h.get(f"{user}({qos})", 0) + g
+    return dict(nodes=list(nodes.values()), mine=mine, pending=pending)
+
+
 def render_text(res: dict) -> str:
     L = []
     t = datetime.fromtimestamp(NOW).strftime("%Y-%m-%d %H:%M")
@@ -609,6 +657,23 @@ def render_text(res: dict) -> str:
             if b["restricted"]:
                 bits.append("RESTRICTED: oe-other budget not allowed")
             L.append(c("      " + " · ".join(bits), "dim"))
+    lm = res.get("lambda")
+    if isinstance(lm, dict) and "error" in lm:
+        L.append(c(f"\nlambda: ERROR {lm['error']}", "red"))
+    elif lm:
+        L.append("")
+        L.append(c("LAMBDA  (ssh lambda; A100-80GB x8/node; info only -- A100: check with Prasann before using)", "h"))
+        caps = " · ".join(f"{q} {lm['mine'].get(q, 0)}/{cap}" for q, cap in LAMBDA_CAPS.items())
+        L.append(c(f"  your GPUs vs fair-share caps: {caps} · normal {lm['mine'].get('normal', 0)} (uncapped, "
+                   f"preemptible)   pending jobs by user: {lm['pending'] or 'none'}", "dim"))
+        for n in lm["nodes"]:
+            if any(x in n["state"] for x in ("down", "drain", "maint")):
+                L.append(c(f"  {n['name']:<22} {n['state'].split('+')[0]:<10} unavailable ({n['state']})", "dim"))
+                continue
+            free = max(0, n["total"] - n["alloc"])
+            who = " ".join(f"{k}:{v}" for k, v in n["holders"].items())
+            L.append(f"  {n['name']:<22} {n['state']:<10} {bar(n['alloc'], 0, n['total'])} "
+                     f"{free}/{n['total']} free  {who}")
     return "\n".join(L)
 
 
@@ -728,6 +793,7 @@ def main() -> None:
                     help="small-scale debugging job: also recommend berkeleynlp (debug-only partition)")
     ap.add_argument("--no-beaker", action="store_true")
     ap.add_argument("--no-local", action="store_true")
+    ap.add_argument("--no-lambda", action="store_true", help="skip the Lambda section (one ssh call)")
     a = ap.parse_args()
     REQ_SIZES = sorted(set(a.gpus)) if a.gpus else REQ_SIZES
     RUN_HOURS = a.hours
@@ -738,7 +804,8 @@ def main() -> None:
 
     res: dict = dict(time=datetime.fromtimestamp(NOW).isoformat(timespec="seconds"),
                      request_sizes=REQ_SIZES, user=ME)
-    with cf.ThreadPoolExecutor(2) as ex:
+    with cf.ThreadPoolExecutor(3) as ex:
+        f_lm = None if a.no_lambda else ex.submit(lambda_snapshot)
         f_sl = None if a.no_local else ex.submit(slurm_snapshot)
         f_bk = None if a.no_beaker else ex.submit(beaker_snapshot)
         if f_sl:
@@ -755,6 +822,11 @@ def main() -> None:
                 res["beaker"] = f_bk.result()
             except Exception as e:  # noqa: BLE001
                 res["beaker"] = dict(error=str(e)[:300])
+        if f_lm:
+            try:
+                res["lambda"] = f_lm.result()
+            except Exception as e:  # noqa: BLE001
+                res["lambda"] = dict(error=str(e)[:300])
     res["recommend"] = recommend(res)
     res["policy_notes"] = [DEBUG_ONLY_NOTE]
     res["elapsed_s"] = round(time.time() - NOW, 2)

@@ -93,6 +93,8 @@ hesitate. (Preempting `preemptive` holders at `preemptive_high*` is also fine; i
 - A node that looks idle for a long time (e.g. lorax with 7/7 free) may be idle because it is
   flaky — `sinfo -R` before betting a long run on it.
 - GPU speed factors (`SPEED` in the script) are rough bf16-LM-training guesses; edit there.
-- Lambda (A100, `ssh lambda`) is not covered — see OLMo-core's `lambda_cluster.md`.
+- Lambda (A100, `ssh lambda`) is shown as an info-only section (one ssh call; `--no-lambda` skips it): per-node
+  free GPUs, holders, and your GPUs vs the fair-share caps (≤8 preemptive_high + ≤8 preemptive, rest normal).
+  It is never in the ranked picks (A100: ask Prasann). Launch recipe: OLMo-core's `lambda_cluster.md`.
 - User-specific constants (slurm user, Beaker author `prasanns`, oe-other budget id, jupiter-only,
   ask-first users) are at the top of the script.
