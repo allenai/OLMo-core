@@ -571,6 +571,32 @@ STAGE1_V3_SOURCE_SIZES: dict[str, int] = {
 """Examples (rows) of each stage-1 v3 source as :func:`build_stage1_v3_sources` builds them from
 the default artifacts (``len`` of each built dataset, 2026-10-11)."""
 
+STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS: dict[str, float] = {
+    **STAGE1_V3_MEAN_LOSS_WEIGHTS,
+    "cosyn_chart_exp": 440.2109375,
+    "cosyn_chemical_exp": 285.0546875,
+    "cosyn_diagram_exp": 339.9453125,
+    "cosyn_document": 48.203125,
+    "cosyn_music_exp": 254.953125,
+    "cosyn_point_v2": 98.96875,
+    "cosyn_table_exp": 443.421875,
+    "dv_qa": 26.140625,
+    "figure_qa": 40.5703125,
+    "pixmo_points_v2": 375.5078125,
+    "plot_qa": 122.75,
+    "text_rich_chart": 633.125,
+    "text_rich_diagram": 692.6640625,
+    "text_rich_doc": 854.109375,
+    "text_rich_graphic": 528.171875,
+    "text_rich_table": 794.71875,
+}
+"""Calibration of the stage-1 v3 sources at 65,536 tokens when every annotation of a drawn image is
+its own document sharing the image's crops (``annotation_sampling="documents"``), for the
+multi-annotation sources with more than one annotation per image; the others keep
+:data:`STAGE1_V3_MEAN_LOSS_WEIGHTS`. Same probe (128 rows per source, seed 0, dolma2 at the pinned
+revision), measured 2026-10-20. Documents per draw: PixMo-Points 15.5, PlotQA 20, FigureQA 13.5,
+DVQA 11.4, CoSyn QA 6.3-9.5, CoSyn point 4.5, text-rich captions 3."""
+
 STAGE1_V4_EPOCHS: dict[str, float] = {
     "pixmo_caption": 3.7,
     "pixmo_transcript": 3.6,

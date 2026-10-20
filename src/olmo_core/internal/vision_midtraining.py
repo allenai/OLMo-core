@@ -63,7 +63,7 @@ from .vision_alignment import (
     _image_token_rows,
     _load_text_config,
     _restore_pretraining_router_lb,
-    _sample_one_annotation,
+    _set_annotation_sampling,
     _uses_document_mode,
     parse_cli_args,
     resolve_hf_datasets_cache_dir,
@@ -73,6 +73,7 @@ from .vision_alignment import (
 )
 from .vision_alignment_data import (
     DEFAULT_ALIGNMENT_ARTIFACT_ROOT,
+    STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS,
     STAGE1_V3_LOSS_TARGETS,
     STAGE1_V3_MEAN_LOSS_WEIGHTS,
     STAGE1_V4_LOSS_TARGETS,
@@ -228,6 +229,14 @@ class MixedMidtrainingRecipeConfig(Config):
     balance_vit_crops: bool = False
     """Share each micro-batch's image crops evenly among all ranks for the vision encoder (see
     :attr:`~olmo_core.train.train_module.transformer.multimodal_train_module.MultimodalOLMoDDPTrainModuleConfig.balance_vit_crops`)."""
+    annotation_documents: bool = False
+    """With ``stage1_v3`` or ``stage1_v4`` visual data, keep every annotation of a drawn image, each
+    as its own document sharing the image's crops (``annotation_sampling="documents"``), instead
+    of one sampled annotation per example: the vision encoder runs once for all of an image's
+    documents, and every document is the one-annotation example. The per-source loss shares stay
+    (calibrated means :data:`~olmo_core.internal.vision_alignment_data.STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS`,
+    65,536 tokens only); images with more annotations weigh more, as in the released Molmo2 v3
+    recipe, which trains every annotation of each drawn image."""
 
 
 @dataclass
@@ -314,6 +323,10 @@ def _build_recipe(
     if recipe.visual_data not in ("midtraining", "stage1_v3", "stage1_v4"):
         raise OLMoConfigurationError(
             "recipe.visual_data must be midtraining, stage1_v3 or stage1_v4"
+        )
+    if recipe.annotation_documents and recipe.visual_data not in ("stage1_v3", "stage1_v4"):
+        raise OLMoConfigurationError(
+            "recipe.annotation_documents needs stage1_v3 or stage1_v4 visual data"
         )
     if (
         isinstance(recipe.text_loss_share, bool)
@@ -1121,7 +1134,16 @@ def build_config(
     # v4 is v3's sources and calibration with its own loss split.
     stage1_v3 = recipe.visual_data in ("stage1_v3", "stage1_v4") and recipe.text_loss_share < 1.0
     if stage1_v3:
-        means = dict(_STAGE1_V3_MEANS.get(recipe.sequence_length, {}))
+        if recipe.annotation_documents and recipe.sequence_length != 65536:
+            raise OLMoConfigurationError(
+                "recipe.annotation_documents is calibrated at 65,536 tokens only, not "
+                f"{recipe.sequence_length}"
+            )
+        means = dict(
+            STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS
+            if recipe.annotation_documents
+            else _STAGE1_V3_MEANS.get(recipe.sequence_length, {})
+        )
         recipe.visual_example_weights = {}
         recipe.visual_loss_shares = dict(
             STAGE1_V4_LOSS_TARGETS if recipe.visual_data == "stage1_v4" else STAGE1_V3_LOSS_TARGETS
@@ -1139,7 +1161,9 @@ def build_config(
             "joint", recipe.sequence_length, recipe.alignment_artifact_root
         )
         # KDA's document mode isolates packed documents, not sibling annotation branches.
-        _sample_one_annotation(visual_sources)
+        _set_annotation_sampling(
+            visual_sources, "documents" if recipe.annotation_documents else "one"
+        )
     elif recipe.text_loss_share < 1.0 and not replaced_sources:
         visual_sources = build_visual_sources(
             sequence_length=recipe.sequence_length,

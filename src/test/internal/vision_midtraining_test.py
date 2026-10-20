@@ -1424,6 +1424,49 @@ def test_merged_stage_takes_its_shape_from_the_text_config(merged_stage):
     assert (config.data_loader.pack_max_crops, config.data_loader.pack_buffer_size) == (512, 384)
 
 
+@dataclass
+class _MultiAnnotationConfig(PixMoCapDatasetConfig):
+    """A stand-in source with ``annotation_sampling``, as the multi-annotation sources have."""
+
+    annotation_sampling: str = "all"
+
+
+@pytest.mark.parametrize("documents", [False, True])
+def test_merged_stage_annotation_documents(merged_stage, monkeypatch, documents):
+    """``--recipe.annotation_documents`` switches the multi-annotation sources from one sampled
+    annotation per example to every annotation as a document, with their calibrated means."""
+    from olmo_core.internal.vision_alignment_data import (
+        STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS,
+        STAGE1_V3_MEAN_LOSS_WEIGHTS,
+    )
+
+    monkeypatch.setattr(
+        vision_midtraining,
+        "build_stage1_v3_sources",
+        lambda phase, sequence_length, artifact_root: {
+            name: _MultiAnnotationConfig(
+                dataset_path=f"/data/{name}", max_sequence_length=sequence_length
+            )
+            for name in STAGE1_V3_MEAN_LOSS_WEIGHTS
+        },
+    )
+    config = merged_stage.build(*(["--recipe.annotation_documents=true"] if documents else []))
+    visual = {k: v for k, v in config.dataset.sources.items() if k != "text_midtraining"}
+    assert {source.annotation_sampling for source in visual.values()} == {
+        "documents" if documents else "one"
+    }
+    means = {k: v for k, v in config.dataset.mean_loss_weight.items() if k != "text_midtraining"}
+    assert means == (
+        STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS if documents else STAGE1_V3_MEAN_LOSS_WEIGHTS
+    )
+    assert config.dataset.target_loss_mass["text_midtraining"] == 0.9
+
+
+def test_annotation_documents_needs_stage1_data(mixed_recipe):
+    with pytest.raises(OLMoConfigurationError, match="annotation_documents"):
+        mixed_recipe.build("--recipe.annotation_documents=true")
+
+
 def test_merged_stage_lm_takes_the_text_stage_runtime(merged_stage):
     """The parent's LM was built with the 8K runtime; the 65K stage recomputes every block and
     shares the expert-parallel dispatch and combine scratch, as the text stage does."""
