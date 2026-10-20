@@ -1146,7 +1146,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
     trainer_config = trainer_config.with_callback(
         "flop_meter",
         FlopMeterCallback(
-            seq_len=opts.seq_len, pad_id=ids.eos
+            seq_len=opts.seq_len, pad_id=ids.eos, per_example=opts.flop_per_example
         ),  # rows are padded with EOS (see pad_token_id above)
     )
     source = plan["instance_source_config"].build(plan["data_loader_config"].work_dir)
@@ -1811,6 +1811,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--num-workers", type=int, default=2, help="dataloader workers per rank")
     ap.add_argument("--max-steps", type=int, default=0, help="hard-stop after N steps (0 = full)")
     ap.add_argument(
+        "--no-flop-per-example",
+        dest="flop_per_example",
+        action="store_false",
+        help="flop_meter: charge attention at --seq-len for every token (pre-2026-10-20 accounting) "
+        "instead of each example at its own (compacted) length",
+    )
+    ap.add_argument(
         "--max-tokens",
         type=int,
         default=0,
@@ -1981,9 +1988,21 @@ def parse_args() -> argparse.Namespace:
         ap.error("--pooled-* options are only valid with --variant pooledkv")
     if opts.variant == "softtoken":
         if opts.pack:
-            ap.error(
-                "--variant softtoken requires the padded (no --pack) data path (per-row fingerprints)"
-            )
+            # Packed rows run in SEGMENT mode: the model unpacks each row to one example per row
+            # (per-example gold fingerprints), compacts, and re-packs the compacted examples into
+            # one varlen row. Defined only for slot-less compaction with no extra attention bias.
+            bad = [
+                flag
+                for flag, on in (
+                    ("--st-drop-slots is required", not opts.st_drop_slots),
+                    ("--st-aux-weight", opts.st_aux_weight > 0),
+                    ("--st-len-bias", opts.st_len_bias),
+                    ("--st-distill-prob", opts.st_distill_prob > 0),
+                )
+                if on
+            ]
+            if bad:
+                ap.error(f"--variant softtoken with --pack (segment mode): {', '.join(bad)}")
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False

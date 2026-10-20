@@ -43,10 +43,56 @@ class FlopMeterCallback(Callback):
     over ranks), so a padded single-example path (the soft-token arm) and a packed path (dense)
     are charged for the same real tokens; when ``None`` the padded global batch size is used."""
 
+    per_example: bool = False
+    """Charge every example at ITS OWN length: ``sum_i L_i * flops_per_token(L_i)`` over the real
+    examples of the step (packed documents or padded rows; pad excluded), with ``L_i`` the
+    compacted length for the soft-token arm. Needs ``pad_id``. Without it, attention is charged at
+    ``seq_len`` for every token, which on a packed 32k window of ~4.5k-token examples overstates a
+    dense arm's attention cost ~7x and so flatters any arm whose rows are shorter."""
+
     _actual: float = 0.0
     _dense: float = 0.0
     _tokens: int = 0
     _real_tokens_this_step: Optional[int] = None
+    _fpt_cache: Optional[Dict[int, int]] = None
+    _examples: int = 0
+
+    def pre_train(self):
+        if self.per_example:
+            if self.pad_id is None:
+                raise ValueError("FlopMeterCallback(per_example=True) needs pad_id")
+            # the model records per-example lengths of every TRAINING forward while this is set
+            self._model()._flop_pad_id = int(self.pad_id)
+
+    def _per_example_flops(self, m):
+        """``(dense, actual, tokens, examples)`` summed over ranks from the model's length log."""
+        import torch
+        import torch.distributed as dist
+
+        st = getattr(m, "_flop_example_lens", None) or {"dense": [], "actual": []}
+        if self._fpt_cache is None:
+            self._fpt_cache = {}
+        cache = self._fpt_cache
+
+        def cost(lens):
+            tot = 0.0
+            for L in lens:
+                f = cache.get(L)
+                if f is None:
+                    f = cache[L] = int(m.num_flops_per_token(int(L)))
+                tot += float(L) * f
+            return tot
+
+        dev = next(m.parameters()).device
+        v = torch.tensor(
+            [cost(st["dense"]), cost(st["actual"]), float(sum(st["dense"])), float(len(st["dense"]))],
+            dtype=torch.float64,
+            device=dev,
+        )
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(v, op=dist.ReduceOp.SUM)
+        m._flop_example_lens = {"dense": [], "actual": []}
+        return float(v[0]), float(v[1]), int(v[2]), int(v[3])
 
     def pre_step(self, batch):
         if self.pad_id is None:
@@ -155,6 +201,12 @@ class FlopMeterCallback(Callback):
             )
             comp["tokens_in"] = comp["tokens_out"] = comp["rows"] = 0
 
+        if self.per_example:
+            dense_flops, actual, tokens, n_ex = self._per_example_flops(m)
+            self._examples += n_ex
+            if dense_flops > 0:
+                self.trainer.record_metric("flop_meter/step_actual_over_dense", actual / dense_flops)
+
         self._actual += actual
         self._dense += dense_flops
         self._tokens += tokens
@@ -178,6 +230,8 @@ class FlopMeterCallback(Callback):
             "actual_over_dense": self._actual / max(1.0, self._dense),
             "tokens_processed": self._tokens,
             "tokens_are_real": self.pad_id is not None,
+            "per_example": self.per_example,
+            "examples": self._examples if self.per_example else None,
             "ffn_cost_frac": (
                 self._ffn_cost_weighted / self._tokens if self._ffn_cost_weighted > 0 and self._tokens else None
             ),

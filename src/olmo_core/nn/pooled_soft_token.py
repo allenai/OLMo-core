@@ -44,6 +44,10 @@ __all__ = [
     "PooledDocProjector",
     "CompactedBatch",
     "compact_pooled_rows",
+    "example_lengths",
+    "UnpackedRows",
+    "unpack_packed_rows",
+    "repack_compacted_rows",
     "add_soft_len_bias",
     "build_position_causal_bias",
     "masked_sdpa",
@@ -338,6 +342,128 @@ def compact_pooled_rows(
         shadow_log_len=torch.tensor(shadow_log_len, dtype=torch.float32, device=device),
         shadow_doc_cols=sh_doc_cols,
         is_shadow=is_shadow,
+    )
+
+
+def example_lengths(
+    input_ids: torch.Tensor, doc_lens: Optional[torch.Tensor], pad_id: int
+) -> List[int]:
+    """
+    Real length of every example in a training batch, for per-example FLOP accounting.
+
+    Packed rows (``doc_lens`` given, ``(B, max_docs)`` zero-padded): one entry per document of
+    each row, skipping documents made only of ``pad_id`` (the packer's trailing fill). Padded rows
+    (``doc_lens`` is ``None``, one example per row): the row up to and including its first
+    ``pad_id`` (== EOS on the Qwen paths), or the whole row if it has none.
+    """
+    out: List[int] = []
+    if doc_lens is None:
+        is_pad = input_ids == pad_id
+        has = is_pad.any(dim=1)
+        first = is_pad.int().argmax(dim=1)
+        lens = torch.where(has, first + 1, torch.full_like(first, input_ids.shape[1]))
+        return [int(x) for x in lens.tolist()]
+    nonpad = (input_ids != pad_id).int()
+    for b in range(input_ids.shape[0]):
+        dl = doc_lens[b][doc_lens[b] > 0]
+        ends = torch.cumsum(dl, 0)
+        csum = torch.cat([nonpad.new_zeros(1), torch.cumsum(nonpad[b], 0)])
+        real = csum[ends] - csum[ends - dl]
+        for L, r in zip(dl.tolist(), real.tolist()):
+            if r > 0:
+                out.append(int(L))
+    return out
+
+
+@dataclass
+class UnpackedRows:
+    """Examples of a packed batch, one per row (see :func:`unpack_packed_rows`)."""
+
+    input_ids: torch.Tensor  # (S, Lmax), right-padded with pad_id
+    labels: Optional[torch.Tensor]  # (S, Lmax), ignore_index pad
+    lengths: List[int]  # each example's real length
+
+
+def unpack_packed_rows(
+    input_ids: torch.Tensor,
+    labels: Optional[torch.Tensor],
+    doc_lens: torch.Tensor,
+    *,
+    pad_id: int,
+    ignore_index: int = -100,
+) -> UnpackedRows:
+    """
+    Split packed rows (several whole examples per row, boundaries in ``doc_lens``) into one
+    right-padded row per example -- exactly the layout of the padded single-example data path,
+    so per-example gold fingerprints (:func:`~olmo_core.nn.attention.gold_grad_mask.content_fingerprint_from_row`)
+    and :func:`compact_pooled_rows` apply unchanged. Documents made only of ``pad_id`` (the
+    packer's trailing fill) are dropped.
+    """
+    segs: List[Tuple[int, int, int]] = []  # (row, start, length)
+    nonpad = (input_ids != pad_id).int()
+    for b in range(input_ids.shape[0]):
+        dl = doc_lens[b][doc_lens[b] > 0]
+        ends = torch.cumsum(dl, 0)
+        csum = torch.cat([nonpad.new_zeros(1), torch.cumsum(nonpad[b], 0)])
+        real = (csum[ends] - csum[ends - dl]).tolist()
+        for L, e, r in zip(dl.tolist(), ends.tolist(), real):
+            if r > 0:
+                segs.append((b, int(e) - int(L), int(L)))
+    if not segs:
+        raise ValueError("unpack_packed_rows: the batch holds no non-pad example")
+    lmax = max(L for _, _, L in segs)
+    S = len(segs)
+    ids = torch.full((S, lmax), pad_id, dtype=input_ids.dtype, device=input_ids.device)
+    lab = (
+        torch.full((S, lmax), ignore_index, dtype=labels.dtype, device=labels.device)
+        if labels is not None
+        else None
+    )
+    for i, (b, st, L) in enumerate(segs):
+        ids[i, :L] = input_ids[b, st : st + L]
+        if lab is not None:
+            lab[i, :L] = labels[b, st : st + L]  # type: ignore[index]
+    return UnpackedRows(input_ids=ids, labels=lab, lengths=[L for _, _, L in segs])
+
+
+def repack_compacted_rows(
+    cb: "CompactedBatch",
+    *,
+    pad_id: int,
+    ignore_index: int = -100,
+    pad_multiple: int = 1,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, List[int]]:
+    """
+    Concatenate the compacted rows' content (their first ``row_lens`` columns) into ONE packed
+    row, the inverse of :func:`unpack_packed_rows` after compaction: the model then runs dense
+    varlen attention / GDN over full-size rows instead of many short padded ones.
+
+    :returns: ``(input_ids, labels, position_ids, doc_lens, max_doc_lens)`` with shapes
+        ``(1, T)``, ``(1, T)``, ``(1, T)``, ``(1, n_docs)`` and a 1-list. ``T`` is rounded up to
+        ``pad_multiple`` with one trailing pad document (pad id, ignored labels, position 0).
+    """
+    B, T2 = cb.input_ids.shape
+    if cb.shadow_rows.numel() or cb.soft_rows.numel():
+        raise ValueError("repack_compacted_rows supports slot-less compaction only (drop_slots)")
+    valid = torch.arange(T2, device=cb.input_ids.device)[None, :] < cb.row_lens[:, None]
+    ids = cb.input_ids[valid]
+    pos = cb.position_ids[valid]
+    lab = cb.labels[valid] if cb.labels is not None else None
+    lens = [int(x) for x in cb.row_lens.tolist()]
+    tail = (-ids.numel()) % pad_multiple if pad_multiple > 1 else 0
+    if tail:
+        ids = torch.cat([ids, ids.new_full((tail,), pad_id)])
+        pos = torch.cat([pos, pos.new_zeros(tail)])
+        if lab is not None:
+            lab = torch.cat([lab, lab.new_full((tail,), ignore_index)])
+        lens = lens + [tail]
+    doc_lens = torch.tensor([lens], dtype=torch.int32, device=ids.device)
+    return (
+        ids[None],
+        lab[None] if lab is not None else None,
+        pos[None],
+        doc_lens,
+        [max(lens)],
     )
 
 

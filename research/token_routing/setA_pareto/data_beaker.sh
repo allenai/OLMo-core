@@ -18,4 +18,4 @@ gantry run --name "setA-pareto-data-$MODE-s$SEED-$(date +%m%d%H%M)" -w ai2/flex2
   --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install false \
   --weka oe-training-default:/weka/oe-training-default \
   --env WEKA="$WEKA" --env MODE="$MODE" --env SEED="$SEED" --env JOBS="$CPUS" \
-  --timeout 0 --yes -- bash research/token_routing/setA_pareto/_data_inner.sh
+  --allow-dirty --timeout 0 --yes -- bash research/token_routing/setA_pareto/_data_inner.sh

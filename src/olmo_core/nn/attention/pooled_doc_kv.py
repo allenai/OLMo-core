@@ -177,6 +177,9 @@ class PooledDocKeepHolder:
     keep_docs: Optional[torch.Tensor] = None
     n_attached: int = 0
     _hook_handle: object = field(default=None, repr=False)
+    #: The keep function itself, so a soft-token model fed PACKED rows (several examples per row,
+    #: ``doc_lens`` given) can apply it to each example's own row: fingerprints are per example.
+    keep_docs_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = field(default=None, repr=False)
 
 
 class PooledDocKVAttention(DocumentChunkedAttention):
@@ -706,11 +709,16 @@ def install_pooled_doc_keep(
 
     :returns: the :class:`PooledDocKeepHolder` (records how many layers were attached).
     """
-    holder = PooledDocKeepHolder()
+    holder = PooledDocKeepHolder(keep_docs_fn=keep_docs_fn)
 
     def pre_hook(module, args, kwargs):
         input_ids = kwargs.get("input_ids", args[0] if args else None)
         if input_ids is None:
+            return
+        if kwargs.get("doc_lens") is not None:
+            # Packed rows: a row-level fingerprint matches no example. The soft-token model
+            # unpacks the row and calls ``holder.keep_docs_fn`` per example instead.
+            holder.keep_docs = None
             return
         holder.keep_docs = keep_docs_fn(input_ids)
 

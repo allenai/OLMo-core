@@ -37,6 +37,11 @@ export PATH="$ENV/bin:$PATH"   # torchrun from the node-visible env, never a sys
 export HF_HOME="${HF_HOME_OVERRIDE:-/accounts/projects/sewonm/prasann/.cache/huggingface}"
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=offline
 export TRITON_CACHE_DIR=/tmp/$USER/triton_cache; mkdir -p "$TRITON_CACHE_DIR"
+# the runner cd's into $WEKA_LLM/checkpoints/prasanns/_eval_bundle (rung files below are absolute)
+mkdir -p "$ROOT/weka_stub/checkpoints/prasanns/_eval_bundle"
+# scipy/scikit-learn (outlier/rerank metrics) were installed offline from wheels on 2026-10-20;
+# lambda has no pypi, so the runner's own pip fallback cannot fetch them
+"$ENV/bin/python" -c "import scipy, sklearn" || { echo "FATAL: scipy/sklearn missing from $ENV"; exit 4; }
 FILES="{\"$KEY\": {\"8k\": \"$ROOT/eval/$R8\", \"2k\": \"$ROOT/eval/$R2\"}}"
 echo "=== LAMBDA fast8k eval host=$(hostname) RUN=$RUN TASK=$TASK CKPT=$CKPT NGPU=$NGPU $(date '+%F %T') ==="
 cd "$REPO"

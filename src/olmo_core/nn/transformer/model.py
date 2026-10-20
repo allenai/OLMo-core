@@ -1001,6 +1001,36 @@ class Transformer(nn.Module):
         )
         holder.set_from_chunk_ids(move_to_device(chunk_ids, self.device))
 
+    def _record_example_lens(self, dense_lens: List[int], actual_lens: List[int]) -> None:
+        """Per-example lengths of this forward for the FLOP meter (dense = the real example,
+        actual = what ran, e.g. the compacted example). Read and reset by ``FlopMeterCallback``."""
+        st = getattr(self, "_flop_example_lens", None)
+        if st is None:
+            st = self._flop_example_lens = {"dense": [], "actual": []}
+        st["dense"].extend(dense_lens)
+        st["actual"].extend(actual_lens)
+
+    def _check_soft_token_segment_mode(self) -> None:
+        """Packed-row soft tokens re-pack the compacted examples into one varlen row, which is only
+        defined for slot-less compaction with no extra attention bias or paired teacher pass."""
+        cfg = self._pooled_soft_tokens
+        assert cfg is not None
+        bad = [
+            name
+            for name, on in (
+                ("slots (set drop_slots)", not cfg.get("drop_slots", False)),
+                ("aux matching", cfg["aux_match_weight"] > 0.0),
+                ("len_bias", bool(cfg.get("len_bias"))),
+                ("paired distillation", cfg["distill_prob"] > 0.0),
+                ("oracle cache", cfg.get("oracle_cache") is not None),
+            )
+            if on
+        ]
+        if bad:
+            raise OLMoConfigurationError(
+                f"pooled soft tokens on PACKED rows (doc_lens) do not support: {', '.join(bad)}"
+            )
+
     def _compact_pooled_soft_tokens(
         self,
         input_ids: torch.Tensor,
@@ -1286,7 +1316,7 @@ class Transformer(nn.Module):
             add_shadows=cfg["aux_match_weight"] > 0.0,
             max_shadows_per_row=cfg["aux_max_shadows"],
             drop_slots=bool(cfg.get("drop_slots", False)),
-            pad_multiple=int(cfg.get("pad_multiple", 1)),
+            pad_multiple=1 if cfg.get("_segment_mode") else int(cfg.get("pad_multiple", 1)),
         )
         if pre_free_chunk_ids is not None:
             cfg["_keep_token_calls"] += 1
@@ -2277,6 +2307,16 @@ class Transformer(nn.Module):
         soft_inject: Optional[Tuple] = None
         aux_ctx: Optional[Dict[str, Any]] = None
         distill_teacher: Optional[Dict[str, Any]] = None
+        track_lens = (
+            getattr(self, "_flop_pad_id", None) is not None
+            and self.training
+            and not input_ids.is_floating_point()
+        )
+        if track_lens and self._pooled_soft_tokens is None:
+            from ..pooled_soft_token import example_lengths
+
+            lens = example_lengths(input_ids, kwargs.get("doc_lens"), self._flop_pad_id)
+            self._record_example_lens(lens, lens)
         if (
             self._pooled_soft_tokens is not None
             and self.training
@@ -2342,10 +2382,48 @@ class Transformer(nn.Module):
                     "caps": {li: t_caps[li][d_rows, d_pos].detach() for li in t_caps},
                 }
             n_tokens_in = int(input_ids.numel())
+            # PACKED rows (doc_lens given): unpack to one example per row so the per-example gold
+            # fingerprints and the compaction apply unchanged, then re-pack the compacted examples
+            # into one varlen row below (repack_compacted_rows).
+            packed = kwargs.get("doc_lens") is not None
+            pst0["_segment_mode"] = packed
+            if packed:
+                from ..pooled_soft_token import unpack_packed_rows
+
+                self._check_soft_token_segment_mode()
+                packed_orig = (input_ids, labels, kwargs.pop("doc_lens"), kwargs.pop("max_doc_lens", None))
+                up = unpack_packed_rows(
+                    input_ids, labels, packed_orig[2], pad_id=pst0["eos_id"], ignore_index=ignore_index
+                )
+                input_ids, labels, dense_lens = up.input_ids, up.labels, up.lengths
+                holder = self._pooled_keep_holder
+                if holder is not None and getattr(holder, "keep_docs_fn", None) is not None:
+                    holder.keep_docs = holder.keep_docs_fn(input_ids)
+            elif track_lens:
+                from ..pooled_soft_token import example_lengths
+
+                dense_lens = example_lengths(input_ids, None, pst0["eos_id"])
             compacted = self._compact_pooled_soft_tokens(input_ids, labels, ignore_index)
+            if compacted is None and packed:
+                input_ids, labels = packed_orig[0], packed_orig[1]
+                kwargs["doc_lens"], kwargs["max_doc_lens"] = packed_orig[2], packed_orig[3]
+            if compacted is None and track_lens:
+                self._record_example_lens(dense_lens, dense_lens)
             if compacted is not None:
                 cb, soft_inject, oracle_ovr = compacted
                 input_ids, labels = cb.input_ids, cb.labels
+                if track_lens:
+                    self._record_example_lens(dense_lens, [int(x) for x in cb.row_lens.tolist()])
+                if packed:
+                    from ..pooled_soft_token import repack_compacted_rows
+
+                    input_ids, labels, rp_pos, rp_dl, rp_mdl = repack_compacted_rows(
+                        cb,
+                        pad_id=pst0["eos_id"],
+                        ignore_index=ignore_index,
+                        pad_multiple=int(pst0.get("pad_multiple", 1)),
+                    )
+                    kwargs["doc_lens"], kwargs["max_doc_lens"] = rp_dl, rp_mdl
                 # Compaction accounting for the FLOP meter (accumulated across microbatches; the
                 # FlopMeterCallback reads and resets it every step).
                 stats = getattr(self, "_soft_token_compaction", None)
@@ -2358,7 +2436,7 @@ class Transformer(nn.Module):
                 stats["tokens_in"] += n_tokens_in
                 stats["tokens_out"] += int(input_ids.numel())
                 stats["rows"] += int(input_ids.shape[0])
-                kwargs["position_ids"] = cb.position_ids
+                kwargs["position_ids"] = rp_pos if packed else cb.position_ids
                 if oracle_ovr is not None:
                     kwargs["soft_kv_override_layers"] = oracle_ovr
                     # Slot biases need the additive-bias SDPA path: position-causality is
