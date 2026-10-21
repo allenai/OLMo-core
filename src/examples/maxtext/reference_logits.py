@@ -21,7 +21,6 @@ and other constant-initialized parameters get noise so a swapped mapping can't h
 
 import argparse
 import copy
-import json
 import logging
 import os
 from typing import Any, Dict, Tuple
@@ -40,15 +39,16 @@ except ImportError:
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
-from olmo_core.nn.maxtext import (
-    get_maxtext_config,
+from olmo_core.nn.maxtext import get_maxtext_config
+from olmo_core.nn.maxtext.checkpoint import (
     load_olmo_core_config,
     load_olmo_core_weights,
+    read_json,
     save_olmo_core_weights,
 )
 from olmo_core.nn.maxtext.parity import concat, default_positions, summarize_logits
 from olmo_core.nn.transformer import TransformerConfig
+from olmo_core.nn.transformer.config import normalize_legacy_config_dict
 from olmo_core.utils import prepare_cli_environment
 
 log = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def _for_reference(value: Any) -> None:
 
 def build_model(model_config: Dict[str, Any], device: torch.device):
     model_config = copy.deepcopy(model_config)
-    _normalize_legacy_latent_moe_config(model_config)
+    normalize_legacy_config_dict(model_config)
     _for_reference(model_config)
     model = TransformerConfig.from_dict(model_config).build(init_device="meta")
     model.to_empty(device=device)
@@ -87,9 +87,8 @@ def _randomize(model: torch.nn.Module, seed: int) -> None:
     for name, p in model.named_parameters():
         # Norm gains (all ones), SSMax gains and zero biases would map correctly even if the
         # mapping mixed them up, so make every parameter distinct.
-        noise = torch.randn(p.shape, generator=gen).to(p.device, p.dtype)
         if p.numel() > 1 and torch.all(p == p.reshape(-1)[0]):
-            p.add_(0.1 * noise)
+            p.add_(0.1 * torch.randn(p.shape, generator=gen).to(p.device, p.dtype))
             log.info(f"Perturbed constant-initialized {name}")
 
 
@@ -174,8 +173,7 @@ def main() -> None:
     if args.checkpoint:
         experiment_config = load_olmo_core_config(args.checkpoint)
     else:
-        with open(args.config) as f:
-            experiment_config = json.load(f)
+        experiment_config = read_json(args.config)
         if "model" not in experiment_config:
             experiment_config = {"model": experiment_config}
     model_config = experiment_config["model"]
@@ -184,7 +182,8 @@ def main() -> None:
 
     if args.checkpoint:
         state = load_olmo_core_weights(args.checkpoint, config)
-        model.load_state_dict(state)
+        # On CPU, adopt the loaded tensors rather than holding two copies of the model.
+        model.load_state_dict(state, assign=device.type == "cpu")
         del state
     else:
         _randomize(model, args.seed)

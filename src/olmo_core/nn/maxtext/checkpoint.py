@@ -9,35 +9,28 @@ into the same environment (CPU JAX is enough).
 
 import json
 import logging
-import re
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Mapping
 
 import numpy as np
 import torch
-import torch.distributed.checkpoint as dist_cp
 from cached_path import cached_path
 
-from olmo_core.distributed.checkpoint.filesystem import (
-    RemoteFileSystemReader,
-    RemoteFileSystemWriter,
+from olmo_core.distributed.checkpoint import (
+    get_checkpoint_metadata,
+    load_keys,
+    save_state_dict,
 )
-from olmo_core.io import (
-    PathOrStr,
-    file_exists,
-    is_url,
-    join_path,
-    normalize_path,
-    upload,
-)
+from olmo_core.io import PathOrStr, copy_file, file_exists, join_path, normalize_path
 
 from .config import MaxTextModelConfig, ScanLayout
-from .convert import normalize_olmo_core_key, olmo_core_shapes
+from .convert import normalize_olmo_core_key, olmo_core_shapes, split_layer_key
 
 log = logging.getLogger(__name__)
 
 __all__ = [
+    "read_json",
+    "write_json",
     "load_olmo_core_config",
     "load_olmo_core_weights",
     "save_olmo_core_weights",
@@ -46,17 +39,29 @@ __all__ = [
     "scan_params",
     "unscan_params",
     "is_scanned",
-    "write_json",
 ]
+
+
+def read_json(path: PathOrStr) -> Any:
+    """Read a JSON file from a local path or a cloud URL."""
+    with cached_path(normalize_path(path)).open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def write_json(path: PathOrStr, obj: Any, *, save_overwrite: bool = False) -> None:
+    """Write ``obj`` as JSON to a local path or a cloud URL."""
+    with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
+        json.dump(obj, f, indent=2)
+        f.flush()
+        copy_file(f.name, path, save_overwrite=save_overwrite)
 
 
 def load_olmo_core_config(checkpoint_dir: PathOrStr) -> Dict[str, Any]:
     """Load the experiment ``config.json`` saved alongside an OLMo Core checkpoint."""
-    path = f"{normalize_path(checkpoint_dir)}/config.json"
+    path = join_path(checkpoint_dir, "config.json")
     if not file_exists(path):
         raise FileNotFoundError(f"no config.json at {checkpoint_dir}")
-    with cached_path(path).open("r", encoding="utf-8") as f:
-        config = json.load(f)
+    config = read_json(path)
     if "model" not in config:
         raise ValueError(f"{path} is not an OLMo Core experiment config")
     return config
@@ -74,19 +79,13 @@ def load_olmo_core_weights(
     shapes come from ``config``, so this runs on CPU without the GPU kernel packages.
     """
     model_and_optim = join_path(checkpoint_dir, "model_and_optim")
-    reader = RemoteFileSystemReader(model_and_optim)
-    metadata = reader.read_metadata().state_dict_metadata
+    metadata = get_checkpoint_metadata(model_and_optim).state_dict_metadata
     shapes = olmo_core_shapes(config)
 
     # Prefer the model weights; fall back to the fp32 master copies.
-    by_name: Dict[str, Dict[str, str]] = {"model": {}, "main": {}}
-    for key in metadata:
-        if key.startswith("model."):
-            by_name["model"][normalize_olmo_core_key(key)] = key
-        elif key.endswith(".main"):
-            by_name["main"][normalize_olmo_core_key(key)] = key
-    source = "model" if by_name["model"] else "main"
-    keys = by_name[source]
+    model_keys = {normalize_olmo_core_key(k): k for k in metadata if k.startswith("model.")}
+    main_keys = {normalize_olmo_core_key(k): k for k in metadata if k.endswith(".main")}
+    keys = model_keys or main_keys
     if not keys:
         raise RuntimeError(f"{model_and_optim} has neither model.* nor .main entries")
     missing = sorted(set(shapes) - set(keys))
@@ -95,23 +94,15 @@ def load_olmo_core_weights(
     extra = sorted(set(keys) - set(shapes))
     if extra:
         raise KeyError(f"{model_and_optim} has parameters the config doesn't: {extra[:10]}")
-
-    to_load: Dict[str, torch.Tensor] = {}
     for name, shape in shapes.items():
-        key = keys[name]
-        md = metadata[key]
-        stored_shape = tuple(md.size)  # type: ignore[union-attr]
-        numel = int(np.prod(shape))
-        if stored_shape not in (shape, (numel,)):
-            raise ValueError(f"{key}: stored shape {stored_shape} doesn't fit {shape}")
-        dtype = md.properties.dtype  # type: ignore[union-attr]
-        to_load[key] = torch.empty(stored_shape, dtype=dtype)
-    log.info(f"Loading {len(to_load)} parameters ({source}) from '{model_and_optim}'")
-    dist_cp.load(to_load, storage_reader=reader, no_dist=True)
+        stored_shape = tuple(metadata[keys[name]].size)  # type: ignore[union-attr]
+        if stored_shape not in (shape, (int(np.prod(shape)),)):
+            raise ValueError(f"{keys[name]}: stored shape {stored_shape} doesn't fit {shape}")
 
+    log.info(f"Loading {len(shapes)} parameters from '{model_and_optim}'")
+    tensors = load_keys(model_and_optim, [keys[name] for name in shapes])
     out = {}
-    for name, shape in shapes.items():
-        tensor = to_load.pop(keys[name])
+    for (name, shape), tensor in zip(shapes.items(), tensors):
         if tensor.dtype != torch.float32:
             log.warning(f"{name} is stored as {tensor.dtype}; upcasting to float32")
             tensor = tensor.float()
@@ -133,31 +124,11 @@ def save_olmo_core_weights(
     these weights and starts the optimizer fresh.
     """
     model_and_optim = join_path(output_dir, "model_and_optim")
-    if file_exists(f"{normalize_path(model_and_optim)}/.metadata") and not save_overwrite:
-        raise FileExistsError(f"{model_and_optim} already holds a checkpoint")
-    tensors = {f"model.{k}": v.contiguous() for k, v in state.items()}
-    log.info(f"Saving {len(tensors)} parameters to '{model_and_optim}'")
-    dist_cp.save(tensors, storage_writer=RemoteFileSystemWriter(model_and_optim), no_dist=True)
-
+    log.info(f"Saving {len(state)} parameters to '{model_and_optim}'")
+    save_state_dict(model_and_optim, {"model": dict(state)}, save_overwrite=save_overwrite)
     write_json(
-        f"{normalize_path(output_dir)}/config.json",
-        experiment_config,
-        save_overwrite=save_overwrite,
+        join_path(output_dir, "config.json"), experiment_config, save_overwrite=save_overwrite
     )
-
-
-def write_json(path: str, obj: Any, *, save_overwrite: bool = False) -> None:
-    """Write ``obj`` as JSON to a local path or a cloud URL."""
-    if not is_url(path):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        if Path(path).exists() and not save_overwrite:
-            raise FileExistsError(path)
-        Path(path).write_text(json.dumps(obj, indent=2))
-        return
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as f:
-        json.dump(obj, f, indent=2)
-        f.flush()
-        upload(f.name, path, save_overwrite=save_overwrite)
 
 
 def _flatten(tree: Mapping[str, Any], prefix: str = "") -> Dict[str, Any]:
@@ -215,9 +186,7 @@ def load_maxtext_params(items_dir: str) -> Dict[str, torch.Tensor]:
     return {k: torch.from_numpy(np.array(v)) for k, v in _flatten(params).items()}
 
 
-def save_maxtext_params(
-    output_dir: str, params: Mapping[str, torch.Tensor], *, device_count: Optional[int] = None
-) -> None:
+def save_maxtext_params(output_dir: str, params: Mapping[str, torch.Tensor]) -> None:
     """
     Write a flat ``/``-joined parameter dict as a MaxText checkpoint at ``<output_dir>/0/items``,
     loadable with ``load_parameters_path=<output_dir>/0/items``. Uses MaxText's own checkpoint
@@ -231,30 +200,30 @@ def save_maxtext_params(
     save_weights_to_checkpoint(
         output_dir,
         _unflatten({k: v.numpy() for k, v in params.items()}),
-        device_count=device_count or jax.device_count(),
+        device_count=jax.device_count(),
         use_ocdbt=True,
         use_zarr3=True,
     )
 
 
-_UNSCANNED_RE = re.compile(r"^decoder/layers_(?P<layer>\d+)/(?P<rest>.+)$")
+#: Unscanned layer parameters live under ``decoder/layers_{i}/``.
+_UNSCANNED = "decoder/layers_"
+
+#: Scanned parameters stack their cycles along this axis.
+_SCAN_AXIS = 1
 
 
-def _scanned_res(layout: ScanLayout) -> List[re.Pattern]:
-    slot = re.escape(layout.slot).replace(re.escape("{}"), r"(?P<slot>\d+)")
-    groups = [(layout.stacked, "stacked")]
+def _slot_prefixes(layout: ScanLayout) -> Dict[str, bool]:
+    """Key prefix of each scanned slot -> whether it's the unrolled first cycle."""
+    prefixes = {f"{layout.stacked}/{layout.slot}": False}
     if layout.unrolled is not None:
-        groups.append((layout.unrolled, "unrolled"))
-    return [
-        re.compile(rf"^(?P<{name}>{re.escape(prefix)})/{slot}/(?P<rest>.+)$")
-        for prefix, name in groups
-    ]
+        prefixes[f"{layout.unrolled}/{layout.slot}"] = True
+    return prefixes
 
 
 def is_scanned(params: Mapping[str, Any], layout: ScanLayout) -> bool:
     """Whether ``params`` is in the ``scan_layers=True`` layout."""
-    res = _scanned_res(layout)
-    return any(r.match(k) for k in params for r in res)
+    return any(k.startswith(p) for k in params for p in _slot_prefixes(layout))
 
 
 def scan_params(
@@ -269,24 +238,23 @@ def scan_params(
     n_unrolled = 1 if layout.unrolled is not None else 0
     n_stacked = n_layers // layout.cycle - n_unrolled
     out: Dict[str, torch.Tensor] = {}
-    per_slot: Dict[tuple, list] = {}
+    per_slot: Dict[str, list] = {}
     for key, value in params.items():
-        m = _UNSCANNED_RE.match(key)
-        if m is None:
+        split = split_layer_key(key, _UNSCANNED, "/")
+        if split is None:
             out[key] = value
             continue
-        cycle, slot = divmod(int(m["layer"]), layout.cycle)
-        slot_name = layout.slot.format(slot)
+        layer, rest = split
+        cycle, slot = divmod(layer, layout.cycle)
         if cycle < n_unrolled:
-            out[f"{layout.unrolled}/{slot_name}/{m['rest']}"] = value
+            out[f"{layout.unrolled}/{layout.slot}{slot}/{rest}"] = value
         else:
-            per_slot.setdefault((slot_name, m["rest"]), [None] * n_stacked)[
-                cycle - n_unrolled
-            ] = value
-    for (slot_name, rest), values in per_slot.items():
+            stacked_key = f"{layout.stacked}/{layout.slot}{slot}/{rest}"
+            per_slot.setdefault(stacked_key, [None] * n_stacked)[cycle - n_unrolled] = value
+    for key, values in per_slot.items():
         if any(v is None for v in values):
-            raise KeyError(f"{slot_name}/{rest} is missing from some cycles")
-        out[f"{layout.stacked}/{slot_name}/{rest}"] = torch.stack(values, dim=layout.axis)
+            raise KeyError(f"{key} is missing from some cycles")
+        out[key] = torch.stack(values, dim=_SCAN_AXIS)
     return out
 
 
@@ -294,21 +262,23 @@ def unscan_params(
     params: Mapping[str, torch.Tensor], layout: ScanLayout
 ) -> Dict[str, torch.Tensor]:
     """The inverse of :func:`scan_params`."""
-    res = _scanned_res(layout)
     n_unrolled = 1 if layout.unrolled is not None else 0
     out: Dict[str, torch.Tensor] = {}
     for key, value in params.items():
-        m = next((m for r in res if (m := r.match(key)) is not None), None)
-        if m is None:
-            if _UNSCANNED_RE.match(key):
+        for prefix, unrolled in _slot_prefixes(layout).items():
+            split = split_layer_key(key, prefix, "/")
+            if split is not None:
+                break
+        else:
+            if split_layer_key(key, _UNSCANNED, "/") is not None:
                 raise ValueError(f"{key} is already unscanned")
             out[key] = value
             continue
-        slot = int(m["slot"])
-        if m.groupdict().get("unrolled") is not None:
-            out[f"decoder/layers_{slot}/{m['rest']}"] = value
-            continue
-        for c in range(value.shape[layout.axis]):
-            layer = (c + n_unrolled) * layout.cycle + slot
-            out[f"decoder/layers_{layer}/{m['rest']}"] = value.select(layout.axis, c)
+        slot, rest = split
+        if unrolled:
+            out[f"{_UNSCANNED}{slot}/{rest}"] = value
+        else:
+            for c in range(value.shape[_SCAN_AXIS]):
+                layer = (c + n_unrolled) * layout.cycle + slot
+                out[f"{_UNSCANNED}{layer}/{rest}"] = value.select(_SCAN_AXIS, c)
     return out

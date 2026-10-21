@@ -3,9 +3,6 @@ Tests of the OLMo Core <-> MaxText mappings against MaxText itself. Skipped unle
 JAX) is installed; CPU JAX is enough.
 """
 
-import os
-import sys
-
 import numpy as np
 import pytest
 import torch
@@ -13,15 +10,18 @@ import torch
 pytest.importorskip("maxtext")
 
 from olmo_core.nn.maxtext import (  # noqa: E402
+    convert_state_to_maxtext,
     get_maxtext_config,
-    maxtext_shapes,
+)
+from olmo_core.nn.maxtext.checkpoint import (  # noqa: E402
     save_maxtext_params,
     scan_params,
 )
-from olmo_core.nn.maxtext.convert import convert_state_to_maxtext  # noqa: E402
+from olmo_core.nn.maxtext.convert import maxtext_shapes  # noqa: E402
 from olmo_core.nn.maxtext.parity import (  # noqa: E402
     compare_summaries,
     default_positions,
+    initialize_maxtext_config,
     maxtext_logit_summary,
     summarize_logits,
 )
@@ -40,33 +40,19 @@ def maxtext_param_shapes(config, scan_layers: bool) -> dict:
     import jax
     import jax.numpy as jnp
     from jax.sharding import Mesh
-    from maxtext.configs import pyconfig
     from maxtext.layers import quantizations
     from maxtext.models import models
     from maxtext.utils import maxtext_utils
-    from maxtext.utils.globals import MAXTEXT_PKG_DIR
 
-    argv, sys.argv = sys.argv, sys.argv[:1]
-    try:
-        mt_config = pyconfig.initialize(
-            [
-                "",
-                os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml"),
-                f"model_name={config.model_name}",
-                "override_model_config=True",
-                *config.overrides(),
-                "run_name=shapes",
-                "enable_checkpointing=False",
-                f"scan_layers={scan_layers}",
-                "skip_jax_distributed_system=True",
-                "per_device_batch_size=1",
-                "max_target_length=64",
-                "megablox=False",
-                "sparse_matmul=False",
-            ]
-        )
-    finally:
-        sys.argv = argv
+    mt_config = initialize_maxtext_config(
+        config,
+        "run_name=shapes",
+        "enable_checkpointing=False",
+        "max_target_length=64",
+        "megablox=False",
+        "sparse_matmul=False",
+        scan_layers=scan_layers,
+    )
     mesh = Mesh(maxtext_utils.create_device_mesh(mt_config), mt_config.mesh_axes)
     model = models.transformer_as_linen(
         mt_config, mesh, quant=quantizations.configure_quantization(mt_config)

@@ -19,12 +19,10 @@ Usage::
         --olmo-core-config gs://bucket/run/step1000/config.json
 """
 
-import json
 from argparse import ArgumentParser
 
-from cached_path import cached_path
-
 from olmo_core.nn.maxtext import convert_checkpoint_from_maxtext
+from olmo_core.nn.maxtext.checkpoint import read_json
 from olmo_core.utils import prepare_cli_environment
 
 
@@ -58,14 +56,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-    experiment_config = None
-    if args.olmo_core_config:
-        with cached_path(args.olmo_core_config).open("r", encoding="utf-8") as f:
-            experiment_config = json.load(f)
     convert_checkpoint_from_maxtext(
         args.maxtext_input_path,
         args.checkpoint_output_dir,
-        experiment_config=experiment_config,
+        experiment_config=read_json(args.olmo_core_config) if args.olmo_core_config else None,
         validate=args.validate,
         save_overwrite=args.save_overwrite,
     )

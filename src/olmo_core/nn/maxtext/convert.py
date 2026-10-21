@@ -7,15 +7,15 @@ collection flattened to ``/``-joined paths in the unscanned (``scan_layers=False
 ``decoder/layers_3/mlp/wi_0/kernel``; see :func:`olmo_core.nn.maxtext.checkpoint.scan_params` for
 the scanned layout.
 
-Every mapping is a pure re-layout (transpose, reshape, split, concatenate), so converting there
-and back is bit-exact. The mappings for a layer depend on the MaxText decoder and on the layer's
-sequence mixer and feed-forward, since layers of a hybrid model share OLMo Core names
-(``blocks.{i}.attention.*``) but not MaxText ones. They are built per layer from the
-``*_TO_MAXTEXT`` / ``*_FROM_MAXTEXT`` builders below, which you may change or extend.
+Every mapping is a pure re-layout (transpose, reshape, split, concatenate), so it's inverted
+mechanically and converting there and back is bit-exact. The mappings for a layer depend on the
+MaxText decoder and on the layer's sequence mixer and feed-forward, since layers of a hybrid model
+share OLMo Core names (``blocks.{i}.attention.*``) but not MaxText ones. They are built per layer
+from the ``*_mappings`` builders below, which you may change or extend.
 """
 
 import logging
-from typing import Callable, Dict, List, Mapping, MutableMapping, Tuple
+from typing import Callable, Dict, List, Mapping, MutableMapping, Optional, Tuple
 
 import torch
 
@@ -23,7 +23,7 @@ from olmo_core.doc_utils import beta_feature
 from olmo_core.nn.conversion.state_converter import StateConverter
 from olmo_core.nn.conversion.state_mapping import StateMappingTemplate
 
-from .config import LayerSpec, MaxTextDecoderBlock, MaxTextModelConfig
+from .config import MaxTextDecoderBlock, MaxTextModelConfig
 
 __all__ = [
     "get_converter_to_maxtext",
@@ -37,8 +37,8 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: Builds the mappings for one part of the model from the model config, the OLMo Core prefix
-#: (e.g. ``blocks.3``) and the MaxText prefix (e.g. ``decoder/layers_3``).
+#: Builds the OLMo Core -> MaxText mappings for one part of a layer from the model config, the
+#: OLMo Core prefix (e.g. ``blocks.3``) and the MaxText prefix (e.g. ``decoder/layers_3``).
 MappingBuilder = Callable[[MaxTextModelConfig, str, str], List[StateMappingTemplate]]
 
 
@@ -56,8 +56,7 @@ def _transpose(source: str, dest: str) -> StateMappingTemplate:
 # ------------------------------------------------------------------------------------------------
 
 
-def _model_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    del b, m
+def _model_mappings(c: MaxTextModelConfig) -> List[StateMappingTemplate]:
     mappings = [
         _rename("embeddings.weight", "token_embedder/embedding"),
         _rename("lm_head.norm.weight", "decoder/decoder_norm/scale"),
@@ -66,19 +65,6 @@ def _model_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappin
     if c.decoder_block == MaxTextDecoderBlock.olmoe3:
         mappings.append(_rename("embedding_norm.weight", "decoder/embedding_norm/scale"))
     return mappings
-
-
-def _model_from_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    return [_invert_simple(t) for t in _model_to_maxtext(c, b, m)]
-
-
-def _invert_simple(t: StateMappingTemplate) -> StateMappingTemplate:
-    """Inverse of a :func:`_rename` or :func:`_transpose` mapping."""
-    assert isinstance(t.source_template_keys, str) and isinstance(t.dest_template_keys, str)
-    assert t.unflatten_dim is None and t.flatten_dims is None
-    return StateMappingTemplate(
-        t.dest_template_keys, t.source_template_keys, dims_permutation=t.dims_permutation
-    )
 
 
 # ------------------------------------------------------------------------------------------------
@@ -102,7 +88,7 @@ BLOCK_NORM_MAPPINGS: Dict[str, Dict[str, str]] = {
 }
 
 
-def _norms_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _norm_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     return [
         _rename(f"{b}.{norm}.weight", f"{m}/{mt_norm}/scale")
         for norm, mt_norm in BLOCK_NORM_MAPPINGS[c.decoder_block].items()
@@ -114,7 +100,7 @@ def _norms_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappin
 # ------------------------------------------------------------------------------------------------
 
 
-def _attention_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _attention_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     a, hd = f"{b}.attention", c.attention.head_dim
     if c.decoder_block == MaxTextDecoderBlock.olmoe3:
         m = f"{m}/mixer"
@@ -178,60 +164,6 @@ def _attention_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMa
     return mappings
 
 
-def _attention_from_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    a, hd = f"{b}.attention", c.attention.head_dim
-    if c.decoder_block == MaxTextDecoderBlock.olmoe3:
-        m = f"{m}/mixer"
-    mt = f"{m}/attention"
-    mappings = [
-        StateMappingTemplate(
-            f"{mt}/key/kernel", f"{a}.w_k.weight", dims_permutation=(1, 2, 0), flatten_dims=(0, 1)
-        ),
-        StateMappingTemplate(
-            f"{mt}/value/kernel", f"{a}.w_v.weight", dims_permutation=(1, 2, 0), flatten_dims=(0, 1)
-        ),
-    ]
-    if c.attention.gated:
-        # [d_model, heads, 2 * head_dim] -> [2, heads, head_dim, d_model], then split in two.
-        mappings.append(
-            StateMappingTemplate(
-                f"{mt}/query/kernel",
-                (f"{a}.w_q.weight", f"{a}.w_g.weight"),
-                unflatten_dim=(2, (2, hd)),
-                dims_permutation=(2, 1, 3, 0),
-                flatten_dims=(0, 2),
-            )
-        )
-    else:
-        mappings.append(
-            StateMappingTemplate(
-                f"{mt}/query/kernel",
-                f"{a}.w_q.weight",
-                dims_permutation=(1, 2, 0),
-                flatten_dims=(0, 1),
-            )
-        )
-    if c.decoder_block == MaxTextDecoderBlock.olmoe3:
-        mappings.append(_transpose(f"{mt}/out/kernel", f"{a}.w_out.weight"))
-    else:
-        mappings.append(
-            StateMappingTemplate(
-                f"{mt}/out/kernel",
-                f"{a}.w_out.weight",
-                dims_permutation=(2, 0, 1),
-                flatten_dims=(1, 2),
-            )
-        )
-    if c.attention.qk_norm:
-        mappings += [
-            _rename(f"{mt}/query_norm/scale", f"{a}.q_norm.weight"),
-            _rename(f"{mt}/key_norm/scale", f"{a}.k_norm.weight"),
-        ]
-    if c.attention.scalable_softmax:
-        mappings.append(_rename(f"{mt}/ssmax_scale", f"{a}.ssmax_scale"))
-    return mappings
-
-
 # ------------------------------------------------------------------------------------------------
 # Kimi Delta Attention
 # ------------------------------------------------------------------------------------------------
@@ -249,7 +181,7 @@ KDA_RENAMES = {
 }
 
 
-def _kda_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _kda_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     a, mt = f"{b}.attention", f"{m}/mixer"
     mappings = [_transpose(f"{a}.{w}.weight", f"{mt}/{w}/kernel") for w in KDA_KERNELS]
     mappings += [_rename(f"{a}.{k}", f"{mt}/{v}") for k, v in KDA_RENAMES.items()]
@@ -261,23 +193,12 @@ def _kda_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingT
     return mappings
 
 
-def _kda_from_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    a, mt = f"{b}.attention", f"{m}/mixer"
-    mappings = [_transpose(f"{mt}/{w}/kernel", f"{a}.{w}.weight") for w in KDA_KERNELS]
-    mappings += [_rename(f"{mt}/{v}", f"{a}.{k}") for k, v in KDA_RENAMES.items()]
-    mappings += [
-        StateMappingTemplate(f"{mt}/{x}_conv", f"{a}.{x}_conv1d.weight", unflatten_dim=(1, (1, -1)))
-        for x in "qkv"
-    ]
-    return mappings
-
-
 # ------------------------------------------------------------------------------------------------
 # Feed-forward
 # ------------------------------------------------------------------------------------------------
 
 
-def _feed_forward_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _feed_forward_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     # OLMo Core computes w2(silu(w1(x)) * w3(x)); MaxText silu(x @ wi_0) * (x @ wi_1) @ wo.
     return [
         _transpose(f"{b}.feed_forward.w1.weight", f"{m}/mlp/wi_0/kernel"),
@@ -286,11 +207,7 @@ def _feed_forward_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[Stat
     ]
 
 
-def _feed_forward_from_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    return [_invert_simple(t) for t in _feed_forward_to_maxtext(c, b, m)]
-
-
-def _shared_expert_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _shared_expert_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     # x @ w_up_gate gives [up | gate] along the columns, and the block computes up * silu(gate).
     # MaxText computes silu(wi_0) * wi_1, so wi_0 is the gate and wi_1 is up.
     return [
@@ -306,22 +223,7 @@ def _shared_expert_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[Sta
     ]
 
 
-def _shared_expert_from_maxtext(
-    c: MaxTextModelConfig, b: str, m: str
-) -> List[StateMappingTemplate]:
-    return [
-        StateMappingTemplate(
-            (f"{m}/shared_ffn/wi_1/kernel", f"{m}/shared_ffn/wi_0/kernel"),
-            f"{b}.shared_experts.w_up_gate",
-            source_concat_dim=1,
-        ),
-        StateMappingTemplate(
-            f"{m}/shared_ffn/wo/kernel", f"{b}.shared_experts.w_down", unflatten_dim=(0, (1, -1))
-        ),
-    ]
-
-
-def _routed_experts_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
+def _routed_expert_mappings(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
     assert c.moe is not None
     return [
         _transpose(f"{b}.latent_down_proj.weight", f"{m}/latent_down/kernel"),
@@ -346,94 +248,88 @@ def _routed_experts_to_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[St
     ]
 
 
-def _routed_experts_from_maxtext(
-    c: MaxTextModelConfig, b: str, m: str
-) -> List[StateMappingTemplate]:
-    return [
-        _transpose(f"{m}/latent_down/kernel", f"{b}.latent_down_proj.weight"),
-        _transpose(f"{m}/latent_up/kernel", f"{b}.latent_up_proj.weight"),
-        StateMappingTemplate(
-            f"{m}/moe_block/gate/kernel",
-            f"{b}.routed_experts_router.weight",
-            dims_permutation=(1, 0),
-            flatten_dims=(0, 1),
-        ),
-        StateMappingTemplate(
-            (f"{m}/moe_block/wi_1", f"{m}/moe_block/wi_0"),
-            f"{b}.routed_experts.w_up_gate",
-            source_concat_dim=2,
-            dims_permutation=(0, 2, 1),
-        ),
-        _rename(f"{m}/moe_block/wo", f"{b}.routed_experts.w_down"),
-    ]
-
-
-#: Sequence mixer type (as in OLMo Core's config) -> (to MaxText, from MaxText).
-SEQUENCE_MIXER_MAPPINGS: Dict[str, Tuple[MappingBuilder, MappingBuilder]] = {
-    "attention": (_attention_to_maxtext, _attention_from_maxtext),
-    "kimi_delta_attention": (_kda_to_maxtext, _kda_from_maxtext),
+#: Sequence mixer type (as in OLMo Core's config) -> its mapping builder.
+SEQUENCE_MIXER_MAPPINGS: Dict[str, MappingBuilder] = {
+    "attention": _attention_mappings,
+    "kimi_delta_attention": _kda_mappings,
 }
 
 
-def _layer_builders(
-    c: MaxTextModelConfig, layer: LayerSpec
-) -> List[Tuple[MappingBuilder, MappingBuilder]]:
-    builders = [
-        (_norms_to_maxtext, _norms_from_maxtext),
-        SEQUENCE_MIXER_MAPPINGS[layer.sequence_mixer],
-    ]
+def _layer_mappings(c: MaxTextModelConfig, layer: int) -> List[StateMappingTemplate]:
+    spec = c.layers[layer]
+    builders = [_norm_mappings, SEQUENCE_MIXER_MAPPINGS[spec.sequence_mixer]]
     if c.decoder_block == MaxTextDecoderBlock.olmo3:
-        builders.append((_feed_forward_to_maxtext, _feed_forward_from_maxtext))
+        builders.append(_feed_forward_mappings)
     else:
-        builders.append((_shared_expert_to_maxtext, _shared_expert_from_maxtext))
-        if layer.moe:
-            builders.append((_routed_experts_to_maxtext, _routed_experts_from_maxtext))
-    return builders
+        builders.append(_shared_expert_mappings)
+        if spec.moe:
+            builders.append(_routed_expert_mappings)
+    b, m = f"blocks.{layer}", f"decoder/layers_{layer}"
+    return [t for build in builders for t in build(c, b, m)]
 
 
-def _norms_from_maxtext(c: MaxTextModelConfig, b: str, m: str) -> List[StateMappingTemplate]:
-    return [_invert_simple(t) for t in _norms_to_maxtext(c, b, m)]
+def _mappings(c: MaxTextModelConfig, layer: Optional[int]) -> List[StateMappingTemplate]:
+    return _model_mappings(c) if layer is None else _layer_mappings(c, layer)
 
 
-def _prefixes(layer: int) -> Tuple[str, str]:
-    return f"blocks.{layer}", f"decoder/layers_{layer}"
+def _invert(
+    t: StateMappingTemplate, source_shapes: Mapping[str, Tuple[int, ...]]
+) -> StateMappingTemplate:
+    """
+    The mapping that undoes ``t``. :class:`StateConverter` concatenates, unflattens, permutes,
+    flattens and chunks, in that order, so the inverse undoes each step in reverse. Undoing a
+    flatten needs the flattened dims' sizes, which come from ``source_shapes``.
+    """
+    sources = (
+        t.source_template_keys
+        if isinstance(t.source_template_keys, tuple)
+        else (t.source_template_keys,)
+    )
+    x = torch.cat(
+        [torch.empty(source_shapes[k], device="meta") for k in sources], dim=t.source_concat_dim
+    )
+    flatten_dims = unflatten_dim = dims_permutation = None
+    if t.unflatten_dim is not None:
+        dim, shape = t.unflatten_dim
+        x = x.unflatten(dim, tuple(int(s) for s in shape))
+        flatten_dims = (dim, dim + len(shape) - 1)
+    if t.dims_permutation is not None:
+        x = x.permute(*t.dims_permutation)
+        dims_permutation = tuple(
+            sorted(range(len(t.dims_permutation)), key=t.dims_permutation.__getitem__)
+        )
+    if t.flatten_dims is not None:
+        first, last = t.flatten_dims
+        unflatten_dim = (first, tuple(x.shape[first : last + 1]))
+    return StateMappingTemplate(
+        t.dest_template_keys,
+        t.source_template_keys,
+        source_concat_dim=t.dest_chunk_dim,
+        unflatten_dim=unflatten_dim,
+        dims_permutation=dims_permutation,
+        flatten_dims=flatten_dims,
+        dest_chunk_dim=t.source_concat_dim,
+    )
 
 
 @beta_feature
 def get_converter_to_maxtext(
-    config: MaxTextModelConfig, layer: int | None = None
+    config: MaxTextModelConfig, layer: Optional[int] = None
 ) -> StateConverter:
     """
     The converter from OLMo Core to MaxText state for one layer, or for the parameters outside the
     layers (embeddings and LM head) if ``layer`` is ``None``.
     """
-    if layer is None:
-        return StateConverter(_model_to_maxtext(config, "", ""))
-    b, m = _prefixes(layer)
-    return StateConverter(
-        [
-            t
-            for to_mt, _ in _layer_builders(config, config.layers[layer])
-            for t in to_mt(config, b, m)
-        ]
-    )
+    return StateConverter(_mappings(config, layer))
 
 
 @beta_feature
 def get_converter_from_maxtext(
-    config: MaxTextModelConfig, layer: int | None = None
+    config: MaxTextModelConfig, layer: Optional[int] = None
 ) -> StateConverter:
     """The inverse of :func:`get_converter_to_maxtext`."""
-    if layer is None:
-        return StateConverter(_model_from_maxtext(config, "", ""))
-    b, m = _prefixes(layer)
-    return StateConverter(
-        [
-            t
-            for _, from_mt in _layer_builders(config, config.layers[layer])
-            for t in from_mt(config, b, m)
-        ]
-    )
+    shapes = olmo_core_shapes(config)
+    return StateConverter([_invert(t, shapes) for t in _mappings(config, layer)])
 
 
 # ------------------------------------------------------------------------------------------------
@@ -538,13 +434,21 @@ def maxtext_shapes(c: MaxTextModelConfig) -> Dict[str, Tuple[int, ...]]:
 def normalize_olmo_core_key(key: str) -> str:
     """
     Strip the prefixes and suffixes that OLMo Core checkpoints put around parameter names:
-    ``model.`` (train module), ``module.`` (DDP wrapper) and ``.main`` (the fp32 master copy that
-    the OLMoDDP train module saves).
+    ``model.`` (train module), ``module.`` (DDP wrapper), ``_orig_mod.`` (``torch.compile``) and
+    ``.main`` (the fp32 master copy that the OLMoDDP train module saves).
     """
-    for prefix in ("model.", "module."):
-        if key.startswith(prefix):
-            key = key[len(prefix) :]
-    return key[: -len(".main")] if key.endswith(".main") else key
+    key = key.removesuffix(".main")
+    for prefix in ("model.", "module.", "_orig_mod."):
+        key = key.removeprefix(prefix)
+    return key
+
+
+def split_layer_key(key: str, prefix: str, sep: str) -> Optional[Tuple[int, str]]:
+    """Split ``{prefix}{i}{sep}{rest}`` into ``(i, rest)``, or ``None`` if ``key`` isn't of that form."""
+    if not key.startswith(prefix):
+        return None
+    i, _, rest = key[len(prefix) :].partition(sep)
+    return (int(i), rest) if i.isdigit() else None
 
 
 def _check_shapes(
@@ -559,13 +463,6 @@ def _check_shapes(
     for k, shape in expected.items():
         if tuple(state[k].shape) != tuple(shape):
             raise ValueError(f"{what} {k}: shape {tuple(state[k].shape)} != expected {shape}")
-
-
-def _layer_of(key: str, to_maxtext: bool) -> int | None:
-    prefix, sep = ("blocks.", ".") if to_maxtext else ("decoder/layers_", "/")
-    if not key.startswith(prefix):
-        return None
-    return int(key[len(prefix) :].split(sep, 1)[0])
 
 
 def _convert(
@@ -588,9 +485,11 @@ def _convert(
             olmo_core_shapes(c) if to_maxtext else maxtext_shapes(c),
             "OLMo Core" if to_maxtext else "MaxText",
         )
-    by_layer: Dict[int | None, List[str]] = {}
+    prefix, sep = ("blocks.", ".") if to_maxtext else ("decoder/layers_", "/")
+    by_layer: Dict[Optional[int], List[str]] = {}
     for k in state:
-        by_layer.setdefault(_layer_of(k, to_maxtext), []).append(k)
+        split = split_layer_key(k, prefix, sep)
+        by_layer.setdefault(None if split is None else split[0], []).append(k)
     get_converter = get_converter_to_maxtext if to_maxtext else get_converter_from_maxtext
     get_inverse = get_converter_from_maxtext if to_maxtext else get_converter_to_maxtext
 

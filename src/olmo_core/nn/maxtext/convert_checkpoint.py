@@ -1,20 +1,10 @@
 """
-Convert OLMo Core checkpoints to MaxText checkpoints and back.
-
-This module exposes :func:`convert_checkpoint_to_maxtext` and
-:func:`convert_checkpoint_from_maxtext` for programmatic use and for the example CLI scripts in
-``src/examples/maxtext/``.
-
-Only weights are converted. Optimizer state isn't, so the target framework starts its optimizer
-fresh. Full-size checkpoints are held in memory in fp32, so convert large models on a high-memory
-machine.
+Convert OLMo Core checkpoints to MaxText checkpoints and back. Only weights are converted, so the
+target framework starts its optimizer fresh.
 """
 
-import json
 import logging
 from typing import Any, Dict, Optional
-
-from cached_path import cached_path
 
 from olmo_core.aliases import PathOrStr
 from olmo_core.doc_utils import beta_feature
@@ -25,6 +15,7 @@ from .checkpoint import (
     load_maxtext_params,
     load_olmo_core_config,
     load_olmo_core_weights,
+    read_json,
     save_maxtext_params,
     save_olmo_core_weights,
     scan_params,
@@ -53,7 +44,6 @@ def convert_checkpoint_to_maxtext(
     checkpoint_path: PathOrStr,
     output_path: str,
     *,
-    experiment_config: Optional[Dict[str, Any]] = None,
     scan_layers: bool = True,
     validate: bool = True,
 ) -> None:
@@ -62,14 +52,13 @@ def convert_checkpoint_to_maxtext(
     loadable in MaxText with ``load_parameters_path=<output_path>/0/items``. The OLMo Core config is
     copied to ``<output_path>/olmo_core_config.json``.
 
-    :param checkpoint_path: An OLMo Core checkpoint step directory (with ``model_and_optim/``).
+    :param checkpoint_path: An OLMo Core checkpoint step directory (with ``model_and_optim/`` and
+        ``config.json``).
     :param output_path: Where to write the MaxText checkpoint.
-    :param experiment_config: The OLMo Core experiment config. Defaults to the checkpoint's
-        ``config.json``.
     :param scan_layers: Write the layout for MaxText's ``scan_layers=True`` (the default there).
     :param validate: Check that converting each layer back reproduces the original weights.
     """
-    experiment_config = experiment_config or load_olmo_core_config(checkpoint_path)
+    experiment_config = load_olmo_core_config(checkpoint_path)
     config = get_maxtext_config(experiment_config["model"])
     log.info(f"Converting to MaxText's {config.decoder_block} decoder")
     state = load_olmo_core_weights(checkpoint_path, config)
@@ -100,8 +89,7 @@ def load_olmo_core_config_for_maxtext(maxtext_items_path: str) -> Dict[str, Any]
     path = f"{root}/{OLMO_CORE_CONFIG_FILE}"
     if not file_exists(path):
         raise FileNotFoundError(f"no {OLMO_CORE_CONFIG_FILE} next to {maxtext_items_path}")
-    with cached_path(path).open("r", encoding="utf-8") as f:
-        return json.load(f)
+    return read_json(path)
 
 
 @beta_feature

@@ -7,12 +7,14 @@ checks the mappings against MaxText itself.
 
 import copy
 import json
+from functools import partial
 from pathlib import Path
 from typing import Callable, Dict
 
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
 from olmo_core.nn.maxtext import (
     MaxTextDecoderBlock,
@@ -20,12 +22,13 @@ from olmo_core.nn.maxtext import (
     convert_state_from_maxtext,
     convert_state_to_maxtext,
     get_maxtext_config,
-    maxtext_shapes,
-    olmo_core_shapes,
-    scan_params,
-    unscan_params,
 )
-from olmo_core.nn.maxtext.convert import normalize_olmo_core_key
+from olmo_core.nn.maxtext.checkpoint import scan_params, unscan_params
+from olmo_core.nn.maxtext.convert import (
+    maxtext_shapes,
+    normalize_olmo_core_key,
+    olmo_core_shapes,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -101,6 +104,15 @@ def distinct(shapes, seed: int = 0):
     return out
 
 
+def random_state(c, seed=3):
+    """A float64 state for checking the mappings' semantics."""
+    gen = torch.Generator().manual_seed(seed)
+    return {
+        k: torch.randn(s, generator=gen, dtype=torch.float64)
+        for k, s in olmo_core_shapes(c).items()
+    }
+
+
 def assert_same_values(a: dict, b: dict):
     """The two states hold exactly the same multiset of values (nothing dropped or duplicated)."""
     flat_a = torch.sort(torch.cat([v.reshape(-1) for v in a.values()])).values
@@ -158,8 +170,10 @@ def test_dense_config():
 
 @pytest.mark.parametrize(
     "make_config",
-    [dense_config, *(lambda n=n: hybrid_config(n) for n in (8, 16, 32))],
-    ids=["dense", "hybrid_moe-8", "hybrid_moe-16", "hybrid_moe-32"],
+    [
+        pytest.param(dense_config, id="dense"),
+        *(pytest.param(partial(hybrid_config, n), id=f"hybrid_moe-{n}") for n in (8, 16, 32)),
+    ],
 )
 def test_olmo_core_round_trip(make_config):
     c = make_config()
@@ -210,17 +224,7 @@ def test_dense_scan_layout():
 # The tests below check each re-layout against the computation it has to preserve, written the
 # way each framework does it.
 
-
-def silu(x):
-    return x / (1.0 + torch.exp(-x))
-
-
-def random_state(c, seed=3):
-    gen = torch.Generator().manual_seed(seed)
-    return {
-        k: torch.randn(s, generator=gen, dtype=torch.float64)
-        for k, s in olmo_core_shapes(c).items()
-    }
+silu = F.silu
 
 
 def randn(*shape, seed):
@@ -332,7 +336,13 @@ def test_attention_and_feed_forward_semantics():
 
 def test_normalize_olmo_core_key():
     name = "blocks.3.routed_experts.w_up_gate"
-    for key in (name, f"model.{name}", f"module.{name}.main", f"model.module.{name}"):
+    for key in (
+        name,
+        f"model.{name}",
+        f"module.{name}.main",
+        f"model.module.{name}",
+        f"model._orig_mod.{name}",
+    ):
         assert normalize_olmo_core_key(key) == name
     assert normalize_olmo_core_key("blocks.0.attention.A_log.main") == "blocks.0.attention.A_log"
 

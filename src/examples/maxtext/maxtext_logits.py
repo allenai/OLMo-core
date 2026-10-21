@@ -13,13 +13,12 @@ settings on TPU). Exits non-zero if a threshold fails.
 """
 
 import argparse
-import json
 import logging
 import sys
 
-from cached_path import cached_path
-
-from olmo_core.nn.maxtext import get_maxtext_config, load_olmo_core_config_for_maxtext
+from olmo_core.nn.maxtext import get_maxtext_config
+from olmo_core.nn.maxtext.checkpoint import read_json
+from olmo_core.nn.maxtext.convert_checkpoint import load_olmo_core_config_for_maxtext
 from olmo_core.nn.maxtext.parity import (
     LogitSummary,
     compare_summaries,
@@ -55,8 +54,7 @@ def main() -> None:
     prepare_cli_environment()
 
     if args.olmo_core_config:
-        with cached_path(args.olmo_core_config).open("r", encoding="utf-8") as f:
-            experiment_config = json.load(f)
+        experiment_config = read_json(args.olmo_core_config)
     else:
         experiment_config = load_olmo_core_config_for_maxtext(args.checkpoint)
     config = get_maxtext_config(experiment_config["model"])

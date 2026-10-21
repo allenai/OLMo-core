@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from fnmatch import fnmatch
 from itertools import cycle, islice
-from typing import TYPE_CHECKING, Dict, List, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from olmo_core.config import UNSET, DType, StrEnum
 from olmo_core.doc_utils import beta_feature
@@ -2174,3 +2174,27 @@ def resolve_block_configs(
 
     assert len(block_configs) == n_layers
     return block_configs
+
+
+def normalize_legacy_config_dict(value: Any) -> None:
+    """
+    Rename legacy LatentMoE and experimental KDA keys in a saved config dict, in place, so that
+    :meth:`TransformerConfig.from_dict` accepts it.
+    """
+    if isinstance(value, dict):
+        if "use_cute_kernel" in value:
+            if "use_experimental_kernels" in value:
+                raise ValueError("Config contains both legacy and current KDA kernel flags.")
+            value["use_experimental_kernels"] = value.pop("use_cute_kernel")
+        latent = value.get("latent_moe")
+        if isinstance(latent, dict) and "routed_expert_dim" in latent:
+            if "latent_dim" in latent:
+                raise ValueError(
+                    "LatentMoE config contains both 'routed_expert_dim' and 'latent_dim'."
+                )
+            latent["latent_dim"] = latent.pop("routed_expert_dim")
+        for child in value.values():
+            normalize_legacy_config_dict(child)
+    elif isinstance(value, list):
+        for child in value:
+            normalize_legacy_config_dict(child)

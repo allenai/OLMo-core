@@ -12,12 +12,11 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
-if TYPE_CHECKING:
-    from .config import MaxTextModelConfig
+from .config import MaxTextModelConfig
 
 __all__ = [
     "LogitSummary",
@@ -25,6 +24,7 @@ __all__ = [
     "concat",
     "compare_summaries",
     "default_positions",
+    "initialize_maxtext_config",
     "maxtext_logit_summary",
 ]
 
@@ -80,8 +80,10 @@ def summarize_logits(
         positions = default_positions(S)
     next_lp = np.empty((B, S - 1), dtype=np.float32)
     for b in range(B):
-        lp = _log_softmax(logits[b, :-1])
-        next_lp[b] = lp[np.arange(S - 1), tokens[b, 1:]]
+        # In chunks of positions: a full [S, V] float64 log-softmax is several GB.
+        for t in range(0, S - 1, 256):
+            lp = _log_softmax(logits[b, t : min(t + 256, S - 1)])
+            next_lp[b, t : t + len(lp)] = lp[np.arange(len(lp)), tokens[b, t + 1 : t + 1 + len(lp)]]
     return LogitSummary(
         tokens=np.asarray(tokens, dtype=np.int32),
         positions=np.asarray(positions, dtype=np.int64),
@@ -138,8 +140,38 @@ def compare_summaries(reference: LogitSummary, actual: LogitSummary) -> Dict[str
     }
 
 
+def initialize_maxtext_config(
+    config: MaxTextModelConfig, *overrides: str, scan_layers: bool = True
+) -> Any:
+    """
+    MaxText's ``pyconfig`` for :attr:`config.model_name <MaxTextModelConfig.model_name>` sized to
+    this model (one device, no distributed system), plus any ``key=value`` ``overrides``.
+    """
+    from maxtext.configs import pyconfig  # type: ignore
+    from maxtext.utils.globals import MAXTEXT_PKG_DIR  # type: ignore
+
+    # MaxText code paths may hand sys.argv to absl, which rejects the caller's flags.
+    argv, sys.argv = sys.argv, sys.argv[:1]
+    try:
+        return pyconfig.initialize(
+            [
+                "",
+                os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml"),
+                f"model_name={config.model_name}",
+                "override_model_config=True",
+                *config.overrides(),
+                f"scan_layers={scan_layers}",
+                "skip_jax_distributed_system=True",
+                "per_device_batch_size=1",
+                *overrides,
+            ]
+        )
+    finally:
+        sys.argv = argv
+
+
 def maxtext_logit_summary(
-    config: "MaxTextModelConfig",
+    config: MaxTextModelConfig,
     items_path: str,
     tokens: np.ndarray,
     positions: np.ndarray,
@@ -160,10 +192,9 @@ def maxtext_logit_summary(
     import jax  # type: ignore
     import jax.numpy as jnp  # type: ignore
     from flax import nnx  # type: ignore
+    from jax.experimental.multihost_utils import process_allgather  # type: ignore
     from maxtext.common.common_types import MODEL_MODE_TRAIN  # type: ignore
-    from maxtext.configs import pyconfig  # type: ignore
     from maxtext.utils import maxtext_utils, model_creation_utils  # type: ignore
-    from maxtext.utils.globals import MAXTEXT_PKG_DIR  # type: ignore
 
     from .checkpoint import load_maxtext_params
 
@@ -176,32 +207,19 @@ def maxtext_logit_summary(
         settings += [f"emo_min_document_expert_pool={pool}", f"emo_max_document_expert_pool={pool}"]
     if config.kda is not None:
         settings.append("use_tokamax_kda=False")
-    # MaxText code paths may hand sys.argv to absl, which rejects the caller's flags.
-    argv, sys.argv = sys.argv, sys.argv[:1]
-    try:
-        mt_config = pyconfig.initialize(
-            [
-                "",
-                os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml"),
-                f"model_name={config.model_name}",
-                "override_model_config=True",
-                *config.overrides(),
-                *settings,
-                "run_name=olmo_core_parity",
-                "enable_checkpointing=True",
-                f"load_parameters_path={items_path}",
-                f"scan_layers={scan_layers}",
-                "skip_jax_distributed_system=True",
-                f"max_target_length={S}",
-                "dtype=float32",
-                "weight_dtype=float32",
-                "matmul_precision=highest",
-                "per_device_batch_size=1",
-                *extra_overrides,
-            ]
-        )
-    finally:
-        sys.argv = argv
+    mt_config = initialize_maxtext_config(
+        config,
+        *settings,
+        "run_name=olmo_core_parity",
+        "enable_checkpointing=True",
+        f"load_parameters_path={items_path}",
+        f"max_target_length={S}",
+        "dtype=float32",
+        "weight_dtype=float32",
+        "matmul_precision=highest",
+        *extra_overrides,
+        scan_layers=scan_layers,
+    )
     mesh = jax.sharding.Mesh(maxtext_utils.create_device_mesh(mt_config), mt_config.mesh_axes)
     model = model_creation_utils.from_pretrained(mt_config, mesh=mesh, model_mode=MODEL_MODE_TRAIN)
 
@@ -216,11 +234,9 @@ def maxtext_logit_summary(
             f"only in checkpoint {sorted(stored.keys() - loaded.keys())[:5]}"
         )
     for k, v in loaded.items():
-        value = np.asarray(jax.experimental.multihost_utils.process_allgather(v[...], tiled=True))
-        if not np.array_equal(value, stored[k].numpy()):
+        if not np.array_equal(np.asarray(process_allgather(v[...], tiled=True)), stored.pop(k)):
             raise ValueError(f"{k}: MaxText isn't running the checkpoint's weights")
     log.info(f"All {len(loaded)} MaxText params match the checkpoint")
-    del stored
 
     global_batch = mt_config.global_batch_size_to_load
     decoder_positions = jnp.broadcast_to(jnp.arange(S, dtype=jnp.int32), (global_batch, S))
@@ -235,9 +251,6 @@ def maxtext_logit_summary(
             decoder_segment_ids=segments,
             enable_dropout=False,
         )
-        logits = np.asarray(
-            jax.experimental.multihost_utils.process_allgather(logits, tiled=True)[:1],
-            dtype=np.float32,
-        )
+        logits = np.asarray(process_allgather(logits[:1], tiled=True), dtype=np.float32)
         summaries.append(summarize_logits(row[None], logits, positions))
     return concat(summaries)

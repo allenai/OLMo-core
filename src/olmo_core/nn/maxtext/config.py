@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from olmo_core.config import StrEnum
 from olmo_core.doc_utils import beta_feature
+from olmo_core.nn.transformer.config import normalize_legacy_config_dict
 
 __all__ = [
     "MaxTextDecoderBlock",
@@ -50,25 +51,17 @@ class ScanLayout:
     """
     Where MaxText puts layer parameters when ``scan_layers=True``.
 
-    Layer ``i`` is slot ``i % cycle`` of cycle ``i // cycle``. Cycles are stacked along ``axis`` of
-    every parameter under ``{stacked}/{slot}``. If ``unrolled`` is set, the first cycle is not
-    stacked and lives under ``{unrolled}/{slot}`` instead.
+    Layer ``i`` is slot ``i % cycle`` of cycle ``i // cycle``. Cycles are stacked along axis 1 of
+    every parameter under ``{stacked}/{slot}{i % cycle}``. If ``unrolled`` is set, the first cycle
+    is not stacked and lives under ``{unrolled}/{slot}{i % cycle}`` instead.
     """
 
     cycle: int
     stacked: str
     slot: str
-    """Format string for a slot's name, e.g. ``"layer_{}"``."""
+    """Prefix of a slot's name, e.g. ``"layer_"``."""
     unrolled: Optional[str] = None
-    axis: int = 1
 
-
-_SCAN_LAYOUTS = {
-    MaxTextDecoderBlock.olmo3: dict(stacked="decoder/layers", slot="layers_{}"),
-    MaxTextDecoderBlock.olmoe3: dict(
-        stacked="decoder/scanned_blocks", slot="layer_{}", unrolled="decoder/layers_0"
-    ),
-}
 
 #: The MaxText model config each decoder's overrides start from. MaxText switches some behavior
 #: on the model name (e.g. global vs. per-head QK norm), so this has to be a config for the same
@@ -134,6 +127,8 @@ class MaxTextModelConfig:
     d_model: int
     vocab_size: int
     layers: Tuple[LayerSpec, ...]
+    cycle: int
+    """The decoder repeats its layer pattern (e.g. sliding/global attention) with this period."""
     norm_eps: float
     attention: AttentionSpec
     kda: Optional[KDASpec] = None
@@ -146,21 +141,21 @@ class MaxTextModelConfig:
         return len(self.layers)
 
     @property
+    def n_dense_layers(self) -> int:
+        """Layers without routed experts before the first MoE layer."""
+        return next((i for i, layer in enumerate(self.layers) if layer.moe), self.n_layers)
+
+    @property
     def model_name(self) -> str:
         """The MaxText ``model_name`` that :meth:`overrides` apply to."""
         return _BASE_MODEL_NAMES[self.decoder_block]
 
     @property
     def scan_layout(self) -> ScanLayout:
-        cycle = _OLMO3_CYCLE if self.decoder_block == MaxTextDecoderBlock.olmo3 else self._cycle
-        return ScanLayout(cycle=cycle, **_SCAN_LAYOUTS[self.decoder_block])  # type: ignore[arg-type]
-
-    @property
-    def _cycle(self) -> int:
-        # The hybrid decoder puts full attention on the last layer of every cycle.
-        return (
-            next(i for i, layer in enumerate(self.layers) if layer.sequence_mixer == "attention")
-            + 1
+        if self.decoder_block == MaxTextDecoderBlock.olmo3:
+            return ScanLayout(self.cycle, stacked="decoder/layers", slot="layers_")
+        return ScanLayout(
+            self.cycle, stacked="decoder/scanned_blocks", slot="layer_", unrolled="decoder/layers_0"
         )
 
     def overrides(self) -> Tuple[str, ...]:
@@ -178,6 +173,7 @@ class MaxTextModelConfig:
             f"head_dim={a.head_dim}",
             f"normalization_layer_epsilon={self.norm_eps}",
             f"use_qk_norm={a.qk_norm}",
+            f"inhomogeneous_layer_cycle_interval={self.cycle}",
             "logits_via_embedding=False",
         ]
         if self.decoder_block == MaxTextDecoderBlock.olmo3:
@@ -188,7 +184,6 @@ class MaxTextModelConfig:
         assert self.rope_theta is not None
         return [
             f"base_mlp_dim={self.layers[0].hidden_size}",
-            f"inhomogeneous_layer_cycle_interval={_OLMO3_CYCLE}",
             # Without a sliding window every layer is global; a window as long as MaxText allows
             # makes MaxText's sliding layers global too.
             f"sliding_window_size={self.sliding_window or 2**30}",
@@ -206,13 +201,12 @@ class MaxTextModelConfig:
             "use_embedding_norm=True",
             f"qk_norm_per_head={self.attention.per_head_qk_norm}",
             f"use_scalable_softmax={self.attention.scalable_softmax}",
-            "first_num_dense_layers=1",
+            f"first_num_dense_layers={self.n_dense_layers}",
             f"base_mlp_dim={self.layers[0].hidden_size}",
             f"base_moe_mlp_dim={m.hidden_size}",
             f"moe_expert_input_dim={m.latent_dim}",
             f"num_experts={m.num_experts}",
             f"num_experts_per_tok={m.top_k}",
-            f"inhomogeneous_layer_cycle_interval={self._cycle}",
             f"gdn_num_key_heads={k.n_heads}",
             f"gdn_num_value_heads={k.n_heads}",
             f"gdn_key_head_dim={k.head_dim}",
@@ -244,11 +238,8 @@ def get_maxtext_config(model_config: Mapping[str, Any]) -> MaxTextModelConfig:
     :raises ValueError: If the model is close to a supported decoder but differs in a way the
         decoder can't express (e.g. the sliding-window pattern).
     """
-    # Imported here: olmo_core.nn.hf pulls in transformers.
-    from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
-
     model_config = copy.deepcopy(dict(model_config))
-    _normalize_legacy_latent_moe_config(model_config)
+    normalize_legacy_config_dict(model_config)
     if model_config.get("tie_word_embeddings"):
         raise NotImplementedError("tied embeddings aren't supported yet")
     blocks = _blocks(model_config)
@@ -269,11 +260,9 @@ def _blocks(model_config: Mapping[str, Any]) -> list:
         or "sequence_mixer" not in model_config["block"]
     ):
         raise NotImplementedError("named block configs aren't supported")
-    overrides = model_config.get("block_overrides") or {}
-    return [
-        overrides.get(str(i), overrides.get(i, model_config["block"]))
-        for i in range(model_config["n_layers"])
-    ]
+    # Keys are ints from ``as_config_dict()`` and strings from JSON.
+    overrides = {int(i): b for i, b in (model_config.get("block_overrides") or {}).items()}
+    return [overrides.get(i, model_config["block"]) for i in range(model_config["n_layers"])]
 
 
 def _same(prev: Optional[Dict[str, Any]], cfg: Mapping[str, Any], keys: Tuple[str, ...], what: str):
@@ -353,6 +342,7 @@ def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModel
             LayerSpec(sequence_mixer="attention", hidden_size=ff["hidden_size"])
             for _ in range(n_layers)
         ),
+        cycle=_OLMO3_CYCLE,
         norm_eps=eps,
         attention=AttentionSpec(
             n_heads=mixer["n_heads"],
@@ -427,24 +417,27 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
     if model_config.get("embedding_norm") is None:
         raise ValueError("MaxText's olmoe3 decoder normalizes the embeddings")
     emo = router.get("emo")
+    kda_head_dim = _head_dim(d_model, kda)
     config = MaxTextModelConfig(
         decoder_block=MaxTextDecoderBlock.olmoe3,
         d_model=d_model,
         vocab_size=model_config["vocab_size"],
         layers=tuple(layers),
+        # The decoder puts full attention on the last layer of every cycle.
+        cycle=next(i for i, layer in enumerate(layers) if layer.sequence_mixer == "attention") + 1,
         norm_eps=_norm_eps(norms + [model_config["embedding_norm"]]),
         attention=AttentionSpec(
             n_heads=attn["n_heads"],
-            n_kv_heads=attn["n_kv_heads"],
-            head_dim=attn["head_dim"],
+            n_kv_heads=attn.get("n_kv_heads") or attn["n_heads"],
+            head_dim=_head_dim(d_model, attn),
             gated=True,
             per_head_qk_norm=True,
             scalable_softmax=True,
         ),
         kda=KDASpec(
             n_heads=kda["n_heads"],
-            head_dim=kda["head_dim"],
-            head_v_dim=int(kda["head_dim"] * kda["expand_v"]),
+            head_dim=kda_head_dim,
+            head_v_dim=int(kda_head_dim * kda["expand_v"]),
             conv_size=kda["conv_size"],
         ),
         moe=MoESpec(
@@ -469,13 +462,17 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
 
 def _validate_hybrid_layout(config: MaxTextModelConfig) -> None:
     """
-    The layer pattern MaxText's olmoe3 decoder builds: a dense first layer then MoE everywhere,
-    with full attention on the last layer of every cycle.
+    The layer pattern MaxText's olmoe3 decoder builds: dense layers within the first cycle, then
+    MoE everywhere, with full attention on the last layer of every cycle.
     """
-    cycle = config._cycle
+    cycle, n_dense = config.cycle, config.n_dense_layers
     assert config.moe is not None
     if config.n_layers % cycle:
         raise ValueError(f"n_layers={config.n_layers} must be a multiple of the cycle ({cycle})")
+    if not 0 < n_dense <= cycle:
+        raise ValueError(
+            f"MaxText's olmoe3 decoder needs 1 to {cycle} leading dense layers, not {n_dense}"
+        )
     for i, layer in enumerate(config.layers):
         want_attention = (i + 1) % cycle == 0
         if (layer.sequence_mixer == "attention") != want_attention:
@@ -483,9 +480,10 @@ def _validate_hybrid_layout(config: MaxTextModelConfig) -> None:
                 f"layer {i}: MaxText's olmoe3 decoder puts full attention on layers where "
                 f"(i + 1) % {cycle} == 0"
             )
-        if layer.moe != (i > 0):
+        if layer.moe != (i >= n_dense):
             raise ValueError(
-                f"layer {i}: MaxText's olmoe3 decoder has exactly one dense layer, layer 0"
+                f"layer {i}: MaxText's olmoe3 decoder has routed experts on every layer after "
+                f"the first {n_dense}"
             )
         if layer.moe and layer.hidden_size != config.moe.hidden_size:
             raise ValueError(
