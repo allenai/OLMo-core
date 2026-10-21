@@ -238,7 +238,8 @@ def barfam_masks(p, r, P, xs):
 def run_row(model, GS, p, r, a, dev):
     P = GI.Prober(model, p, dev, ckpt_blocks=False)
     T = p["T"]
-    out = {"T": T, "n_body": P.Nb, "gold_docs": sorted(r["gold"] or []), "ce_full": p["ce_full"], "checks": {}, "points": []}
+    out = {"T": T, "n_body": P.Nb, "gold_docs": sorted(r["gold"] or []), "ce_full": p["ce_full"], "checks": {}, "points": [],
+           "doc_len": np.bincount(p["cid"][P.body_idx.cpu()].cpu().numpy().clip(min=0)).astype(int).tolist()}
     t0 = time.time()
 
     def compact(keep_body):
@@ -326,6 +327,9 @@ def run_row(model, GS, p, r, a, dev):
         pt = {"rule": nm, "rho": rho, "k": int(keep.sum()), "T2": it["T2"], "ce": ce_d, "dce": ce_d - ce_f, "x": xf,
               "gold_kept": float(keep.cpu().numpy()[P.gold].mean()) if P.gold.any() else float("nan"),
               "gold_leak_auc": gold_leak_auc(keep, P, r, p["cid"]),
+              # per-document kept body-token counts (offline leak metrics: visible length, whole-doc indicator)
+              "doc_kept": np.bincount(p["cid"][P.body_idx.cpu()].cpu().numpy().clip(min=0),
+                                      weights=keep.detach().cpu().numpy().astype(np.float64)).astype(int).tolist(),
               **summ_stats(d, n1, n2), "group_dot": d.tolist(), "group_norm2_drop": n2.tolist()}
         if dc is not None:
             pt["centered"] = {**summ_stats(*dc), "group_dot": dc[0].tolist(), "group_norm2_drop": dc[2].tolist()}
