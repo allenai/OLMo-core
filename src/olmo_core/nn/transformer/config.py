@@ -29,6 +29,7 @@ from ..layer_norm import LayerNormConfig, LayerNormType
 from ..lm_head import LMHeadConfig, LMHeadType
 from ..moe import MoEConfig, MoERouterConfig, MoEType
 from ..rope import RoPEConfig, RoPEScalingConfig, RoPEType
+from .completedp import CompletedPConfig
 from .init import InitMethod
 
 if TYPE_CHECKING:
@@ -346,6 +347,7 @@ class TransformerConfig(ModelConfig):
     block_overrides: Optional[Dict[int, TransformerBlockConfig]] = None
     embed_scale: Optional[float] = None
     tie_word_embeddings: bool = False
+    completedp: Optional[CompletedPConfig] = None
 
     def __post_init__(self):
         if self.tie_word_embeddings and self.name == TransformerType.normalized:
@@ -385,6 +387,13 @@ class TransformerConfig(ModelConfig):
             f"{self.num_non_embedding_params:,d} non-embedding params"
         )
         model: Transformer
+        if self.completedp is not None and self.name not in (
+            TransformerType.default,
+            TransformerType.moe_fused_v2,
+        ):
+            raise OLMoConfigurationError(
+                f"CompletedP is not supported for transformer type '{self.name}'"
+            )
         if self.name == TransformerType.default:
             model = Transformer(
                 d_model=self.d_model,
@@ -403,6 +412,7 @@ class TransformerConfig(ModelConfig):
                 block_pattern=self.block_pattern,
                 embed_scale=self.embed_scale,
                 tie_word_embeddings=self.tie_word_embeddings,
+                completedp=self.completedp,
             )
         elif self.name == TransformerType.normalized:
             assert self.embedding_norm is None
@@ -2093,6 +2103,7 @@ class OLMoDDPModelConfig(TransformerConfig):
                 embed_scale=self.embed_scale,
                 block_pattern=self.block_pattern,
                 tie_word_embeddings=self.tie_word_embeddings,
+                completedp=self.completedp,
             )
         else:
             raise NotImplementedError(self.name)
