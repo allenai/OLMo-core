@@ -363,6 +363,8 @@ class Transformer(nn.Module):
         slot_centroid: str = "row",
         cat_keep: Optional[Dict[str, Any]] = None,
         pad_multiple: int = 1,
+        span_len: int = 12,
+        kept_doc_k: Optional[float] = None,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -475,6 +477,10 @@ class Transformer(nn.Module):
             on GatedDeltaNet layers, so a slot influences no parameter's gradient anywhere: its
             attention K/V and GDN writes are detached, and its own query/FFN path is then a dead
             end. ``False`` = the pre-2026-09-08 behaviour (GDN co-adaptation through slots).
+        :param span_len: ``keep_token_rule="spans"``: length of the random phrase-sized spans.
+        :param kept_doc_k: Two-tier keep. When set, documents in the keep set (gold + random decoys)
+            are NOT kept whole: they get the keep-token rule at this larger ``k`` (tier A) while every
+            other document gets ``keep_token_k`` (tier B). ``None`` keeps them whole (historical).
         :param pad_multiple: Round the compacted width up to a multiple of this. The width is
             data-dependent and FLA's GDN kernels autotune at every new one (~25-50 s); ``1`` keeps
             the exact width.
@@ -609,6 +615,8 @@ class Transformer(nn.Module):
             # Round the compacted width up to a multiple of this (compact_pooled_rows): bounds the
             # distinct widths FLA's GDN kernels autotune for. 1 = exact width (historical).
             "pad_multiple": int(pad_multiple),
+            "span_len": int(span_len),
+            "kept_doc_k": None if kept_doc_k is None else float(kept_doc_k),
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -1085,16 +1093,20 @@ class Transformer(nn.Module):
                 extra_tokens=extra_tokens,
                 cap=cfg["header_cap"],
             )
-        if keep_rule in ("rule", "first_last") or frac_first:
+        hdr_chunk_ids, tier_scores = chunk_ids, None
+        if keep_rule in ("rule", "first_last", "spans") or frac_first:
             from ..attention.chunked_mask import mark_doc_topk_tokens_free
             from ..pooled_soft_token import (
                 DEFAULT_KEEP_TOKEN_WEIGHTS,
                 first_last_scores,
                 first_scores,
                 keep_token_scores,
+                span_scores,
             )
 
-            if frac_first:
+            if keep_rule == "spans":
+                scores = span_scores(input_ids, span_len=int(cfg.get("span_len", 12)))
+            elif frac_first:
                 scores = first_scores(
                     input_ids,
                     chunk_ids,
@@ -1121,6 +1133,7 @@ class Transformer(nn.Module):
                     doc_end_id=cfg["doc_end_id"],
                     n_docs=n_docs,
                 )
+            tier_scores = scores
             chunk_ids = mark_doc_topk_tokens_free(
                 chunk_ids,
                 input_ids,
@@ -1305,6 +1318,26 @@ class Transformer(nn.Module):
                     flush=True,
                 )
 
+        if cfg.get("kept_doc_k") is not None and tier_scores is not None:
+            # Two-tier keep: the keep set (gold + decoys) is not kept whole but gets the same rule at
+            # the larger kept_doc_k; every other document keeps keep_token_k (already marked above).
+            from ..attention.chunked_mask import FREE_CHUNK_ID, mark_doc_topk_tokens_free
+
+            c_a = mark_doc_topk_tokens_free(
+                hdr_chunk_ids,
+                input_ids,
+                tier_scores,
+                doc_start_id=cfg["doc_start_id"],
+                doc_end_id=cfg["doc_end_id"],
+                k=float(cfg["kept_doc_k"]),
+                n_docs=n_docs,
+            )
+            cid0 = hdr_chunk_ids.to(torch.long)
+            keep_b = keep[:, :n_docs].to(torch.bool)
+            tier_a = (cid0 >= 0) & keep_b.gather(1, cid0.clamp(min=0))
+            free_a = (c_a == FREE_CHUNK_ID) & tier_a
+            chunk_ids = torch.where(free_a, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+            keep = torch.zeros_like(keep)
         cb = compact_pooled_rows(
             input_ids,
             labels,

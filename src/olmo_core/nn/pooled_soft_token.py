@@ -65,6 +65,7 @@ __all__ = [
     "keep_token_scores",
     "first_last_scores",
     "first_scores",
+    "span_scores",
 ]
 
 
@@ -636,7 +637,7 @@ def apply_slot_mode(
 # second probe (``records/outlier-realtoken-parity-probe.md``) found beats ``first`` at every
 # rung at identical cost, and needs no feature tables at all.
 
-KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule", "custom")
+KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule", "custom", "spans")
 
 #: The probe's feature list, in order (``outlier_saliency_preview_probe.FEATURES``).
 KEEP_TOKEN_FEATURES = (
@@ -925,6 +926,24 @@ def first_last_scores(
     # +1 penalty for the FRONT member of a tie, so the tail wins it (the probe's ``b = k - k // 2``).
     out[flat_idx] = -(2.0 * dist + (within < from_end).to(torch.float32))
     return out.reshape(input_ids.shape)
+
+
+def span_scores(
+    input_ids: torch.Tensor,
+    span_len: int = 12,
+    generator: Optional[torch.Generator] = None,
+) -> torch.Tensor:
+    """
+    Scores for the ``spans`` keep-token rule: every run of ``span_len`` consecutive positions shares
+    ONE uniform random score, so a per-document top-k over these scores keeps whole random
+    phrase-sized spans (the boundary span may be cut) instead of isolated tokens or fixed
+    first/last edges. A fresh draw per call: across epochs every position of a document is seen.
+    """
+    B, T = input_ids.shape
+    n_blocks = -(-T // span_len)
+    r = torch.rand(B, n_blocks, device=input_ids.device, generator=generator)
+    blk = torch.arange(T, device=input_ids.device) // span_len
+    return r[:, blk]
 
 
 def first_scores(

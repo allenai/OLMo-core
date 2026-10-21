@@ -1605,7 +1605,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--st-keep-token-rule",
-        choices=["none", "first", "first_last", "rule"],
+        choices=["none", "first", "first_last", "rule", "spans"],
         default="none",
         help="softtoken: WHICH body tokens of a pooled document stay real. 'none' (default) = off, "
         "bit-identical to every run before 2026-09-15. 'first' = the first --st-keep-token-k body "
@@ -1654,6 +1654,21 @@ def parse_args() -> argparse.Namespace:
         "the compacted row and the kept tokens keep their original positions. Slot-less compaction "
         "has no slot K/V / GDN write to detach (detach flags become no-ops). Motivated by the "
         "eval-side grid, where gold_fl20p8_noslot == gold_fl20p8 on every cell (2026-09-22).",
+    )
+    ap.add_argument(
+        "--st-span-len",
+        type=int,
+        default=12,
+        help="softtoken --st-keep-token-rule spans: length of the random phrase-sized spans kept "
+        "(re-drawn every forward, so every position of a document is eventually seen)",
+    )
+    ap.add_argument(
+        "--st-kept-doc-k",
+        type=float,
+        default=None,
+        help="softtoken two-tier keep: documents in the keep set (gold + random decoys, or the "
+        "gold-blind random set) get the keep-token rule at THIS k instead of staying whole; every "
+        "other document gets --st-keep-token-k. Unset = kept documents stay whole (historical).",
     )
     ap.add_argument(
         "--st-pad-multiple",
@@ -2056,6 +2071,8 @@ def parse_args() -> argparse.Namespace:
             "--st-keep-token-k/--st-keep-token-weights were given but --st-keep-token-rule is "
             "'none', so they would be ignored."
         )
+    if opts.st_kept_doc_k is not None and opts.st_keep_token_rule == "none":
+        ap.error("--st-kept-doc-k (two-tier keep) needs a --st-keep-token-rule for the tiers")
     if mix_requested and opts.variant != "softtoken":
         ap.error(
             "--st-mix-start-p/--st-mix-end-p/--st-mix-anneal-frac are only honoured by "
