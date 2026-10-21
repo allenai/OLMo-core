@@ -597,6 +597,25 @@ multi-annotation sources with more than one annotation per image; the others kee
 revision), measured 2026-10-20. Documents per draw: PixMo-Points 15.5, PlotQA 20, FigureQA 13.5,
 DVQA 11.4, CoSyn QA 6.3-9.5, CoSyn point 4.5, text-rich captions 3."""
 
+STAGE1_V5_POINTING_SCALE: float = 32.64 / 39.39
+"""PixMo-Points v2 tokens per unit of loss with one annotation per example (32.64: the v3 merged
+stage's logged draws, 4,181 steps) over every annotation as a document (39.39: the documents
+calibration probe). Images with many annotations, which carry more short negative answers, weigh
+more as documents, so pointing takes 21% more positions per unit of loss; scaling its loss share
+by this factor keeps pointing's positions per step, and so the text's, as in v3."""
+
+_V5_TARGETS = {
+    name: share * (STAGE1_V5_POINTING_SCALE if name == "pixmo_points_v2" else 1.0)
+    for name, share in STAGE1_V3_LOSS_TARGETS.items()
+}
+STAGE1_V5_LOSS_TARGETS: dict[str, float] = {
+    name: share / sum(_V5_TARGETS.values()) for name, share in _V5_TARGETS.items()
+}
+"""Target loss mass of each stage-1 v5 source: the v3 targets with PixMo-Points v2 scaled by
+:data:`STAGE1_V5_POINTING_SCALE`, renormalized. v5 trains every annotation of a drawn image as its
+own document (``annotation_sampling="documents"``) with
+:data:`STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS`; chosen 2026-10-20."""
+
 STAGE1_V4_EPOCHS: dict[str, float] = {
     "pixmo_caption": 3.7,
     "pixmo_transcript": 3.6,

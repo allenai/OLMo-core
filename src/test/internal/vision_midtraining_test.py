@@ -1462,6 +1462,40 @@ def test_merged_stage_annotation_documents(merged_stage, monkeypatch, documents)
     assert config.dataset.target_loss_mass["text_midtraining"] == 0.9
 
 
+def test_merged_stage_v5_trains_documents_with_its_loss_shares(merged_stage, monkeypatch):
+    """``stage1_v5``: v3's sources with every annotation as a document, the documents means, and
+    v3's loss shares with PixMo-Points v2 scaled to keep its positions per step."""
+    from olmo_core.internal.vision_alignment_data import (
+        STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS,
+        STAGE1_V3_LOSS_TARGETS,
+        STAGE1_V3_MEAN_LOSS_WEIGHTS,
+        STAGE1_V5_LOSS_TARGETS,
+        STAGE1_V5_POINTING_SCALE,
+    )
+
+    monkeypatch.setattr(
+        vision_midtraining,
+        "build_stage1_v3_sources",
+        lambda phase, sequence_length, artifact_root: {
+            name: _MultiAnnotationConfig(
+                dataset_path=f"/data/{name}", max_sequence_length=sequence_length
+            )
+            for name in STAGE1_V3_MEAN_LOSS_WEIGHTS
+        },
+    )
+    config = merged_stage.build("--recipe.visual_data=stage1_v5")
+    visual = {k: v for k, v in config.dataset.sources.items() if k != "text_midtraining"}
+    assert {source.annotation_sampling for source in visual.values()} == {"documents"}
+    means = {k: v for k, v in config.dataset.mean_loss_weight.items() if k != "text_midtraining"}
+    assert means == STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS
+    assert sum(STAGE1_V5_LOSS_TARGETS.values()) == pytest.approx(1.0)
+    ratio = {name: STAGE1_V5_LOSS_TARGETS[name] / STAGE1_V3_LOSS_TARGETS[name] for name in visual}
+    others = {r for name, r in ratio.items() if name != "pixmo_points_v2"}
+    assert max(others) == pytest.approx(min(others))
+    assert ratio["pixmo_points_v2"] / min(others) == pytest.approx(STAGE1_V5_POINTING_SCALE)
+    assert config.dataset.target_loss_mass["text_midtraining"] == 0.9
+
+
 def test_annotation_documents_needs_stage1_data(mixed_recipe):
     with pytest.raises(OLMoConfigurationError, match="annotation_documents"):
         mixed_recipe.build("--recipe.annotation_documents=true")
