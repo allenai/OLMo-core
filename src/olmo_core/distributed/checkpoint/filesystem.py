@@ -1,3 +1,4 @@
+import concurrent.futures
 import dataclasses
 import io
 import logging
@@ -16,7 +17,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 
 import torch
 import torch.distributed as dist
@@ -51,6 +52,20 @@ from olmo_core.io import (
 from olmo_core.utils import generate_uuid, get_default_thread_count, get_element_size
 
 log = logging.getLogger(__name__)
+
+
+# Byte ranges larger than this are read as concurrent chunks (remote storage only).
+_RANGE_CHUNK_BYTES = 64 * 1024 * 1024
+_RANGE_CHUNK_POOL: Optional[concurrent.futures.ThreadPoolExecutor] = None
+
+
+def _range_chunk_pool() -> concurrent.futures.ThreadPoolExecutor:
+    global _RANGE_CHUNK_POOL
+    if _RANGE_CHUNK_POOL is None:
+        _RANGE_CHUNK_POOL = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(16, get_default_thread_count()), thread_name_prefix="dcp-range"
+        )
+    return _RANGE_CHUNK_POOL
 
 
 @dataclass
@@ -373,13 +388,34 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
             full_path = str(resource_path(self.path, relative_path, local_cache=self.work_dir))
         else:
             full_path = f"{self.path}/{relative_path}"
-        return get_bytes_range(full_path, offset, length)
+        if length <= _RANGE_CHUNK_BYTES or not is_url(full_path):
+            return get_bytes_range(full_path, offset, length)
+        # One request per large tensor is limited by a single stream's throughput; fetch it in chunks
+        # concurrently. A separate pool, since this already runs on one of the read threads.
+        starts = range(offset, offset + length, _RANGE_CHUNK_BYTES)
+        chunks = _range_chunk_pool().map(
+            lambda start: get_bytes_range(
+                full_path, start, min(_RANGE_CHUNK_BYTES, offset + length - start)
+            ),
+            starts,
+        )
+        return b"".join(chunks)
 
-    def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, bytes]:
+    def _get_content_for_read(self, read_item: ReadItem) -> Tuple[ReadItem, Any]:
         try:
             sinfo = self.storage_data[read_item.storage_index]
             content = self._get_bytes(sinfo.relative_path, sinfo.offset, sinfo.length)
-            return read_item, content
+            if read_item.type == LoadItemType.BYTE_IO:
+                return read_item, content
+            # Deserialize and narrow on the read thread too: done serially on the main thread, this
+            # dominated loading checkpoints that are split into many small pieces.
+            # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
+            tensor = cast(
+                torch.Tensor, torch.load(io.BytesIO(content), map_location="cpu", weights_only=False)
+            )
+            return read_item, _narrow_tensor_by_index(
+                tensor, read_item.storage_offsets, read_item.lengths
+            )
         except BaseException:
             # NOTE: we might get an error here that can't be pickled, which causes a different failure
             # later when PyTorch tries to reduce that error across ranks. So here we just make
@@ -406,18 +442,10 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
 
         # Modified from `FileSystemReader.read_data()`
         for read_item, content in contents:
-            bytes = io.BytesIO(content)
-            bytes.seek(0)
             if read_item.type == LoadItemType.BYTE_IO:
-                planner.load_bytes(read_item, bytes)
+                planner.load_bytes(read_item, io.BytesIO(content))
             else:
-                # NOTE: 'weights_only=False' needed to load torchao's float8 linear layer checkpoints
-                tensor = cast(
-                    torch.Tensor, torch.load(bytes, map_location="cpu", weights_only=False)
-                )
-                tensor = _narrow_tensor_by_index(
-                    tensor, read_item.storage_offsets, read_item.lengths
-                )
+                tensor = content  # deserialized and narrowed by `_get_content_for_read`
                 target_tensor = planner.resolve_tensor(read_item).detach()
 
                 assert (
@@ -427,7 +455,6 @@ class RemoteFileSystemReader(dist_cp.StorageReader):
                 planner.commit_tensor(read_item, target_tensor)
                 del tensor
             del read_item
-            del bytes
             del content
             # It might be tempting to do a GS here, but that tanks performance during checkpoint loading,
             # and most of the time it's not necessary. If you run out of CPU memory while loading checkpoints,
