@@ -5,6 +5,7 @@ import pickle
 import re
 import shutil
 import ssl
+import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -677,17 +678,25 @@ def _http_file_exists(url: str) -> bool:
 ####################
 
 
-@cache
-def _get_gcs_client():
-    import google.auth
-    import google.auth.exceptions
-    from google.cloud import storage as gcs
+_GCS_CLIENTS = threading.local()
 
-    try:
-        google.auth.default()
-        return gcs.Client()
-    except google.auth.exceptions.DefaultCredentialsError:
-        return gcs.Client.create_anonymous_client()
+
+def _get_gcs_client():
+    # One client per thread. A single shared client (this used to be @cache'd) has one HTTP connection
+    # pool of about 10 connections, which the checkpoint reader's threads contended for.
+    client = getattr(_GCS_CLIENTS, "client", None)
+    if client is None:
+        import google.auth
+        import google.auth.exceptions
+        from google.cloud import storage as gcs
+
+        try:
+            google.auth.default()
+            client = gcs.Client()
+        except google.auth.exceptions.DefaultCredentialsError:
+            client = gcs.Client.create_anonymous_client()
+        _GCS_CLIENTS.client = client
+    return client
 
 
 def _gcs_is_retriable(exc: Exception) -> bool:
@@ -754,16 +763,17 @@ def _gcs_get_bytes_range(bucket_name: str, key: str, bytes_start: int, num_bytes
     storage_client = _get_gcs_client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(key)
+    # No blob.reload() first: a ranged download doesn't need the metadata, and the extra round trip
+    # doubled the requests for checkpoints read as many small ranges.
     try:
-        blob.reload(retry=_get_gcs_retry())
+        return blob.download_as_bytes(
+            start=bytes_start,
+            end=bytes_start + num_bytes - 1,
+            retry=_get_gcs_retry(),
+            checksum=None,  # type: ignore
+        )
     except NotFound:
         raise FileNotFoundError(f"gs://{bucket_name}/{key}")
-    return blob.download_as_bytes(
-        start=bytes_start,
-        end=bytes_start + num_bytes - 1,
-        retry=_get_gcs_retry(),
-        checksum=None,  # type: ignore
-    )
 
 
 @retriable(retry_condition=_gcs_is_retriable)
