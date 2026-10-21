@@ -56,6 +56,7 @@ SE is pooled over rungs (approximate).
 | `chk32-32M` 639 PF vs dense-32M 1539 PF | contradiction / 5-rung | 0.869 vs 0.868 (2.4x; 64k 0.656 vs 0.672) | 5x500 | 0.007 | unknown | results/ds64/results.csv |
 | `ck64-32M` 396 PF vs dense-32M 1582 PF | outlier / 4-rung | 0.581 vs 0.564 (4.0x, dominates) | 4x500 | 0.011 | unknown | results/ds64/results.csv |
 | `flk64-64M` 810 PF vs dense interp. 0.409 | outlier / 4-rung | 0.729 (+0.32, largest matched-FLOP delta; interpolated) | 4x500 | 0.010 | unknown | results/ds64/results.csv + handoff §1 |
+| `chk32ns` / `flk64ns` (slot-less, `--st-drop-slots`) vs slotted `chk32` / `flk64`, 16M & 32M | contradiction 5-rung / outlier 4-rung | contra 0.747 vs 0.728 (16M), 0.863 vs 0.869 (32M); outlier 0.408 vs 0.426 (16M), 0.627 vs 0.612 (32M): slots add nothing in training (recorded 2026-10-21 from Beaker eval logs) | 500/rung (outlier 64k: ⚠ 300, excluded) | ~0.01 | no-cot | ops result (ds64, *ns*) |
 | WALL-CLOCK: soft frontier vs dense point it "beats" | train_seconds / gpu_hours | chk32-32M 5044 s on 4 GPUs (5.6 GPU-h) vs dense 621 s on 8 GPUs (1.4 GPU-h); occ00-16M 3.50 vs 0.36 GPU-h; kv33-64M 5.25 vs 1.24; ck64-32M 2.33 vs 1.42 | — | — | — | results/ds64/results.csv |
 
 ## Next step
