@@ -760,6 +760,13 @@ def main():
                     full[gi] = resp
 
             if is_main:
+                # Keep every generation next to the result (project default: eval outputs are kept).
+                resp_path = f"{os.path.splitext(args.out)[0]}_{task}_{label}_responses.jsonl"
+                with open(resp_path, "w") as rf:
+                    for gi, resp in enumerate(full):
+                        raw = examples[gi].get("ex", examples[gi])
+                        gold = {k: raw[k] for k in ("gold_doc_indices", "gold_pairs", "answers") if k in raw}
+                        rf.write(json.dumps({"i": gi, "response": resp, **gold}) + "\n")
                 res, _ = score_fn(examples, full)
                 if primary_key is not None:
                     prim = res.get(primary_key)

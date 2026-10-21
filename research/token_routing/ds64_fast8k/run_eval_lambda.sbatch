@@ -60,6 +60,6 @@ n = d.get("_meta", {}).get("eval_size") or {}
 print("eval_size per rung:", n)
 sys.exit(0 if n and all(v for v in n.values()) else 1)
 PY
-mkdir -p "$LROOT/eval_results/$RUN" && cp "$RUN_DIR"/eval/*.json "$LROOT/eval_results/$RUN/" 2>/dev/null
+mkdir -p "$LROOT/eval_results/$RUN" && cp "$RUN_DIR"/eval/*.json "$RUN_DIR"/eval/*_responses.jsonl "$LROOT/eval_results/$RUN/" 2>/dev/null
 echo "=== DONE rc=$rc $(date '+%F %T') ==="
 exit $rc
