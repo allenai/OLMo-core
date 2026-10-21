@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-lra-q35-4b
-next_step: DONE as an LR screen (12 runs x 4 tasks x 2 rungs, 96 results recorded). Dense best at 2e-6..5e-6; bar collapses on gold-labelled tasks at EVERY LR (contradiction 8k <=0.07 vs 0.893) -- gold shortcut (kept generations: bar lists 8-13 claim pairs vs 3 gold). Next: screen a shortcut-free keep rule (matched random non-gold kept whole / partial gold / gold-blind) on the same mt4s488 recipe at LR 2e-6, before any setA ladder.
+next_step: UNIVERSAL-RULE SCREEN running (4-task mt4s488 mix, LR 2e-6, Lambda). Round 1 node02: bfd33/bfd50 (gold + 1/3, 1/2 decoys whole + p8fl20), gbfl20p8, gbflk64p8; dense at 31/61 steps (+ existing 122) = matched-FLOP curve. Round 2 node05: tier33fl, tier33sp (two-tier keep, kept_doc_k 0.5 / k 0.1), gbsp20 (gold-blind random 12-token spans 20%), tier33leansp (spans, 0.3 / 0.05). Evals auto-queued by scratchpad watchers; compare with research/token_routing/ds64_fast8k/collect_rule_screen.py. Goal (Prasann 2026-10-21): one rule, optional per-doc gold flag, Pareto on all 22 tasks; iterate.
 ---
 
 # tokdrop_lr
