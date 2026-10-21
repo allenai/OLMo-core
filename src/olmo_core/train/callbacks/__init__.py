@@ -32,7 +32,6 @@ from .sequence_length_scheduler import SequenceLengthSchedulerCallback
 from .slack_notifier import SlackNotificationSetting, SlackNotifierCallback
 from .speed_monitor import SpeedMonitorCallback
 from .stability_monitor import StabilityMonitorCallback
-from .unsharded_export import UnshardedModelExportCallback
 from .wandb import WandBCallback
 
 __all__ = [
@@ -52,7 +51,6 @@ __all__ = [
     "GarbageCollectorCallback",
     "GPUMemoryMonitorCallback",
     "HFConverterCallback",
-    "UnshardedModelExportCallback",
     "ProfilerCallback",
     "NvidiaProfilerCallback",
     "TorchMemoryHistoryCallback",

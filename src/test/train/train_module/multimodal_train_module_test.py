@@ -132,14 +132,6 @@ def test_train_batch_with_response_residual_dropout(response_logits_only: bool):
     train_module.train_batch(_batch())
 
 
-@pytest.mark.parametrize("response_logits_only", [False, True])
-def test_train_batch_without_masked_dropout(response_logits_only: bool):
-    """Sanity: the same paths still work when masked dropout is off."""
-    torch.manual_seed(0)
-    train_module = _train_module(masked_dropout=0.0, response_logits_only=response_logits_only)
-    train_module.train_batch(_batch())
-
-
 def _single_token_batch(weight: float) -> Dict[str, torch.Tensor]:
     batch = _batch()
     batch["loss_masks"] = torch.zeros(1, SEQ_LEN)

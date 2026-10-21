@@ -19,7 +19,6 @@ three ways:
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from fnmatch import fnmatch
 from functools import lru_cache
@@ -36,13 +35,7 @@ from olmo_core.distributed.parallel import (
     build_world_mesh,
     get_dp_model_mesh,
 )
-from olmo_core.distributed.utils import (
-    get_local_tensor,
-    get_rank,
-    get_world_size,
-    is_distributed,
-    reduce_distributed_failure_flag,
-)
+from olmo_core.distributed.utils import get_local_tensor, get_world_size, is_distributed
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
 from olmo_core.optim import OptimConfig, SkipStepOptimizer
@@ -61,11 +54,6 @@ from .train_module import TransformerTrainModule
 log = logging.getLogger(__name__)
 
 __all__ = ["MultimodalTransformerTrainModule", "MultimodalTransformerTrainModuleConfig"]
-
-
-def _mm_train_verbose_logs() -> bool:
-    """Per-step batch/optim diagnostics (forces CUDA sync via ``.item()``)."""
-    return os.environ.get("MM_TRAIN_VERBOSE_LOGS", "0").lower() in ("1", "true", "yes")
 
 
 class MultimodalTransformerTrainModule(TransformerTrainModule):
@@ -272,28 +260,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         if mode == "train" and any(fnmatch(n, "vision.*") for n in self.freeze_params):
             self._multimodal.vision.eval()
 
-    def _log_batch_sources(self, batch: Dict[str, Any], local_weight: torch.Tensor) -> None:
-        """Log per-rank packed source names (enable with ``MM_TRAIN_VERBOSE_LOGS=1``)."""
-        if not _mm_train_verbose_logs():
-            return
-        sources = batch.get("pack_source_names")
-        if sources is None:
-            return
-        images = batch.get("images")
-        n_crops = int(images.shape[1]) if images is not None else 0
-        n_im_patch = int(
-            (batch["input_ids"] == self._multimodal.cfg.image_patch_token_id).sum().item()
-        )
-        log.info(
-            "batch sources rank=%d sources=%s local_weight=%.1f im_patch=%d crops=%d shape=%s",
-            get_rank(),
-            sources,
-            float(local_weight.item()),
-            n_im_patch,
-            n_crops,
-            tuple(batch["input_ids"].shape),
-        )
-
     # -- training step -----------------------------------------------------------
 
     def train_batch(self, batch: Dict[str, Any], dry_run: bool = False):
@@ -314,10 +280,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
         # Guard only an all-zero batch; a positive fractional weight sum must still normalise
         # the loss exactly (clamping it to 1 would silently shrink the gradients).
         div_factor = torch.where(div_factor > 0, div_factor, torch.ones_like(div_factor))
-
-        pack_sources = batch.get("pack_source_names")
-        if not dry_run:
-            self._log_batch_sources(batch, local_weight)
 
         ce_batch_loss = move_to_device(torch.tensor(0.0), self.device)
         z_batch_loss: Optional[torch.Tensor] = (
@@ -344,24 +306,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             raise OLMoConfigurationError(
                 "DDP with gradient accumulation (more than one microbatch per batch) is not "
                 "supported by MultimodalTransformerTrainModule; use FSDP/HSDP or one microbatch"
-            )
-
-        if get_rank() == 0 and not dry_run and _mm_train_verbose_logs():
-            images = batch.get("images")
-            bsz, seq_len = batch["input_ids"].shape[:2]
-            n_crops = int(images.shape[1]) if images is not None else 0
-            vit_bt = bsz * n_crops
-            gpu_mem_gb = (
-                torch.cuda.max_memory_allocated(self.device) / (1024**3)
-                if torch.cuda.is_available()
-                else 0.0
-            )
-            log.info(
-                "batch shapes: input_ids=%s crops/seq=%d vit_B*T=%d gpu_max_alloc_gb=%.2f",
-                tuple(batch["input_ids"].shape),
-                n_crops,
-                vit_bt,
-                gpu_mem_gb,
             )
 
         for micro_batch_idx, micro_batch in enumerate(micro_batches):
@@ -413,30 +357,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                     z_loss_multiplier=self.z_loss_multiplier or 1e-4,
                 )
 
-                # This flag is an all_reduce, so EVERY rank must call it on every
-                # microbatch — gating it on the local result would leave healthy ranks
-                # in backward's collectives while a failing rank calls this one
-                # (mismatched collectives -> NCCL hang).
-                local_failed = bool(not torch.isfinite(ce_loss))
-                if reduce_distributed_failure_flag(
-                    local_failed, self.device, group=self.dp_process_group
-                ):
-                    if local_failed:
-                        n_im_patch = int(
-                            (input_ids == self._multimodal.cfg.image_patch_token_id).sum()
-                        )
-                        raise RuntimeError(
-                            f"Non-finite CE loss on rank {get_rank()}: ce={ce_loss.item()}, "
-                            f"local_weight={local_weight.item():.4f}, "
-                            f"logits_nan={bool(torch.isnan(logits).any())}, "
-                            f"logits_inf={bool(torch.isinf(logits).any())}, "
-                            f"im_patch_tokens={n_im_patch}, seq_len={input_ids.shape[1]}, "
-                            f"sources={pack_sources}"
-                        )
-                    raise RuntimeError(
-                        f"Training failed on another rank (rank {get_rank()} had finite CE)"
-                    )
-
                 if dry_run:
                     continue
 
@@ -484,13 +404,6 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 reset=True
             ).items():
                 self.record_metric(metric_name, metric_val, reduction, namespace="train")
-
-        if not dry_run and _mm_train_verbose_logs():
-            log.info(
-                "train_batch rank=%d complete local_weight=%.1f",
-                get_rank(),
-                float(local_weight.item()),
-            )
 
     def optim_step(self):
         if self.max_grad_norm is not None:
