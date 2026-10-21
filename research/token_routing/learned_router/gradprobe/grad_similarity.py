@@ -155,7 +155,7 @@ def flk_mask(p, P, k, stop_id, first_only=False):
     return real[P.body_idx.cpu()].to(P.body_idx.device)
 
 
-def frac_mask(p, r, P, kind, frac, stop_id, row_seed):
+def frac_mask(p, r, P, kind, frac, stop_id, row_seed, stop_count=1):
     """ds64's whole-document keep arms, hard-drop (slot-less) form (research/token_routing/ds64/launch_ds64.py):
       kv  F       gold docs + round(F * n_non_gold) (>= 1) random non-gold docs whole; every other doc fully dropped
                   (--st-keep-mode gold_plus_random --st-keep-frac F: kv33 / kv17)
@@ -169,15 +169,20 @@ def frac_mask(p, r, P, kind, frac, stop_id, row_seed):
     n_docs_ = int(cid.max()) + 1
     rng = np.random.default_rng(row_seed)
     gold_l = sorted({int(g_) for g_ in (r["gold"] or [])})
-    if kind == "gb":
+    if kind in ("gb", "gbh"):
         whole = {d for d in range(n_docs_) if rng.random() < frac}
+    elif kind == "runs":  # --st-neighbour-runs 1: every pick (gold and random) keeps +-1 neighbours; budget / 3
+        non = [d for d in range(n_docs_) if d not in gold_l]
+        n_rand = max(1, int(round(frac * len(non) / 3))) if non else 0
+        picks = set(gold_l) | set(rng.choice(non, size=min(n_rand, len(non)), replace=False).tolist())
+        whole = {e for d in picks for e in (d - 1, d, d + 1) if 0 <= e < n_docs_}
     else:
         non = [d for d in range(n_docs_) if d not in gold_l]
         n_rand = max(1, int(round(frac * len(non)))) if non else 0
         whole = set(gold_l) | set(rng.choice(non, size=min(n_rand, len(non)), replace=False).tolist())
-    if kind == "hdr":
+    if kind in ("hdr", "gbh"):
         c = mark_doc_headers_free(cid[None].clone(), xs_[None], doc_start_id=ids_.doc_start, doc_end_id=ids_.doc_end,
-                                  stop_id=stop_id, stop_count=1, extra_tokens=0, cap=32)
+                                  stop_id=stop_id, stop_count=stop_count, extra_tokens=0, cap=32)
         real = (c[0] == FREE_CHUNK_ID) | (cid < 0)
     else:
         real = cid < 0
@@ -315,8 +320,9 @@ def run_row(model, GS, p, r, a, dev):
             parts = spec.split(":")
             kind, fr = parts[0], float(parts[1])
             sid = int(parts[2]) if len(parts) > 2 and parts[2].lower() != "none" else None
-            keep = frac_mask(p, r, P, kind, fr, sid, row_seed=9100 + 37 * j + p["T"])
-            configs.append((f"{kind}{round(fr * 100)}", int(keep.sum()) / max(P.Nb, 1), keep, fr))
+            scount = int(parts[3]) if len(parts) > 3 else 1
+            keep = frac_mask(p, r, P, kind, fr, sid, row_seed=9100 + 37 * j + p["T"], stop_count=scount)
+            configs.append((f"{kind}{round(fr * 1000) / 10:g}", int(keep.sum()) / max(P.Nb, 1), keep, fr))
     for nm, rho, keep, xf in configs:
         it = compact(keep)
         ce_d, g_d = GS.grad(it["x"], it["pred"], it["tgt"], it["pos"])
@@ -414,7 +420,8 @@ def main():
     ap.add_argument("--ck", default="", help="barfam: like --flk but the FIRST K body tokens (ds64's ck<K>), e.g. 64:5491")
     ap.add_argument("--frac", default="", help="barfam: ds64 whole-document arms KIND:F[:STOP], KIND in kv (gold + F random "
                     "non-gold whole, rest dropped), hdr (same + headers up to STOP real), gb (gold-blind, each doc whole w.p. F), "
-                    "e.g. kv:0.333,hdr:0.333:25,gb:0.333")
+                    "gbh (gb + headers up to the COUNT-th STOP real), runs (gold + F random with +-1 neighbour runs), "
+                    "e.g. kv:0.333,hdr:0.333:25,gb:0.333,gbh:0.333:25:3,runs:0.083")
     ap.add_argument("--matched-refs", type=int, default=1, help="barfam: also run rand/|grad| at each flk/ck rule's budget")
     ap.add_argument("--gate", type=int, default=1, help="secondary gate-gradient stability measurement (0 = off)")
     ap.add_argument("--gate-alpha", type=float, default=0.5)

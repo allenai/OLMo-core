@@ -374,3 +374,11 @@ Report: `research/token_routing/learned_router/gradprobe/predict_report.py` (tab
     (0.68 with bar's step-matched outcome included). Scatter: the `Token-drop Pareto on setA` artifact
     (https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5, section "Which frozen-model metric predicts..."); data
     `research/token_routing/learned_router/gradprobe/predict_points_2026-10-21.json`.
+19. **Held-out test (same day).** 17 more ds64 arms with measured outcomes (contradiction runs03/08; nq kvgb, nqcc17/08;
+    outlier kv17, kvgb50, xh2k50, cc03/08, ck32, flk32; oolong ohdr33/17/08, occ08/00 on setA32k only) scored with new
+    `--frac runs|gbh` masks (⚠ 24 rows each); the combined score's z-scaling frozen on the original 17
+    (`heldout_predict.py`, `heldout_points_2026-10-21.json`, mooney `gsimheld_*`). Spearman ρ vs matched-FLOP Δf1 on
+    held-out arms only, per-task (12) / setA32k (17): combined 0.44 / 0.63; gold leak 0.45 / 0.37; −ΔCE −0.23 / 0.19;
+    gradient cosine −0.46 / 0.44. All 34 on setA32k: combined 0.71. Robust part: every arm with whole-doc leak > 0.4
+    (5 held-out gold+few-decoy arms, 6 original, bar) failed to beat dense. Misses on the win side: kvgb50 / xh2k50
+    (near parity despite ΔCE 0.5–0.8). Many held-out dense comparisons are extrapolated; ρ at n = 12–17 is ±~0.25.
