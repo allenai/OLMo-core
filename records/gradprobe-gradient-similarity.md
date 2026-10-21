@@ -366,3 +366,11 @@ Report: `research/token_routing/learned_router/gradprobe/predict_report.py` (tab
 17. **Post-hoc two-part check** ("leak ≤ 0.33" AND small frozen ΔCE) classifies 18/20 (per-task) and 19/20
     (setA32k). Misses: contradiction ck16 (won with ΔCE 0.19–0.26) and per-task outlier kv33. Thresholds were
     chosen after seeing outcomes: a hypothesis, not a validated predictor.
+
+18. **Correction and the continuous version (same day).** Outlier ck16 was mislabeled L above: at MATCHED
+    FLOPs it beats dense (+0.15 at 128M, 0.09x FLOPs); it loses only at the same token budget. Using the
+    continuous outcome (best measured ds64 Δf1 vs dense at matched FLOPs) instead of W/L, Spearman ρ over the 17
+    ds64 rules: gradient cosine 0.01 (per-task) / 0.21 (setA32k); −ΔCE 0.03 / 0.12; −gold leak 0.58 / 0.58
+    (0.68 with bar's step-matched outcome included). Scatter: the `Token-drop Pareto on setA` artifact
+    (https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5, section "Which frozen-model metric predicts..."); data
+    `research/token_routing/learned_router/gradprobe/predict_points_2026-10-21.json`.

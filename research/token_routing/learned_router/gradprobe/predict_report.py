@@ -34,7 +34,7 @@ OUTCOME = {
     ("nq", "goldhfl"): ("L", "tokdrop_lr bar: 8k 0.742 vs dense 0.898 (best LRs)"),
     ("outlier", "flk64"): ("W", "ds64 flk64: largest matched-FLOP gain (+0.32 interpolated)"),
     ("outlier", "ck64"): ("W", "ds64 ck64-32M dominates dense at 4.0x fewer FLOPs"),
-    ("outlier", "ck16"): ("L", "ds64 ck16: -0.49 at 16k vs dense same budget"),
+    ("outlier", "ck16"): ("W", "ds64 ck16: +0.15 vs dense at MATCHED FLOPs (128M, 0.09x FLOPs); -0.49 at 16k only at the same token budget"),
     ("outlier", "ck0"): ("L", "ds64 cc00 (headers only): -0.78 at 8k"),
     ("outlier", "kv33"): ("L", "ds64 kv33: -0.78 at 8k (gold-forcing collapse)"),
     ("outlier", "gb33"): ("L", "ds64 kvgb: -0.60 at 8k"),
