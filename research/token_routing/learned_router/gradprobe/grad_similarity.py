@@ -191,6 +191,36 @@ def frac_mask(p, r, P, kind, frac, stop_id, row_seed, stop_count=1):
     return real[P.body_idx.cpu()].to(P.body_idx.device)
 
 
+def p8fl_mask(p, r, P, whole_frac, k, gold_aware, row_seed):
+    """The bar family with decoys, as the trainer builds it (--st-header-extra-tokens 8 --st-keep-token-rule first_last
+    --st-keep-token-k K --st-drop-slots): every doc keeps its first 8 tokens + first/last K (fraction if K < 1, else
+    tokens); WHOLE docs = gold (if gold_aware and the row has gold) + round(whole_frac * n_non_gold) random others
+    (--st-keep-mode gold_plus_random --st-keep-frac F), or, gold-blind, each doc whole w.p. whole_frac."""
+    from olmo_core.nn.attention.chunked_mask import FREE_CHUNK_ID, mark_doc_headers_free, mark_doc_topk_tokens_free
+    from olmo_core.nn.pooled_soft_token import first_last_scores
+
+    ids_ = G.RESERVED_IDS[G.FAMILY]
+    xs_, cid = p["x"][0].cpu(), p["cid"]
+    n_docs_ = int(cid.max()) + 1
+    c = mark_doc_headers_free(cid[None].clone(), xs_[None], doc_start_id=ids_.doc_start, doc_end_id=ids_.doc_end,
+                              stop_id=None, stop_count=1, extra_tokens=8, cap=32)
+    sc = first_last_scores(xs_[None], c, doc_start_id=ids_.doc_start, doc_end_id=ids_.doc_end, n_docs=n_docs_)
+    c = mark_doc_topk_tokens_free(c, xs_[None], sc, doc_start_id=ids_.doc_start, doc_end_id=ids_.doc_end, k=float(k),
+                                  n_docs=n_docs_)
+    real = (c[0] == FREE_CHUNK_ID) | (cid < 0)
+    rng = np.random.default_rng(row_seed)
+    gold_l = sorted({int(g_) for g_ in (r["gold"] or [])}) if gold_aware else []
+    if gold_aware:
+        non = [d for d in range(n_docs_) if d not in gold_l]
+        n_rand = (max(1, int(round(whole_frac * len(non)))) if whole_frac > 0 else 0) if non else 0
+        whole = set(gold_l) | set(rng.choice(non, size=min(n_rand, len(non)), replace=False).tolist())
+    else:
+        whole = {d for d in range(n_docs_) if rng.random() < whole_frac}
+    for d in whole:
+        real = real | (cid == d)
+    return real[P.body_idx.cpu()].to(P.body_idx.device)
+
+
 def gold_leak_auc(keep, P, r, cid):
     """Mask-only gold leakage: AUC with which a document's KEPT FRACTION ranks gold docs above non-gold docs
     (0.5 = the mask says nothing about which docs are gold; 1.0 = kept-ness identifies gold). Model-free."""
@@ -316,6 +346,10 @@ def run_row(model, GS, p, r, a, dev):
             if a.matched_refs:
                 configs.append((f"rand@{nm}", k / max(P.Nb, 1), P.topk(rules["rand"], k), float(kk)))
                 configs.append((f"a0.5_abs@{nm}", k / max(P.Nb, 1), P.topk(a05, k), float(kk)))
+        for j, spec in enumerate(v for v in a.p8fl.split(",") if v):  # NAME:GOLD(0/1):WHOLE_FRAC:K
+            nm, ga, wf, kk = spec.split(":")
+            keep = p8fl_mask(p, r, P, float(wf), float(kk), ga == "1", row_seed=7700 + 41 * j + p["T"])
+            configs.append((nm, int(keep.sum()) / max(P.Nb, 1), keep, float(wf)))
         for j, spec in enumerate(v for v in a.frac.split(",") if v):  # ds64 whole-document arms (kv / hdr / gb)
             parts = spec.split(":")
             kind, fr = parts[0], float(parts[1])
@@ -422,6 +456,8 @@ def main():
                     "non-gold whole, rest dropped), hdr (same + headers up to STOP real), gb (gold-blind, each doc whole w.p. F), "
                     "gbh (gb + headers up to the COUNT-th STOP real), runs (gold + F random with +-1 neighbour runs), "
                     "e.g. kv:0.333,hdr:0.333:25,gb:0.333,gbh:0.333:25:3,runs:0.083")
+    ap.add_argument("--p8fl", default="", help="barfam: trainer-equivalent p8 + first/last-K rules with optional gold + "
+                    "decoys whole, NAME:GOLD(0/1):WHOLE_FRAC:K, e.g. bfd33:1:0.3333:0.2,gbflk64p8:0:0:64")
     ap.add_argument("--matched-refs", type=int, default=1, help="barfam: also run rand/|grad| at each flk/ck rule's budget")
     ap.add_argument("--gate", type=int, default=1, help="secondary gate-gradient stability measurement (0 = off)")
     ap.add_argument("--gate-alpha", type=float, default=0.5)
