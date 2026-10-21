@@ -45,7 +45,7 @@ from olmo_core.distributed.utils import (
 )
 from olmo_core.exceptions import OLMoConfigurationError
 from olmo_core.nn.functional import weighted_cross_entropy_loss
-from olmo_core.optim import OptimConfig
+from olmo_core.optim import OptimConfig, SkipStepOptimizer
 from olmo_core.optim.scheduler import Scheduler
 from olmo_core.utils import get_default_device, move_to_device, warn_once
 
@@ -311,7 +311,9 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             div_factor = div_factor / get_world_size(self.dp_process_group)
         else:
             div_factor = local_weight
-        div_factor = torch.clamp(div_factor, min=1.0)
+        # Guard only an all-zero batch; a positive fractional weight sum must still normalise
+        # the loss exactly (clamping it to 1 would silently shrink the gradients).
+        div_factor = torch.where(div_factor > 0, div_factor, torch.ones_like(div_factor))
 
         pack_sources = batch.get("pack_source_names")
         if not dry_run:
@@ -332,6 +334,17 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             )
         micro_batches = split_batch(batch, self.rank_microbatch_size // seq_len)
         num_micro_batches = len(micro_batches)
+        if (
+            num_micro_batches > 1
+            and self.dp_config is not None
+            and self.dp_config.name == DataParallelType.ddp
+        ):
+            # The inherited no_sync() handling only recognises legacy DistributedDataParallel;
+            # with composable `replicate` every microbatch would all-reduce its gradients.
+            raise OLMoConfigurationError(
+                "DDP with gradient accumulation (more than one microbatch per batch) is not "
+                "supported by MultimodalTransformerTrainModule; use FSDP/HSDP or one microbatch"
+            )
 
         if get_rank() == 0 and not dry_run and _mm_train_verbose_logs():
             images = batch.get("images")
@@ -448,13 +461,23 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 self._lm.reset_auxiliary_metrics()
             return
 
-        # Record a per-weighted-token CE loss (comparable across steps).
-        mean_ce = ce_batch_loss / torch.clamp(local_weight, min=1.0)
-        self.record_ce_loss(mean_ce, ReduceType.mean)
+        # Record the globally weighted per-token CE: each rank contributes its local sum over the
+        # global divisor (= global weight / world size), so the mean over ranks is exactly
+        # sum_r(ce_r) / global_weight, not an average of per-rank means.
+        mean_ce = ce_batch_loss / div_factor
+        if isinstance(self.optim, SkipStepOptimizer):
+            # The skip-step optimizer needs the reduced loss right away.
+            if is_distributed():
+                dist.all_reduce(mean_ce, op=dist.ReduceOp.AVG, group=self.dp_process_group)
+            self.record_ce_loss(mean_ce)
+            self.optim.latest_loss = mean_ce
+        else:
+            self.record_ce_loss(mean_ce, ReduceType.mean)
         if z_batch_loss is not None:
             assert self.z_loss_multiplier is not None
-            mean_z = z_batch_loss / torch.clamp(local_weight, min=1.0)
-            self.record_metric("Z loss", mean_z, ReduceType.mean, namespace="train")
+            self.record_metric(
+                "Z loss", z_batch_loss / div_factor, ReduceType.mean, namespace="train"
+            )
 
         if hasattr(self._lm, "compute_auxiliary_metrics"):
             for metric_name, (metric_val, reduction) in self._lm.compute_auxiliary_metrics(
@@ -475,6 +498,8 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
             self.trainer.record_metric(
                 "total grad norm", grad_norm, reduce_type=None, namespace="optim"
             )
+            if isinstance(self.optim, SkipStepOptimizer):
+                self.optim.latest_grad_norm = grad_norm
 
         assert self.optim is not None
         if self.scheduler is not None:
@@ -483,6 +508,8 @@ class MultimodalTransformerTrainModule(TransformerTrainModule):
                 self.trainer.record_metric(f"LR (group {group_idx})", new_lr, namespace="optim")
 
         self.optim.step()
+        if isinstance(self.optim, SkipStepOptimizer):
+            self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
         if hasattr(self._lm, "post_optim_step"):
             self._lm.post_optim_step()

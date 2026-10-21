@@ -284,3 +284,17 @@ def test_mixed_flex_and_torch_backends_are_rejected():
     input_ids, images, idx = _make_inputs(batch=1, seq_len=16)
     with pytest.raises(OLMoConfigurationError, match="mixing FlexAttention"):
         model(input_ids, images=images, pooled_patches_idx=idx)
+
+
+def test_sliding_window_flex_blocks_are_rejected():
+    from olmo_core.exceptions import OLMoConfigurationError
+    from olmo_core.nn.attention.backend import FlexAttentionBackend
+
+    model = _tiny_multimodal_cfg().build(init_device="cpu").eval()
+    for block in model.lm.blocks.values():
+        block.attention.backend = FlexAttentionBackend(  # type: ignore[assignment]
+            head_dim=8, n_heads=4, window_size=(4, 0)
+        )
+    input_ids, images, idx = _make_inputs(batch=1, seq_len=16)
+    with pytest.raises(OLMoConfigurationError, match="sliding"):
+        model(input_ids, images=images, pooled_patches_idx=idx)

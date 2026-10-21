@@ -376,9 +376,10 @@ class TransformerConfig(ModelConfig):
             )
         if self.n_extra_vocab < 0:
             raise OLMoConfigurationError("'n_extra_vocab' cannot be negative")
-        if self.n_extra_vocab and self.name == TransformerType.normalized:
+        if self.n_extra_vocab and self.name != TransformerType.default:
             raise OLMoConfigurationError(
-                "'n_extra_vocab' is not supported with the normalized transformer"
+                f"'n_extra_vocab' is only supported by the '{TransformerType.default}' "
+                f"transformer, got '{self.name}'"
             )
         validate_block_resolution_config(
             n_layers=self.n_layers,
