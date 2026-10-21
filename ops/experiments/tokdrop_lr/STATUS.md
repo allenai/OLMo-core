@@ -2,7 +2,7 @@
 experiment: tokdrop_lr
 title: LR ablation for token-drop training — dense vs gold_fl20p8_noslot (gfl20p8ns) × LR {5e-6, 1.5e-5, 5e-5}, ONE multi-task job per (arm, LR) on contradiction+nq+outlier+oolong (fast8k mt4 shard), Qwen3.5-4B base
 status: active
-updated: 2026-10-20
+updated: 2026-10-21
 branch: prasann/flopdrop_clean @ 9bdff38d0 (pushed)
 launcher: research/token_routing/ds64_fast8k/launch_fast8k.py (env F8K_SUFFIX=-lra, OPS_EXPERIMENT=tokdrop_lr)
 records:
@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-lra-q35-4b
-next_step: All 6 trainings done (checkpoints verified). 22 of 24 evals in (8k+2k x 500, no-cot); bar contradiction still running (113139-113141). Then ops result add --check for every cell. Early read -- LR 5e-6 best for both arms; bar trails dense at matched STEPS on every task (bar = 0.33x dense FLOPs); bar collapses at 5e-5 -- see the artifact.
+next_step: DONE as an LR screen (12 runs x 4 tasks x 2 rungs, 96 results recorded). Dense best at 2e-6..5e-6; bar collapses on gold-labelled tasks at EVERY LR (contradiction 8k <=0.07 vs 0.893) -- gold shortcut (kept generations: bar lists 8-13 claim pairs vs 3 gold). Next: screen a shortcut-free keep rule (matched random non-gold kept whole / partial gold / gold-blind) on the same mt4s488 recipe at LR 2e-6, before any setA ladder.
 ---
 
 # tokdrop_lr

@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5
 wandb_group: setA-pareto
-next_step: When setA32k_s42 lands, run the 3-step Beaker smoke of both arms (launch_pareto.py --smoke), check bar s/step vs dense and the per-example FLOP ratio, then size the bar ladder and build setA32k_mix from s42+s43+s44
+next_step: Ladders ON HOLD -- tokdrop_lr shows the gold-whole keep rule teaches a gold shortcut (bar contradiction 8k 0.07 vs dense 0.89 at every LR). Smokes (sAp-dense-smoke, sAp-bar-smoke) still pending on jupiter; let them run for the throughput check. Pick a shortcut-free global rule first, then size the ladder.
 ---
 
 # setA_pareto
