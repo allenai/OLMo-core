@@ -57,6 +57,12 @@ from .block import (
     TransformerBlock,
     TransformerBlockBase,
 )
+from .completedp import (
+    CompletedPConfig,
+    apply_completedp_init_,
+    completedp_block_configs,
+    validate_completedp_model,
+)
 from .config import (
     TransformerActivationCheckpointingMode,
     TransformerBlockConfig,
@@ -98,6 +104,8 @@ class Transformer(nn.Module):
     :param block_overrides: Overrides for specific blocks. Not supported if `block` is a dict of named blocks.
     :param block_pattern: The pattern of blocks to use. Required if `block` is a dict of named blocks.
     :param embed_scale: The scale factor for the embeddings.
+    :param completedp: Use the CompletedP parameterization: scale every residual branch by depth
+        and the init by width (see :class:`~olmo_core.nn.transformer.completedp.CompletedPConfig`).
     """
 
     def __init__(
@@ -119,6 +127,7 @@ class Transformer(nn.Module):
         block_pattern: Optional[List[str]] = None,
         embed_scale: Optional[float] = None,
         tie_word_embeddings: bool = False,
+        completedp: Optional[CompletedPConfig] = None,
     ):
         super().__init__()
 
@@ -146,6 +155,8 @@ class Transformer(nn.Module):
             block_pattern=block_pattern,
             block_overrides=block_overrides,
         )
+        if completedp is not None:
+            block_configs = completedp_block_configs(block_configs, completedp, n_layers)
 
         self.blocks = nn.ModuleDict()
         for block_idx in range(n_layers):
@@ -171,6 +182,9 @@ class Transformer(nn.Module):
         self.init_seed = init_seed
         self.init_std = init_std
         self.embedding_init_std = embedding_init_std
+        self.completedp = completedp
+        if completedp is not None:
+            validate_completedp_model(self)
 
         self._cache = cache
         self._pp_enabled = False
@@ -432,6 +446,9 @@ class Transformer(nn.Module):
                 std=self.init_std,
                 generator=generator,
             )
+
+        if self.completedp is not None:
+            apply_completedp_init_(self)
 
         return generator
 
