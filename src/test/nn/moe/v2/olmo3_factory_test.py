@@ -13,6 +13,7 @@ from olmo_core.nn.attention import (
     AttentionBackendName,
     AttentionType,
     KimiDeltaAttention,
+    KimiDeltaAttentionConfig,
 )
 from olmo_core.nn.ddp.block import OLMoDDPTransformerBlockConfig
 from olmo_core.nn.hf import config as hf_config_utils
@@ -52,6 +53,106 @@ def hybrid_config(latent_dim=16):
         embed_norm=True,
         use_peri_ln=True,
     )
+
+
+@pytest.mark.parametrize("tied,omit_head", [(False, False), (True, False), (True, True)])
+@pytest.mark.parametrize("attention_type", [AttentionType.default, AttentionType.fused_v2])
+def test_tied_embedding_import_and_exports(tied, omit_head, attention_type):
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "full_attention"]
+    hf.attention_gate_type = None
+    hf.tie_word_embeddings = tied
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf,
+        dtype=DType.float32,
+        attention_backend=AttentionBackendName.torch,
+        attention_type=attention_type,
+    )
+    native = config.build(init_device="cpu")
+    reference = Olmo3MoeForCausalLM(hf)
+    expected = reference.state_dict()
+    state = dict(expected)
+    if omit_head:
+        del state["lm_head.weight"]
+    olmo3.load_olmo3_moe_hf_state(native, hf, state)
+    assert (native.embeddings.weight is native.lm_head.w_out.weight) == tied
+    assert ("lm_head.weight" not in state) == omit_head
+    for exported in (
+        olmo3.gather_olmo3_moe_hf_state(native, hf, cpu=True),
+        dict(olmo3.iter_olmo3_moe_hf_state(native, hf)),
+    ):
+        assert exported.keys() == expected.keys()
+        for name in expected:
+            torch.testing.assert_close(exported[name], expected[name], rtol=0, atol=0)
+
+
+def test_tied_embedding_import_rejects_conflicting_values_before_loading():
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "full_attention"]
+    hf.tie_word_embeddings = True
+    native = olmo3.build_olmo3_moe_config_from_hf_config(
+        hf, dtype=DType.float32, attention_backend=AttentionBackendName.torch
+    ).build(init_device="cpu")
+    state = Olmo3MoeForCausalLM(hf).state_dict()
+    state["lm_head.weight"] = state["model.embed_tokens.weight"] + 1
+    before = {name: value.clone() for name, value in native.state_dict().items()}
+    with pytest.raises(RuntimeError, match="Conflicting checkpoint values for tied parameters"):
+        olmo3.load_olmo3_moe_hf_state(native, hf, state)
+    for name, value in native.state_dict().items():
+        torch.testing.assert_close(value, before[name], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize(
+    "layer_types",
+    [
+        ["full_attention", "full_attention"],
+        ["linear_attention", "linear_attention"],
+        ["linear_attention", "full_attention"],
+    ],
+)
+@pytest.mark.parametrize("omit_window", [False, True])
+def test_non_sliding_factory_does_not_require_window(layer_types, omit_window):
+    hf = hybrid_config(None)
+    hf.layer_types = layer_types
+    hf.sliding_window = None
+    config_dict = hf.to_dict()
+    if omit_window:
+        del config_dict["sliding_window"]
+    config = olmo3.build_olmo3_moe_config_from_hf_config(
+        config_dict, attention_backend=AttentionBackendName.torch
+    )
+    assert isinstance(config.block, dict)
+    for block in config.block.values():
+        mixer = block.sequence_mixer
+        if not isinstance(mixer, KimiDeltaAttentionConfig):
+            assert mixer.sliding_window is None
+    if "linear_attention" not in layer_types:
+        config.build(init_device="cpu")
+
+
+@pytest.mark.parametrize("window", [None, 0, -1, 1.5, True, "4"])
+def test_sliding_factory_rejects_invalid_window(window):
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "sliding_attention"]
+    hf.sliding_window = window
+    with pytest.raises(ValueError, match="sliding_window must be a positive integer"):
+        olmo3.build_olmo3_moe_config_from_hf_config(hf)
+
+
+def test_sliding_factory_requires_window_and_preserves_valid_window():
+    hf = hybrid_config(None)
+    hf.layer_types = ["full_attention", "sliding_attention"]
+    hf.use_rope = True
+    config_dict = hf.to_dict()
+    del config_dict["sliding_window"]
+    with pytest.raises(ValueError, match="sliding_window must be a positive integer"):
+        olmo3.build_olmo3_moe_config_from_hf_config(config_dict)
+    config_dict["sliding_window"] = 4
+    native = olmo3.build_olmo3_moe_config_from_hf_config(
+        config_dict, attention_backend=AttentionBackendName.torch
+    ).build(init_device="cpu")
+    assert native.blocks["1"].attention.backend.window_size == (3, 0)
+    assert hf_config_utils.get_hf_config(native).sliding_window == 4
 
 
 @pytest.mark.parametrize("latent_dim", [None, 16])

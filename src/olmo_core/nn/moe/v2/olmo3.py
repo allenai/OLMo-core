@@ -176,7 +176,16 @@ def build_olmo3_moe_config_from_hf_config(
     ep.validate()
 
     def make_block(layer_type: str, *, dense: bool) -> OLMoDDPTransformerBlockConfig:
-        window = int(config["sliding_window"])
+        sliding_window = None
+        if layer_type == OLMO3_SLIDING_ATTENTION:
+            window = config.get("sliding_window")
+            if isinstance(window, bool) or not isinstance(window, int) or window <= 0:
+                raise ValueError("sliding_window must be a positive integer for sliding attention.")
+            sliding_window = SlidingWindowAttentionConfig(
+                pattern=[window],
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=False,
+            )
         block_shared_experts: SharedExpertsConfig | None
         if dense:
             assert dense_hidden is not None
@@ -219,15 +228,7 @@ def build_olmo3_moe_config_from_hf_config(
             scalable_softmax=bool(config.get("scalable_softmax", False)),
             backend=attention_backend,
             dtype=dtype,
-            sliding_window=(
-                SlidingWindowAttentionConfig(
-                    pattern=[window],
-                    force_full_attention_on_first_layer=False,
-                    force_full_attention_on_last_layer=False,
-                )
-                if layer_type == OLMO3_SLIDING_ATTENTION
-                else None
-            ),
+            sliding_window=sliding_window,
         )
         if layer_type == OLMO3_LINEAR_ATTENTION:
             key_dim = int(config["linear_key_head_dim"])
@@ -332,7 +333,7 @@ def load_olmo3_moe_hf_state(
     model = _unwrap_model(model)
     hf_config = _config_for_native_dense_layout(model, hf_config)
     native_state = convert_state_from_hf(hf_config, dict(hf_state), model_type="olmo3moe")
-    parameters = dict(model.named_parameters())
+    parameters = dict(model.named_parameters(remove_duplicate=False))
     for layer_idx in range(hf_config.num_hidden_layers):
         prefix = f"blocks.{layer_idx}.attention."
         fused_key = f"{prefix}w_qkv.weight"
@@ -354,8 +355,23 @@ def load_olmo3_moe_hf_state(
             f"Converted Olmo3Moe state has unexpected parameters: {sorted(unexpected)}"
         )
 
+    # Check aliases before copying anything, then load each shared parameter once.
+    # In particular, tied input/output embeddings may have both names in HF state.
+    parameter_names: dict[int, str] = {}
+    unique_parameters: dict[str, torch.nn.Parameter] = {}
+    for name, target in parameters.items():
+        previous_name = parameter_names.get(id(target))
+        if previous_name is not None:
+            if not torch.equal(native_state[name], native_state[previous_name]):
+                raise RuntimeError(
+                    f"Conflicting checkpoint values for tied parameters: {previous_name} and {name}"
+                )
+        else:
+            parameter_names[id(target)] = name
+            unique_parameters[name] = target
+
     with torch.no_grad():
-        for name, target in parameters.items():
+        for name, target in unique_parameters.items():
             source = native_state[name]
             owner_name = name.rsplit(".", 1)[0]
             owner = model.get_submodule(owner_name)
