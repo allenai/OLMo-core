@@ -182,7 +182,7 @@ Recorded with `ops result add --check` (metric prefix `otrprobe_`, run `otr-prob
 * **Recipe.** mt4s488, 122 steps, 16 rows/step, 2 GPUs, LR 2e-6 (the rule arms' LR), input drop.
 * **Router.** keep 0.3, doc_share 1, explore 0.1, layer-4 prefix features, ridge 0.1, 2,048 samples per row, a
   full-context step every 8 steps.
-* **Runs.** Arms otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBBZ426B8A5Y0G3K4N9KCG, otr30M8
+* **Runs.** Arms otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
   01M5HBD2K8W5772DDZN4RY1H1J. Two earlier launches were cancelled while still pending: one ran on a stale commit,
   the other predated the full-context steps.
 * **Results.** _pending_.

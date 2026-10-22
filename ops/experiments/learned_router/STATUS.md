@@ -25,7 +25,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-otr (online); https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e (frozen)
-next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1) - otr30L4 01M5HAPR2YTSZWXC3PEHBD17QD, rnd30 control 01M5HAQZV12DMJ6ED178BRVNMX, otr30M8 mid-stack 01M5HAS79DVEZH3Z90AARZVHPF; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
+next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1; objective per Prasann 2026-10-22 = gradient FIDELITY of the truncated pass, train-time only) - otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8 mid-stack 01M5HBD2K8W5772DDZN4RY1H1J (all with a charged full-context step every 8); gradient-fidelity probe 01M5HBH3XHQ45E55RA7XZ3N77X; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
 ---
 
 # learned_router
