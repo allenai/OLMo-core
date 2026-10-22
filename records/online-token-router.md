@@ -5,10 +5,10 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (probes done; 13 training runs done, 26/52 evals in)
+status: active (13 mt4 runs evaluated; seed repeats + mt11 queued)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
-summary: Online train-time keep router (ridge refit each step on per-token gradient norms) + mid-stack drop; at matched FLOPs the mid-stack router ties or beats dense on 3 of 4 tasks at 8k (single seed); the drop point matters more than the selection.
+summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop point matters most, selection grows with training.
 ---
 # Online train-time token router
 
@@ -300,42 +300,65 @@ What changes once the model is trained:
 
   The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
   tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
-* **Results** (26 of 52 evals in; the rest have been pending on jupiter since 13:10). Δ vs dense at matched FLOPs,
-  at 8k:
-  * Dense is the tokdrop_lr LR-5e-6 curve on Lambda: s488 at 31 / 61 / 122 steps, fresh-data s976 at 244 and s1464
-    at 366.
-  * It is interpolated in log PF onto our meter: dense PF per step = 3.17 from our runs' dense-equivalent.
-  * eval_size 500 per cell, single seed; the SE of a difference is ≈ ±0.02-0.03.
-  * Full table: `research/token_routing/online_router/results/matched_flop_table.md`. Collector: `collect_otr.py`.
-    ops results: experiment `learned_router`.
+* **Results** (100 of 104 mt4 scores in, 2026-10-22; only the relaunched rnd30-s1464 contradiction / nq are
+  pending).
+  * Δ is against dense at matched FLOPs, at 8k.
+  * Dense is the best LR per cell. Only LR 5e-6 has ≥ 2 points so far: s488 at 31 / 61 / 122 steps on Lambda and
+    fresh-data s976 = 244, s1464 = 366. The `lri` LR-2e-6 curve joins automatically when recorded.
+  * Interpolated in log PF on our meter.
+  * eval_size 500 per cell, single seed (seed-1 repeats are queued); a difference has an SE of ≈ ±0.02-0.03.
+  * Full table: `results/matched_flop_table.md` (`collect_otr.py`). ops results experiment `learned_router`.
 
-| run | PF (× dense-eq) | contradiction | nq | oolong | outlier |
+| run (fresh data) | PF (× dense-eq) | contradiction | nq | oolong | outlier |
 |---|---|---|---|---|---|
-| **otr30M8-s976** (mid-stack router) | 417 (0.54) | **+0.029** | +0.010 | −0.022 | **+0.049** |
-| rnd30M8-s976 (mid-stack random) | 417 (0.54) | −0.019 | +0.016 | −0.009 | +0.053 |
-| fl30M8-s976 (mid-stack first/last) | 417 (0.54) | +0.015 | −0.046 | pending | pending |
-| otr30L4-s976 (input router) | 348 (0.45) | −0.100 | +0.004 | −0.019 | +0.046 |
-| rnd30-s976 (input random) | 348 (0.45) | **−0.265** | +0.002 | −0.021 | −0.023 |
-| otr30L4-s1464 (input router) | 516 (0.45) | −0.060 | −0.008 | +0.003 | +0.105 |
-| otr30L4-s488 (smoke) | 177 (0.45) | −0.229 | −0.013 | −0.030 | −0.028 |
-| otr30M8 / rnd30 / rnd30M8 / fl30M8 -s1464, otr10M8 -s976 / -s1464 | 310-620 | pending | | | |
+| **otr30M8-s1464** mid-stack router | 619 (0.54) | **+0.032** | +0.008 | **+0.038** | **+0.225** |
+| **otr10M8-s1464** mid-stack router, keep 0.1 | 471 (0.41) | **+0.043** | +0.016 | +0.021 | **+0.238** |
+| rnd30M8-s1464 mid-stack random | 619 (0.54) | +0.016 | +0.018 | +0.021 | +0.148 |
+| fl30M8-s1464 mid-stack first/last | 619 (0.54) | +0.022 | −0.028 | +0.035 | +0.137 |
+| otr30M8-s976 mid-stack router | 417 (0.54) | +0.029 | +0.010 | −0.022 | +0.049 |
+| otr10M8-s976 mid-stack router, keep 0.1 | 319 (0.41) | +0.018 | +0.016 | +0.004 | +0.083 |
+| rnd30M8-s976 mid-stack random | 417 (0.54) | −0.019 | +0.016 | −0.009 | +0.053 |
+| fl30M8-s976 mid-stack first/last | 417 (0.54) | +0.015 | −0.046 | −0.019 | +0.042 |
+| otr30L4-s1464 input router | 516 (0.45) | −0.060 | −0.008 | +0.003 | +0.105 |
+| otr30L4-s976 input router | 348 (0.45) | −0.100 | +0.004 | −0.019 | +0.046 |
+| rnd30-s1464 input random | 516 (0.45) | pending | pending | +0.002 | +0.021 |
+| rnd30-s976 input random | 348 (0.45) | **−0.265** | +0.002 | −0.021 | −0.023 |
+| otr30L4-s488 (smoke, same rows as dense s488) | 177 (0.45) | −0.229 | −0.013 | −0.030 | −0.028 |
 
-  ⚠ **Outlier@2k is confounded by LR.** Dense at LR 5e-6 scores ≈ 0.55 there, but dense at LR 2e-6 scores 0.83
-  at 122 steps. The drop arms' +0.20-0.26 at outlier@2k is an LR effect, not the method, so it is left out above.
+  **Run-vs-run, no interpolation.** Comparing with actual dense runs avoids assuming a shape for the dense curve,
+  which matters on outlier, where dense jumps 0.30 / 0.43 / 0.72 at 122 / 244 / 366 steps. Contradiction / nq /
+  oolong / outlier at 8k:
 
-  What it says so far:
-  1. **The drop point matters more than the selection.** Moving the drop mid-stack (every token runs blocks 0-7)
-     removes the contradiction collapse even with random tokens: −0.265 at the input becomes −0.019 at block 8.
-     The mid-stack router is the only arm at or above dense on three of four tasks at 8k, with oolong −0.02
-     within noise.
-  2. **The selection matters at the input.** On contradiction the router scores −0.10 against random's −0.265, and
-     on outlier +0.05 against −0.02. Under mid-stack the router adds a little on contradiction (+0.03 vs −0.02)
-     and ties random elsewhere at this length of training.
-  3. **The input router on more data still trails dense on contradiction** (−0.06 at s1464), while gaining on
-     outlier (+0.10).
-  4. The trained-checkpoint fidelity probe predicts random / fixed mid-stack rules fall behind the router as
-     training goes on. The s1464 mid-stack evals test that.
-  5. All of this is single seed. Before calling a win, the decision rule asks for 3 seeds of the best arm.
+  | run | PF | scores |
+  |---|---|---|
+  | dense-s976 (Lambda, LR 5e-6) | ≈ 773 | 0.931 / 0.916 / 0.584 / 0.432 |
+  | otr30M8-s1464 | 619 (0.80×) | 0.951 / 0.918 / 0.633 / 0.615 |
+  | otr10M8-s1464 | 471 (0.61×) | 0.947 / 0.918 / 0.629 / 0.577 |
+  | dense-s1464 | ≈ 1,160 | 0.956 / 0.936 / 0.630 / 0.719 |
+
+  * Both mid-stack router runs match or beat dense-s976 on all four tasks with less compute. The outlier gaps
+    (+0.18 / +0.15) are ≈ 5-6 SE. The others are 0-1.6 SE, single seed.
+  * dense-s1464, at 1.9-2.5× the compute, still leads on nq and outlier.
+  * `ops result add --check` flagged otr30M8-s1464 outlier@8k = 0.615 as > 3 SE above the experiment's previous
+    best. The eval is clean (500 rows scored, none skipped), and the value sits between dense-s976 and
+    dense-s1464, so it is a training effect on a steep curve, not an eval artefact.
+
+  ⚠ **Outlier@2k is confounded by LR.** Dense at LR 5e-6 scores ≈ 0.55 there; dense at LR 2e-6 scores 0.83 at
+  122 steps. The +0.2 of the drop arms there is LR, not method, so it is excluded.
+
+  What it says:
+  1. **The drop point matters most.** Mid-stack dropping (every token runs blocks 0-7, dropped tokens skip
+     8-31) removes the contradiction collapse of input dropping, even with random tokens (−0.265 → −0.019 at
+     s976).
+  2. **With more training, the selection matters too.** At s976 the mid-stack router and random were close. At
+     s1464 the router leads random on contradiction (+0.016), oolong (+0.017) and outlier (+0.077), and leads
+     first/last on nq (+0.036) and outlier (+0.088). This is what the trained-checkpoint fidelity probe
+     predicted: random keeps cos 0.10 of the gradient there vs the router's 0.78.
+  3. **Keep 0.1 mid-stack is as good as keep 0.3 for less compute** (0.41× vs 0.54×). Most of the cost is now
+     the 8 full blocks plus the full-context step every 8. A shallower drop layer or fewer dense steps would
+     lower it further.
+  4. The input router trails dense on contradiction at every budget. Input dropping is not the method.
+  5. Single seed throughout. The seed-1 repeats of otr30M8 (s976 / s1464) and the 11-task runs are queued.
 
 ## Proposed run matrix
 
