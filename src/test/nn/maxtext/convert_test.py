@@ -513,6 +513,16 @@ def test_clip_qkv_fails(name):
         get_maxtext_config(config)
 
 
+@pytest.mark.parametrize("setting", ["attention_residual_alpha", "feed_forward_residual_alpha"])
+def test_dense_residual_alpha_fails(setting):
+    # The overrides carry no residual scale, so a non-unit alpha would convert into a different
+    # model.
+    config = load_fixture("dense_small_config.json")
+    config["block"][setting] = 0.5
+    with pytest.raises(ValueError, match="residual"):
+        get_maxtext_config(config)
+
+
 def test_dense_zero_embed_scale_fails():
     config = load_fixture("dense_small_config.json")
     config["embed_scale"] = 0.0

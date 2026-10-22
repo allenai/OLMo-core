@@ -376,6 +376,13 @@ def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModel
             )
     if mixer.get("type", "attention") != "attention" or mixer.get("name", "default") != "default":
         raise ValueError(f"unsupported sequence mixer {mixer.get('type')!r}/{mixer.get('name')!r}")
+    alphas = {
+        k: blocks[0].get(k)
+        for k in ("attention_residual_alpha", "feed_forward_residual_alpha")
+        if blocks[0].get(k) not in (None, 1.0)
+    }
+    if alphas:
+        raise ValueError(f"MaxText's olmo3 decoder doesn't scale the residual branches: {alphas}")
     # ``as_config_dict()`` drops None fields, and both modules then build with bias=True.
     if mixer.get("bias", True) or ff.get("bias", True):
         raise ValueError("MaxText's olmo3 decoder has no projection biases")
