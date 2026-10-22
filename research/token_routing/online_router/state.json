@@ -91,5 +91,46 @@
    "lr": 2e-06
   }
  },
- "evals": {}
+ "evals": {
+  "f8k-mt4-otr30L4-s976-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5HN931ADW0V5Z6FCH9JF7VS",
+   "train_run": "f8k-mt4-otr30L4-s976-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-otr30L4-s976-tdb-lr2e-06-evnq": {
+   "ex": "01M5HNA5BNPKH8J602BD8SRTG9",
+   "train_run": "f8k-mt4-otr30L4-s976-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-otr30L4-s976-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5HNBAX8DPKV47AC4A97T1ZP",
+   "train_run": "f8k-mt4-otr30L4-s976-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr30L4-s976-tdb-lr2e-06-evoolong": {
+   "ex": "01M5HNCQXZ02RQF8W1G6C7P477",
+   "train_run": "f8k-mt4-otr30L4-s976-tdb-lr2e-06",
+   "task": "oolong"
+  },
+  "f8k-mt4-otr30M8-s976-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5HNDTH308F2AEDX31SPYM6K",
+   "train_run": "f8k-mt4-otr30M8-s976-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-otr30M8-s976-tdb-lr2e-06-evnq": {
+   "ex": "01M5HNETVD74R60B3AV3J1HJMK",
+   "train_run": "f8k-mt4-otr30M8-s976-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-otr30M8-s976-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5HNGYJ8Z3X8KG1VWHKWGE2H",
+   "train_run": "f8k-mt4-otr30M8-s976-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr30M8-s976-tdb-lr2e-06-evoolong": {
+   "ex": "01M5HNJ04MHR7157BG6GV968G8",
+   "train_run": "f8k-mt4-otr30M8-s976-tdb-lr2e-06",
+   "task": "oolong"
+  }
+ }
 }
