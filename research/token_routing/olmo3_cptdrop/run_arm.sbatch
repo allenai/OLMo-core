@@ -98,7 +98,7 @@ ARGS=(--task cpt --model-family olmo3 --model-scale 7b $VAR
   --wandb-group "${WANDB_GROUP:-o3cd-q3-7b}" --seed "${SEED:-0}")
 if [ -n "${SMOKE:-}" ]; then ARGS+=(--no-final-checkpoint); else ARGS+=(--save-checkpoint); fi
 [ -n "${HARD_STOP:-}" ] && ARGS+=(--max-steps "$HARD_STOP")
-[ -n "${SAVE_INTERVAL:-}" ] && ARGS+=(--save-interval "$SAVE_INTERVAL")
+[ -n "${SAVE_INTERVAL:-}" ] && ARGS+=(--save-interval "$SAVE_INTERVAL" --max-checkpoints 0)   # keep every branch point
 [ -n "${BRANCH_FROM:-}" ] && ARGS+=(--branch-from "$BRANCH_FROM")
 [ -n "${BRANCH_OPTIM_ONLY:-}" ] && ARGS+=(--branch-optim-only)
 [ -n "${NOWANDB:-}" ] && ARGS+=(--no-wandb)

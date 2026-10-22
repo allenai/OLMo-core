@@ -1093,7 +1093,11 @@ def build_and_fit(opts: argparse.Namespace) -> None:
         .with_callback(
             "checkpointer",
             CheckpointerCallback(
-                save_interval=opts.save_interval, enabled=not opts.no_final_checkpoint
+                save_interval=opts.save_interval,
+                enabled=not opts.no_final_checkpoint,
+                # default 3 = keep only the newest three permanent checkpoints; 0 = keep all (decay-branch
+                # points must survive the rest of the run)
+                max_checkpoints=(opts.max_checkpoints or None),
             ),
         )
     )
@@ -2077,6 +2081,13 @@ def parse_args() -> argparse.Namespace:
         help="steps between mid-run model+optim checkpoints. Default None = none written (eval only "
         "needs the post-fit model-only save, and at 4B each mid-run checkpoint costs ~55G). Set an "
         "integer to get resume points for a long run on a preemptible queue.",
+    )
+    ap.add_argument(
+        "--max-checkpoints",
+        type=int,
+        default=3,
+        help="permanent checkpoints kept in the save folder (CheckpointerCallback.max_checkpoints); 0 = keep all. "
+        "The default 3 silently deletes older --save-interval checkpoints, e.g. a decay-branch point.",
     )
     ap.add_argument(
         "--no-final-checkpoint",

@@ -37,6 +37,10 @@ for st in ${STAGES:-IRAND IFL C}; do
       run o3cd-IFL-2160 ARM=IFL RUN=o3cd-IFL-2160 MAX_STEPS_TOTAL=2160 SAVE_INTERVAL=486 EXPECTED_MIN=120 || exit 40
       run o3cd-IFL-540 ARM=IFL RUN=o3cd-IFL-540 MAX_STEPS_TOTAL=540 BRANCH_FROM="$ROOT/runs/o3cd-IFL-2160/step486" EXPECTED_MIN=12 || exit 41
       run o3cd-IFL-1080 ARM=IFL RUN=o3cd-IFL-1080 MAX_STEPS_TOTAL=1080 BRANCH_FROM="$ROOT/runs/o3cd-IFL-2160/step972" EXPECTED_MIN=15 || exit 42 ;;
+    DFIX)  # the dense driver lost D-480/step108 (max_checkpoints=3): D-240 branch from step216, D-120 fresh x2 seeds
+      run o3cd-D-240 ARM=D RUN=o3cd-D-240 MAX_STEPS_TOTAL=240 BRANCH_FROM="$ROOT/runs/o3cd-D-480/step216" EXPECTED_MIN=15 || exit 70
+      run o3cd-D-120 ARM=D RUN=o3cd-D-120 MAX_STEPS_TOTAL=120 EXPECTED_MIN=30 || exit 71
+      run o3cd-D-120-s1 ARM=D RUN=o3cd-D-120-s1 MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 72 ;;
     EVALD)  # dense family + the CPT start, 8-GPU row-chunked scoring
       for d in dev32k_1024 short4k_v2; do \
         "$PY" -u "$ROOT/s3_sync.py" down "$ROOT/data/$d" "data/$d" | tail -1; done
