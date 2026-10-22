@@ -169,6 +169,24 @@ ARM_EXTRA.update({
     "gfl20p8ns": ("--st-keep-mode gold_plus_random --st-n-random 0 --st-header-extra-tokens 8 "
                   "--st-keep-token-rule first_last --st-keep-token-k 0.2 --st-drop-slots"),
 })
+# tokdrop_lr universal-rule screen (2026-10-21/22, Lambda rounds 3-7; flags verbatim from those launches).
+# tier<D>... = gold + D% random docs form the keep set, which gets --st-kept-doc-k of its body (two-tier)
+# instead of staying whole; every other body keeps --st-keep-token-k, floored at --st-keep-token-min tokens.
+_P8 = "--st-header-extra-tokens 8 --st-drop-slots"
+_FL = "--st-keep-token-rule first_last"
+_GB = "--st-gold-blind --st-keep-prob 0.0"
+def _gr(frac):
+    return f"--st-keep-mode gold_plus_random --st-keep-frac {frac}"
+ARM_EXTRA.update({
+    "tier67a50m32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.5 --st-keep-token-min 32 {_P8}",
+    "tier67flm16": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 16 {_P8}",
+    "tier67flm32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 32 {_P8}",
+    "tier50flm32": f"{_gr(0.5)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.4 --st-keep-token-min 32 {_P8}",
+    "tier33fl": f"{_gr(0.3333)} {_FL} --st-keep-token-k 0.1 --st-kept-doc-k 0.5 {_P8}",
+    "gbflk32p8": f"{_GB} {_FL} --st-keep-token-k 32 {_P8}",
+    "gbflk64p8": f"{_GB} {_FL} --st-keep-token-k 64 {_P8}",
+    "gbfl10m32p8": f"{_GB} {_FL} --st-keep-token-k 0.1 --st-keep-token-min 32 {_P8}",
+})
 ARM_MICRO = {}          # every arm at micro 2: the FLOP audit (09-15 10:30) requires identical
 DEFAULT_MICRO = 2       # gpus/micro across any pair that will be compared at matched FLOPs.
 
@@ -230,7 +248,7 @@ SUFFIX = os.environ.get("F8K_SUFFIX", "")
 
 
 def run_name(task, arm, budget):
-    return f"f8k-{task}-{arm}-{budget}{SUFFIX}{LR_TAG}"
+    return f"f8k-{task}-{arm}-{budget.replace('@', 'st')}{SUFFIX}{LR_TAG}"  # s488@31 -> s488st31
 
 
 def resolve(arm):
@@ -241,14 +259,33 @@ def resolve(arm):
     return arm, BASE
 
 
+#: tasks per multi-task shard (merge_tasks.py), for the ``s<rows>`` budgets below.
+MT_TASKS = {"mt4": MT4_TASKS,
+            "mt11": ["nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
+                     "reorder", "rerank", "strmatch", "grouping"]}
+
+
+def parse_budget(task, budget):
+    """``8M``/``16M``/... -> the ``<task>_g<budget>`` pool shard. ``s<rows>[@<steps>]`` -> the merged
+    first-N shard ``<task>s<rows>`` (rows per task; mt4s488 is a prefix of mt4s976, of mt4s1464), optionally
+    cut at ``<steps>`` optimizer steps (the dense matched-FLOP curve). Returns (data dir, examples, max_steps)."""
+    if budget.startswith("s"):
+        rows, _, steps = budget[1:].partition("@")
+        n = int(rows) * len(MT_TASKS.get(task, [task]))
+        return f"{SHARDS}/{task}s{rows}", n, int(steps or 0)
+    return f"{SHARDS}/{task}_g{budget}", EXAMPLES.get(budget, 0), 0
+
+
 def arm_args(task, arm, budget):
     recipe, base = resolve(arm)
-    data = f"{SHARDS}/{task}_g{budget}"
+    data, _, max_steps = parse_budget(task, budget)
     micro = ARM_MICRO.get(recipe, DEFAULT_MICRO)
     if GLOBAL_BATCH % (micro * GPUS * NODES):
         raise SystemExit(f"global batch {GLOBAL_BATCH} not divisible by micro {micro} x {GPUS * NODES} GPUs")
     common = ["--seq-len", str(SEQ_LEN), "--global-batch", str(GLOBAL_BATCH),
               "--micro-batch-instances", str(micro), "--base-checkpoint", base]
+    if max_steps:
+        common += ["--max-steps", str(max_steps)]
     if recipe == "dense":
         # NOT --pack: every arm trains unpacked so rows/step and step counts match exactly.
         return "full", data, common, ""
@@ -297,7 +334,8 @@ def do_launch(args, mode):
             print(f"  -> rc={rc} ex={ex}: {tail[:200]}", flush=True)
             if mode == "launch":
                 st["runs"][name] = {"ex": ex, "task": args.task, "arm": arm, "budget": budget,
-                                    "steps_expected": -(-EXAMPLES.get(budget, 0) // GLOBAL_BATCH),
+                                    "steps_expected": (parse_budget(args.task, budget)[2]
+                                                       or -(-parse_budget(args.task, budget)[1] // GLOBAL_BATCH)),
                                     "gpus": GPUS * NODES, "state": "S" if ex else "LAUNCH-FAILED"}
                 save_state(st)
                 rows.append((args.task, arm, budget, name, rc, (ex or "") + " " + tail))
@@ -345,9 +383,9 @@ def do_eval(args):
             print(f"[wait] {name} train={r.get('state')} -- eval deferred")
             continue
         # A multi-task (mt4) checkpoint is scored once PER TASK, as `<run>-ev<task>`.
-        tasks = MT4_TASKS if r["task"] == "mt4" else [r["task"]]
+        tasks = MT_TASKS.get(r["task"], [r["task"]])
         for task in tasks:
-            ename = f"{name}-ev{task}" if r["task"] == "mt4" else name
+            ename = f"{name}-ev{task}" if r["task"] in MT_TASKS else name
             if ename != name and st["evals"].get(ename, {}).get("ex") and not args.force:
                 print(f"[skip] eval {ename} already launched ({st['evals'][ename]['ex']})")
                 continue
