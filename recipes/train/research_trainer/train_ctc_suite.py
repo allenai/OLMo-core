@@ -1636,7 +1636,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--st-keep-token-rule",
-        choices=["none", "first", "first_last", "rule", "spans"],
+        choices=["none", "first", "first_last", "rule", "spans", "online"],
         default="none",
         help="softtoken: WHICH body tokens of a pooled document stay real. 'none' (default) = off, "
         "bit-identical to every run before 2026-09-15. 'first' = the first --st-keep-token-k body "
@@ -1718,6 +1718,32 @@ def parse_args() -> argparse.Namespace:
         "gold-blind random set) get the keep-token rule at THIS k instead of staying whole; every "
         "other document gets --st-keep-token-k. Unset = kept documents stay whole (historical).",
     )
+    # ---- online learned keep scorer (--st-keep-token-rule online; olmo_core.nn.online_token_router)
+    ap.add_argument("--st-otr-keep-frac", type=float, default=0.3,
+                    help="online router: body tokens kept per row (fraction of the row's body tokens)")
+    ap.add_argument("--st-otr-explore-frac", type=float, default=0.1,
+                    help="online router: share of the kept budget drawn uniformly at random (exploration)")
+    ap.add_argument("--st-otr-feature-layer", type=int, default=0,
+                    help="online router: hidden features at this layer (0 = input embedding, free; L > 0 = a "
+                    "no-grad prefix pass through blocks [0, L) on the full row, charged to the FLOP meter)")
+    ap.add_argument("--st-otr-no-hidden", dest="st_otr_use_hidden", action="store_false",
+                    help="online router: structure + lexical features only")
+    ap.add_argument("--st-otr-no-query", dest="st_otr_use_query", action="store_false",
+                    help="online router: drop the h*q query-interaction features")
+    ap.add_argument("--st-otr-use-gold", action="store_true",
+                    help="online router: per-document 0/1 gold flag (gold sidecar) as a feature")
+    ap.add_argument("--st-otr-target", choices=["gnorm", "gxh"], default="gnorm",
+                    help="online router target: log ||dL/de_t|| or log |<dL/de_t, e_t>| at the embedding output")
+    ap.add_argument("--st-otr-ridge", type=float, default=1.0)
+    ap.add_argument("--st-otr-decay", type=float, default=0.9, help="online router: per-step forgetting")
+    ap.add_argument("--st-otr-warmup-steps", type=int, default=1,
+                    help="online router: leading keep-all steps (targets over every token, no heuristic init)")
+    ap.add_argument("--st-otr-dense-every", type=int, default=0,
+                    help="online router: every N-th step trains uncompressed (0 = never after warmup)")
+    ap.add_argument("--st-otr-samples-per-row", type=int, default=512)
+    ap.add_argument("--st-otr-proj-dim", type=int, default=0,
+                    help="online router: random projection of hidden features (0 = all d_model dims)")
+    ap.add_argument("--st-otr-log-every", type=int, default=10)
     ap.add_argument(
         "--st-pad-multiple",
         type=int,

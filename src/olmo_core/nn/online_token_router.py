@@ -1,0 +1,637 @@
+"""
+Online, train-time token router for soft-token compaction (``keep_token_rule="online"``).
+
+Every training forward, a linear scorer over cheap per-token features ranks the DOCUMENT BODY
+tokens of each row; the top ``keep_frac`` of them (a share ``explore_frac`` of that budget drawn
+uniformly at random instead) stay real and the rest are dropped by the existing slot-less
+compaction (:func:`~olmo_core.nn.pooled_soft_token.compact_pooled_rows`). Markers, the prompt, the
+query and the answer are never routed.
+
+The scorer is refit every optimizer step by ridge regression on targets measured in that step's own
+backward pass: for a sample of the KEPT tokens, the log norm of the loss gradient at the compacted
+row's embedding output (``target="gnorm"``) or ``|<grad, embedding>|`` (``"gxh"``, the first-order
+cost of zeroing the token). Targets are centred per row, so only the within-row ranking is fit.
+There is no heuristic warm start: until the first fit (``warmup_steps``) every row trains
+uncompressed (keep-all fallback), which also gives the first fit unbiased targets over every token.
+The exploration tokens keep later fits honest about the tokens the scorer would otherwise never
+keep (selection bias), and they are what the logged held-out rank correlation is measured on.
+
+Features (``feature_names``): document structure (offset from the body start / end as one-hots and
+log2 buckets, relative position, document index, log length), lexical query match (does the token
+id occur in the query; log repeat count in the row), the RMS-normalised hidden state ``h`` at
+``feature_layer`` (0 = the input embedding; ``L > 0`` = a no-grad prefix pass through blocks
+``[0, L)`` on the FULL row, charged to the FLOP meter), the query interaction ``h * q`` (``q`` = the
+mean normalised hidden state of the query tokens; with ``query_position="after"`` document tokens
+cannot see the query causally, so this is the only query-aware hidden feature), and optionally the
+per-document 0/1 gold flag (``use_gold``, from the shard's gold-fingerprint sidecar).
+
+Scoring never materialises the (T, F) feature matrix: ``score = s.w_s + h.(w_h + q * w_hq)``.
+
+Every FLOP the router spends (prefix pass, scoring, target hook, ridge statistics, solve) is added
+to ``model._flop_extra_actual``, which :class:`~olmo_core.train.callbacks.FlopMeterCallback` adds to
+``flop_meter/actual_pflops``.
+
+State (ridge statistics, weights) is NOT checkpointed: a resumed run restarts the router (warmup
+included).
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+import math
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import torch
+
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "OnlineRouterConfig",
+    "OnlineTokenRouter",
+    "structural_features",
+    "query_mask",
+    "N_STRUCT",
+]
+
+#: one-hot offsets 0..15 + 11 log2 buckets (16..2^15), from the body start and from the body end
+_N_ONEHOT = 16
+_N_LOG = 11
+#: bias, start one-hot+log, end one-hot+log, rel-in-doc, doc rel index, log doc length
+N_STRUCT = 1 + 2 * (_N_ONEHOT + _N_LOG) + 3
+#: in-query flag, log repeat count
+N_LEX = 2
+TARGETS = ("gnorm", "gxh")
+
+
+@dataclass
+class OnlineRouterConfig:
+    keep_frac: float = 0.3
+    """Body tokens kept per row (fraction of the row's body tokens)."""
+    explore_frac: float = 0.1
+    """Share of the kept budget drawn uniformly at random among body tokens (exploration)."""
+    feature_layer: int = 0
+    """0: features from the input embedding (free). L > 0: a no-grad prefix pass through blocks [0, L)."""
+    use_hidden: bool = True
+    use_query: bool = True
+    use_gold: bool = False
+    target: str = "gnorm"
+    ridge: float = 1.0
+    """Ridge strength, relative to the mean diagonal of the (decayed) Gram matrix."""
+    decay: float = 0.9
+    """Per-step forgetting factor of the ridge statistics."""
+    warmup_steps: int = 1
+    """Leading optimizer steps (1-based) that train uncompressed (keep-all) and collect targets."""
+    dense_every: int = 0
+    """If > 0, every ``dense_every``-th step is also uncompressed (fresh unbiased targets)."""
+    samples_per_row: int = 512
+    proj_dim: int = 0
+    """Random-project the hidden features to this many dims (0: use all d_model dims)."""
+    seed: int = 0
+    log_every: int = 10
+
+    def validate(self) -> None:
+        if not 0.0 < self.keep_frac <= 1.0:
+            raise ValueError(f"online router keep_frac must be in (0, 1], got {self.keep_frac}")
+        if not 0.0 <= self.explore_frac <= 1.0:
+            raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
+        if self.target not in TARGETS:
+            raise ValueError(f"online router target must be one of {TARGETS}, got {self.target!r}")
+        if self.feature_layer < 0:
+            raise ValueError("online router feature_layer must be >= 0")
+        if self.warmup_steps < 1:
+            raise ValueError("online router warmup_steps must be >= 1 (the first fit needs targets)")
+
+
+def _log_bucket(j: torch.Tensor) -> torch.Tensor:
+    """Bucket of an offset j >= 16: floor(log2 j) - 4, clamped to [0, _N_LOG)."""
+    jf = j.clamp(min=16).to(torch.float32)
+    return (torch.floor(torch.log2(jf)) - 4).clamp(0, _N_LOG - 1).to(torch.long)
+
+
+def structural_features(
+    input_ids: torch.Tensor,
+    chunk_ids: torch.Tensor,
+    *,
+    doc_start_id: int,
+    doc_end_id: int,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Per-token document-structure features.
+
+    :returns: ``(feats (B, T, N_STRUCT) float32, body (B, T) bool)``; rows of non-body tokens are 0.
+    """
+    B, T = input_ids.shape
+    dev = input_ids.device
+    cid = chunk_ids.to(torch.long)
+    markers = (input_ids == doc_start_id) | (input_ids == doc_end_id)
+    body = (cid >= 0) & ~markers
+    n_docs = max(1, int(cid.max().item()) + 1)
+    pos = torch.arange(T, device=dev).expand(B, T)
+    gid = (torch.arange(B, device=dev)[:, None] * n_docs + cid.clamp(min=0)).reshape(-1)
+    inside = (cid >= 0).reshape(-1)
+    big = torch.full((B * n_docs,), T, dtype=torch.long, device=dev)
+    start = big.scatter_reduce(0, gid[inside], pos.reshape(-1)[inside], reduce="amin")
+    end = torch.full_like(big, -1).scatter_reduce(
+        0, gid[inside], pos.reshape(-1)[inside], reduce="amax"
+    )
+    gid2 = gid.reshape(B, T)
+    s_t = start[gid2]
+    e_t = end[gid2]
+    j = (pos - s_t - 1).clamp(min=0)  # 0 = first body token (s_t is the doc_start marker)
+    r = (e_t - pos - 1).clamp(min=0)  # 0 = last body token (e_t is the doc_end marker)
+    blen = (e_t - s_t - 1).clamp(min=1)
+    # number of documents present per row, for the relative document index
+    n_row = (cid.max(dim=1).values + 1).clamp(min=1).to(torch.float32)
+    f = torch.zeros(B, T, N_STRUCT, dtype=torch.float32, device=dev)
+    f[..., 0] = 1.0
+    o = 1
+    for off in (j, r):
+        oh = off < _N_ONEHOT
+        idx = torch.where(oh, off, _N_ONEHOT + _log_bucket(off))
+        f.scatter_(2, (o + idx).unsqueeze(-1), 1.0)
+        o += _N_ONEHOT + _N_LOG
+    f[..., o] = j.to(torch.float32) / (blen - 1).clamp(min=1).to(torch.float32)
+    f[..., o + 1] = cid.clamp(min=0).to(torch.float32) / (n_row - 1).clamp(min=1)[:, None]
+    f[..., o + 2] = torch.log(blen.to(torch.float32)) / 10.0
+    f = f * body.unsqueeze(-1)
+    return f, body
+
+
+def query_mask(
+    chunk_ids: torch.Tensor, labels: Optional[torch.Tensor], ignore_index: int = -100
+) -> torch.Tensor:
+    """
+    The query tokens of each row: FREE tokens after the last document token and up to (including)
+    the last prompt position before the answer. ``labels`` are the shifted training labels (label
+    at ``i`` = token ``i + 1``), so answer tokens are never part of the query.
+    """
+    B, T = chunk_ids.shape
+    dev = chunk_ids.device
+    pos = torch.arange(T, device=dev).expand(B, T)
+    cid = chunk_ids.to(torch.long)
+    last_doc = torch.where(cid >= 0, pos, torch.full_like(pos, -1)).max(dim=1).values
+    if labels is not None:
+        lab = labels != ignore_index
+        first_lab = torch.where(lab, pos, torch.full_like(pos, T)).min(dim=1).values
+    else:
+        first_lab = torch.full((B,), T, dtype=torch.long, device=dev)
+    return (cid == -1) & (pos > last_doc[:, None]) & (pos <= first_lab[:, None])
+
+
+def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
+    if a.numel() < 3:
+        return float("nan")
+    ra = a.argsort().argsort().to(torch.float64)
+    rb = b.argsort().argsort().to(torch.float64)
+    ra, rb = ra - ra.mean(), rb - rb.mean()
+    den = (ra.norm() * rb.norm()).item()
+    return float((ra @ rb).item() / den) if den > 0 else float("nan")
+
+
+def _auc(score: torch.Tensor, pos: torch.Tensor) -> float:
+    """P(score of a random positive > a random negative), ties half."""
+    n1, n0 = int(pos.sum()), int((~pos).sum())
+    if n1 == 0 or n0 == 0:
+        return float("nan")
+    s = score.to(torch.float64)
+    gt = (s[pos][:, None] > s[~pos][None, :]).to(torch.float64).sum()
+    eq = (s[pos][:, None] == s[~pos][None, :]).to(torch.float64).sum()
+    return float((gt + 0.5 * eq).item() / (n1 * n0))
+
+
+class OnlineTokenRouter:
+    """See the module docstring. One instance per model; driven by the model's compaction hook
+    (:meth:`select`), the embedding-output hook (:meth:`attach_target_hook`) and a trainer callback
+    (:meth:`begin_step`, :meth:`metrics`)."""
+
+    def __init__(
+        self,
+        cfg: OnlineRouterConfig,
+        *,
+        doc_start_id: int,
+        doc_end_id: int,
+        eos_id: int,
+        d_model: int,
+        gold_table: Optional[Dict[str, Any]] = None,
+        rank: int = 0,
+    ):
+        cfg.validate()
+        if cfg.use_gold and gold_table is None:
+            raise ValueError("online router use_gold needs the gold-fingerprint table")
+        self.cfg = cfg
+        self.doc_start_id, self.doc_end_id, self.eos_id = int(doc_start_id), int(doc_end_id), int(eos_id)
+        self.d_model = int(d_model)
+        self.rank = int(rank)
+        self.gold: Optional[Dict[str, List[int]]] = None
+        if gold_table is not None:
+            self.gold = {}
+            for fp, val in gold_table.items():
+                items = list(val)
+                if items and isinstance(items[0], (list, tuple)):
+                    items = [a for p in items for a in p]
+                self.gold[fp] = sorted({int(a) for a in items})
+        self.hdim = cfg.proj_dim if (cfg.proj_dim and cfg.use_hidden) else (self.d_model if cfg.use_hidden else 0)
+        self.n_scalar = N_STRUCT + N_LEX + (1 if cfg.use_query and cfg.use_hidden else 0) + (1 if cfg.use_gold else 0)
+        self.n_features = self.n_scalar + self.hdim * (1 + int(cfg.use_query))
+        self.step = 0
+        self._calls = 0
+        self.w: Optional[torch.Tensor] = None
+        self.XtX: Optional[torch.Tensor] = None
+        self.Xty: Optional[torch.Tensor] = None
+        self.n_seen = 0.0
+        self._proj: Optional[torch.Tensor] = None
+        self._pending: List[Dict[str, Any]] = []
+        self._current: Optional[Dict[str, Any]] = None
+        self._stats: Dict[str, List[float]] = {}
+        self.last_metrics: Dict[str, float] = {}
+
+    # ------------------------------------------------------------------ naming
+    def feature_names(self) -> List[str]:
+        names = ["bias"]
+        for side in ("start", "end"):
+            names += [f"{side}_off{i}" for i in range(_N_ONEHOT)]
+            names += [f"{side}_log{i}" for i in range(_N_LOG)]
+        names += ["rel_in_doc", "doc_rel_idx", "log_doc_len", "in_query", "log_repeat"]
+        if self.cfg.use_query and self.cfg.use_hidden:
+            names.append("cos_h_q")
+        if self.cfg.use_gold:
+            names.append("gold")
+        names += [f"h{i}" for i in range(self.hdim)]
+        if self.cfg.use_query:
+            names += [f"hq{i}" for i in range(self.hdim)]
+        return names
+
+    # ------------------------------------------------------------------ schedule
+    def dense_now(self) -> bool:
+        """Whether this step trains uncompressed (warmup or a periodic dense step)."""
+        c = self.cfg
+        if self.w is None or self.step <= c.warmup_steps:
+            return True
+        return c.dense_every > 0 and self.step % c.dense_every == 0
+
+    # ------------------------------------------------------------------ features
+    def _flop(self, model, n: float) -> None:
+        model._flop_extra_actual = float(getattr(model, "_flop_extra_actual", 0.0)) + float(n)
+
+    def _hidden(self, model, input_ids: torch.Tensor) -> torch.Tensor:
+        """(B, T, D) hidden state at ``feature_layer`` on the full row, no grad."""
+        with torch.no_grad():
+            h = model.embeddings(input_ids)
+            if model.embed_scale is not None:
+                h = h * model.embed_scale
+            if model.embedding_norm is not None:
+                h = model.embedding_norm(h)
+            L = self.cfg.feature_layer
+            if L > 0:
+                _, _, abk, pbk, _ = model._prepare_inputs(input_ids, None)
+                blocks = list(model.blocks.values())
+                if L > len(blocks):
+                    raise ValueError(f"feature_layer {L} > {len(blocks)} blocks")
+                for i in range(L):
+                    h = blocks[i](h, **abk, **pbk.get(i, {}))
+                # forward-only cost of the prefix (num_flops_per_token is forward+backward = 3x fwd)
+                T = int(input_ids.shape[1])
+                per_tok = sum(int(b.num_flops_per_token(T)) for b in blocks[:L]) / 3.0
+                self._flop(model, per_tok * input_ids.numel())
+        return h
+
+    def _row_gold(self, input_ids: torch.Tensor, chunk_ids: torch.Tensor) -> torch.Tensor:
+        """(B, T) float gold-document flag per token (0 where unknown)."""
+        from .attention.gold_grad_mask import content_fingerprint_from_row
+
+        assert self.gold is not None
+        B, T = input_ids.shape
+        cid = chunk_ids.to(torch.long)
+        n_docs = max(1, int(cid.max().item()) + 1)
+        g = torch.zeros(B, n_docs + 1, dtype=torch.float32)
+        rows = input_ids.detach().to("cpu").tolist()
+        hits = 0
+        for b in range(B):
+            gold = self.gold.get(content_fingerprint_from_row(rows[b], self.eos_id))
+            if gold is None:
+                continue
+            hits += 1
+            for d in gold:
+                if 0 <= d < n_docs:
+                    g[b, d] = 1.0
+        self._stat("gold_fp_hit", hits / max(1, B))
+        g = g.to(input_ids.device)
+        return torch.where(cid >= 0, g.gather(1, cid.clamp(min=0)), torch.zeros_like(cid, dtype=torch.float32))
+
+    def _projection(self, device) -> Optional[torch.Tensor]:
+        if not self.cfg.proj_dim:
+            return None
+        if self._proj is None or self._proj.device != device:
+            gen = torch.Generator(device="cpu").manual_seed(1234567 + self.cfg.seed)
+            p = torch.randn(self.d_model, self.cfg.proj_dim, generator=gen) / math.sqrt(self.cfg.proj_dim)
+            self._proj = p.to(device)
+        return self._proj
+
+    def token_features(
+        self,
+        model,
+        input_ids: torch.Tensor,
+        chunk_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        ignore_index: int = -100,
+    ) -> Dict[str, torch.Tensor]:
+        """Per-token feature PARTS (scalars ``s`` (B,T,n_scalar); hidden ``h`` (B,T,hdim) and query
+        ``q`` (B,hdim), both RMS-normalised) plus the ``body`` mask."""
+        c = self.cfg
+        struct, body = structural_features(
+            input_ids, chunk_ids, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id
+        )
+        B, T = input_ids.shape
+        qm = query_mask(chunk_ids, labels, ignore_index)
+        # lexical: token id occurs in the query; log repeat count of the id among the row's body tokens
+        V = int(max(int(input_ids.max().item()) + 1, 1))
+        rows = torch.arange(B, device=input_ids.device)[:, None].expand(B, T)
+        key = rows * V + input_ids.to(torch.long)
+        qset = torch.zeros(B * V, dtype=torch.bool, device=input_ids.device)
+        qset[key[qm]] = True
+        in_q = qset[key].to(torch.float32)
+        cnt = torch.zeros(B * V, dtype=torch.float32, device=input_ids.device).index_add_(
+            0, key[body], torch.ones(int(body.sum()), device=input_ids.device)
+        )
+        rep = torch.log1p(cnt[key]) / 5.0
+        parts = [struct, (in_q * body).unsqueeze(-1), (rep * body).unsqueeze(-1)]
+        out: Dict[str, torch.Tensor] = {"body": body, "query": qm}
+        if c.use_hidden:
+            h = self._hidden(model, input_ids).float()
+            h = h * torch.rsqrt(h.pow(2).mean(-1, keepdim=True) + 1e-6)
+            P = self._projection(h.device)
+            if P is not None:
+                h = h @ P
+            if c.use_query:
+                nq = qm.sum(1).clamp(min=1).to(torch.float32)
+                q = (h * qm.unsqueeze(-1)).sum(1) / nq[:, None]
+                q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + 1e-6)
+                out["q"] = q
+                parts.append(((h * q[:, None, :]).mean(-1) * body).unsqueeze(-1))
+            out["h"] = h * body.unsqueeze(-1)
+        if c.use_gold:
+            parts.append((self._row_gold(input_ids, chunk_ids) * body).unsqueeze(-1))
+        out["s"] = torch.cat(parts, dim=-1)
+        return out
+
+    def full_features(self, fp: Dict[str, torch.Tensor], rows: torch.Tensor, cols: torch.Tensor) -> torch.Tensor:
+        """Materialise the (N, F) feature rows of the selected tokens."""
+        parts = [fp["s"][rows, cols]]
+        if "h" in fp:
+            h = fp["h"][rows, cols]
+            parts.append(h)
+            if "q" in fp:
+                parts.append(h * fp["q"][rows])
+        return torch.cat(parts, dim=-1)
+
+    def score(self, fp: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """(B, T) linear score without materialising the full feature matrix."""
+        assert self.w is not None
+        w = self.w.to(torch.float32)
+        ns, hd = self.n_scalar, self.hdim
+        sc = fp["s"] @ w[:ns]
+        if "h" in fp:
+            wh = w[ns : ns + hd]
+            if "q" in fp:
+                wh = wh[None, :] + fp["q"] * w[ns + hd : ns + 2 * hd][None, :]  # (B, hd)
+                sc = sc + torch.einsum("btd,bd->bt", fp["h"], wh)
+            else:
+                sc = sc + fp["h"] @ wh
+        return sc
+
+    # ------------------------------------------------------------------ selection
+    def select(
+        self,
+        model,
+        input_ids: torch.Tensor,
+        chunk_ids: torch.Tensor,
+        labels: Optional[torch.Tensor],
+        ignore_index: int = -100,
+    ) -> torch.Tensor:
+        """The (B, T) keep mask over body tokens for this training forward (non-body ignored).
+        Also stashes the feature rows of a sample of the kept tokens for :meth:`attach_target_hook`."""
+        c = self.cfg
+        self._calls += 1
+        # trim the right pad: features / prefix pass only over the longest real row
+        real = (chunk_ids != -2).sum(dim=1)
+        Tr = int(real.max().item())
+        ids, cid = input_ids[:, :Tr], chunk_ids[:, :Tr]
+        lab = labels[:, :Tr] if labels is not None else None
+        fp = self.token_features(model, ids, cid, lab, ignore_index)
+        body = fp["body"]
+        B = ids.shape[0]
+        dev = ids.device
+        gen = torch.Generator(device=dev).manual_seed(
+            (self.cfg.seed * 1_000_003 + self.step * 7919 + self.rank * 104_729 + self._calls) % (2**62)
+        )
+        u = torch.rand(ids.shape, generator=gen, device=dev)
+        n_body = body.sum(dim=1)
+        dense = self.dense_now()
+        explore = torch.zeros_like(body)
+        score = None
+        if self.w is not None:
+            score = self.score(fp)
+            self._flop(model, 2.0 * self.n_features * float(body.sum()))
+        if dense:
+            keep = body.clone()
+        else:
+            assert score is not None
+            k = torch.ceil(n_body.to(torch.float32) * c.keep_frac).to(torch.long)
+            k_e = torch.round(k.to(torch.float32) * c.explore_frac).to(torch.long)
+            # exploration: the k_e body tokens with the smallest uniform draw
+            ru = torch.where(body, u, torch.full_like(u, 2.0))
+            rank_u = ru.argsort(dim=1).argsort(dim=1)
+            explore = body & (rank_u < k_e[:, None])
+            sc = torch.where(body & ~explore, score, torch.full_like(score, -float("inf")))
+            rank_s = (-sc).argsort(dim=1).argsort(dim=1)
+            keep = explore | (body & (rank_s < (k - k_e)[:, None]))
+        # sample kept tokens for targets: every exploration token first, then random kept ones
+        pri = torch.where(keep, u + 2.0 * (~explore).to(u.dtype), torch.full_like(u, 9.0))
+        rank_p = pri.argsort(dim=1).argsort(dim=1)
+        samp = keep & (rank_p < c.samples_per_row)
+        rows, cols = samp.nonzero(as_tuple=True)
+        feats = self.full_features(fp, rows, cols)
+        entry: Dict[str, Any] = {
+            "rows": rows,
+            "pos": cols,
+            "feats": feats,
+            "explore": explore[rows, cols],
+            "pred": (score[rows, cols] if score is not None else None),
+            "target": None,
+        }
+        self._current = entry
+        # diagnostics: realised keep, gold leak (does per-document kept density name gold?)
+        self._stat("keep_frac", float(keep.sum()) / max(1.0, float(body.sum())))
+        self._stat("dense", float(dense))
+        if self.gold is not None and not dense:
+            gflag = self._row_gold(ids, cid)
+            self._stat("leak_auc", self._leak_auc(keep, body, cid, gflag))
+        full = torch.zeros_like(input_ids, dtype=torch.bool)
+        full[:, :Tr] = keep
+        return full
+
+    def _leak_auc(self, keep, body, cid, gflag) -> float:
+        """Mean over rows of AUC(per-document kept fraction -> gold). 0.5 = density names nothing."""
+        aucs = []
+        c = cid.to(torch.long)
+        for b in range(keep.shape[0]):
+            bb = body[b]
+            if not bb.any():
+                continue
+            d = c[b][bb]
+            nd = int(d.max()) + 1
+            kept = torch.zeros(nd, device=d.device).index_add_(0, d, keep[b][bb].to(torch.float32))
+            tot = torch.zeros(nd, device=d.device).index_add_(0, d, torch.ones_like(d, dtype=torch.float32))
+            g = torch.zeros(nd, device=d.device).index_add_(0, d, gflag[b][bb]) > 0
+            present = tot > 0
+            a = _auc((kept / tot.clamp(min=1))[present], g[present])
+            if not math.isnan(a):
+                aucs.append(a)
+        return float(sum(aucs) / len(aucs)) if aucs else float("nan")
+
+    # ------------------------------------------------------------------ targets
+    def attach_target_hook(self, model, h: torch.Tensor, position_ids: Optional[torch.Tensor]) -> torch.Tensor:
+        """Register the target hook on the compacted embedding output ``h`` (B, T', D); its original
+        positions are ``position_ids`` (B, T'). No-op if this forward did not route."""
+        entry, self._current = self._current, None
+        if entry is None or not h.requires_grad:
+            return h
+        rows, pos = entry["rows"], entry["pos"]
+        if position_ids is None:
+            cols = pos
+            ok = pos < h.shape[1]
+        else:
+            pid = position_ids.to(pos.device)
+            cols = torch.searchsorted(pid[rows].contiguous(), pos[:, None].contiguous()).squeeze(-1)
+            cols = cols.clamp(max=pid.shape[1] - 1)
+            ok = pid[rows, cols] == pos
+        entry["ok"] = ok
+        entry["cols"] = cols
+        if self.cfg.target == "gxh":
+            entry["hsel"] = h.detach()[rows, cols].float()
+        self._pending.append(entry)
+        n_sel = int(rows.numel())
+        self._flop(model, 2.0 * self.d_model * n_sel * (2 if self.cfg.target == "gxh" else 1))
+
+        def hook(g: torch.Tensor) -> None:
+            gs = g.detach()[rows, cols].float()
+            if self.cfg.target == "gnorm":
+                t = gs.norm(dim=-1)
+            else:
+                t = (gs * entry["hsel"]).sum(-1).abs()
+            entry["target"] = torch.log(t + 1e-12)
+
+        h.register_hook(hook)
+        return h
+
+    # ------------------------------------------------------------------ fitting
+    def _stat(self, k: str, v: float) -> None:
+        if not math.isnan(v):
+            self._stats.setdefault(k, []).append(float(v))
+
+    def begin_step(self, step: int, model=None) -> None:
+        """Consume the previous step's targets (all ranks: one all-reduce), refit, advance."""
+        import torch.distributed as dist
+
+        F = self.n_features
+        if self.step == 0:
+            self._pending = []  # forwards before the first step = the trainer's dry-run batch
+        X, y, rows_all, expl, preds = [], [], [], [], []
+        for e in self._pending:
+            if e["target"] is None:
+                continue
+            ok = e["ok"]
+            if not ok.any():
+                continue
+            t = e["target"][ok]
+            r = e["rows"][ok]
+            # per-row centring (only the within-row ranking is fit)
+            nb = int(r.max()) + 1
+            s = torch.zeros(nb, device=t.device).index_add_(0, r, t)
+            n = torch.zeros(nb, device=t.device).index_add_(0, r, torch.ones_like(t))
+            t = t - (s / n.clamp(min=1))[r]
+            X.append(e["feats"][ok])
+            y.append(t)
+            rows_all.append(r + 10_000 * len(rows_all))
+            expl.append(e["explore"][ok])
+            if e["pred"] is not None:
+                preds.append(e["pred"][ok])
+        self._pending = []
+        dev = None
+        if model is not None:
+            dev = next(model.parameters()).device
+        elif X:
+            dev = X[0].device
+        if dev is None:
+            return
+        if X:
+            Xc = torch.cat(X).to(dev, torch.float64)
+            yc = torch.cat(y).to(dev, torch.float64)
+        else:
+            Xc = torch.zeros(0, F, dtype=torch.float64, device=dev)
+            yc = torch.zeros(0, dtype=torch.float64, device=dev)
+        # online held-out quality of the CURRENT weights (before refitting on these targets)
+        if preds and len(preds) == len(X):
+            pc = torch.cat(preds).to(dev, torch.float64)
+            ec = torch.cat(expl).to(dev)
+            rc = torch.cat(rows_all).to(dev)
+            for name, m in (("rank_corr_explore", ec), ("rank_corr_kept", ~ec)):
+                vals = []
+                for rid in torch.unique(rc[m]).tolist():
+                    mm = m & (rc == rid)
+                    vals.append(_spearman(pc[mm], yc[mm]))
+                vals = [v for v in vals if not math.isnan(v)]
+                if vals:
+                    self._stat(name, sum(vals) / len(vals))
+        G = Xc.T @ Xc
+        b = Xc.T @ yc
+        cnt = torch.tensor([float(Xc.shape[0])], dtype=torch.float64, device=dev)
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(G)
+            dist.all_reduce(b)
+            dist.all_reduce(cnt)
+        if model is not None:
+            self._flop(model, 2.0 * F * F * Xc.shape[0] + 2.0 * F * Xc.shape[0])
+        if self.XtX is None:
+            self.XtX, self.Xty = G, b
+        else:
+            self.XtX = self.cfg.decay * self.XtX + G
+            self.Xty = self.cfg.decay * self.Xty + b
+        self.n_seen = self.cfg.decay * self.n_seen + float(cnt.item())
+        self._stat("fit_samples", float(cnt.item()))
+        if self.n_seen > 0:
+            A = self.XtX.clone()
+            lam = self.cfg.ridge * float(torch.diagonal(A).mean().clamp(min=1e-12))
+            A.diagonal().add_(lam)
+            try:
+                Lc = torch.linalg.cholesky(A)
+                self.w = torch.cholesky_solve(self.Xty[:, None], Lc).squeeze(-1).to(torch.float32)
+            except RuntimeError as exc:  # pragma: no cover - numerically singular
+                log.warning("[online-router] ridge solve failed (%s); keeping previous weights", exc)
+            if model is not None:
+                self._flop(model, F**3 / 3.0 + 4.0 * F * F)
+        self.step = int(step)
+
+    def metrics(self) -> Dict[str, float]:
+        """Means of the per-forward diagnostics since the last call (then reset)."""
+        out = {f"online_router/{k}": sum(v) / len(v) for k, v in self._stats.items() if v}
+        self._stats = {}
+        if self.w is not None:
+            w = self.w
+            ns = self.n_scalar
+            out["online_router/w_norm_scalar"] = float(w[:ns].norm())
+            out["online_router/w_norm_hidden"] = float(w[ns:].norm()) if w.numel() > ns else 0.0
+            if self.cfg.use_gold:
+                out["online_router/w_gold"] = float(w[ns - 1])
+            names = self.feature_names()
+            out["online_router/w_in_query"] = float(w[names.index("in_query")])
+        self.last_metrics = out
+        return out
+
+    def weights_digest(self) -> str:
+        """Short hash of the current weights (cross-rank consistency check)."""
+        if self.w is None:
+            return "none"
+        return hashlib.sha1(self.w.detach().cpu().numpy().tobytes()).hexdigest()[:12]

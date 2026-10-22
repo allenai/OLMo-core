@@ -640,7 +640,9 @@ def apply_slot_mode(
 # second probe (``records/outlier-realtoken-parity-probe.md``) found beats ``first`` at every
 # rung at identical cost, and needs no feature tables at all.
 
-KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule", "custom", "spans")
+#: ``online``: a learned scorer refit every step from the training backward
+#: (:mod:`olmo_core.nn.online_token_router`, passed as ``online_router``).
+KEEP_TOKEN_RULES = ("none", "first", "first_last", "rule", "custom", "spans", "online")
 
 #: The probe's feature list, in order (``outlier_saliency_preview_probe.FEATURES``).
 KEEP_TOKEN_FEATURES = (
