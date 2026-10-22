@@ -373,6 +373,12 @@ def main():
         help="landmark variant: a landmark token every mem_freq content tokens (window=64).",
     )
     ap.add_argument("--max-test-samples", type=int, default=400)
+    ap.add_argument("--gen-batch", type=int, default=int(os.environ.get("LADDER_GEN_BATCH", "1")),
+                    help="non-landmark models: decode this many examples per batch (1 = the bs=1 loop)")
+    ap.add_argument("--gen-batch-tokens", type=int, default=int(os.environ.get("LADDER_GEN_BATCH_TOKENS", "98304")),
+                    help="cap on padded prompt tokens per decode batch")
+    ap.add_argument("--gen-compare", type=int, default=int(os.environ.get("LADDER_GEN_COMPARE", "0")),
+                    help="also decode the first K rows bs=1 and report agreement + speed")
     ap.add_argument(
         "--max-length",
         type=int,
@@ -679,6 +685,49 @@ def main():
             nxt = int(logits[0, -1].argmax().item())
         return strip_think(tok.decode(new_content, skip_special_tokens=True))
 
+    def finish_tokens(gen_ids, answer_complete):
+        """The bs=1 loop's stopping rule applied to an already generated token list: stop BEFORE
+        EOS / im_end, and after a newline once answer_complete(prefix) holds (newline kept)."""
+        new_content = []
+        for t in gen_ids:
+            if t == EOS_TOKEN_ID or t == IM_END_ID:
+                break
+            new_content.append(t)
+            if t == NEWLINE_ID and answer_complete is not None and answer_complete(new_content):
+                break
+        return strip_think(tok.decode(new_content, skip_special_tokens=True))
+
+    @torch.no_grad()
+    def generate_many(items, max_new_tokens, answer_complete):
+        """Batched greedy decode for non-landmark models: length-sorted, left-padded batches of at
+        most --gen-batch rows and --gen-batch-tokens padded prompt tokens, via
+        generate_batch (one decode step serves the whole batch, where the bs=1 loop is
+        kernel-launch bound). Returns {gi: text}. The answer_complete stop is applied afterwards on
+        the generated tokens, which yields the same text as stopping early."""
+        out = {}
+        items = sorted(items, key=lambda it: len(it[1]))
+        i = 0
+        while i < len(items):
+            bs = 1
+            while (i + bs < len(items) and bs < args.gen_batch
+                   and (bs + 1) * len(items[i + bs][1]) <= args.gen_batch_tokens):
+                bs += 1
+            batch = items[i : i + bs]
+            L = max(len(p) for _, p in batch)
+            ids = torch.full((bs, L), pad_id, dtype=torch.long, device=device)
+            mask = torch.zeros((bs, L), dtype=torch.bool, device=device)
+            for j, (_, p) in enumerate(batch):
+                ids[j, L - len(p):] = torch.tensor(p, device=device)
+                mask[j, L - len(p):] = True
+            gen, _, _ = gm.generate_batch(
+                ids, attention_mask=mask, completions_only=True, log_timing=False,
+                max_new_tokens=max_new_tokens, stop_token_ids=[EOS_TOKEN_ID, IM_END_ID],
+            )
+            for j, (gi, _) in enumerate(batch):
+                out[gi] = finish_tokens(gen[j].tolist(), answer_complete)
+            i += bs
+        return out
+
     # ---- output: MERGE into an existing ladder JSON so per-task/rung splits accumulate ----
     out_dir = os.path.dirname(args.out) or "."
     os.makedirs(out_dir, exist_ok=True)
@@ -742,6 +791,32 @@ def main():
             my_gidx = list(range(rank, len(examples), world))
             local = []
             skipped = 0
+            if args.gen_batch > 1 and not is_landmark:
+                todo = []
+                for gi in my_gidx:
+                    raw = examples[gi].get("ex", examples[gi])
+                    prefill = build_prefill(raw, loadtask, chunk_by, item_regex)
+                    if len(prefill) > cap:
+                        skipped += 1
+                        local.append((gi, ""))
+                    else:
+                        todo.append((gi, prefill))
+                t_b = time.time()
+                got = generate_many(todo, max_new_tokens, answer_complete)
+                t_b = time.time() - t_b
+                local += sorted(got.items())
+                if args.gen_compare > 0:  # same rows one at a time: agreement + speed check
+                    sub = todo[: args.gen_compare]
+                    t_1 = time.time()
+                    one = {gi: generate_one(p, max_new_tokens, answer_complete) for gi, p in sub}
+                    t_1 = time.time() - t_1
+                    agree = sum(one[gi] == got[gi] for gi, _ in sub)
+                    print(f"[gen-compare] {task}@{label} rank{rank}: batched == bs1 on {agree}/{len(sub)}; "
+                          f"batched {t_b / max(1, len(todo)):.3f}s/ex vs bs1 {t_1 / max(1, len(sub)):.3f}s/ex", flush=True)
+                    for gi, _ in sub:
+                        if one[gi] != got[gi]:
+                            print(f"[gen-compare]   diff gi={gi}: bs1={one[gi][:120]!r} | batched={got[gi][:120]!r}", flush=True)
+                my_gidx = []
             for gi in my_gidx:
                 raw = examples[gi].get("ex", examples[gi])
                 prefill = build_prefill(raw, loadtask, chunk_by, item_regex)
