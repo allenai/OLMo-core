@@ -59,7 +59,7 @@ run() {  # name, then env for run_arm
   local name=$1; shift
   log "START $name"
   set +e +o pipefail
-  env "$@" RUN="$name" bash "$ARM_SH" 2>&1 | tee "$ROOT/logs/$name.log" | grep -E "INFO\s+\[step=|train/CE loss|Error|error|Traceback" --line-buffered
+  env "$@" RUN="$name" bash "$ARM_SH" 2>&1 | tee "$ROOT/logs/$name.log" | grep -E "\[step=[0-9]|train/CE loss|Error|error|Traceback" --line-buffered
   local rc=${PIPESTATUS[0]}
   set -e -o pipefail
   log "END $name rc=$rc"
