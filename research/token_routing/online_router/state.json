@@ -53,6 +53,42 @@
    "arm": "rnd30",
    "budget": "s1464",
    "lr": 2e-06
+  },
+  "f8k-mt4-rnd30M8-s976-tdb-lr2e-06": {
+   "ex": "01M5HM848904Y7QG4CSQZH0Y9F",
+   "arm": "rnd30M8",
+   "budget": "s976",
+   "lr": 2e-06
+  },
+  "f8k-mt4-rnd30M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5HM965QX3VJE61BT3410R9X",
+   "arm": "rnd30M8",
+   "budget": "s1464",
+   "lr": 2e-06
+  },
+  "f8k-mt4-fl30M8-s976-tdb-lr2e-06": {
+   "ex": "01M5HMA8KXE5GZ9V1JJW5X77KY",
+   "arm": "fl30M8",
+   "budget": "s976",
+   "lr": 2e-06
+  },
+  "f8k-mt4-fl30M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5HMBKT869Z0H66PEYSMFPHF",
+   "arm": "fl30M8",
+   "budget": "s1464",
+   "lr": 2e-06
+  },
+  "f8k-mt4-otr10M8-s976-tdb-lr2e-06": {
+   "ex": "01M5HMCSDHQMCG2S86Z2DMV51F",
+   "arm": "otr10M8",
+   "budget": "s976",
+   "lr": 2e-06
+  },
+  "f8k-mt4-otr10M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5HME5F5PKNCFJ6ERSRNSTMA",
+   "arm": "otr10M8",
+   "budget": "s1464",
+   "lr": 2e-06
   }
  },
  "evals": {}
