@@ -228,6 +228,51 @@ What it says:
    * Raw cosine includes the shared direction (unrelated rows 0.40), and centred cosine was not computed.
    * Only 12 rows per task.
 
+### The same probe on a TRAINED checkpoint
+
+* **Run.** Beaker 01M5HQKKR1T184608W6SQ0JY5M, commit 908eb0957, ops results `gradfid_trained_*`.
+* **Checkpoint.** `f8k-mt4-otr30L4-s976-tdb-lr2e-06` (244 steps of online-router training on mt4s976).
+* **Rows.** Unseen rows of mt4s1464 (fit rows 1000-1031, held-out rows 1080-1091 per task; ⚠ eval_size=12 per task,
+  48 pooled). Median full CE is 0.17.
+* **The parent's dense checkpoints are unusable.** Its tdb runs crashed in `wandb.finish` before saving any
+  checkpoint; their run dirs hold only `flops.json`, `provenance.json`, `run_identity.json` and `wandb/`.
+
+**Unrelated rows now have cos 0.02** (0.40 on the base). The shared direction is gone, so these cosines measure
+the row-specific direction directly. Pooled cos / rel err:
+
+| drop point · rule | ρ = 0.1 | ρ = 0.3 | ρ = 0.5 |
+|---|---|---|---|
+| input · router, per-document | 0.09 / 1.49 | 0.45 / 1.07 | 0.60 / 0.98 |
+| input · oracle, per-document | 0.12 / 1.53 | 0.50 / 1.12 | 0.69 / 0.89 |
+| input · oracle, row top-k | 0.32 / 1.52 | 0.72 / 0.88 | 0.86 / 0.62 |
+| input · random, per-document | 0.07 / 1.44 | 0.06 / 2.46 | 0.06 / 3.48 |
+| input · first/last per document | 0.06 / 1.81 | 0.28 / 1.65 | 0.53 / 1.10 |
+| **mid8 · router, per-document** | 0.22 / 1.93 | **0.78 / 0.80** | **0.89 / 0.53** |
+| mid8 · oracle, per-document | 0.42 / 1.41 | 0.83 / 0.62 | 0.93 / 0.40 |
+| mid8 · random, per-document | 0.06 / 2.88 | 0.10 / 2.58 | 0.28 / 1.79 |
+
+Per task at ρ = 0.3 (cos), router / random / oracle, per-document:
+
+| | contradiction | nq | outlier | oolong |
+|---|---|---|---|---|
+| input | 0.06 / 0.03 / – | 0.40 / 0.03 / – | 0.57 / 0.06 / – | 0.75 / 0.67 / – |
+| mid8 | 0.13 / 0.06 / 0.32 | 0.62 / 0.15 / 0.74 | 0.83 / 0.07 / 0.84 | 0.88 / 0.84 / 0.93 |
+
+What changes once the model is trained:
+
+1. **WHICH tokens now matter as much as WHERE.** Random selection loses the gradient direction almost entirely
+   (cos 0.06-0.10 at ρ = 0.3, relative error 2.5: the dropped-context gradient is larger than the full one and
+   points elsewhere). The router keeps 0.45 at the input and 0.78 mid-stack, close to the oracle (0.83). On the
+   base model, random mid-stack still kept 0.66.
+2. **The router beats the first/last heuristic once trained** (input, ρ = 0.3: 0.45 vs 0.28; ρ = 0.5: 0.60 vs 0.53).
+3. **Mid-stack is still the bigger lever**: 0.78 vs 0.45 at ρ = 0.3. But ρ = 0.1 is too aggressive on a trained
+   model (0.22).
+4. **Contradiction is the weak task.** Even the mid-stack oracle reaches only 0.32, so what contradiction's
+   gradient needs is spread over many tokens.
+5. **For the training runs:** early training looks like the base-model table (where random mid-stack is fine), and
+   later training looks like this one (where only the router keeps the signal). A random or fixed rule that ties
+   the router on short budgets should fall behind on longer ones. That is a prediction for the s1464 runs.
+
 ## Smoke training (step 5)
 
 `f8k-mt4-otr30L4-s488-otr-lr2e-06` and companions (Beaker ids below).
