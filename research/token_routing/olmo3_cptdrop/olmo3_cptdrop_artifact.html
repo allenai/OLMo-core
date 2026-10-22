@@ -68,15 +68,26 @@ ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
 
 <div class="wrap">
   <header style="display:grid;gap:10px">
-    <div class="eyebrow">ops experiment · olmo3_cptdrop · updated 2026-10-21</div>
+    <div class="eyebrow">ops experiment · olmo3_cptdrop · updated 2026-10-22</div>
     <h1>Token-dropping continued pretraining on OLMo 3 7B: an empirical screen</h1>
     <p>Starting from a 7B base that has only ever seen 8k contexts, does dropping tokens during long-context
       continued pretraining reach dense's dev loss for less compute, at every budget, not only the smallest?</p>
   </header>
 
   <div class="status">
-    <div><span class="pill run">in progress</span> &nbsp;<strong>No results yet.</strong> Data build and checkpoint conversion are running; engineering for the drop arms comes next.</div>
-    <p style="color:var(--muted)">Verdict will go here first once round 1 is scored: for each arm, the FLOP multiplier m against the dense curve at 60M, 125M and 250M dense-token budgets.</p>
+    <div><span class="pill run">in progress</span> &nbsp;<strong>Learning rate fixed: peak LR 2e-5 beats the OLMo recipe's 2.07e-4 by 0.13 nats at 120 steps, and dense keeps improving. Every arm now runs at 2e-5.</strong></div>
+    <p>At the OLMo recipe LR with our 512k-token batches (OLMo used 4M), dense CE stopped improving after about 120 steps and got worse after that, while short-document CE climbed from 1.16 to 1.49. At 2e-5, CE drops 0.162 in the first 120 steps and barely moves the guard. Nearly all of the gain arrives within 120 steps, so whether dropping reaches 10–20× is decided at small budgets: dense at 12 / 24 / 48 steps against drop arms at the same FLOPs. A dense small-batch control (half the rows per step, twice the steps) separates the effect of dropping from the effect of taking more optimizer steps.</p>
+    <div class="tbl"><table>
+      <tr><th>dense run (dev32k_1024)</th><th>peak LR</th><th>dev CE, all</th><th>16–32k</th><th>short docs</th><th>paired Δ</th></tr>
+      <tr><td>stage 2 (start)</td><td></td><td class="num">1.848</td><td class="num">1.840</td><td class="num">1.156</td><td></td></tr>
+      <tr><td>stage 3 (OLMo's own long-context model)</td><td></td><td class="num">1.829</td><td class="num">1.801</td><td class="num">1.177</td><td></td></tr>
+      <tr><td>120 steps</td><td class="mono">2.07e-4</td><td class="num">1.819</td><td class="num">1.815</td><td class="num">1.327</td><td class="num">−0.029 ±0.005 vs start</td></tr>
+      <tr><td>240 / 480 steps</td><td class="mono">2.07e-4</td><td class="num">1.829 / 1.824</td><td class="num">1.825 / 1.821</td><td class="num">1.385 / 1.492</td><td class="num">+0.010 / +0.005 vs 120</td></tr>
+      <tr><td>120 / 240 steps</td><td class="mono">6.5e-5</td><td class="num">1.711 / 1.710</td><td class="num">1.709 / 1.707</td><td class="num">1.189 / 1.197</td><td></td></tr>
+      <tr><td><strong>120 steps</strong></td><td class="mono">2e-5</td><td class="num"><strong>1.685</strong></td><td class="num">1.683</td><td class="num">1.161</td><td class="num">−0.162 ±0.004 vs start; −0.133 ±0.002 vs 2.07e-4</td></tr>
+      <tr><td><strong>240 steps</strong></td><td class="mono">2e-5</td><td class="num"><strong>1.683</strong></td><td class="num">1.680</td><td class="num">1.165</td><td class="num">−0.0026 ±0.0001 vs 120</td></tr>
+    </table></div>
+    <p style="color:var(--muted)">Dev: 1,024 rows × 32k from 128k+ documents. Short docs: 256 × 4k rows <span class="flag">⚠ eval_size=256 rows</span>, read as a relative guard. Seed noise at 2.07e-4 was 0.009 nats at 120 steps; a 2e-5 seed replicate is queued.</p>
   </div>
 
   <section>
@@ -121,51 +132,50 @@ ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
       <tr><td>context</td><td class="mono">32,768 · YaRN ×4 on the full-attention layers (64k later)</td></tr>
       <tr><td>data</td><td>Dolma 3 Longmino pool, 2<sup>15</sup>/2<sup>16</sup> length buckets; one document window per row; ~1.41B tokens</td></tr>
       <tr><td>batch</td><td class="mono">16 rows × 32k = 512k tokens/step</td></tr>
-      <tr><td>optimizer</td><td>OLMo 3 stage-3 recipe as is: peak LR 2.07e-4, linear decay, AdamW (0.9, 0.95), wd 0.1, z-loss 1e-5; warmup 1.7% of the run</td></tr>
+      <tr><td>optimizer</td><td>OLMo 3 stage-3 recipe except peak LR 2e-5 (set by the LR probe; the recipe uses 2.07e-4); WSD schedule with 10% decay, so shorter budgets branch from a longer run; AdamW (0.9, 0.95), wd 0.1, z-loss 1e-5; warmup 1.7% of the run</td></tr>
       <tr><td>budgets</td><td class="mono">60M / 125M / 250M dense tokens ≈ 3.8k / 7.9k / 15.7k PF</td></tr>
-      <tr><td>dev</td><td>256 rows from 2<sup>17</sup>+ buckets (never in OLMo's 7B long-context mix); full-context CE by position 0–4k / 4–8k / 8–16k / 16–32k</td></tr>
-      <tr><td>guard</td><td>256 × 4k short-document rows, to catch forgetting</td></tr>
+      <tr><td>dev</td><td>1,024 rows from 2<sup>17</sup>+ buckets (never in OLMo's 7B long-context mix); full-context CE by position 0–4k / 4–8k / 8–16k / 16–32k</td></tr>
+      <tr><td>guard</td><td>256 × 4k rows of short documents drawn from 7 OLMo stage-3 files, to catch forgetting</td></tr>
     </table></div>
+  </section>
+
+  <section>
+    <h2>Starting point</h2>
+    <p>Dev CE before any training, on the first 256 dev rows <span class="flag">⚠ eval_size=256 rows</span>. Paired SE on the stage-3 vs stage-2 difference at 16–32k is ±0.006.</p>
+    <div class="tbl"><table>
+      <tr><th>checkpoint</th><th>0–4k</th><th>4–8k</th><th>8–16k</th><th>16–32k</th><th>all</th></tr>
+      <tr><td>stage 2, no YaRN</td><td class="num">1.956</td><td class="num">1.930</td><td class="num">2.080</td><td class="num">2.276</td><td class="num">2.144</td></tr>
+      <tr><td>stage 2, YaRN ×4 (CPT start)</td><td class="num">1.970</td><td class="num">1.949</td><td class="num">1.929</td><td class="num">1.917</td><td class="num">1.931</td></tr>
+      <tr><td>stage 3 (OLMo's finished 50B-token long-context stage)</td><td class="num">1.966</td><td class="num">1.965</td><td class="num">1.911</td><td class="num">1.872</td><td class="num">1.905</td></tr>
+    </table></div>
+    <p>OLMo's whole long-context stage moves 16–32k CE by 0.046, so arms must differ by roughly 0.015 to be resolved; the dev set was raised to 1,024 rows for that reason.</p>
   </section>
 
   <section>
     <h2>Arms</h2>
     <div class="tbl"><table>
-      <tr><th>arm</th><th>strategy</th><th>FLOPs / token vs dense</th><th>state</th></tr>
-      <tr><td class="mono">D</td><td>dense, 32k</td><td class="num">1.0</td><td><span class="pill todo">not started</span></td></tr>
-      <tr><td class="mono">C</td><td>8k windows for the first half, then 32k</td><td class="num">~0.9</td><td><span class="pill todo">not started</span></td></tr>
-      <tr><td class="mono">I-rand</td><td>random 20% of 512-token blocks kept whole, the rest removed at the input</td><td class="num">~0.2</td><td><span class="pill todo">not started</span></td></tr>
-      <tr><td class="mono">I-fl</td><td>first + last 25% of every 512-token block kept</td><td class="num">~0.3</td><td><span class="pill todo">not started</span></td></tr>
+      <tr><th>arm</th><th>strategy</th><th>FLOPs per step vs dense</th><th>runs (steps)</th><th>where</th></tr>
+      <tr><td class="mono">D</td><td>dense, 32k, 16 rows/step</td><td class="num">1.0</td><td class="num">12 · 24 · 48 · 120 · 120 seed 1 · 240 · 480</td><td>cubbins</td></tr>
+      <tr><td class="mono">DB8</td><td>dense, 8 rows/step, same tokens = 2× the optimizer steps</td><td class="num">1.0</td><td class="num">12 · 24 · 48 (token-equivalent)</td><td>cubbins</td></tr>
+      <tr><td class="mono">C</td><td>8k windows for the first half, then 32k; one run per budget</td><td class="num">0.89 (8k half)</td><td class="num">120 · 240 · 480</td><td>Beaker</td></tr>
+      <tr><td class="mono">I-rand</td><td>random 20% of 512-token blocks kept whole</td><td class="num">0.184 measured</td><td class="num">65 · 130 · 260 · 650 · 1,300 · 2,600</td><td>cubbins</td></tr>
+      <tr><td class="mono">I-fl</td><td>first + last 64 tokens of each 512-token block (25%)</td><td class="num">0.223 measured</td><td class="num">54 · 108 · 215 (cubbins) · 540 · 1,080 · 2,160 (Beaker)</td><td>both</td></tr>
+      <tr><td class="mono">I-fl 10% / 5%</td><td>same rule, keeping 10% / 5% of each block</td><td class="num">~0.09 / ~0.046 estimated</td><td class="num">133 · 267 · 533 / 260 · 520 · 1,040</td><td>Beaker</td></tr>
+      <tr><td class="mono">HO</td><td>I-rand first, then dense to the budget</td><td class="num">mixed</td><td class="num">120 · 240 · 480 dense-equivalent</td><td>cubbins</td></tr>
+      <tr><td class="mono">64k</td><td>dense and I-fl 25 / 10 / 5% on 64k rows, YaRN ×8, 8 rows/step</td><td class="num">estimated</td><td class="num">dense 120 · 240 · 480</td><td>Beaker</td></tr>
     </table></div>
-    <p><strong>Selection rule, fixed in advance.</strong> m = FLOPs dense needs to reach the arm's dev CE ÷ the arm's FLOPs. An arm wins only with m &gt; 1 at all three budgets, beyond dense seed-to-seed noise.</p>
-  </section>
-
-  <section>
-    <h2>Steps</h2>
-    <ol class="steps">
-      <li>Experiment page, plan record, this page <span class="pill done">done</span></li>
-      <li>Convert stage 2 (start) and stage 3 (reference) to OLMo-core, checked against Hugging Face <span class="pill run">stage 2 done, stage 3 running</span></li>
-      <li>Build train / dev / guard data; upload to the S3 hub for weka (Beaker) and Lambda <span class="pill run">built, uploading</span></li>
-      <li>Sliding-window mask by original position after dropping, plus a keep-everything parity check <span class="pill todo">todo</span></li>
-      <li>Positional 512-token blocks in the input-drop path <span class="pill todo">todo</span></li>
-      <li>OLMo 3 dev-CE eval by position bin; check stage 3 beats stage 2 at 8–32k <span class="pill todo">todo</span></li>
-      <li>Trainer: YaRN-factor option, LR-decay branches, the 8k → 32k switch, FLOP meter <span class="pill run">flags added; switch + meter open</span></li>
-      <li>Smoke test of all four arms <span class="pill todo">todo</span></li>
-      <li>Dense curve to 250M + second seed at 60M <span class="pill todo">todo</span></li>
-      <li>C, I-rand, I-fl to 15.7k PF <span class="pill todo">todo</span></li>
-      <li>Score, record, verdict <span class="pill todo">todo</span></li>
-    </ol>
-    <p style="color:var(--muted)">Estimated cost through step 11: about 73 H200-hours, across jsteinhardt H200s, Beaker jupiter and Lambda A100s.</p>
+    <p><strong>Selection rule, fixed in advance.</strong> m = FLOPs the dense curve needs to reach the arm's dev CE ÷ the arm's measured FLOPs, read only between measured dense points (lower bound beyond them, never extrapolated). Target: m of 10–20× at every budget. Minimum bar: the earlier positive results, softdetach ~4× and ds64 2.2–4×.</p>
   </section>
 
   <section>
     <h2>Runs</h2>
     <div class="tbl"><table>
       <tr><th>what</th><th>job</th><th>state</th></tr>
-      <tr><td>data build: train 43,000 × 32k = 1.41B tokens (32,382 documents); dev 256 rows over 23 topics; short-document guard 256 × 4k</td><td class="mono">slurm 4012904 · mooney</td><td><span class="pill done">done</span></td></tr>
-      <tr><td>convert stage 2; fp32 parity vs Hugging Face: max logit diff 4e-5 (random) / 1.4e-3 (6k real row), identical CE</td><td class="mono">slurm 4012907 + 4012938 · mooney</td><td><span class="pill done">done</span></td></tr>
-      <tr><td>convert stage 3 + parity</td><td class="mono">slurm 4012946 · mooney</td><td><span class="pill run">running</span></td></tr>
-      <tr><td>upload data + stage-2 checkpoint to the S3 hub</td><td class="mono">slurm 4012954 · mooney</td><td><span class="pill run">running</span></td></tr>
+      <tr><td>data (train32k 1.41B tokens, train64k 1.31B, dev32k 1,024 rows, dev64k 512 rows, short guard), stage 2 / stage 3 conversion with fp32 parity, S3 hub</td><td class="mono">mooney</td><td><span class="pill done">done</span></td></tr>
+      <tr><td>dense at 2.07e-4 (120 / 240 / 480, seed 1) and the LR probe (6.5e-5, 2e-5)</td><td class="mono">slurm 4017418 / 4017567 / 4017622 · cubbins</td><td><span class="pill done">done</span></td></tr>
+      <tr><td>LR 2e-5: dense 12 / 24 done; dense 48 → DB8 → small-budget I-rand and I-fl → eval → seed replicate → I-rand 2,600 + branches → HO → dense 480 → eval</td><td class="mono">slurm 4017697 · cubbins</td><td><span class="pill run">running</span></td></tr>
+      <tr><td>LR 2e-5 on Beaker: C ×3, I-fl 25 / 10 / 5%, dense 64k, I-fl 64k ×3</td><td class="mono">10 jobs · jupiter 8×H100</td><td><span class="pill todo">queued</span></td></tr>
+      <tr><td>Earlier Beaker waves at the OLMo LR</td><td class="mono">bk3–bk10</td><td>cancelled (superseded) or failed on traps now fixed: EOS-first rows hung the drop arms, S3 sync skipped a rebuilt shard, checkpoint pruning</td></tr>
     </table></div>
   </section>
 
@@ -174,9 +184,9 @@ ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
       <h2>Known limits</h2>
       <ul>
         <li>Dropping tokens breaks OLMo 3's sliding windows unless masked by original position (step 4).</li>
-        <li>32k only for now; the long-range regime past 32k is the follow-up.</li>
+        <li>Dev CE only so far; generation-graded CTC evals come with the confirm round.</li><li>64k FLOP ratios for the drop arms are estimates until their meters report.</li>
         <li>The forgetting guard comes from OLMo stage-3 training data, so it is a relative check across arms.</li>
-        <li>Dev CE only in round 1; generation-graded CTC evals come with the confirm round.</li>
+        
       </ul>
     </div>
     <div>
@@ -185,7 +195,7 @@ ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
         <li>State: <code>ops/experiments/olmo3_cptdrop/STATUS.md</code></li>
         <li>Plan: <code>records/olmo3-cptdrop-screen-plan.md</code></li>
         <li>Code: <code>research/token_routing/olmo3_cptdrop/</code></li>
-        <li>Data and checkpoints: <code>mooney:/data/prasann/olmo3_cptdrop/</code>, then <code>s3://ai2-llm/checkpoints/prasanns/_transfer/olmo3_cptdrop/</code></li>
+        <li>Data and checkpoints: <code>cubbins:/data/prasann/olmo3_cptdrop/</code> (runs, devce/), Beaker weka <code>beaker_&lt;NAME&gt;_lr20</code>, and <code>s3://ai2-llm/checkpoints/prasanns/_transfer/olmo3_cptdrop/</code></li>
       </ul>
     </div>
   </section>
