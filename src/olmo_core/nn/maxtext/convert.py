@@ -388,6 +388,10 @@ def _attention_shapes(c: MaxTextModelConfig, a: str) -> Dict[str, Tuple[int, ...
     if at.qk_norm and at.per_head_qk_norm:
         shapes[f"{a}.q_norm.weight"] = (at.n_heads, at.head_dim)
         shapes[f"{a}.k_norm.weight"] = (at.n_kv_heads, at.head_dim)
+    elif at.qk_norm and at.head_qk_norm:
+        # One gain shared by every head (OLMo Core qk_norm_per_head_gains=False, MaxText qk_norm_per_head=False).
+        shapes[f"{a}.q_norm.weight"] = (at.head_dim,)
+        shapes[f"{a}.k_norm.weight"] = (at.head_dim,)
     elif at.qk_norm:
         shapes[f"{a}.q_norm.weight"] = (q_dim,)
         shapes[f"{a}.k_norm.weight"] = (kv_dim,)

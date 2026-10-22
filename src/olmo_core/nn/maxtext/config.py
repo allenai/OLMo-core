@@ -82,8 +82,11 @@ class AttentionSpec:
     head_dim: int
     gated: bool = False
     """An elementwise sigmoid output gate (``w_g``)."""
+    head_qk_norm: bool = False
+    """QK norm over each head's ``head_dim`` rather than over the whole projection."""
     per_head_qk_norm: bool = False
-    """QK norm per head with ``[heads, head_dim]`` gains, rather than over the whole projection."""
+    """With :attr:`head_qk_norm`, a gain per head (``[heads, head_dim]``) rather than one ``[head_dim]`` gain shared
+    by every head."""
     qk_norm: bool = True
     scalable_softmax: bool = False
 
@@ -367,11 +370,14 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
     for i, block in enumerate(blocks):
         mixer = block["sequence_mixer"]
         if mixer.get("type") == "attention":
-            attn = _same(attn, mixer, ("n_heads", "n_kv_heads", "head_dim"), "attention")
-            if not mixer.get("use_head_qk_norm") or not mixer.get("qk_norm_per_head_gains"):
-                raise ValueError(
-                    f"block {i}: MaxText's olmoe3 decoder needs per-head QK norm with gains"
-                )
+            attn = _same(
+                attn,
+                mixer,
+                ("n_heads", "n_kv_heads", "head_dim", "qk_norm_per_head_gains"),
+                "attention",
+            )
+            if not mixer.get("use_head_qk_norm"):
+                raise ValueError(f"block {i}: MaxText's olmoe3 decoder needs a head-wise QK norm")
             if not mixer.get("scalable_softmax") or mixer.get("rope") is not None:
                 raise ValueError(
                     f"block {i}: MaxText's olmoe3 decoder needs NoPE + scalable softmax"
@@ -431,7 +437,8 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
             n_kv_heads=attn.get("n_kv_heads") or attn["n_heads"],
             head_dim=_head_dim(d_model, attn),
             gated=True,
-            per_head_qk_norm=True,
+            head_qk_norm=True,
+            per_head_qk_norm=bool(attn.get("qk_norm_per_head_gains")),
             scalable_softmax=True,
         ),
         kda=KDASpec(

@@ -82,6 +82,20 @@ def hybrid_config(n_layers: int = 16) -> MaxTextModelConfig:
     )
 
 
+def shared_qk_gains(config: dict) -> dict:
+    """The hybrid config with one QK-norm gain shared by every head instead of a gain per head."""
+    for block in config["block_overrides"].values():
+        if block["sequence_mixer"]["type"] == "attention":
+            block["sequence_mixer"]["qk_norm_per_head_gains"] = False
+    return config
+
+
+def hybrid_shared_qk_gains_config() -> MaxTextModelConfig:
+    return get_maxtext_config(
+        shared_qk_gains(shrink_hybrid(load_fixture("hybrid_moe_12b_model_config.json")))
+    )
+
+
 def dense_config() -> MaxTextModelConfig:
     return get_maxtext_config(load_fixture("dense_small_config.json"))
 
@@ -89,6 +103,7 @@ def dense_config() -> MaxTextModelConfig:
 CONFIGS: Dict[str, Callable[[], MaxTextModelConfig]] = {
     "dense": dense_config,
     "hybrid_moe": hybrid_config,
+    "hybrid_moe_shared_qk_gains": hybrid_shared_qk_gains_config,
 }
 
 
@@ -160,6 +175,25 @@ def test_hybrid_12b_maxtext_tree_shapes():
     assert len(scanned) == 444
 
 
+def test_hybrid_shared_qk_gains_config():
+    per_head, shared = hybrid_config(), hybrid_shared_qk_gains_config()
+    assert per_head.attention.per_head_qk_norm and "qk_norm_per_head=True" in per_head.overrides()
+    assert not shared.attention.per_head_qk_norm and shared.attention.head_qk_norm
+    assert "qk_norm_per_head=False" in shared.overrides()
+    head_dim, n_heads, n_kv_heads = 8, 4, 2
+    assert olmo_core_shapes(shared)["blocks.7.attention.q_norm.weight"] == (head_dim,)
+    assert maxtext_shapes(shared)["decoder/layers_7/mixer/attention/key_norm/scale"] == (head_dim,)
+    assert olmo_core_shapes(per_head)["blocks.7.attention.q_norm.weight"] == (n_heads, head_dim)
+    assert olmo_core_shapes(per_head)["blocks.7.attention.k_norm.weight"] == (n_kv_heads, head_dim)
+
+
+def test_mixed_qk_gains_fail():
+    config = shrink_hybrid(load_fixture("hybrid_moe_12b_model_config.json"))
+    config["block_overrides"]["15"]["sequence_mixer"]["qk_norm_per_head_gains"] = False
+    with pytest.raises(ValueError, match="qk_norm_per_head_gains"):
+        get_maxtext_config(config)
+
+
 def test_dense_config():
     c = dense_config()
     assert c.decoder_block == MaxTextDecoderBlock.olmo3
@@ -173,6 +207,7 @@ def test_dense_config():
     [
         pytest.param(dense_config, id="dense"),
         *(pytest.param(partial(hybrid_config, n), id=f"hybrid_moe-{n}") for n in (8, 16, 32)),
+        pytest.param(hybrid_shared_qk_gains_config, id="hybrid_moe-shared_qk_gains"),
     ],
 )
 def test_olmo_core_round_trip(make_config):

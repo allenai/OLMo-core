@@ -22,7 +22,7 @@ from olmo_core.nn.maxtext.checkpoint import (  # noqa: E402
 from olmo_core.nn.maxtext.convert import maxtext_shapes  # noqa: E402
 from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
 
-from .convert_test import load_fixture  # noqa: E402
+from .convert_test import load_fixture, shared_qk_gains  # noqa: E402
 
 FIXTURES = {
     "dense": "dense_small_config.json",
@@ -77,6 +77,12 @@ def test_converted_tree_matches_maxtext(name, scan_layers):
             for k, v in scan_params(meta, config.scan_layout, config.n_layers).items()
         }
     assert shapes == maxtext_param_shapes(config, scan_layers)
+
+
+def test_converted_tree_matches_maxtext_shared_qk_gains():
+    """One QK-norm gain shared by every head (qk_norm_per_head=False in MaxText)."""
+    config = get_maxtext_config(shared_qk_gains(load_fixture(FIXTURES["hybrid_moe"])))
+    assert maxtext_shapes(config) == maxtext_param_shapes(config, scan_layers=False)
 
 
 def maxtext_logits(config, items_path: str, tokens: np.ndarray, scan_layers: bool) -> np.ndarray:
