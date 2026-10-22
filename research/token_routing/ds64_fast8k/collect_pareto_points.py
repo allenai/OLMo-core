@@ -63,8 +63,12 @@ def lambda_runs():
     return out
 
 
-def train_pf_from(path):
-    """(PF, last step) from a Lambda training log outside LOGS."""
+def train_pf_from(path, run=""):
+    """(PF, last step) from a Lambda training log outside LOGS. The registry may prefix the path with ``lambda:`` or
+    leave it empty; then the online-router session's staged checkouts (OLMo-core-otr*) are searched by run name."""
+    path = (path or "").split(":", 1)[-1] if (path or "").startswith("lambda:") else (path or "")
+    if not path:
+        path = f"$(ls -t /accounts/projects/sewonm/prasann/ctc_suite/OLMo-core-otr*/logs/{run}_*.log 2>/dev/null | head -1)"
     out = ssh(f"grep -E 'flop_meter/actual_pflops|\\[step=' {path} | tail -40")
     pf = [float(x) for x in re.findall(r"flop_meter/actual_pflops[ =]+([0-9.]+)", out)]
     steps = [int(x) for x in re.findall(r"\[step=(\d+)/", out)]
@@ -144,12 +148,12 @@ def main():
         meta = parse_name(run)
         if meta is None:
             continue
-        outside = bool(log_path) and not log_path.startswith(LOGS)
+        outside = not log_path.split(":", 1)[-1].startswith(LOGS) if log_path else not scores(run)
         sc = _ops_scores(run) if outside else scores(run)
         if not sc:
             continue
         if outside:
-            pf, steps = train_pf_from(log_path)
+            pf, steps = train_pf_from(log_path, run)
             per_example = True
         else:
             pf, steps, per_example = train_pf(run)
