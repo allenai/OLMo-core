@@ -1,12 +1,14 @@
-"""Matched-FLOP comparison of keep rules vs a dense curve on the fast8k 4-task mix (Lambda runs).
+"""Matched-FLOP comparison of keep rules vs a dense curve on a fast8k task mix (Lambda runs; mt4s / mt11s).
 
 For every run: eval scores per (task, rung) from the ladder logs (`[ladder:task@rung] metric=v (n=N`), and
 training PF from the run log's last `flop_meter/actual_pflops` (per-example accounting). The dense curve is the
-dense runs at several step counts; a dense run without per-example accounting (the old 122-step run) gets
-PF = steps x the per-step PF of the newest dense run. Each rule is compared with dense interpolated (linearly in
+dense runs at several step counts; a dense run without per-example accounting (the old mt4s 122-step run) gets
+PF = steps x the per-step PF of the longest per-example dense run. Each rule is compared with dense interpolated (linearly in
 log PF) at the rule's PF; outside the dense range it is flagged as extrapolated.
 
     python research/token_routing/ds64_fast8k/collect_rule_screen.py --runs RUN [RUN ...] --dense RUN:STEPS [...]
+
+Scores are each task's primary metric (f1, pairwise_f1, kendall_tau in [-1, 1], mrr...).
 """
 
 import argparse
@@ -24,10 +26,10 @@ def ssh(cmd: str) -> str:
 
 
 def scores(run: str):
-    out = ssh(f"cd {LOGS}; grep -hoE '\\[ladder:[a-z_]+@[0-9]+k\\] [a-z0-9]+=[0-9.]+ \\(n=[0-9]+' "
+    out = ssh(f"cd {LOGS}; grep -hoE '\\[ladder:[a-z_]+@[0-9]+k\\] [a-z0-9_]+=-?[0-9.]+ \\(n=[0-9]+' "
               f"f8k_eval_{run}-ev*.log 2>/dev/null | sort -u")
     res = {}
-    for m in re.finditer(r"\[ladder:([a-z_]+)@(\d+k)\] [a-z0-9]+=([0-9.]+) \(n=(\d+)", out):
+    for m in re.finditer(r"\[ladder:([a-z_]+)@(\d+k)\] [a-z0-9_]+=(-?[0-9.]+) \(n=(\d+)", out):
         res[(m.group(1), m.group(2))] = (float(m.group(3)), int(m.group(4)))
     return res
 
@@ -70,9 +72,9 @@ def main():
         run, st = spec.rsplit(":", 1)
         pf, steps, pe = train_pf(run)
         dense.append(dict(run=run, steps=int(st), pf=pf, per_example=pe, s=scores(run)))
-    ref = max((d for d in dense if d["pf"] and d["steps"] < 122), key=lambda d: d["steps"], default=None)
+    ref = max((d for d in dense if d["pf"] and d["per_example"]), key=lambda d: d["steps"], default=None)
     for d in dense:
-        if d["steps"] >= 122 and ref is not None:
+        if not d["per_example"] and ref is not None:
             d["pf"] = ref["pf"] / ref["steps"] * d["steps"]  # old run: no per-example meter -> scale per-step PF
     rows = []
     for run in a.runs:
@@ -88,9 +90,9 @@ def main():
     print("| run | task@rung | f1 | PF | dense @ same PF | Δ | eval_size |")
     print("|---|---|---|---|---|---|---|")
     for r in rows:
-        print(f"| {r['run'].replace('f8k-mt4s-', '').replace('-lam', '')} | {r['task']}@{r['rung']} | {r['f1']:.3f} | "
+        print(f"| {re.sub(r'^f8k-mt[0-9]+s[0-9]*-', '', r['run']).replace('-lam', '')} | {r['task']}@{r['rung']} | {r['f1']:.3f} | "
               f"{r['pf']} | {r['dense_at_pf']:.3f}{' (extrap)' if r['extrapolated'] else ''} | {r['delta']:+.3f} | {r['eval_size']} |")
-    print("\ndense curve:", [(d["run"].replace("f8k-mt4s-", ""), d["steps"], round(d["pf"] or -1, 1)) for d in dense])
+    print("\ndense curve:", [(re.sub(r"^f8k-mt[0-9]+s[0-9]*-", "", d["run"]), d["steps"], round(d["pf"] or -1, 1)) for d in dense])
     if a.json:
         json.dump(dict(rows=rows, dense=[{k: v for k, v in d.items() if k != "s"} for d in dense]), open(a.json, "w"), indent=1)
 
