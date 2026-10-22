@@ -23,7 +23,7 @@ SUMMED = ("num_instances", "num_tokens", "num_loss_tokens", "num_dropped",
           "rows_over_max_len_dropped")
 
 
-def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask, max_len=0):
+def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask, max_len=0, seed=0):
     """First ``n_rows`` rows of a source (all parts concatenated; 0 = all), keeping only rows of at
     most ``max_len`` tokens when ``max_len`` > 0, written as one part each."""
     import numpy as np
@@ -49,7 +49,10 @@ def _subset(toks, masks, meta, n_rows, dst_tok, dst_mask, max_len=0):
     if n_rows:
         if n_rows > len(idx):
             raise SystemExit(f"--rows-per-src {n_rows} > {len(idx)} rows")
-        idx = idx[:n_rows]
+        if seed:  # uniform sample of the eligible rows (kept in source order), not the first n
+            idx = np.sort(np.random.default_rng(seed).choice(idx, size=n_rows, replace=False))
+        else:
+            idx = idx[:n_rows]
     sel = np.zeros(len(tok), dtype=bool)
     if len(idx) == len(ends) and not n_rows:
         sel[:] = True
@@ -76,6 +79,9 @@ def main() -> None:
     ap.add_argument("--rows-per-src", type=int, default=0,
                     help="keep only the first N rows of each source (a small screening subset); rows are "
                     "split at the EOS id, which must occur exactly num_instances times per source")
+    ap.add_argument("--sample-seed", type=int, default=0,
+                    help="with --rows-per-src: sample the rows uniformly (this seed) instead of taking the first N "
+                    "(a CTC shard is ordered by rung, so the first N are all the shortest rung)")
     ap.add_argument("--max-row-len", type=int, default=0,
                     help="drop rows longer than this many tokens (e.g. 32768 for a 32k window; the "
                     "trainer refuses a --seq-len below a shard's max_example_len)")
@@ -98,7 +104,7 @@ def main() -> None:
         dm = os.path.join(a.out, f"labels_mask_t{i}_000.npy")
         if a.rows_per_src or a.max_row_len:
             meta = dict(meta)
-            meta.update(_subset(toks, masks, meta, a.rows_per_src, dt, dm, a.max_row_len))
+            meta.update(_subset(toks, masks, meta, a.rows_per_src, dt, dm, a.max_row_len, a.sample_seed))
         else:
             for k, (t, m) in enumerate(zip(toks, masks)):
                 shutil.copy2(t, dt.replace("_000.npy", f"_{k:03d}.npy"))
