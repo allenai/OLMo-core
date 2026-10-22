@@ -729,6 +729,16 @@
    "ex": "01M5JM6CHJT3GBPVQ0JXZDN1NX",
    "train_run": "f8k-mt4-otr10M8x30-s976-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt4-otr30M8sd1-s976-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5JM8YEAH8A863YY0CJMEVFR",
+   "train_run": "f8k-mt4-otr30M8sd1-s976-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-otr30M8sd1-s976-tdb-lr2e-06-evnq": {
+   "ex": "01M5JM9R9HNXHJZPJVD2QJFBX0",
+   "train_run": "f8k-mt4-otr30M8sd1-s976-tdb-lr2e-06",
+   "task": "nq"
   }
  },
  "failed_evals": {
@@ -790,6 +800,18 @@
   "f8k-mt4s1464-otr10M8gxh-lro-lr2e-06-lam": {
    "slurm": 113698,
    "arm": "otr10M8gxh",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M6-lro-lr2e-06-lam": {
+   "slurm": 113719,
+   "arm": "otr10M6",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M12-lro-lr2e-06-lam": {
+   "slurm": 113720,
+   "arm": "otr10M12",
    "commit": "513ad5af6",
    "dir": "OLMo-core-otr2"
   }
