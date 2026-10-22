@@ -12,7 +12,8 @@ FAMILY="${1:?FAMILY}"
 # gantry --no-python: use the image's own interpreter (torch 2.9.1 / flash-attn 2.8.2). Under --install true gantry
 # runs an EMPTY venv (no torch, no pip).
 export CODE="$PWD" PY=/opt/conda/bin/python TMPBASE=/tmp/o3cd_tmp
-export ROOT="${ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/olmo3_cptdrop/beaker_$FAMILY}"
+# GEN jobs differ only by NAME: key the dir on it so concurrent GEN jobs never share a data folder
+export ROOT="${ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/olmo3_cptdrop/beaker_${NAME:-$FAMILY}}"
 mkdir -p "$ROOT/data" "$ROOT/base" "$ROOT/runs" "$ROOT/logs" "$ROOT/devce" ~/.aws
 printf '%s\n' "$AWS_CREDS" > ~/.aws/credentials
 printf '%s\n' "$AWS_CFG" > ~/.aws/config
