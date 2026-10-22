@@ -239,6 +239,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_explore_frac: float = 0.1
     st_otr_doc_share: float = 1.0
     st_otr_feature_layer: int = 0
+    st_otr_drop_layer: int = 0
     st_otr_no_hidden: bool = False
     st_otr_no_query: bool = False
     st_otr_use_gold: bool = False
@@ -948,6 +949,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         explore_frac=o.st_otr_explore_frac,
         doc_share=o.st_otr_doc_share,
         feature_layer=o.st_otr_feature_layer,
+        drop_layer=o.st_otr_drop_layer,
         use_hidden=not o.st_otr_no_hidden,
         use_query=not o.st_otr_no_query,
         use_gold=o.st_otr_use_gold,

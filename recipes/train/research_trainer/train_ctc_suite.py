@@ -1730,6 +1730,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-feature-layer", type=int, default=0,
                     help="online router: hidden features at this layer (0 = input embedding, free; L > 0 = a "
                     "no-grad prefix pass through blocks [0, L) on the full row, charged to the FLOP meter)")
+    ap.add_argument("--st-otr-drop-layer", type=int, default=0,
+                    help="online router: 0 = drop at the input; L > 0 = every token runs blocks [0, L) on the "
+                    "full row, then dropped tokens skip blocks [L, n) (features = the forward's own h at L, no "
+                    "prefix pass; targets read at L). Charged per block by the FLOP meter")
     ap.add_argument("--st-otr-no-hidden", action="store_true",
                     help="online router: structure + lexical features only")
     ap.add_argument("--st-otr-no-query", action="store_true",

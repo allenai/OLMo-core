@@ -292,3 +292,53 @@ def test_doc_share_spreads_budget_over_documents():
             assert got == expect, got
         else:
             assert got[0] == 10 and got[2] == 0, got
+
+
+def test_mid_stack_drop_cpu():
+    """drop_layer=1 on a 2-block model: the input row is kept whole, block 0 runs on every token, the
+    router keeps its budget at block 1, labels follow the gather, targets come from block 1's input,
+    and the FLOP adjustment is negative (block 1 + head ran on fewer tokens)."""
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
+    cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=2, fused_ops=False, dtype=DType.float32)
+    model = cfg.build(init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(
+        OnlineRouterConfig(keep_frac=0.25, explore_frac=0.2, samples_per_row=64, drop_layer=1),
+        doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D,
+    )
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.25, online_router=router,
+    )
+    model.train()
+    ids, cid, labels = _row(B=2)
+    seen = {}
+    h1 = model.blocks["1"].register_forward_pre_hook(lambda m, a: seen.__setitem__("w", a[0].shape[1]))
+    for step in (1, 2):
+        router.begin_step(step, model=model)
+        model._flop_extra_actual = 0.0
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+        assert router._pending[-1]["target"] is not None and router._pending[-1]["ok"].all()
+        comp = model._soft_token_compaction
+        assert comp["tokens_out"] == comp["tokens_in"]  # nothing dropped at the input
+        model._soft_token_compaction = None
+        if step == 1:
+            assert seen["w"] == ids.shape[1]  # warmup: every token through block 1
+        else:
+            # routed: block 1 saw 25% of the body + markers + free tokens
+            assert seen["w"] < ids.shape[1] and seen["w"] >= 14 + 6 + 9
+            assert model._flop_extra_actual < 0
+    h1.remove()
+    # the answer CE is unchanged by the gather when everything is kept (dense step): same loss as full
+    router.cfg.dense_every = 1
+    router.begin_step(3, model=model)
+    model.eval()
+    ref = model(ids, labels=labels).loss
+    model.train()
+    out = model(ids, labels=labels)
+    assert torch.allclose(out.loss, ref, atol=1e-5), (out.loss, ref)

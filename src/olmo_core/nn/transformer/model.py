@@ -1583,8 +1583,13 @@ class Transformer(nn.Module):
     ) -> Tuple[torch.Tensor, Dict[int, torch.Tensor]]:
         """Run the block stack; optionally capture (attached) hidden states at given layer indices."""
         captured: Dict[int, torch.Tensor] = {}
+        otr = getattr(self, "_online_token_router", None) if self.training else None
+        otr_layer = otr.cfg.drop_layer if otr is not None else 0
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
+            if otr_layer > 0 and block_idx == otr_layer:
+                # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
+                h, all_block_kwargs = otr.mid_compact(self, h, all_block_kwargs)
             block_kwargs = per_block_kwargs.get(block_idx, {})
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
@@ -2737,6 +2742,8 @@ class Transformer(nn.Module):
             else None
         )
         h, s_caps = self._run_blocks(h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set)
+        if getattr(self, "_online_token_router", None) is not None and self.training:
+            labels = self._online_token_router.mid_labels(labels)  # no-op unless a mid-stack drop ran
 
         # Aux attention-contribution matching loss (soft-token pooling; see aux_matching_loss).
         aux_loss: Optional[torch.Tensor] = None

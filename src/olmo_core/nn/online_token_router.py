@@ -80,6 +80,11 @@ class OnlineRouterConfig:
     faithful scorer concentrates on gold documents (the "dense = gold" training shortcut)."""
     feature_layer: int = 0
     """0: features from the input embedding (free). L > 0: a no-grad prefix pass through blocks [0, L)."""
+    drop_layer: int = 0
+    """0: drop at the input (dropped tokens skip every block). L > 0: MID-STACK drop -- every token runs
+    blocks [0, L) on the full row (trained, full context), then the router scores the forward's own
+    h at layer L (no prefix pass) and the dropped tokens skip blocks [L, n_layers): a two-depth
+    per-(token, layer) skip. Targets are then read at layer L."""
     use_hidden: bool = True
     use_query: bool = True
     use_gold: bool = False
@@ -107,8 +112,11 @@ class OnlineRouterConfig:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
         if self.target not in TARGETS:
             raise ValueError(f"online router target must be one of {TARGETS}, got {self.target!r}")
-        if self.feature_layer < 0:
-            raise ValueError("online router feature_layer must be >= 0")
+        if self.feature_layer < 0 or self.drop_layer < 0:
+            raise ValueError("online router feature_layer / drop_layer must be >= 0")
+        if self.drop_layer > 0 and self.feature_layer > 0:
+            raise ValueError("online router: with drop_layer > 0 the features come from that layer; "
+                             "leave feature_layer at 0")
         if self.warmup_steps < 1:
             raise ValueError("online router warmup_steps must be >= 1 (the first fit needs targets)")
 
@@ -345,9 +353,11 @@ class OnlineTokenRouter:
         chunk_ids: torch.Tensor,
         labels: Optional[torch.Tensor],
         ignore_index: int = -100,
+        hidden: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Per-token feature PARTS (scalars ``s`` (B,T,n_scalar); hidden ``h`` (B,T,hdim) and query
-        ``q`` (B,hdim), both RMS-normalised) plus the ``body`` mask."""
+        ``q`` (B,hdim), both RMS-normalised) plus the ``body`` mask. ``hidden=False`` defers the
+        hidden parts to :meth:`add_hidden` (mid-stack drop)."""
         c = self.cfg
         struct, body = structural_features(
             input_ids, chunk_ids, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id
@@ -365,25 +375,37 @@ class OnlineTokenRouter:
             0, key[body], torch.ones(int(body.sum()), device=input_ids.device)
         )
         rep = torch.log1p(cnt[key]) / 5.0
-        parts = [struct, (in_q * body).unsqueeze(-1), (rep * body).unsqueeze(-1)]
         out: Dict[str, torch.Tensor] = {"body": body, "query": qm}
-        if c.use_hidden:
-            h = self._hidden(model, input_ids).float()
-            h = h * torch.rsqrt(h.pow(2).mean(-1, keepdim=True) + 1e-6)
-            P = self._projection(h.device)
-            if P is not None:
-                h = h @ P
-            if c.use_query:
-                nq = qm.sum(1).clamp(min=1).to(torch.float32)
-                q = (h * qm.unsqueeze(-1)).sum(1) / nq[:, None]
-                q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + 1e-6)
-                out["q"] = q
-                parts.append(((h * q[:, None, :]).mean(-1) * body).unsqueeze(-1))
-            out["h"] = h * body.unsqueeze(-1)
+        out["_s0"] = torch.cat([struct, (in_q * body).unsqueeze(-1), (rep * body).unsqueeze(-1)], dim=-1)
         if c.use_gold:
-            parts.append((self._row_gold(input_ids, chunk_ids) * body).unsqueeze(-1))
-        out["s"] = torch.cat(parts, dim=-1)
+            out["_gold"] = (self._row_gold(input_ids, chunk_ids) * body).unsqueeze(-1)
+        if c.use_hidden and hidden:
+            self.add_hidden(out, self._hidden(model, input_ids))
+        elif not c.use_hidden:
+            self._assemble(out)
         return out
+
+    def add_hidden(self, out: Dict[str, torch.Tensor], h: torch.Tensor) -> None:
+        """Add the hidden parts from a raw (B, T, D) hidden state and assemble ``s``."""
+        c = self.cfg
+        body, qm = out["body"], out["query"]
+        h = h.detach().float()
+        h = h * torch.rsqrt(h.pow(2).mean(-1, keepdim=True) + 1e-6)
+        P = self._projection(h.device)
+        if P is not None:
+            h = h @ P
+        if c.use_query:
+            nq = qm.sum(1).clamp(min=1).to(torch.float32)
+            q = (h * qm.unsqueeze(-1)).sum(1) / nq[:, None]
+            q = q * torch.rsqrt(q.pow(2).mean(-1, keepdim=True) + 1e-6)
+            out["q"] = q
+            out["_cos"] = ((h * q[:, None, :]).mean(-1) * body).unsqueeze(-1)
+        out["h"] = h * body.unsqueeze(-1)
+        self._assemble(out)
+
+    @staticmethod
+    def _assemble(out: Dict[str, torch.Tensor]) -> None:
+        out["s"] = torch.cat([out[k] for k in ("_s0", "_cos", "_gold") if k in out], dim=-1)
 
     def full_features(self, fp: Dict[str, torch.Tensor], rows: torch.Tensor, cols: torch.Tensor) -> torch.Tensor:
         """Materialise the (N, F) feature rows of the selected tokens."""
@@ -419,18 +441,33 @@ class OnlineTokenRouter:
         labels: Optional[torch.Tensor],
         ignore_index: int = -100,
     ) -> torch.Tensor:
-        """The (B, T) keep mask over body tokens for this training forward (non-body ignored).
-        Also stashes the feature rows of a sample of the kept tokens for :meth:`attach_target_hook`."""
-        c = self.cfg
+        """The (B, T) keep mask over body tokens for this training forward's INPUT compaction
+        (non-body ignored). Stashes the feature rows of a sample of the kept tokens for
+        :meth:`attach_target_hook`. With ``drop_layer > 0`` every body token is kept here and the
+        choice is made at that layer by :meth:`mid_compact`."""
         self._calls += 1
+        self._ignore_index = ignore_index
         # trim the right pad: features / prefix pass only over the longest real row
         real = (chunk_ids != -2).sum(dim=1)
         Tr = int(real.max().item())
         ids, cid = input_ids[:, :Tr], chunk_ids[:, :Tr]
         lab = labels[:, :Tr] if labels is not None else None
-        fp = self.token_features(model, ids, cid, lab, ignore_index)
+        mid = self.cfg.drop_layer > 0
+        fp = self.token_features(model, ids, cid, lab, ignore_index, hidden=not mid)
+        full = torch.zeros_like(input_ids, dtype=torch.bool)
+        if mid:
+            self._mid = {"fp": fp, "ids": ids, "cid": cid, "Tr": Tr}
+            full[:, :Tr] = fp["body"]
+            return full
+        keep, entry = self._choose(model, fp, ids, cid)
+        self._current = entry
+        full[:, :Tr] = keep
+        return full
+
+    def _choose(self, model, fp, ids, cid) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """(keep (B, T) over body tokens, target-sample entry) from assembled feature parts."""
+        c = self.cfg
         body = fp["body"]
-        B = ids.shape[0]
         dev = ids.device
         gen = torch.Generator(device=dev).manual_seed(
             (self.cfg.seed * 1_000_003 + self.step * 7919 + self.rank * 104_729 + self._calls) % (2**62)
@@ -478,25 +515,85 @@ class OnlineTokenRouter:
         rank_p = pri.argsort(dim=1).argsort(dim=1)
         samp = keep & (rank_p < c.samples_per_row)
         rows, cols = samp.nonzero(as_tuple=True)
-        feats = self.full_features(fp, rows, cols)
         entry: Dict[str, Any] = {
             "rows": rows,
             "pos": cols,
-            "feats": feats,
+            "feats": self.full_features(fp, rows, cols),
             "explore": explore[rows, cols],
             "pred": (score[rows, cols] if score is not None else None),
             "target": None,
         }
-        self._current = entry
         # diagnostics: realised keep, gold leak (does per-document kept density name gold?)
         self._stat("keep_frac", float(keep.sum()) / max(1.0, float(body.sum())))
         self._stat("dense", float(dense))
         if self.gold is not None and not dense:
-            gflag = self._row_gold(ids, cid)
+            gflag = fp["_gold"][..., 0] if "_gold" in fp else self._row_gold(ids, cid)
             self._stat("leak_auc", self._leak_auc(keep, body, cid, gflag))
-        full = torch.zeros_like(input_ids, dtype=torch.bool)
-        full[:, :Tr] = keep
-        return full
+        return keep, entry
+
+    def mid_compact(self, model, h: torch.Tensor, block_kwargs: Dict[str, Any]) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Mid-stack drop at block ``drop_layer``: score the forward's own hidden state, gather the kept
+        tokens (plus every non-body token) into a shorter row, and re-key ``position_ids``. Records the
+        gather for :meth:`mid_labels`, the target hook at this layer, and the FLOP adjustment (the meter
+        charges the full row through every block; the blocks from here on ran on the kept row only)."""
+        st, self._mid = getattr(self, "_mid", None), None
+        self._mid_gather = None
+        if st is None:
+            return h, block_kwargs
+        fp, ids, cid, Tr = st["fp"], st["ids"], st["cid"], st["Tr"]
+        if h.shape[1] < Tr:
+            raise RuntimeError(f"mid_compact: hidden width {h.shape[1]} < real width {Tr}")
+        B, Tw, D = h.shape
+        if self.cfg.use_hidden:
+            self.add_hidden(fp, h[:, :Tr])
+        keep_body, entry = self._choose(model, fp, ids, cid)
+        body = fp["body"]
+        real = cid != -2
+        keep_all = torch.zeros(B, Tw, dtype=torch.bool, device=h.device)
+        keep_all[:, :Tr] = real & (~body | keep_body)
+        counts = keep_all.sum(dim=1)
+        pm = int((getattr(model, "_pooled_soft_tokens", None) or {}).get("pad_multiple", 1) or 1)
+        W = int(counts.max().item())
+        W = min(Tw, ((W + pm - 1) // pm) * pm)
+        order = torch.argsort((~keep_all).to(torch.int8), dim=1, stable=True)[:, :W]
+        valid = torch.arange(W, device=h.device)[None, :] < counts[:, None]
+        h_new = torch.gather(h, 1, order[..., None].expand(B, W, D)) * valid[..., None].to(h.dtype)
+        kw = dict(block_kwargs)
+        pid = block_kwargs.get("position_ids")
+        if pid is None:
+            pid = torch.arange(Tw, device=h.device)[None, :].expand(B, Tw)
+        pnew = torch.gather(pid, 1, order)
+        kw["position_ids"] = torch.where(valid, pnew, pid.max(dim=1, keepdim=True).values.expand_as(pnew))
+        self._mid_gather = (order, valid)
+        # targets at this layer, on the kept (gathered) columns
+        newcol = keep_all.to(torch.long).cumsum(dim=1) - 1
+        rows, pos = entry["rows"], entry["pos"]
+        entry["ok"] = keep_all[rows, pos]
+        entry["cols"] = newcol[rows, pos].clamp(min=0)
+        self._register_target(model, entry, h_new)
+        # FLOP adjustment, per row: blocks before drop_layer at the full length, the rest + head at the
+        # kept length, minus the dense charge the meter applies to the (uncompacted) row
+        blocks = list(model.blocks.values())
+        L0 = self.cfg.drop_layer
+        head = int(model.lm_head.num_flops_per_token(0)) if model.lm_head is not None else 0
+        adj = 0.0
+        for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
+            fb = [int(b.num_flops_per_token(int(L))) for b in blocks]
+            fk = [int(b.num_flops_per_token(int(Lk))) for b in blocks[L0:]]
+            actual = L * sum(fb[:L0]) + Lk * (sum(fk) + head)
+            adj += actual - L * (sum(fb) + head)
+        self._flop(model, adj)
+        self._stat("mid_row_frac", float(counts.sum()) / max(1.0, float(real.sum())))
+        return h_new, kw
+
+    def mid_labels(self, labels: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """Apply this forward's mid-stack gather to the (input-compacted) labels."""
+        g, self._mid_gather = getattr(self, "_mid_gather", None), None
+        if g is None or labels is None:
+            return labels
+        order, valid = g
+        lab = torch.gather(labels, 1, order.to(labels.device))
+        return torch.where(valid.to(labels.device), lab, torch.full_like(lab, int(getattr(self, "_ignore_index", -100))))
 
     def _leak_auc(self, keep, body, cid, gflag) -> float:
         """Mean over rows of AUC(per-document kept fraction -> gold). 0.5 = density names nothing."""
@@ -535,6 +632,11 @@ class OnlineTokenRouter:
             ok = pid[rows, cols] == pos
         entry["ok"] = ok
         entry["cols"] = cols
+        self._register_target(model, entry, h)
+        return h
+
+    def _register_target(self, model, entry: Dict[str, Any], h: torch.Tensor) -> None:
+        rows, cols = entry["rows"], entry["cols"]
         if self.cfg.target == "gxh":
             entry["hsel"] = h.detach()[rows, cols].float()
         self._pending.append(entry)
