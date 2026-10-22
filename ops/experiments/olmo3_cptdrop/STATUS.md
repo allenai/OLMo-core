@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: cubbins 4018016 (after the seed replicate): SD20 smoke -> LOW (dense 4/8, I-rand 22/43, SD20 = sd20 slot geometry 65/130/260, Dlr10-12, Dlr05-120) -> CTX -> EV -> D480 -> CTX. Beaker: C480 (requeued), D64lr20, IFL25x64 running. So far NO drop arm beats dense at any measured budget on dev CE or ctx_gain; the open bets are the steep <12-step end and slots (the earlier sd20 success) instead of pure removal.
+next_step: SCREEN ANSWERED (2026-10-22 13:00): no token-drop arm beats dense at any budget (best m 0.6x; SD20 slots = removal). Remaining: cubbins 4018016 Dlr20-480 + its ctx_gain (anchors C-480 1.6810); Beaker D64lr20 eval (reads IFL25x64 1.751). Then Prasann decides the next regime (64k/128k eval target where dense keeps improving, or another base); weka cleanup job 01M5JV4926Y7FDYMSE8ABZ1DZ8 (approved).
 ---
 
 # olmo3_cptdrop
@@ -170,6 +170,15 @@ See `next_step` above.
   harder it drops. Overall dev CE cannot support a 10-20x reading here, so the eval gained ctx_gain
   (--ctx-window 8192, commit 5408335a6): last 4k targets with full context vs only the last 8k tokens = how much
   the model uses context beyond 8k. CTX stage of cubbins 4017768 scores every run + stage2/stage3 on it.
+- VERDICT 2026-10-22 13:00 (analyze.py --ref 'Dlr20|DB8lr20', dev32k_1024, 1,024 rows): NO drop arm reaches
+  m > 1 anywhere. Dense: 4 1.7096, 8 1.7008, 12 1.6972, 24 1.6912, 48 1.6880, 120 1.6853 (seed 1: 1.6853), 240
+  1.6827. m: IRANDlr20-22 <1.0, -43 0.6, -65 0.5, -130 0.3, -260 0.2; SD20lr20 (sd20 geometry: one detached MEAN
+  slot per dropped block; softdetach used cent_cmean, which needs the tokenizer) 65/130/260: 1.7045/1.7011/1.6998
+  = m 0.5/0.3/0.2, within 0.0005 of removal; IFLlr20 <=0.3; IFL10 / IFL05 worse with training. ctx_gain ranks
+  them the same (SD20-260 0.0659, IRAND-260 0.0648, Dlr20-12 0.0671). C-480 1.6810 (needs Dlr20-480). LR: Dlr10-120
+  1.6828 (m 2.0 vs the 2e-5 curve), Dlr05-120 1.6834, Dlr10-12 1.7000 (worse than 2e-5 at 12): the reference
+  would be a per-budget LR envelope, which only makes drop arms look worse. Contrast with softdetach (~4x): its
+  dense curve fell 0.046 nats/decade of PF; this one ~0.011, so no room below dense.
 - FINDING 2026-10-22 10:20 (ctx_gain, --ctx-window 8192, dev32k_1024, 1,024 rows; paired SE): long-context use
   ALSO saturates fast and drop arms trail it. ctx_gain: stage2 0.0169, stage3 0.0456 (OLMo's 50B-token stage:
   +0.0287 ±0.0018), Dlr20-12 0.0671 (+0.0502 ±0.0019 vs stage2), -24 0.0700, -48 0.0726, -120 0.0743, -240 0.0762
@@ -178,7 +187,10 @@ See `next_step` above.
   still -0.0023 below Dlr20-12; IFLlr20-54 -0.0107. Dlr10-120 (LR 1e-5) overall CE 1.6828 (best at 120 steps)
   with ctx_gain -0.0011 vs Dlr20-120. No m > 1 anywhere yet (both metrics), so no Pareto plot to draw.
 - TRAP (hit 2026-10-22 08:33): weka `No space left on device` under prasanns/olmo3_cptdrop: IFL10x64 / IFL05x64 died
-  at data staging; IFL10 / IFL05 in-job evals lost chunks. Every Beaker job keeps full model+optim checkpoints
+  at data staging; IFL10 / IFL05 in-job evals lost chunks. Cause: the WHOLE filesystem (1.7 PB, 97% used, 55 TB
+  free at 16:50Z), not a per-user quota. Our olmo3_cptdrop dirs = ~6.4 TB (prasanns/ total 29 TB). Prasann approved
+  deleting the superseded old-LR dirs (~2.0 TB: beaker_GEN/C120/C240/C480/IFL, beaker_o3cd-D64/IFL05/IFL10/
+  IFL10x64/IFL05x64): Beaker CPU job 01M5JV4926Y7FDYMSE8ABZ1DZ8. Every Beaker job keeps full model+optim checkpoints
   (~88 GB each, max_checkpoints 0) in its own dir, plus superseded old-LR dirs. du job 01M5J458P3MAFN3MPD3CFNKPXQ.
 - FIXED in eae16ae0b (branch o3cd/swa-position-window, not merged): compacted rows used to apply the 4,096
   sliding window in compacted index space. SWA layers with gapped position_ids now use a FlexAttention mask by
