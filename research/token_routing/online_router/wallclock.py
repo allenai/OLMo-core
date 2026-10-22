@@ -21,6 +21,19 @@ STEP_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z.*\[step=(\d+)/(\d
 DE_RE = re.compile(r"--st-otr-dense-every (\d+)")
 
 
+#: dense on the same cluster. ``densepf`` = PAD-FREE dense (soft-token path with every document kept: padding stripped,
+#: length-sorted micro-batches, the same input pipeline as the router runs) -- the honest wall-clock reference; the tdb
+#: runs pad every row to 10,240 tokens and compute on the padding (≈ 1.2x slower).
+DENSE_REF = [
+    "f8k-mt4-densepf-s488-tdc-lr5e-06=01M5JBGQCV8ERMTE67ZG18NAYA",
+    "f8k-mt4-densepf-s976-tdc-lr5e-06=01M5JBHK2M66BAAX61Z11VV455",
+    "f8k-mt4-densepf-s1464-tdc-lr5e-06=01M5JBJEEMT7YBMQVJ2Z1WD67F",
+    "f8k-mt4-dense-s488-tdb-lr5e-06=01M5H80ZA3BEWC744CC156816Q",
+    "f8k-mt4-dense-s976-tdb-lr5e-06=01M5H825RM46FQA0E7Q92185G4",
+    "f8k-mt4-dense-s1464-tdb-lr5e-06=01M5H83N5MM11TZ0XG5MS6PE5W",
+]
+
+
 def step_times(ex):
     out = subprocess.run([BEAKER, "experiment", "logs", ex], capture_output=True, text=True, timeout=300).stdout
     t = {}
@@ -49,7 +62,7 @@ def summarize(name, ex, dense_every=0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dense", nargs="*", default=[], help="NAME=EXPERIMENT_ID of dense runs on the same cluster")
+    ap.add_argument("--dense", nargs="*", default=DENSE_REF, help="NAME=EXPERIMENT_ID of dense runs on the same cluster")
     ap.add_argument("--json", default="")
     a = ap.parse_args()
     st = json.load(open(os.path.join(HERE, "state.json")))
@@ -62,7 +75,7 @@ def main():
     print("| run | steps | s/step | routed s/step | dense-step s/step | train min |")
     print("|---|---|---|---|---|---|")
     for r in rows:
-        print(f"| {r['run'].replace('f8k-', '').replace('-tdb-lr2e-06', '').replace('-tdb-lr5e-06', '')} | {r.get('steps')} | "
+        print(f"| {r['run'].replace('f8k-', '').replace('-tdb-lr2e-06', '').replace('-tdb-lr5e-06', '').replace('-tdc-lr5e-06', '')} | {r.get('steps')} | "
               f"{r.get('s_per_step', '')} | {r.get('s_per_step_routed', '') or ''} | {r.get('s_per_step_dense', '') or ''} | "
               f"{r.get('train_min', '')} |")
     if a.json:
