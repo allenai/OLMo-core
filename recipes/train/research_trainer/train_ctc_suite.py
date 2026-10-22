@@ -1726,9 +1726,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-feature-layer", type=int, default=0,
                     help="online router: hidden features at this layer (0 = input embedding, free; L > 0 = a "
                     "no-grad prefix pass through blocks [0, L) on the full row, charged to the FLOP meter)")
-    ap.add_argument("--st-otr-no-hidden", dest="st_otr_use_hidden", action="store_false",
+    ap.add_argument("--st-otr-no-hidden", action="store_true",
                     help="online router: structure + lexical features only")
-    ap.add_argument("--st-otr-no-query", dest="st_otr_use_query", action="store_false",
+    ap.add_argument("--st-otr-no-query", action="store_true",
                     help="online router: drop the h*q query-interaction features")
     ap.add_argument("--st-otr-use-gold", action="store_true",
                     help="online router: per-document 0/1 gold flag (gold sidecar) as a feature")

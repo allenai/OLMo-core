@@ -238,8 +238,8 @@ class SoftTokenOptions(VariantOptions):
     st_otr_keep_frac: float = 0.3
     st_otr_explore_frac: float = 0.1
     st_otr_feature_layer: int = 0
-    st_otr_use_hidden: bool = True
-    st_otr_use_query: bool = True
+    st_otr_no_hidden: bool = False
+    st_otr_no_query: bool = False
     st_otr_use_gold: bool = False
     st_otr_target: str = "gnorm"
     st_otr_ridge: float = 1.0
@@ -946,8 +946,8 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         keep_frac=o.st_otr_keep_frac,
         explore_frac=o.st_otr_explore_frac,
         feature_layer=o.st_otr_feature_layer,
-        use_hidden=o.st_otr_use_hidden,
-        use_query=o.st_otr_use_query,
+        use_hidden=not o.st_otr_no_hidden,
+        use_query=not o.st_otr_no_query,
         use_gold=o.st_otr_use_gold,
         target=o.st_otr_target,
         ridge=o.st_otr_ridge,
