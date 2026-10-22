@@ -69,7 +69,7 @@ def train_pf_from(path, run=""):
     path = (path or "").split(":", 1)[-1] if (path or "").startswith("lambda:") else (path or "")
     if not path:
         path = f"$(ls -t /accounts/projects/sewonm/prasann/ctc_suite/OLMo-core-otr*/logs/{run}_*.log 2>/dev/null | head -1)"
-    out = ssh(f"grep -E 'flop_meter/actual_pflops|\\[step=' {path} | tail -40")
+    out = ssh(f"f={path}; [ -n \"$f\" ] && [ -f \"$f\" ] && grep -E 'flop_meter/actual_pflops|\\[step=' \"$f\" | tail -40")
     pf = [float(x) for x in re.findall(r"flop_meter/actual_pflops[ =]+([0-9.]+)", out)]
     steps = [int(x) for x in re.findall(r"\[step=(\d+)/", out)]
     return (pf[-1] if pf else None), (max(steps) if steps else None)
@@ -148,15 +148,18 @@ def main():
         meta = parse_name(run)
         if meta is None:
             continue
-        outside = not log_path.split(":", 1)[-1].startswith(LOGS) if log_path else not scores(run)
-        sc = _ops_scores(run) if outside else scores(run)
+        # where the TRAINING log lives decides how PF is read; the shared LOGS dir only for runs registered there
+        # (the online-router session's eval logs can land in LOGS while its training logs do not)
+        outside = bool(log_path) and not log_path.split(":", 1)[-1].startswith(LOGS)
+        sc = (_ops_scores(run) or scores(run)) if outside else (scores(run) or _ops_scores(run))
         if not sc:
             continue
-        if outside:
+        pf = steps = None
+        if not outside:  # registered under LOGS, or unregistered: try the shared logs dir first
+            pf, steps, per_example = train_pf(run)
+        if pf is None:
             pf, steps = train_pf_from(log_path, run)
             per_example = True
-        else:
-            pf, steps, per_example = train_pf(run)
         wall, state = lambda_wall(run)
         # 2026-10-22 option-field bug: lrb runs named tier* kept the keep set WHOLE (--st-kept-doc-k dropped)
         # and lrb *m<N>p8 runs lost their --st-keep-token-min floor. Never plot them under their names.

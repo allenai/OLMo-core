@@ -35,11 +35,11 @@ def scores(run: str):
 
 
 def train_pf(run: str):
-    out = ssh(f"cd {LOGS}; f=$(ls -t ctc_suite_{run}_*.log 2>/dev/null | head -1); "
+    out = ssh(f"cd {LOGS}; f=$(ls -t ctc_suite_{run}_*.log 2>/dev/null | head -1); [ -n \"$f\" ] && "
               f"grep -E 'flop_meter/actual_pflops|flop_meter/actual_over_dense|\\[step=' $f | tail -40")
     pf = [float(x) for x in re.findall(r"flop_meter/actual_pflops[ =]+([0-9.]+)", out)]
     steps = [int(x) for x in re.findall(r"\[step=(\d+)/", out)]
-    per_example = "per_example" in ssh(f"cd {LOGS}; f=$(ls -t ctc_suite_{run}_*.log | head -1); "
+    per_example = "per_example" in ssh(f"cd {LOGS}; f=$(ls -t ctc_suite_{run}_*.log 2>/dev/null | head -1); [ -n \"$f\" ] && "
                                        f"grep -m1 -o 'step_actual_over_dense' $f; grep -m1 -o per_example $f")
     return (pf[-1] if pf else None), (max(steps) if steps else None), per_example
 
