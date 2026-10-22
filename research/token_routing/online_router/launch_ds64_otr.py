@@ -6,8 +6,8 @@ UNPACKED rows at seq 65536 (the soft-token path strips padding and length-sorts 
 flash_2, LR 5e-6, the repaired 4B base, shard / budget / --max-tokens from ``shard_for``. Differences:
   * micro-batch 1 (not 2): mid-stack runs blocks [0, L) on the FULL row and every 8th step is fully dense, so two
     56k rows in one micro-batch is the OOM the ds64 mixing arms already hit;
-  * DS64_NGPU defaults to 4 here (ds64: "rows/step is unchanged, so accuracy and FLOPs are unaffected -- only the
-    gradient-accumulation depth and wall-clock change"), because 4-GPU holes schedule on jupiter.
+  * DS64_NGPU defaults to 8 (ds64 default; never 4 on jupiter -- 4-GPU requests schedule slowest. ds64: "rows/step is unchanged, so accuracy and FLOPs are unaffected -- only the
+    gradient-accumulation depth and wall-clock change").
 Evals: the ds64 orchestrator's 5-rung files and command (``orchestrate_ds64.RUNG_FILES``).
 
     python research/token_routing/online_router/launch_ds64_otr.py --tasks contradiction,nq --arms otr10M8,otr30M8 --budgets 64M launch
@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 
-os.environ.setdefault("DS64_NGPU", "4")
+os.environ.setdefault("DS64_NGPU", "8")
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "research", "token_routing", "ds64"))
