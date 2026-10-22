@@ -1049,6 +1049,66 @@
    "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5JNZBKFPVNGP4R7QBG77BEE",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5JP057P473YXPT8YP0MX7SH",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5JP13XT8SH0M5S30WM4Y0FE",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5JP1YXZD0ZGD9B810XCMB6C",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5JP2SMXNM1DGP79T65JP3GG",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5JP3KCT8WP3DGB4MSD6T4S9",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5JP4CRZV866CRX0MY0XFAN9",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5JP575K89B9A2VCMRE41BTD",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5JP60AMKQMJ94G9XN28NV6N",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5JP6TBM9E07WFPJ23TCZ4H1",
+   "train_run": "f8k-mt11-otr30M8-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
