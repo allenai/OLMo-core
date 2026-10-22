@@ -6,6 +6,7 @@
 #   SHARDS="dev32k_1024:256 short4k_v2:256" ROOT=/data/prasann/olmo3_cptdrop CODE=<tree> PY=<python> \
 #     bash devce_multi.sh
 # SPEC = label:ckpt_dir(relative to ROOT or absolute):yarn ; SHARD = name:rows_per_chunk
+# EVAL_EXTRA = extra eval_devce flags (e.g. "--ctx-window 8192"); OUT_DIR keeps such runs apart from plain ones
 set -uo pipefail
 ROOT="${ROOT:?}"; CODE="${CODE:?}"; PY="${PY:?}"
 OUT_DIR="${OUT_DIR:-$ROOT/devce}"; NGPU="${NGPU:-$(nvidia-smi -L | wc -l)}"
@@ -39,7 +40,7 @@ for t in "${tasks[@]}"; do
   g=${free[0]}; free=("${free[@]:1}")
   IFS='|' read -r label ck yf sh s per <<<"$t"
   CUDA_VISIBLE_DEVICES=$g "$PY" -u "$EV" --ckpt "$ck" --yarn-factor "$yf" --dev "$ROOT/data/$sh" --label "$label" \
-    --row-start "$s" --rows "$per" --out "$OUT_DIR/chunks/${label}_${sh}_r${s}.json" \
+    --row-start "$s" --rows "$per" ${EVAL_EXTRA:-} --out "$OUT_DIR/chunks/${label}_${sh}_r${s}.json" \
     > "$OUT_DIR/chunks/${label}_${sh}_r${s}.log" 2>&1 &
   gpu_of[$!]=$g
 done

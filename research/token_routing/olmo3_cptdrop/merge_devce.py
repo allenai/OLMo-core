@@ -12,7 +12,7 @@ import json
 
 import numpy as np
 
-from eval_devce import summarize
+from eval_devce import summarize, summarize_ctx
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     ap.add_argument("chunks", nargs="+")
     a = ap.parse_args()
     ds = sorted((json.load(open(p)) for p in a.chunks), key=lambda d: d["row_ids"][0])
-    for k in ("ckpt", "dev", "yarn_factor", "row_len", "shard_meta", "family"):
+    for k in ("ckpt", "dev", "yarn_factor", "row_len", "shard_meta", "family", "ctx_window"):
         vals = {json.dumps(d.get(k), sort_keys=True) for d in ds}
         if len(vals) != 1:
             raise SystemExit(f"chunks disagree on {k}: {vals}")
@@ -32,16 +32,23 @@ def main():
     cnts = np.concatenate([np.asarray(d["per_row"]["tokens"], dtype=np.int64) for d in ds])
     bins = [(b["name"], b["lo"], b["hi"]) for b in ds[0]["bins"]]
     out = dict(ds[0])
+    summ = summarize(sums, cnts, bins)
+    per_row = {"loss_sum": sums.tolist(), "tokens": cnts.tolist()}
+    if ds[0].get("ctx_window"):
+        ctx = np.concatenate([np.asarray(d["per_row"]["ctx_full_win_cnt"], dtype=np.float64) for d in ds])
+        summ["ctx_gain"] = summarize_ctx(ctx, ds[0]["ctx_window"])
+        per_row["ctx_full_win_cnt"] = ctx.tolist()
     out.update(
-        summary=summarize(sums, cnts, bins), eval_size=len(ids), row_ids=ids,
-        per_row={"loss_sum": sums.tolist(), "tokens": cnts.tolist()},
+        summary=summ, eval_size=len(ids), row_ids=ids,
+        per_row=per_row,
         timing_s={"score_sum_over_chunks": sum(d["timing_s"]["score"] for d in ds)},
         merged_from=list(a.chunks),
     )
     json.dump(out, open(a.out, "w"), indent=1)
     o = out["summary"]["overall"]
     print(f"merged {len(ds)} chunks -> {a.out}: {len(ids)} rows, overall CE {o['ce']:.4f} | "
-          + " ".join(f"{k} {v['ce']:.4f}" for k, v in out["summary"]["bins"].items()))
+          + " ".join(f"{k} {v['ce']:.4f}" for k, v in out["summary"]["bins"].items())
+          + (f" | ctx_gain {summ['ctx_gain']['gain']:+.4f} ±{summ['ctx_gain']['gain_row_se']:.4f}" if "ctx_gain" in summ else ""))
 
 
 if __name__ == "__main__":

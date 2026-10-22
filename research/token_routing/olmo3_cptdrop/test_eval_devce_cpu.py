@@ -132,3 +132,55 @@ def test_shard_tokenizer_mismatch_raises(tmp_path):
     _write_shard(str(tmp_path), rows, np.ones_like(rows, dtype=bool), tok="Qwen/Qwen3.5-0.8B")
     with pytest.raises(SystemExit, match="tokenizer"):
         ev.load_shard(str(tmp_path), None, "olmo3_7b")
+
+
+def test_ctx_gain_matches_manual_and_merges(tmp_path):
+    import merge_devce
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(1)
+    ev.FAMILIES["tiny"] = (lambda v, b: _tiny(v), 1024, "allenai/dolma2-tokenizer")
+    try:
+        cfg = ev.build_cfg("tiny", 4.0, "torch")
+        model = cfg.build(init_device="cpu")
+        model.init_weights(device=torch.device("cpu"))
+        model.eval()
+        g = np.random.default_rng(1)
+        rows = g.integers(0, 1000, size=(4, L))
+        masks = np.ones_like(rows, dtype=bool)
+        masks[:, 0] = False
+        masks[2, L - 100:] = False  # unscored tail targets drop out of both sums
+        W = 512
+        sc = ev.score_rows(model, rows, masks, "cpu", ctx_window=W)
+        for i in (0, 2):
+            x, m = torch.from_numpy(rows[i]), torch.from_numpy(masks[i])
+            full = ev.row_token_ce(model, x, m).numpy().astype(np.float64)[L - W // 2:]
+            win = ev.row_token_ce(model, x[L - W:], m[L - W:]).numpy().astype(np.float64)[W // 2:]
+            ok = ~np.isnan(full)
+            assert sc["ctx"][i, 2] == ok.sum() == (W // 2 - (100 if i == 2 else 0))
+            assert abs(sc["ctx"][i, 0] - full[ok].sum()) < 1e-6 and abs(sc["ctx"][i, 1] - win[ok].sum()) < 1e-6
+        s = ev.summarize_ctx(sc["ctx"], W)
+        assert s["tokens"] == int(sc["ctx"][:, 2].sum()) and np.isfinite(s["gain_row_se"])
+        with pytest.raises(SystemExit):
+            ev.score_rows(model, rows, masks, "cpu", ctx_window=L)
+        # chunked eval + merge reproduces the single-run ctx_gain
+        ck = tmp_path / "ck"
+        save_model_and_optim_state(str(ck / "model_and_optim"), model)
+        shard = tmp_path / "dev"
+        _write_shard(str(shard), rows, masks)
+        base = ["--ckpt", str(ck), "--dev", str(shard), "--yarn-factor", "4", "--family", "tiny",
+                "--attn-backend", "torch", "--ctx-window", str(W)]
+        whole = ev.main(base + ["--out", str(tmp_path / "w.json")])
+        ev.main(base + ["--rows", "2", "--out", str(tmp_path / "c0.json")])
+        ev.main(base + ["--row-start", "2", "--rows", "2", "--out", str(tmp_path / "c1.json")])
+    finally:
+        del ev.FAMILIES["tiny"]
+    import sys
+    old = sys.argv
+    sys.argv = ["merge_devce.py", "--out", str(tmp_path / "m.json"), str(tmp_path / "c1.json"), str(tmp_path / "c0.json")]
+    try:
+        merge_devce.main()
+    finally:
+        sys.argv = old
+    m = json.load(open(tmp_path / "m.json"))
+    assert abs(m["summary"]["ctx_gain"]["gain"] - whole["summary"]["ctx_gain"]["gain"]) < 1e-5

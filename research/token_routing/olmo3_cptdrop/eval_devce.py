@@ -11,6 +11,10 @@ attention on 8), no dropping. Reported:
                  row length are omitted, so a 4k row has one bin = overall)
   per_row        per row and per bin: loss sum + token count, so paired deltas between two
                  checkpoints (``compare_devce.py``) get a per-row standard error
+  ctx_gain       (``--ctx-window W``) long-context use, separated from domain adaptation: the last W/2 targets
+                 of each row scored twice, with the full row as context and with only the last W tokens
+                 (each target then sees W/2..W tokens back). gain = CE_window - CE_full on the same targets
+                 (> 0: the model uses context beyond W); per-row paired SE.
 
 ``eval_size`` is the number of ROWS (each a 32k or 4k window); token counts are reported per bin.
 
@@ -220,17 +224,28 @@ def row_token_ce(model, x: torch.Tensor, tgt_mask: torch.Tensor) -> torch.Tensor
     return out
 
 
-def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1, 2, 5, 10)) -> dict:
-    """Per-row, per-bin loss sums and counts (float64 / int64 numpy) for every row."""
+def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1, 2, 5, 10),
+               ctx_window: int = 0) -> dict:
+    """Per-row, per-bin loss sums and counts (float64 / int64 numpy) for every row; with ``ctx_window`` W also
+    per-row (full-context sum, W-window sum, count) over the last W/2 targets (see ``ctx_gain``)."""
     n, L = rows.shape
     bins = bins_for(L)
     sums = np.zeros((n, len(bins)), dtype=np.float64)
     cnts = np.zeros((n, len(bins)), dtype=np.int64)
+    ctx = np.zeros((n, 3), dtype=np.float64)
+    if ctx_window and not (0 < ctx_window < L and ctx_window % 2 == 0):
+        raise SystemExit(f"--ctx-window {ctx_window} must be even and < row length {L}")
     t0 = time.time()
     for i in range(n):
         x = torch.from_numpy(rows[i]).to(device)
         m = torch.from_numpy(masks[i]).to(device)
         ce = row_token_ce(model, x, m).cpu().numpy().astype(np.float64)
+        if ctx_window:
+            W, T = ctx_window, ctx_window // 2
+            cw = row_token_ce(model, x[L - W:], m[L - W:]).cpu().numpy().astype(np.float64)[W - T:]
+            cf = ce[L - T:]
+            ok = ~np.isnan(cf) & ~np.isnan(cw)
+            ctx[i] = (cf[ok].sum(), cw[ok].sum(), int(ok.sum()))
         for b, (_, lo, hi) in enumerate(bins):
             v = ce[lo:hi]
             ok = ~np.isnan(v)
@@ -240,7 +255,19 @@ def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1,
             el = time.time() - t0
             log(f"row {i + 1}/{n} running CE {sums[: i + 1].sum() / max(cnts[: i + 1].sum(), 1):.4f} "
                 f"({el:.0f}s, {el / (i + 1):.2f}s/row, ETA {el / (i + 1) * (n - i - 1):.0f}s)")
-    return {"bins": bins, "sums": sums, "cnts": cnts, "score_seconds": time.time() - t0}
+    return {"bins": bins, "sums": sums, "cnts": cnts, "ctx": ctx if ctx_window else None,
+            "score_seconds": time.time() - t0}
+
+
+def summarize_ctx(ctx: np.ndarray, window: int) -> dict:
+    """ctx_gain summary from per-row (full sum, window sum, count)."""
+    full, win, c = ctx[:, 0], ctx[:, 1], ctx[:, 2]
+    ok = c > 0
+    d = (win[ok] - full[ok]) / c[ok]
+    return {"window": window, "tail_targets_per_row": window // 2, "tokens": int(c.sum()), "rows": int(ok.sum()),
+            "ce_full_tail": float(full.sum() / c.sum()), "ce_window_tail": float(win.sum() / c.sum()),
+            "gain": float((win.sum() - full.sum()) / c.sum()),
+            "gain_row_se": float(d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 1 else None}
 
 
 def summarize(sums: np.ndarray, cnts: np.ndarray, bins) -> dict:
@@ -286,6 +313,8 @@ def main(argv=None):
     ap.add_argument("--row-start", type=int, default=0,
                     help="skip the first K rows (row chunks across GPUs; merge_devce.py joins the chunk JSONs)")
     ap.add_argument("--attn-backend", default="flash_2")
+    ap.add_argument("--ctx-window", type=int, default=0,
+                    help="also score the last W/2 targets with only the last W tokens as context (ctx_gain); 0 = off")
     ap.add_argument("--label", default="", help="free-form name stored in the JSON (e.g. stage2-yarn4)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
@@ -298,15 +327,19 @@ def main(argv=None):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model, load_s = load_model(a.ckpt, cfg, device, L)
     log(f"loaded {find_distcp(a.ckpt)} in {load_s:.0f}s (yarn={a.yarn_factor}, {a.attn_backend}, {device})")
-    sc = score_rows(model, rows, masks, device)
+    sc = score_rows(model, rows, masks, device, ctx_window=a.ctx_window)
     summ = summarize(sc["sums"], sc["cnts"], sc["bins"])
+    if a.ctx_window:
+        summ["ctx_gain"] = summarize_ctx(sc["ctx"], a.ctx_window)
     out = {
         "label": a.label, "family": a.family, "ckpt": a.ckpt, "dev": a.dev, "yarn_factor": a.yarn_factor,
         "attn_backend": a.attn_backend, "eval_size": n, "eval_size_unit": "rows", "row_len": L,
         "cot": "no-cot", "metric": "teacher-forced CE (nats/token) over labels_mask targets, dense attention",
         "summary": summ,
         "bins": [{"name": nm, "lo": lo, "hi": hi} for nm, lo, hi in sc["bins"]],
-        "per_row": {"loss_sum": sc["sums"].tolist(), "tokens": sc["cnts"].tolist()},
+        "per_row": {"loss_sum": sc["sums"].tolist(), "tokens": sc["cnts"].tolist(),
+                    **({"ctx_full_win_cnt": sc["ctx"].tolist()} if a.ctx_window else {})},
+        "ctx_window": a.ctx_window,
         "row_ids": list(range(a.row_start, a.row_start + n)),
         "shard_meta": {k: meta.get(k) for k in ("source", "buckets", "tokenizer", "num_instances", "seed")},
         **ck_info,
@@ -323,7 +356,8 @@ def main(argv=None):
         json.dump(out, f, indent=1)
     o = summ["overall"]
     log(f"SUMMARY {a.label or a.ckpt}: overall CE {o['ce']:.4f} ({o['tokens']} tokens, eval_size={n} rows) | "
-        + " ".join(f"{k} {v['ce']:.4f}" for k, v in summ["bins"].items()))
+        + " ".join(f"{k} {v['ce']:.4f}" for k, v in summ["bins"].items())
+        + (f" | ctx_gain@{a.ctx_window} {summ['ctx_gain']['gain']:+.4f}" if a.ctx_window else ""))
     log(f"timing: load {load_s:.0f}s, score {sc['score_seconds']:.0f}s; wrote {a.out}")
     return out
 
