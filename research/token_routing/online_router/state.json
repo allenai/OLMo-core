@@ -130,14 +130,6 @@
    "mix": "mt11",
    "seed": 0
   },
-  "f8k-mt4-otr10M4-s1464-tdb-lr2e-06": {
-   "ex": "01M5JB3XB5ZC3JXMM658Q0YKEB",
-   "arm": "otr10M4",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
-   "seed": 0
-  },
   "f8k-mt4-otr10M4-s976-tdb-lr2e-06": {
    "ex": "01M5JB4VXJ7M3HVDJGT8TJ2WRC",
    "arm": "otr10M4",
@@ -192,14 +184,6 @@
    "budget": "s720",
    "lr": 2e-06,
    "mix": "mt11",
-   "seed": 0
-  },
-  "f8k-mt4-otr10M1-s1464-tdb-lr2e-06": {
-   "ex": "01M5JCJHRJD51TBM1A2B7G9D8Y",
-   "arm": "otr10M1",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
    "seed": 0
   },
   "f8k-mt4-otr10M1-s976-tdb-lr2e-06": {
@@ -547,6 +531,39 @@
    "ex": "01M5HSTYACNZ75B171BXFDRB9P",
    "train_run": "f8k-mt4-rnd30-s1464-tdb-lr2e-06",
    "task": "nq"
+  }
+ },
+ "cancelled_runs": {
+  "f8k-mt4-otr10M4-s1464-tdb-lr2e-06": {
+   "ex": "01M5JB3XB5ZC3JXMM658Q0YKEB",
+   "arm": "otr10M4",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M1-s1464-tdb-lr2e-06": {
+   "ex": "01M5JCJHRJD51TBM1A2B7G9D8Y",
+   "arm": "otr10M1",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  }
+ },
+ "lambda_runs": {
+  "f8k-mt4s1464-otr10M8-s1-lro-lr2e-06-lam": {
+   "slurm": 113693,
+   "arm": "otr10M8",
+   "seed": 1
+  },
+  "f8k-mt4s1464-otr10M4-lro-lr2e-06-lam": {
+   "slurm": 113694,
+   "arm": "otr10M4"
+  },
+  "f8k-mt4s1464-otr10M1-lro-lr2e-06-lam": {
+   "slurm": 113695,
+   "arm": "otr10M1"
   }
  }
 }
