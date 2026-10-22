@@ -71,7 +71,7 @@ def test_warmup_keeps_everything_then_learns_lexical_match():
     torch.manual_seed(0)
     m = _Emb()
     ids, cid, labels = _row(B=2)
-    r = _router(use_hidden=False)
+    r = _router(use_hidden=False, doc_share=0.0)
     r.begin_step(1, model=m)
     keep = r.select(m, ids, cid, labels)
     body = (cid >= 0) & (ids != DS) & (ids != DE)
@@ -96,7 +96,7 @@ def test_exploration_share_and_dense_every():
     torch.manual_seed(0)
     m = _Emb()
     ids, cid, labels = _row()
-    r = _router(explore_frac=0.5, dense_every=3)
+    r = _router(explore_frac=0.5, dense_every=3, doc_share=0.0)
     r.w = torch.zeros(r.n_features)
     r.step = 2
     keep = r.select(m, ids, cid, labels)
@@ -186,8 +186,10 @@ def test_model_training_step_with_online_rule_cpu():
     router.begin_step(3, model=model)
     assert router.w is not None
     cb = model._compact_pooled_soft_tokens(ids, labels, -100)[0]
-    # 25% of 53 body tokens (14) + 6 markers + 9 free (prompt, query, answer, EOS)
-    assert int(cb.row_lens[0]) == math.ceil(0.25 * 53) + 6 + 9, cb.row_lens
+    # 25% of 53 body tokens (14; exploration tokens can overfill a short document's share by <= 3)
+    # + 6 markers + 9 free (prompt, query, answer, EOS)
+    n_kept = int(cb.row_lens[0]) - 6 - 9
+    assert 14 <= n_kept <= 14 + 3, cb.row_lens
     assert model._flop_extra_actual > 0
     mets = router.metrics()
     assert "online_router/keep_frac" in mets and "online_router/rank_corr_kept" in mets
@@ -269,3 +271,24 @@ def test_online_rule_on_gdn_hybrid_gpu():
             assert comp["tokens_out"] < comp["tokens_in"]
         model._soft_token_compaction = None
     assert router.w is not None and torch.isfinite(router.w).all()
+
+
+def test_doc_share_spreads_budget_over_documents():
+    """doc_share=1: every document keeps ceil(keep_frac * |body|) of its own top tokens, even when the
+    scorer prefers one document; doc_share=0 lets the scorer take the whole budget from it."""
+    m = _Emb()
+    ids, cid, labels = _row()
+    for share, expect in ((1.0, {0: 2, 1: 8, 2: 1}), (0.0, {0: 10, 1: 1, 2: 0})):
+        r = _router(use_hidden=False, doc_share=share, keep_frac=0.2)
+        r.w = torch.zeros(r.n_features)
+        r.w[r.feature_names().index("start_off0")] = 0.0
+        r.step = 2
+        # scorer: doc 0 tokens high (via the doc-index feature, negative weight = earlier docs first)
+        r.w[r.feature_names().index("doc_rel_idx")] = -5.0
+        keep = r.select(m, ids, cid, labels)
+        got = {d: int((keep[0] & (cid[0] == d)).sum()) for d in range(3)}
+        assert sum(got.values()) == math.ceil(0.2 * 53) or share == 1.0
+        if share == 1.0:
+            assert got == expect, got
+        else:
+            assert got[0] == 10 and got[2] == 0, got

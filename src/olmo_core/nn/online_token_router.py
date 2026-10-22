@@ -71,6 +71,13 @@ class OnlineRouterConfig:
     """Body tokens kept per row (fraction of the row's body tokens)."""
     explore_frac: float = 0.1
     """Share of the kept budget drawn uniformly at random among body tokens (exploration)."""
+    doc_share: float = 1.0
+    """Share of the budget spread over documents in proportion to their length (every document keeps
+    its own top ``ceil(doc_share * keep_frac * |body|)`` tokens by score); the rest is allocated by
+    score over the whole row. 1.0 = the router picks only WHICH tokens of each document stay, so the
+    per-document kept fraction is (up to exploration and rounding) the same for every document and
+    cannot name the gold one (count-leak AUC 0.5); 0.0 = pure row-level top-k, which a gradient-
+    faithful scorer concentrates on gold documents (the "dense = gold" training shortcut)."""
     feature_layer: int = 0
     """0: features from the input embedding (free). L > 0: a no-grad prefix pass through blocks [0, L)."""
     use_hidden: bool = True
@@ -94,6 +101,8 @@ class OnlineRouterConfig:
     def validate(self) -> None:
         if not 0.0 < self.keep_frac <= 1.0:
             raise ValueError(f"online router keep_frac must be in (0, 1], got {self.keep_frac}")
+        if not 0.0 <= self.doc_share <= 1.0:
+            raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
         if self.target not in TARGETS:
@@ -444,9 +453,26 @@ class OnlineTokenRouter:
             ru = torch.where(body, u, torch.full_like(u, 2.0))
             rank_u = ru.argsort(dim=1).argsort(dim=1)
             explore = body & (rank_u < k_e[:, None])
-            sc = torch.where(body & ~explore, score, torch.full_like(score, -float("inf")))
+            keep = explore.clone()
+            kd = c.keep_frac * c.doc_share
+            if kd > 0:
+                # per-document share: each document's own top ceil(kd * |body_d|) by score
+                # (exploration tokens rank first, so they count against their document's share)
+                from .attention.chunked_mask import FREE_CHUNK_ID, mark_doc_topk_tokens_free
+
+                if kd >= 1.0:
+                    keep = body.clone()
+                else:
+                    sc_d = torch.where(explore, torch.full_like(score, 1e30), score)
+                    out = mark_doc_topk_tokens_free(
+                        cid, ids, sc_d, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id, k=kd
+                    )
+                    keep = keep | (body & (out == FREE_CHUNK_ID))
+            # the rest of the budget by score over the whole row
+            left = (k - keep.sum(dim=1)).clamp(min=0)
+            sc = torch.where(body & ~keep, score, torch.full_like(score, -float("inf")))
             rank_s = (-sc).argsort(dim=1).argsort(dim=1)
-            keep = explore | (body & (rank_s < (k - k_e)[:, None]))
+            keep = keep | (body & ~keep & (rank_s < left[:, None]))
         # sample kept tokens for targets: every exploration token first, then random kept ones
         pri = torch.where(keep, u + 2.0 * (~explore).to(u.dtype), torch.full_like(u, 9.0))
         rank_p = pri.argsort(dim=1).argsort(dim=1)

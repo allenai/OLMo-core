@@ -1723,6 +1723,10 @@ def parse_args() -> argparse.Namespace:
                     help="online router: body tokens kept per row (fraction of the row's body tokens)")
     ap.add_argument("--st-otr-explore-frac", type=float, default=0.1,
                     help="online router: share of the kept budget drawn uniformly at random (exploration)")
+    ap.add_argument("--st-otr-doc-share", type=float, default=1.0,
+                    help="online router: share of the budget spread over documents in proportion to length "
+                    "(each keeps its own top tokens by score); the rest goes to the row-level top scores. "
+                    "1.0 = within-document choice only (per-document density cannot name gold)")
     ap.add_argument("--st-otr-feature-layer", type=int, default=0,
                     help="online router: hidden features at this layer (0 = input embedding, free; L > 0 = a "
                     "no-grad prefix pass through blocks [0, L) on the full row, charged to the FLOP meter)")
