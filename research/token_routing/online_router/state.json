@@ -618,6 +618,24 @@
   "f8k-mt4s1464-otr10M1-lro-lr2e-06-lam": {
    "slurm": 113695,
    "arm": "otr10M1"
+  },
+  "f8k-mt4s1464-otr10M8dh-lro-lr2e-06-lam": {
+   "slurm": 113696,
+   "arm": "otr10M8dh",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M8mix-lro-lr2e-06-lam": {
+   "slurm": 113697,
+   "arm": "otr10M8mix",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M8gxh-lro-lr2e-06-lam": {
+   "slurm": 113698,
+   "arm": "otr10M8gxh",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
   }
  }
 }
