@@ -399,3 +399,43 @@ def test_first_last_control_keeps_document_edges():
     # doc 1 (40 body tokens, ids 2000..2039) keeps 8: its first 4 and last 4
     kept = sorted(int(t) for t in ids[0][keep[0] & (cid[0] == 1)])
     assert kept == [2000, 2001, 2002, 2003, 2036, 2037, 2038, 2039], kept
+
+
+@pytest.mark.parametrize("target", ["gxh", "dh", "mix"])
+def test_mid_stack_targets_cpu(target):
+    """Every target trains end to end in mid-stack mode, records the gradient norm too, and refits."""
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
+    cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=2, fused_ops=False, dtype=DType.float32)
+    model = cfg.build(init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(
+        OnlineRouterConfig(keep_frac=0.25, explore_frac=0.2, samples_per_row=64, drop_layer=1, target=target,
+                           dense_every=2),
+        doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D,
+    )
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.25, online_router=router,
+    )
+    model.train()
+    ids, cid, labels = _row(B=2)
+    for step in (1, 2, 3):
+        router.begin_step(step, model=model)
+        out = model(ids, labels=labels)
+        out.loss.backward()
+        e = router._pending[-1]
+        assert e["target"] is not None and torch.isfinite(e["target"]).all()
+        assert e["gn"] is not None and torch.isfinite(e["gn"]).all()
+        if target == "mix":
+            assert (e["target"] >= 0).all() and (e["target"] <= 1).all()
+    router.begin_step(4, model=model)
+    assert router.w is not None and torch.isfinite(router.w).all()
+    assert "online_router/fid_mass_router" in router.metrics()
+
+
+def test_dh_target_needs_mid_stack():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(target="dh").validate()

@@ -1743,8 +1743,9 @@ def parse_args() -> argparse.Namespace:
                     help="online router: drop the h*q query-interaction features")
     ap.add_argument("--st-otr-use-gold", action="store_true",
                     help="online router: per-document 0/1 gold flag (gold sidecar) as a feature")
-    ap.add_argument("--st-otr-target", choices=["gnorm", "gxh"], default="gnorm",
-                    help="online router target: log ||dL/de_t|| or log |<dL/de_t, e_t>| at the embedding output")
+    ap.add_argument("--st-otr-target", choices=["gnorm", "gxh", "dh", "mix"], default="gnorm",
+                    help="online router target: gnorm log ||dL/dh_t||; gxh log |<dL/dh_t, h_t>|; dh log ||h_t^L - h_t^0|| "
+                    "(residual change through the first L blocks, mid-stack only); mix = average of the gnorm and dh ranks")
     ap.add_argument("--st-otr-ridge", type=float, default=0.1,
                     help="online router: ridge strength relative to the mean Gram diagonal (offline probe: 0.01 > 0.1 > 1.0 at 1M samples)")
     ap.add_argument("--st-otr-decay", type=float, default=0.9, help="online router: per-step forgetting")

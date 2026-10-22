@@ -62,7 +62,11 @@ _N_LOG = 11
 N_STRUCT = 1 + 2 * (_N_ONEHOT + _N_LOG) + 3
 #: in-query flag, log repeat count
 N_LEX = 2
-TARGETS = ("gnorm", "gxh")
+#: gnorm = log ||dL/dh_t|| (at the embedding output, or at the drop layer in mid-stack mode); gxh = log |<dL/dh_t, h_t>|;
+#: dh = log ||h_t^L - h_t^0|| (residual change through blocks [0, L): an activation-strength target that does not
+#: vanish once a token is well learned; mid-stack only, no backward needed); mix = within-row average of the gnorm
+#: and dh ranks. The gradient norm is recorded under every target (fidelity metrics stay comparable).
+TARGETS = ("gnorm", "gxh", "dh", "mix")
 
 
 @dataclass
@@ -119,6 +123,8 @@ class OnlineRouterConfig:
             raise ValueError(f"online router score must be router / random / first_last, got {self.score!r}")
         if self.target not in TARGETS:
             raise ValueError(f"online router target must be one of {TARGETS}, got {self.target!r}")
+        if self.target in ("dh", "mix") and self.drop_layer <= 0:
+            raise ValueError(f"online router target {self.target!r} needs the mid-stack drop (drop_layer > 0)")
         if self.feature_layer < 0 or self.drop_layer < 0:
             raise ValueError("online router feature_layer / drop_layer must be >= 0")
         if self.drop_layer > 0 and self.feature_layer > 0:
@@ -216,6 +222,16 @@ def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
     ra, rb = ra - ra.mean(), rb - rb.mean()
     den = (ra.norm() * rb.norm()).item()
     return float((ra @ rb).item() / den) if den > 0 else float("nan")
+
+
+def _row_ranks(x: torch.Tensor, rows: torch.Tensor) -> torch.Tensor:
+    """Ranks of ``x`` within each row of ``rows``, scaled to [0, 1]."""
+    out = torch.zeros_like(x, dtype=torch.float32)
+    for r in torch.unique(rows).tolist():
+        m = rows == r
+        n = int(m.sum())
+        out[m] = x[m].argsort().argsort().to(torch.float32) / max(1, n - 1)
+    return out
 
 
 def _auc(score: torch.Tensor, pos: torch.Tensor) -> float:
@@ -592,6 +608,15 @@ class OnlineTokenRouter:
         rows, pos = entry["rows"], entry["pos"]
         entry["ok"] = keep_all[rows, pos]
         entry["cols"] = newcol[rows, pos].clamp(min=0)
+        if self.cfg.target in ("dh", "mix"):
+            # residual change of the sampled tokens through blocks [0, L), on the full row (no grad)
+            with torch.no_grad():
+                e0 = model.embeddings(ids)
+                if model.embed_scale is not None:
+                    e0 = e0 * model.embed_scale
+                d = (h[:, :Tr][rows, pos].float() - e0[rows, pos].float()).norm(dim=-1)
+            entry["dh"] = torch.log(d + 1e-12)
+            self._flop(model, 3.0 * self.d_model * int(rows.numel()))
         self._register_target(model, entry, h_new)
         # FLOP adjustment, per row: blocks before drop_layer at the full length, the rest + head at the
         # kept length, minus the dense charge the meter applies to the (uncompacted) row
@@ -667,11 +692,17 @@ class OnlineTokenRouter:
 
         def hook(g: torch.Tensor) -> None:
             gs = g.detach()[rows, cols].float()
-            if self.cfg.target == "gnorm":
-                t = gs.norm(dim=-1)
-            else:
-                t = (gs * entry["hsel"]).sum(-1).abs()
-            entry["target"] = torch.log(t + 1e-12)
+            gn = torch.log(gs.norm(dim=-1) + 1e-12)
+            entry["gn"] = gn
+            tgt = self.cfg.target
+            if tgt == "gnorm":
+                entry["target"] = gn
+            elif tgt == "gxh":
+                entry["target"] = torch.log((gs * entry["hsel"]).sum(-1).abs() + 1e-12)
+            elif tgt == "dh":
+                entry["target"] = entry["dh"]
+            else:  # mix: within-row average of the two ranks
+                entry["target"] = 0.5 * (_row_ranks(gn, rows) + _row_ranks(entry["dh"], rows))
 
         h.register_hook(hook)
         return h
@@ -688,7 +719,7 @@ class OnlineTokenRouter:
         F = self.n_features
         if self.step == 0:
             self._pending = []  # forwards before the first step = the trainer's dry-run batch
-        X, y, rows_all, expl, preds, dense_e = [], [], [], [], [], []
+        X, y, rows_all, expl, preds, dense_e, gns = [], [], [], [], [], [], []
         for e in self._pending:
             if e["target"] is None:
                 continue
@@ -709,6 +740,8 @@ class OnlineTokenRouter:
             if e["pred"] is not None:
                 preds.append(e["pred"][ok])
             dense_e.append(torch.full_like(t, float(bool(e.get("dense")))).bool())
+            g = e.get("gn", e["target"])[ok]
+            gns.append(g - (torch.zeros(nb, device=g.device).index_add_(0, r, g) / n.clamp(min=1))[r])
         self._pending = []
         dev = None
         if model is not None:
@@ -751,9 +784,10 @@ class OnlineTokenRouter:
                 if vals:
                     self._stat("rank_corr_fullctx", sum(vals) / len(vals))
                 fr, fo = [], []
+                gc = torch.cat(gns).to(dev, torch.float64)  # the gradient norm, whatever the router's target
                 for rid in torch.unique(rc[dc]).tolist():
                     mm = dc & (rc == rid)
-                    yy, pp = yc[mm], pc[mm]
+                    yy, pp = gc[mm], pc[mm]
                     if yy.numel() < 10:
                         continue
                     k = max(1, int(math.ceil(self.cfg.keep_frac * yy.numel())))
