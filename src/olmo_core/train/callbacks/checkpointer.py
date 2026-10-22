@@ -319,7 +319,20 @@ class CheckpointerCallback(Callback):
             return
 
         if self.step > self._latest_checkpoint_step:
-            self._checkpoints.append(self._save_checkpoint(save_async=False))
-            self._trim_checkpoints()
+            final_path = join_path(
+                self.trainer.save_folder, self.checkpointer.checkpoint_dirname(self.step)
+            )
+            if self.checkpointer.dir_is_checkpoint(final_path):
+                # A restart that resumed from this run's own final checkpoint (e.g. after a
+                # node failure during the end-of-training eval) has nothing new to save.
+                log.info(
+                    f"Checkpoint for step {self.step} already exists at '{final_path}', "
+                    "skipping the final save"
+                )
+                self._latest_checkpoint_step = self.step
+                self._latest_checkpoint_path = str(final_path)
+            else:
+                self._checkpoints.append(self._save_checkpoint(save_async=False))
+                self._trim_checkpoints()
 
         self._await_last_checkpoint()
