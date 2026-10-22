@@ -58,6 +58,7 @@ ARMS = {
     "otr10M8": otr(0.1, drop=8),
     # cheaper mid-stack settings (parent session, 2026-10-22): shallower full-context prefix, fewer dense steps
     "otr10M4": otr(0.1, drop=4),
+    "otr10M1": otr(0.1, drop=1),   # Prasann: route after block 1 (one GDN layer of full-context mixing)
     "otr10M8de16": otr(0.1, drop=8, dense_every=16),
     "otr10M4de16": otr(0.1, drop=4, dense_every=16),
 }
