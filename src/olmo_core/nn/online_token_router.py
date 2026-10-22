@@ -70,7 +70,8 @@ class OnlineRouterConfig:
     keep_frac: float = 0.3
     """Body tokens kept per row (fraction of the row's body tokens)."""
     explore_frac: float = 0.1
-    """Share of the kept budget drawn uniformly at random among body tokens (exploration)."""
+    """Share of the kept budget drawn uniformly at random among body tokens (exploration). >= 1.0 is the
+    random control: every kept token is random, with the same budget and ``doc_share`` allocation."""
     doc_share: float = 1.0
     """Share of the budget spread over documents in proportion to their length (every document keeps
     its own top ``ceil(doc_share * keep_frac * |body|)`` tokens by score); the rest is allocated by
@@ -484,8 +485,14 @@ class OnlineTokenRouter:
             keep = body.clone()
         else:
             assert score is not None
+            if c.explore_frac >= 1.0:
+                # random CONTROL: the same budget and allocation, uniform scores (the router is fit and
+                # logged but never chooses a token)
+                score, c_explore = u.clone(), 0.0
+            else:
+                c_explore = c.explore_frac
             k = torch.ceil(n_body.to(torch.float32) * c.keep_frac).to(torch.long)
-            k_e = torch.round(k.to(torch.float32) * c.explore_frac).to(torch.long)
+            k_e = torch.round(k.to(torch.float32) * c_explore).to(torch.long)
             # exploration: the k_e body tokens with the smallest uniform draw
             ru = torch.where(body, u, torch.full_like(u, 2.0))
             rank_u = ru.argsort(dim=1).argsort(dim=1)

@@ -373,3 +373,16 @@ def test_fidelity_mass_logged_on_dense_steps():
     met = r.metrics()
     assert met["online_router/fid_mass_router"] == pytest.approx(met["online_router/fid_mass_oracle"])
     assert met["online_router/fid_mass_router"] > met["online_router/fid_mass_random"]
+
+
+def test_random_control_keeps_doc_share_without_router():
+    """explore_frac >= 1: per-document share of uniformly random tokens, whatever the weights say."""
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, doc_share=1.0, keep_frac=0.2, explore_frac=1.0)
+    r.w = torch.zeros(r.n_features)
+    r.w[r.feature_names().index("doc_rel_idx")] = -50.0
+    r.step = 2
+    keep = r.select(m, ids, cid, labels)
+    got = {d: int((keep[0] & (cid[0] == d)).sum()) for d in range(3)}
+    assert got == {0: 2, 1: 8, 2: 1}, got
