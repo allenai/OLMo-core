@@ -193,6 +193,22 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt4-otr10M1-s1464-tdb-lr2e-06": {
+   "ex": "01M5JCJHRJD51TBM1A2B7G9D8Y",
+   "arm": "otr10M1",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M1-s976-tdb-lr2e-06": {
+   "ex": "01M5JCKC2PK9B4X5H1BC83H8SE",
+   "arm": "otr10M1",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
