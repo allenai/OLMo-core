@@ -159,6 +159,20 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- FINDING 2026-10-22 08:30 (LR 2e-5, dev32k_1024, 1,024 rows): dense SATURATES almost at once. stage2 1.8477 ->
+  Dlr20-12 1.6972 -> 24 1.6912 -> 48 1.6880 -> 120 1.6853 -> 240 1.6827: 12 steps (6.3M tokens) already give
+  -0.150 of -0.165, and a 20x compute range (12 -> 240) moves CE 0.015. The gain is uniform across position bins
+  (0-4k -0.196, 16-32k -0.144 at 12 steps): adaptation to the pool's text, not long-range learning. Small batch
+  (DB8, 8 rows/step, same tokens) 1.6933 / 1.6906 / 1.6901 at 12 / 24 / 48 (helps only at 12). Drop arms at
+  matched FLOPs LOSE: IRANDlr20-65 (=12 dense steps) 1.7050, -130 1.7015 (0-4k ties dense, 16-32k +0.011);
+  IFL10-133 (~12) 1.7531, IFL10-533 (~48) 1.7701 (worse with more training); IFL05-1040 1.8557 (896-row partial,
+  eval hit ENOSPC). C-120 1.6859, C-240 1.6841 (~1.05x). Input dropping damages long-range positions, more so the
+  harder it drops. Overall dev CE cannot support a 10-20x reading here, so the eval gained ctx_gain
+  (--ctx-window 8192, commit 5408335a6): last 4k targets with full context vs only the last 8k tokens = how much
+  the model uses context beyond 8k. CTX stage of cubbins 4017768 scores every run + stage2/stage3 on it.
+- TRAP (hit 2026-10-22 08:33): weka `No space left on device` under prasanns/olmo3_cptdrop: IFL10x64 / IFL05x64 died
+  at data staging; IFL10 / IFL05 in-job evals lost chunks. Every Beaker job keeps full model+optim checkpoints
+  (~88 GB each, max_checkpoints 0) in its own dir, plus superseded old-LR dirs. du job 01M5J458P3MAFN3MPD3CFNKPXQ.
 - FIXED in eae16ae0b (branch o3cd/swa-position-window, not merged): compacted rows used to apply the 4,096
   sliding window in compacted index space. SWA layers with gapped position_ids now use a FlexAttention mask by
   ORIGINAL position (built once per forward, ~1 ms at 32k); full-attention layers and contiguous rows stay on
