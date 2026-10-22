@@ -1214,6 +1214,11 @@
    "ex": "01M5JPQYTCM44VT23BQDR8NX4D",
    "train_run": "f8k-contradiction-otr10M8-16M-tdp-lr2e-06",
    "task": "contradiction"
+  },
+  "f8k-contradiction-otr30M8-16M-tdp-lr2e-06-evcontradiction": {
+   "ex": "01M5JPRXZ8DD1YX8S66ZEWJECW",
+   "train_run": "f8k-contradiction-otr30M8-16M-tdp-lr2e-06",
+   "task": "contradiction"
   }
  },
  "failed_evals": {
