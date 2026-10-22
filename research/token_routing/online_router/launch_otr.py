@@ -62,6 +62,7 @@ ARMS = {
     # router + whole-block skip: every token also skips GDN blocks 20 / 24 / 28 (full attention at 3, 7, 11, ...)
     "otr10M8sk3": otr(0.1, drop=8, extra="--train-skip-layers 20,24,28"),
     "otr10M7": otr(0.1, drop=7),    # right before the block-7 full attention (direct test of the full-attention hypothesis)
+    "otr10M5": otr(0.1, drop=5),
     "otr10M6": otr(0.1, drop=6),    # split-point bracket around 8 (parent, 2026-10-22): before the block-7 full attention
     "otr10M12": otr(0.1, drop=12),  # later split: floor 12/32 of the dense cost
     "otr10M1": otr(0.1, drop=1),   # Prasann: route after block 1 (one GDN layer of full-context mixing)
