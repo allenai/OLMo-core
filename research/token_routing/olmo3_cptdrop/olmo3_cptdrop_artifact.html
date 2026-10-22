@@ -15,6 +15,8 @@
   --ok: #2f7d4f;
   --wait: #8a6d1d;
   --pill-bg: #e8edf6;
+  --c: #6b4fa0;
+  --warn: #b23a48;
   --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
@@ -23,12 +25,14 @@
   :root:not([data-theme="light"]) {
     --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b4; --rule: #2c3440;
     --accent: #7ea6f0; --dense: #e0a050; --ok: #6cc08e; --wait: #d4b45a; --pill-bg: #232c3a;
+    --c: #b49ae6; --warn: #ef8a96;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b4; --rule: #2c3440;
   --accent: #7ea6f0; --dense: #e0a050; --ok: #6cc08e; --wait: #d4b45a; --pill-bg: #232c3a;
+    --c: #b49ae6; --warn: #ef8a96;
   color-scheme: dark;
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.55; }
@@ -75,20 +79,103 @@ ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
   </header>
 
   <div class="status">
-    <div><span class="pill run">in progress</span> &nbsp;<strong>Learning rate fixed: peak LR 2e-5 beats the OLMo recipe's 2.07e-4 by 0.13 nats at 120 steps, and dense keeps improving. Every arm now runs at 2e-5.</strong></div>
-    <p>At the OLMo recipe LR with our 512k-token batches (OLMo used 4M), dense CE stopped improving after about 120 steps and got worse after that, while short-document CE climbed from 1.16 to 1.49. At 2e-5, CE drops 0.162 in the first 120 steps and barely moves the guard. Nearly all of the gain arrives within 120 steps, so whether dropping reaches 10–20× is decided at small budgets: dense at 12 / 24 / 48 steps against drop arms at the same FLOPs. A dense small-batch control (half the rows per step, twice the steps) separates the effect of dropping from the effect of taking more optimizer steps.</p>
-    <div class="tbl"><table>
-      <tr><th>dense run (dev32k_1024)</th><th>peak LR</th><th>dev CE, all</th><th>16–32k</th><th>short docs</th><th>paired Δ</th></tr>
-      <tr><td>stage 2 (start)</td><td></td><td class="num">1.848</td><td class="num">1.840</td><td class="num">1.156</td><td></td></tr>
-      <tr><td>stage 3 (OLMo's own long-context model)</td><td></td><td class="num">1.829</td><td class="num">1.801</td><td class="num">1.177</td><td></td></tr>
-      <tr><td>120 steps</td><td class="mono">2.07e-4</td><td class="num">1.819</td><td class="num">1.815</td><td class="num">1.327</td><td class="num">−0.029 ±0.005 vs start</td></tr>
-      <tr><td>240 / 480 steps</td><td class="mono">2.07e-4</td><td class="num">1.829 / 1.824</td><td class="num">1.825 / 1.821</td><td class="num">1.385 / 1.492</td><td class="num">+0.010 / +0.005 vs 120</td></tr>
-      <tr><td>120 / 240 steps</td><td class="mono">6.5e-5</td><td class="num">1.711 / 1.710</td><td class="num">1.709 / 1.707</td><td class="num">1.189 / 1.197</td><td></td></tr>
-      <tr><td><strong>120 steps</strong></td><td class="mono">2e-5</td><td class="num"><strong>1.685</strong></td><td class="num">1.683</td><td class="num">1.161</td><td class="num">−0.162 ±0.004 vs start; −0.133 ±0.002 vs 2.07e-4</td></tr>
-      <tr><td><strong>240 steps</strong></td><td class="mono">2e-5</td><td class="num"><strong>1.683</strong></td><td class="num">1.680</td><td class="num">1.165</td><td class="num">−0.0026 ±0.0001 vs 120</td></tr>
-    </table></div>
-    <p style="color:var(--muted)">Dev: 1,024 rows × 32k from 128k+ documents. Short docs: 256 × 4k rows <span class="flag">⚠ eval_size=256 rows</span>, read as a relative guard. Seed noise at 2.07e-4 was 0.009 nats at 120 steps; a 2e-5 seed replicate is queued.</p>
+    <div><span class="pill run">in progress</span> &nbsp;<strong>No input-drop arm beats dense yet, at any measured budget, on either metric. Dense CPT saturates within about 12 steps (6M tokens).</strong></div>
+    <p>At peak LR 2e-5, 12 dense steps already give 0.150 of the 0.165-nat gain that 240 steps reach, and long-context use (context gain) rises from 0.017 to 0.067 in those 12 steps. Every arm that removes tokens trails dense at matched compute: random 20% of blocks by 0.008 nats of dev CE and 0.005 of context gain at the same FLOPs, first+last 25% by 0.022, first+last 10% by 0.056. The curriculum arm ties dense (about 1.05×). Still running: dense at 4 / 8 steps with matched random-block runs (the steep end, the last place a multiplier could show), and the sd20 slot recipe, which keeps one detached summary token per dropped block instead of removing it (the recipe behind the earlier ~4× result).</p>
   </div>
+
+  <section>
+    <h2>Dev CE vs compute</h2>
+    <figure>
+      <div class="legend" aria-hidden="true">
+        <span><i class="sw" style="border-color:var(--dense)"></i>dense</span>
+        <span><i class="sw" style="border-color:var(--dense);border-top-style:dashed"></i>dense, 8 rows/step</span>
+        <span><i class="sw" style="border-color:var(--c)"></i>curriculum C</span>
+        <span><i class="sw" style="border-color:var(--accent)"></i>I-rand 20%</span>
+        <span><i class="sw" style="border-color:var(--warn)"></i>I-fl 25%</span>
+        <span><i class="sw" style="border-color:var(--warn);border-top-style:dotted"></i>I-fl 10%</span>
+      </div>
+<svg viewBox="0 0 660 300" role="img" aria-label="Dev cross-entropy versus training petaFLOPs at LR 2e-5: both dense curves sit lowest; every input-drop arm is above dense at matched compute, and first+last 10% gets worse with more training.">
+<g stroke="var(--rule)" stroke-width="1" fill="none">
+<line x1="62" y1="243.9" x2="640" y2="243.9"/>
+<line x1="62" y1="195.5" x2="640" y2="195.5"/>
+<line x1="62" y1="147.1" x2="640" y2="147.1"/>
+<line x1="62" y1="98.7" x2="640" y2="98.7"/>
+<line x1="62" y1="50.3" x2="640" y2="50.3"/>
+</g><g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="end">
+<text x="56" y="247.9">1.68</text>
+<text x="56" y="199.5">1.70</text>
+<text x="56" y="151.1">1.72</text>
+<text x="56" y="102.7">1.74</text>
+<text x="56" y="54.3">1.76</text>
+</g><g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="middle">
+<text x="62.0" y="274">300</text>
+<text x="250.6" y="274">1k</text>
+<text x="422.8" y="274">3k</text>
+<text x="611.4" y="274">10k</text>
+<text x="351.0" y="294">training compute (PF, log)</text></g>
+<text x="14" y="135.0" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" transform="rotate(-90 14 135.0)" text-anchor="middle">dev CE (nats)</text>
+<polyline fill="none" stroke="var(--dense)" stroke-width="2.5" points="121.5,202.3 230.2,216.8 338.8,224.5 482.3,231.1 590.9,237.4"/>
+<g fill="var(--dense)"><circle cx="121.5" cy="202.3" r="3.5"/><circle cx="230.2" cy="216.8" r="3.5"/><circle cx="338.8" cy="224.5" r="3.5"/><circle cx="482.3" cy="231.1" r="3.5"/><circle cx="590.9" cy="237.4" r="3.5"/></g>
+<polyline fill="none" stroke="var(--dense)" stroke-width="2.5" stroke-dasharray="5 4" points="121.5,211.7 230.2,218.2 338.8,219.5"/>
+<g fill="var(--dense)"><circle cx="121.5" cy="211.7" r="3.5"/><circle cx="230.2" cy="218.2" r="3.5"/><circle cx="338.8" cy="219.5" r="3.5"/></g>
+<polyline fill="none" stroke="var(--c)" stroke-width="2.5" points="473.5,229.6 582.1,234.0"/>
+<g fill="var(--c)"><circle cx="473.5" cy="229.6" r="3.5"/><circle cx="582.1" cy="234.0" r="3.5"/></g>
+<polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="121.0,183.4 229.6,191.9 338.2,194.8"/>
+<g fill="var(--accent)"><circle cx="121.0" cy="183.4" r="3.5"/><circle cx="229.6" cy="191.9" r="3.5"/><circle cx="338.2" cy="194.8" r="3.5"/></g>
+<polyline fill="none" stroke="var(--warn)" stroke-width="2.5" points="121.8,149.8 230.4,156.8 338.3,156.1"/>
+<g fill="var(--warn)"><circle cx="121.8" cy="149.8" r="3.5"/><circle cx="230.4" cy="156.8" r="3.5"/><circle cx="338.3" cy="156.1" r="3.5"/></g>
+<polyline fill="none" stroke="var(--warn)" stroke-width="2.5" stroke-dasharray="2 3" points="121.2,67.0 338.7,25.9"/>
+<g fill="var(--warn)"><circle cx="121.2" cy="67.0" r="3.5"/><circle cx="338.7" cy="25.9" r="3.5"/></g>
+</svg>
+      <figcaption>Full-context dev CE on 1,024 rows × 32k; lower is better; x = measured training PF (I-fl 10% from an estimated FLOP ratio of 0.09). The start (stage 2) is at 1.848, off the top of the chart. Seed noise at this LR is being measured; paired SEs between checkpoints are ±0.0002–0.002.</figcaption>
+    </figure>
+    <h2>Context gain vs compute</h2>
+    <figure>
+<svg viewBox="0 0 660 300" role="img" aria-label="Context gain versus training petaFLOPs: dense rises from 0.067 to 0.076; random-block and first+last drop arms stay below dense at every budget.">
+<g stroke="var(--rule)" stroke-width="1" fill="none">
+<line x1="62" y1="245.9" x2="640" y2="245.9"/>
+<line x1="62" y1="195.5" x2="640" y2="195.5"/>
+<line x1="62" y1="145.1" x2="640" y2="145.1"/>
+<line x1="62" y1="94.7" x2="640" y2="94.7"/>
+<line x1="62" y1="44.3" x2="640" y2="44.3"/>
+</g><g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="end">
+<text x="56" y="249.9">0.055</text>
+<text x="56" y="199.5">0.060</text>
+<text x="56" y="149.1">0.065</text>
+<text x="56" y="98.7">0.070</text>
+<text x="56" y="48.3">0.075</text>
+</g><g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="middle">
+<text x="62.0" y="274">300</text>
+<text x="250.6" y="274">1k</text>
+<text x="422.8" y="274">3k</text>
+<text x="611.4" y="274">10k</text>
+<text x="351.0" y="294">training compute (PF, log)</text></g>
+<text x="14" y="135.0" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" transform="rotate(-90 14 135.0)" text-anchor="middle">ctx gain (nats)</text>
+<polyline fill="none" stroke="var(--dense)" stroke-width="2.5" points="121.5,123.9 230.2,94.7 338.8,68.5 482.3,51.3 590.9,32.1"/>
+<g fill="var(--dense)"><circle cx="121.5" cy="123.9" r="3.5"/><circle cx="230.2" cy="94.7" r="3.5"/><circle cx="338.8" cy="68.5" r="3.5"/><circle cx="482.3" cy="51.3" r="3.5"/><circle cx="590.9" cy="32.1" r="3.5"/></g>
+<polyline fill="none" stroke="var(--dense)" stroke-width="2.5" stroke-dasharray="5 4" points="121.5,93.7 230.2,77.5 338.8,55.3"/>
+<g fill="var(--dense)"><circle cx="121.5" cy="93.7" r="3.5"/><circle cx="230.2" cy="77.5" r="3.5"/><circle cx="338.8" cy="55.3" r="3.5"/></g>
+<polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="121.0,178.4 229.6,161.2 338.2,147.1"/>
+<g fill="var(--accent)"><circle cx="121.0" cy="178.4" r="3.5"/><circle cx="229.6" cy="161.2" r="3.5"/><circle cx="338.2" cy="147.1" r="3.5"/></g>
+<polyline fill="none" stroke="var(--warn)" stroke-width="2.5" points="121.8,230.8 230.4,216.7 338.3,209.6"/>
+<g fill="var(--warn)"><circle cx="121.8" cy="230.8" r="3.5"/><circle cx="230.4" cy="216.7" r="3.5"/><circle cx="338.3" cy="209.6" r="3.5"/></g>
+</svg>
+      <figcaption>Context gain = CE on each row's last 4k tokens with only an 8k window minus CE with the full 32k context, so higher means the model uses distant context more. Stage 2: 0.017; OLMo's stage 3 (50B long-context tokens): 0.046. Paired SE on differences ±0.0002. C runs on Beaker and was scored without this metric.</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>run (LR 2e-5)</th><th>FLOPs, dense-step equiv.</th><th>dev CE</th><th>16–32k</th><th>context gain</th><th>short docs</th></tr>
+      <tr><td>stage 2 (start) / stage 3</td><td></td><td class="num">1.848 / 1.829</td><td class="num">1.840 / 1.801</td><td class="num">0.017 / 0.046</td><td class="num">1.156 / 1.177</td></tr>
+      <tr><td>dense 12 / 24 / 48</td><td class="num">12 / 24 / 48</td><td class="num">1.697 / 1.691 / 1.688</td><td class="num">1.696 / 1.690 / 1.686</td><td class="num">0.067 / 0.070 / 0.073</td><td class="num">1.157 / 1.158 / 1.159</td></tr>
+      <tr><td>dense 120 / 240</td><td class="num">120 / 240</td><td class="num">1.685 / 1.683</td><td class="num">1.683 / 1.680</td><td class="num">0.074 / 0.076</td><td class="num">1.161 / 1.165</td></tr>
+      <tr><td>dense 8 rows/step, 12 / 24 / 48</td><td class="num">12 / 24 / 48</td><td class="num">1.693 / 1.691 / 1.690</td><td class="num">1.692 / 1.688 / 1.687</td><td class="num">0.070 / 0.072 / 0.074</td><td class="num">1.158 / 1.158 / 1.163</td></tr>
+      <tr><td>dense LR 1e-5, 120</td><td class="num">120</td><td class="num">1.683</td><td class="num">1.680</td><td class="num">0.073</td><td class="num">1.157</td></tr>
+      <tr><td>I-rand 65 / 130 / 260 steps</td><td class="num">12 / 24 / 48</td><td class="num">1.705 / 1.702 / 1.700</td><td class="num">1.706 / 1.702 / 1.701</td><td class="num">0.062 / 0.063 / 0.065</td><td class="num">1.171 / 1.172 / 1.176</td></tr>
+      <tr><td>I-fl 25%, 54 / 108 / 215 steps</td><td class="num">12 / 24 / 48</td><td class="num">1.719 / 1.716 / 1.716</td><td class="num">1.722 / 1.719 / 1.719</td><td class="num">0.057 / 0.058 / 0.059</td><td class="num">1.177 / 1.177 / 1.180</td></tr>
+      <tr><td>I-fl 10%, 133 / 533 steps</td><td class="num">~12 / ~48</td><td class="num">1.753 / 1.770</td><td class="num">1.764 / 1.784</td><td></td><td class="num">1.194 / 1.214</td></tr>
+      <tr><td>C 120 / 240</td><td class="num">113 / 227</td><td class="num">1.686 / 1.684</td><td class="num">1.684 / 1.682</td><td></td><td class="num">1.163 / 1.169</td></tr>
+    </table></div>
+    <p style="color:var(--muted)">Short docs: 256 × 4k rows <span class="flag">⚠ eval_size=256 rows</span>, a relative forgetting guard. The OLMo recipe LR (2.07e-4) plateaued at 1.82 and forgot (short docs up to 1.49); the probe that set 2e-5 is in STATUS.md.</p>
+  </section>
 
   <section>
     <h2>Why this experiment</h2>
