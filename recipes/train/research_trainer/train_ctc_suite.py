@@ -434,7 +434,8 @@ def variant_and_options(opts: argparse.Namespace) -> Tuple["V.Variant", "V.Varia
 
 def active_variants(opts: argparse.Namespace) -> List[Tuple["V.Variant", "V.VariantOptions"]]:
     """Every variant whose hooks run, in hook order: the ``--ffn-drop-*`` modifier (drop-CPT, any
-    non-routed arm) first, then the ``--variant`` arm.
+    non-routed arm) first, then the ``--variant`` arm, then the ``--train-skip-layers`` /
+    ``--layer-drop-*`` modifier (whole-block skipping, any arm).
 
     :param opts: Parsed CLI options.
 
@@ -446,6 +447,10 @@ def active_variants(opts: argparse.Namespace) -> List[Tuple["V.Variant", "V.Vari
     if drop_opts.active:  # type: ignore[attr-defined]
         out.append((drop, drop_opts))
     out.append(variant_and_options(opts))
+    ldrop = V.VARIANTS["layerdrop"]
+    ldrop_opts = ldrop.options_from_namespace(opts)
+    if ldrop_opts.active:  # type: ignore[attr-defined]
+        out.append((ldrop, ldrop_opts))
     return out
 
 
@@ -1118,6 +1123,12 @@ def build_and_fit(opts: argparse.Namespace) -> None:
                     "base_checkpoint": base_checkpoint,
                     "ffn_drop_max_rate": opts.ffn_drop_max_rate,
                     "ffn_drop_layer_prob": opts.ffn_drop_layer_prob,
+                    "train_skip_layers": opts.train_skip_layers,
+                    "layer_drop_p": opts.layer_drop_p,
+                    "layer_drop_schedule": opts.layer_drop_schedule,
+                    "layer_drop_exclude_first": opts.layer_drop_exclude_first,
+                    "layer_drop_exclude_last": opts.layer_drop_exclude_last,
+                    "layer_drop_rescale": opts.layer_drop_rescale,
                     "data": opts.data,
                 },
             ),
@@ -1432,6 +1443,39 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--ffn-drop-start-layer", type=int, default=1, help="drop-CPT: first droppable layer"
+    )
+    # ---- whole-block skipping (olmo_core.nn.layer_drop; any arm, training only) ----
+    ap.add_argument(
+        "--train-skip-layers",
+        default="",
+        help="skip these blocks (e.g. '10,14,18' or '10-12'; negative = from the end) on EVERY "
+        "training forward: the block's forward is not called (identity on the residual stream). "
+        "Eval runs every block.",
+    )
+    ap.add_argument(
+        "--layer-drop-p",
+        type=float,
+        default=0.0,
+        help="LayerDrop: every optimizer step each eligible block is skipped whole with this "
+        "probability (seeded from --seed and the global step: same blocks on every rank and "
+        "micro-batch; 0 = off)",
+    )
+    ap.add_argument(
+        "--layer-drop-schedule",
+        choices=["uniform", "linear"],
+        default="uniform",
+        help="uniform: p_i = p; linear: p_i = p * (i + 1) / n_layers (stochastic depth)",
+    )
+    ap.add_argument(
+        "--layer-drop-exclude-first", type=int, default=0, help="never drop the first K blocks"
+    )
+    ap.add_argument(
+        "--layer-drop-exclude-last", type=int, default=0, help="never drop the last K blocks"
+    )
+    ap.add_argument(
+        "--layer-drop-rescale",
+        action="store_true",
+        help="scale a RUN block's residual update by 1/(1-p_i) (inverted-dropout expectation)",
     )
     ap.add_argument(
         "--router-lr", type=float, default=1e-3, help="ffnmoe: router/gain LR (backbone uses --lr)"
@@ -2053,6 +2097,15 @@ def parse_args() -> argparse.Namespace:
         ap.error(str(exc))
     if not opts.dry_run and opts.dry_run_n_examples:
         ap.error("--dry-run-n-examples is only valid with --dry-run")
+    if not 0.0 <= opts.layer_drop_p < 1.0:
+        ap.error(f"--layer-drop-p must be in [0, 1), got {opts.layer_drop_p}")
+    if opts.train_skip_layers:
+        from olmo_core.nn.layer_drop import parse_layer_list
+
+        try:
+            parse_layer_list(opts.train_skip_layers)
+        except ValueError as exc:
+            ap.error(f"--train-skip-layers: {exc}")
     if opts.variant == "chunked-mix" and opts.compile:
         # The python-seeded mix coin + counter are not torch.compile-capturable.
         print("[ctc-suite] chunked-mix: forcing --no-compile (mix coin is not compilable)")
