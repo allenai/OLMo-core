@@ -60,7 +60,7 @@ def build_model(size: str, ckpt: str, attn_backend: str):
     t0 = time.time()
     load_model_and_optim_state(ck, model)
     log(f"loaded {ck} in {time.time() - t0:.0f}s ({sum(p.numel() for p in model.parameters()) / 1e9:.2f}B params)")
-    model = model.cuda().to(torch.bfloat16).eval()
+    model = model.to(torch.bfloat16).cuda().eval()  # cast on CPU first: 27B fp32 does not fit an 80 GB GPU
     for p in model.parameters():
         p.requires_grad_(False)
     return model
@@ -114,12 +114,12 @@ def main() -> None:
             log(f"row {i}: converter skipped it")
             continue
         n_mk = int(np.isin(mk[0], [ids_set.doc_start, ids_set.doc_end]).sum())
-        # same answer tokens and same prompt up to the markers: check before trusting the pair
-        assert len(mk[0]) - len(nm[0]) == n_mk, (len(mk[0]), len(nm[0]), n_mk)
+        # the answer tokens must be identical. The lengths differ by the marker count for chunk_by=document;
+        # for chunk_by=line (oolong) wrapping a line also changes how the adjacent newlines merge, so they differ more
         assert mk[0][mk[1]].tolist() == nm[0][nm[1]].tolist(), "answer spans differ"
         ce_mk, n_ans = answer_ce(model, *mk)
         ce_nm, _ = answer_ce(model, *nm)
-        rows.append({"i": i, "T_markers": len(mk[0]), "T_none": len(nm[0]), "n_markers": n_mk, "n_answer": n_ans,
+        rows.append({"i": i, "T_markers": len(mk[0]), "T_none": len(nm[0]), "n_markers": n_mk, "len_diff_minus_markers": len(mk[0]) - len(nm[0]) - n_mk, "n_answer": n_ans,
                      "ce_markers": ce_mk, "ce_none": ce_nm, "dce": ce_mk - ce_nm})
         if i + 1 in (1, 2, 5, 10) or (i + 1) % 25 == 0:
             el = time.time() - t0
