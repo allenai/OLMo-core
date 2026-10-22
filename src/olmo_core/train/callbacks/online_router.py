@@ -41,7 +41,10 @@ class OnlineRouterCallback(Callback):
             for k, v in m.items():
                 self.trainer.record_metric(k, v)
         every = int(router.cfg.log_every)
-        if get_rank() == 0 and every > 0 and (self.step <= 3 or self.step % every == 0):
+        # also print every step that carries the full-context (dense-step) stats: they are computed on the step after a
+        # dense step, which a log_every that is a multiple of dense_every never hits (offline wandb = console only)
+        full = "online_router/rank_corr_fullctx" in m
+        if get_rank() == 0 and every > 0 and (self.step <= 3 or self.step % every == 0 or full):
             log.info(
                 "[online-router] step %d: %s w=%s",
                 self.step,
