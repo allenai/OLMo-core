@@ -15,6 +15,7 @@
 #   BRANCH_FROM    stepN dir to branch from; BRANCH_OPTIM_ONLY=1 for arm C phase 2
 #   WARMUP / DECAY_FRAC   WSD warmup fraction (0.017) / decay fraction (0.1)
 #   SEED, EXTRA (appended trainer flags), NOWANDB=1, CODE_SHA (staged tree)
+#   SMOKE=1        no model-only export and no end-of-run full checkpoint (mid-run SAVE_INTERVAL ones still)
 #SBATCH --job-name=o3cd-arm
 #SBATCH --partition=jsteinhardt
 #SBATCH --qos=preemptive_high
@@ -65,7 +66,8 @@ ARGS=(--task cpt --model-family olmo3 --model-scale 7b $VAR
   --max-tokens $(( STEPS * TOK_PER_STEP ))
   --activation-checkpointing full --shard-degree "$NGPU" --attn-backend flash_2 --no-compile
   --save-folder "$SAVE" --work-dir "$ROOT/work/$RUN" --run-name "$RUN"
-  --wandb-group "${WANDB_GROUP:-o3cd-q3-7b}" --seed "${SEED:-0}" --save-checkpoint)
+  --wandb-group "${WANDB_GROUP:-o3cd-q3-7b}" --seed "${SEED:-0}")
+if [ -n "${SMOKE:-}" ]; then ARGS+=(--no-final-checkpoint); else ARGS+=(--save-checkpoint); fi
 [ -n "${HARD_STOP:-}" ] && ARGS+=(--max-steps "$HARD_STOP")
 [ -n "${SAVE_INTERVAL:-}" ] && ARGS+=(--save-interval "$SAVE_INTERVAL")
 [ -n "${BRANCH_FROM:-}" ] && ARGS+=(--branch-from "$BRANCH_FROM")
