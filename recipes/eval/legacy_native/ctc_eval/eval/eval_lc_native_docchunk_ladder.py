@@ -120,12 +120,17 @@ def _ctc_registry():
     repo's ``ctc/src`` (the eval runners put only ``src`` and ``recipes/eval/legacy_native`` on the
     path). Plain ``grouping`` is not in ctc's canonical set; it is registered here from the vendored
     factory with the same arguments olmo-eval's ``ctc_suite`` uses.
+
+    Probe ``ctc.format``, not ``ctc``: run from the repo root, the ``ctc/`` folder (no
+    ``__init__.py``) imports as an empty namespace package and ``import ctc`` succeeds.
     """
     try:
-        import ctc  # noqa: F401
+        import ctc.format  # noqa: F401
     except ImportError:
         here = os.path.dirname(os.path.abspath(__file__))
         sys.path.insert(0, os.path.normpath(os.path.join(here, *[os.pardir] * 5, "ctc", "src")))
+        for name in [m for m in sys.modules if m == "ctc" or m.startswith("ctc.")]:
+            del sys.modules[name]
     import importlib
 
     from ctc.format import registry
