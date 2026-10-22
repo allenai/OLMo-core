@@ -102,6 +102,18 @@ def _yarn_by_layer(model_cfg: dict) -> Dict[str, Optional[float]]:
     return out
 
 
+#: Tokenizers with dolma2's exact ids. train_ctc_suite records the patched OLMo 3 marker tokenizer (dolma2 with the
+#: unused <|extra_id_1|>/<|extra_id_2|> RENAMED, ids unchanged; olmo3_configs.OLMO3_MARKER_TOKENIZER) in config.json.
+_OLMO3_SAME_IDS = ("allenai/dolma2-tokenizer", "allenai/dolma3-tokenizer")
+_OLMO3_MARKER_COPIES = ("ctc_olmo3/tokenizer", "Olmo-3-1025-7B-docchunk")
+
+
+def _same_ids_tokenizer(tok: str, family: str) -> bool:
+    if family != "olmo3_7b":
+        return False
+    return tok in _OLMO3_SAME_IDS or any(tok.rstrip("/").endswith(c) for c in _OLMO3_MARKER_COPIES)
+
+
 def check_ckpt_config(ckpt_dir: str, cfg, family: str) -> dict:
     """Cross-check the architecture against the checkpoint's own config.json when it has one.
 
@@ -119,7 +131,7 @@ def check_ckpt_config(ckpt_dir: str, cfg, family: str) -> dict:
     if got != want:
         raise SystemExit(f"{path}: architecture {got} != {family} config {want}")
     tok = ((raw.get("dataset") or {}).get("tokenizer") or {}).get("identifier")
-    if tok is not None and tok != FAMILIES[family][2]:
+    if tok is not None and tok != FAMILIES[family][2] and not _same_ids_tokenizer(tok, family):
         raise SystemExit(f"{path}: tokenizer {tok!r} != {FAMILIES[family][2]!r}")
     saved = _yarn_by_layer(m)
     built = {str(k): float(b.sequence_mixer.rope.scaling.factor) for k, b in (cfg.block_overrides or {}).items()
