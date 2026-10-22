@@ -192,6 +192,17 @@ ARM_EXTRA.update({
     # pad-free dense wall-clock reference: the soft-token path (strips padding, length-sorts micro-batches) with
     # EVERY document kept whole -- same tokens and maths as dense; its scores double as a check that it IS dense
     "densepf": "--st-gold-blind --st-keep-prob 1.0 --st-drop-slots",
+    # ds64's per-task Pareto winners, verbatim from research/token_routing/ds64/launch_ds64.py (2026-10-22 per-task
+    # reproduction in the fast8k setting: single-task g16M shards, 8k rows, unpacked, 16 rows/step)
+    "chk16": ("--st-gold-blind --st-keep-prob 0.0 --st-header-stop-id 25 --st-header-stop-count 1 --st-header-extra-tokens 16 "
+              f"--st-slot-mode cent_cmean --st-slot-tokenizer {W}/hf_tokenizers/Qwen3.5-0.8B-Base"),
+    "chk64": ("--st-gold-blind --st-keep-prob 0.0 --st-header-stop-id 25 --st-header-stop-count 1 --st-header-extra-tokens 64 "
+              f"--st-slot-mode cent_cmean --st-slot-tokenizer {W}/hf_tokenizers/Qwen3.5-0.8B-Base"),
+    "flk64": ("--st-gold-blind --st-keep-prob 0.0 --st-header-stop-id 5491 --st-header-stop-count 1 --st-keep-token-rule first_last "
+              f"--st-keep-token-k 64 --st-slot-mode cent_cmean --st-slot-tokenizer {W}/hf_tokenizers/Qwen3.5-0.8B-Base"),
+    "ck64ds": ("--st-gold-blind --st-keep-prob 0.0 --st-header-stop-id 5491 --st-header-stop-count 1 --st-header-extra-tokens 64 "
+               f"--st-slot-mode cent_cmean --st-slot-tokenizer {W}/hf_tokenizers/Qwen3.5-0.8B-Base"),
+    "ohdr33": "--st-gold-blind --st-keep-prob 0.3333 --st-header-stop-id 25 --st-header-stop-count 3",
     "tier67a60m48": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.6 --st-keep-token-min 48 {_P8}",
     "tier67flm32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 32 {_P8}",
     "tier50flm32": f"{_gr(0.5)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.4 --st-keep-token-min 32 {_P8}",
@@ -292,14 +303,15 @@ MT_TASKS = {"mt4": MT4_TASKS,
 
 
 def parse_budget(task, budget):
-    """``8M``/``16M``/... -> the ``<task>_g<budget>`` pool shard. ``s<rows>[@<steps>]`` -> the merged
+    """``8M``/``16M``/... -> the ``<task>_g<budget>`` pool shard (``16M@31``: cut at 31 steps; ``16M_eg``: the oolong eg pool). ``s<rows>[@<steps>]`` -> the merged
     first-N shard ``<task>s<rows>`` (rows per task; mt4s488 is a prefix of mt4s976, of mt4s1464), optionally
     cut at ``<steps>`` optimizer steps (the dense matched-FLOP curve). Returns (data dir, examples, max_steps)."""
     if budget.startswith("s"):
         rows, _, steps = budget[1:].partition("@")
         n = int(rows) * len(MT_TASKS.get(task, [task]))
         return f"{SHARDS}/{task}s{rows}", n, int(steps or 0)
-    return f"{SHARDS}/{task}_g{budget}", EXAMPLES.get(budget, 0), 0
+    base, _, steps = budget.partition("@")  # 16M@31 = the g16M pool cut at 31 steps (per-task dense curve)
+    return f"{SHARDS}/{task}_g{base}", EXAMPLES.get(base.split("_")[0], 0), int(steps or 0)
 
 
 def arm_args(task, arm, budget):
