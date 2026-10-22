@@ -1224,6 +1224,11 @@
    "ex": "01M5JPSWEJP4PJT3XAC3D0R0MA",
    "train_run": "f8k-nq-otr10M8-16M-tdp-lr2e-06",
    "task": "nq"
+  },
+  "f8k-oolong-otr10M8-16M_eg-tdp-lr2e-06-evoolong": {
+   "ex": "01M5JPTTTA4PX9K3JX7TH2DPHK",
+   "train_run": "f8k-oolong-otr10M8-16M_eg-tdp-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
