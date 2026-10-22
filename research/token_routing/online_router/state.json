@@ -257,6 +257,60 @@
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
+  },
+  "f8k-contradiction-otr10M8-16M-tdp-lr2e-06": {
+   "ex": "01M5JETJJP0H52DD80YFC2TJFB",
+   "arm": "otr10M8",
+   "budget": "g16M",
+   "lr": 2e-06,
+   "mix": "contradiction",
+   "seed": 0,
+   "task": "contradiction"
+  },
+  "f8k-nq-otr10M8-16M-tdp-lr2e-06": {
+   "ex": "01M5JEVBREHVK6WNCJK5W9D0S2",
+   "arm": "otr10M8",
+   "budget": "g16M",
+   "lr": 2e-06,
+   "mix": "nq",
+   "seed": 0,
+   "task": "nq"
+  },
+  "f8k-outlier-otr10M8-16M-tdp-lr2e-06": {
+   "ex": "01M5JEW4HHSWHFWBETS71VENWN",
+   "arm": "otr10M8",
+   "budget": "g16M",
+   "lr": 2e-06,
+   "mix": "outlier",
+   "seed": 0,
+   "task": "outlier"
+  },
+  "f8k-oolong-otr10M8-16M_eg-tdp-lr2e-06": {
+   "ex": "01M5JEWYZ4Q5A9D05FS6EV57E5",
+   "arm": "otr10M8",
+   "budget": "g16M_eg",
+   "lr": 2e-06,
+   "mix": "oolong",
+   "seed": 0,
+   "task": "oolong"
+  },
+  "f8k-contradiction-otr30M8-16M-tdp-lr2e-06": {
+   "ex": "01M5JEXRXP1V8EY3CBZET0QGZC",
+   "arm": "otr30M8",
+   "budget": "g16M",
+   "lr": 2e-06,
+   "mix": "contradiction",
+   "seed": 0,
+   "task": "contradiction"
+  },
+  "f8k-outlier-otr30M8-16M-tdp-lr2e-06": {
+   "ex": "01M5JEYHRJ9BAPFQ29NF5H2KNJ",
+   "arm": "otr30M8",
+   "budget": "g16M",
+   "lr": 2e-06,
+   "mix": "outlier",
+   "seed": 0,
+   "task": "outlier"
   }
  },
  "evals": {
