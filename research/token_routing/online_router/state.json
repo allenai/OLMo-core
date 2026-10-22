@@ -311,6 +311,22 @@
    "mix": "outlier",
    "seed": 0,
    "task": "outlier"
+  },
+  "f8k-mt4-dh10M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5JFRGYWJJRB5TK1R3QP9MFW",
+   "arm": "dh10M8",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-dh10M8de0-s1464-tdb-lr2e-06": {
+   "ex": "01M5JFS9WR0DNYX8EK4GYSZ0ZN",
+   "arm": "dh10M8de0",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
