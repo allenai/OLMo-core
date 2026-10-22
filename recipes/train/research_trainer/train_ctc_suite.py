@@ -2157,7 +2157,11 @@ def parse_args() -> argparse.Namespace:
                 "--st-keep-token-rule is only honoured by --variant softtoken "
                 f"(got --variant {opts.variant!r}); it would be ignored."
             )
-        if opts.st_keep_token_k <= 0:
+        if opts.st_keep_token_rule == "online":
+            # the online router's budget is --st-otr-keep-frac, not --st-keep-token-k
+            if not 0.0 < opts.st_otr_keep_frac <= 1.0:
+                ap.error("--st-keep-token-rule online needs 0 < --st-otr-keep-frac <= 1.")
+        elif opts.st_keep_token_k <= 0:
             ap.error(f"--st-keep-token-rule {opts.st_keep_token_rule} needs --st-keep-token-k > 0.")
         # first_last / rule ON TOP of a fixed real prefix is the devloss grid's gold_fl20p8
         # construction (the prefix keeps the `Document [N]:` id; the K budget then applies to the
