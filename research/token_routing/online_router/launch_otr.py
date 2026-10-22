@@ -58,6 +58,9 @@ ARMS = {
     "otr10M8": otr(0.1, drop=8),
     # cheaper mid-stack settings (parent session, 2026-10-22): shallower full-context prefix, fewer dense steps
     "otr10M4": otr(0.1, drop=4),
+    "otr05M8": otr(0.05, drop=8),   # frontier push (parent, 2026-10-22): keep 5%
+    # router + whole-block skip: every token also skips GDN blocks 20 / 24 / 28 (full attention at 3, 7, 11, ...)
+    "otr10M8sk3": otr(0.1, drop=8, extra="--train-skip-layers 20,24,28"),
     "otr10M7": otr(0.1, drop=7),    # right before the block-7 full attention (direct test of the full-attention hypothesis)
     "otr10M6": otr(0.1, drop=6),    # split-point bracket around 8 (parent, 2026-10-22): before the block-7 full attention
     "otr10M12": otr(0.1, drop=12),  # later split: floor 12/32 of the dense cost

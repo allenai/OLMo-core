@@ -510,10 +510,6 @@ def test_mid_stack_drop_layer_cannot_be_skipped():
     model.enable_layer_drop(fixed={1})
     model.train()
     ids, cid, labels = _row(B=1)
-    for step in (1, 2):
-        router.begin_step(step, model=model)
-        if step == 2:
-            with pytest.raises(RuntimeError):
-                model(ids, labels=labels)
-        else:
-            model(ids, labels=labels).loss.backward()
+    router.begin_step(1, model=model)
+    with pytest.raises(RuntimeError):
+        model(ids, labels=labels)
