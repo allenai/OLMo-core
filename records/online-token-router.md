@@ -24,6 +24,26 @@ the fine-tuning itself.
 (`SoftTokenOptions` fields; `recipes/train/variants_options_test.py` guards them). Tests:
 `src/test/nn/online_token_router_test.py`. Offline probe and launcher: `research/token_routing/online_router/`.
 
+## Objective (Prasann, 2026-10-22, relayed by the parent session)
+
+"I want the router to be train-time only by the way, and the grad-norm dependence is important as the goal should
+be for the truncated forward/backward to be as similar as possible to the un-truncated forward/backward."
+
+* **Train-time only.** The router acts only inside training forwards (`model.training` and soft-token compaction).
+  Eval and inference run the full context through every layer.
+* **The objective is gradient fidelity.** The truncated pass should reproduce the full pass: answer loss, and above
+  all the parameter gradient. The per-token gradient norm is the central target.
+* **Measured directly.**
+  * Offline: `grad_fidelity.py` gives the cosine, relative error and norm ratio between the truncated and full
+    parameter gradients on held-out rows, per rule × budget × drop point.
+  * Online: `online_router/fid_mass_*` gives the share of the full-pass squared gradient mass the router's top-k
+    keeps.
+* **Cost of the full-pass measurement.** It is AMORTISED and CHARGED. Router arms take a full-context step every 8
+  steps (`--st-otr-dense-every 8`, the `launch_otr.py` default). These are ordinary dense training steps, so the
+  FLOP meter charges them at the full cost. They give unbiased full-pass targets for every token and the
+  `fid_mass_*` estimate. On the other steps the targets come from the truncated pass itself: cheap, but measured
+  in the compacted context (agreement with the full-pass ranking 0.40–0.66, below).
+
 ## Design
 
 **What is routed.** Document body tokens only. Markers, system prompt, query and answer always stay. Dropped
@@ -86,7 +106,9 @@ overhead goes into `model._flop_extra_actual` and is all-reduced and added to `f
 pass, scoring (2F per body token), the target hook (2D per sampled token), the ridge statistics (2F²N), the
 solve (F³/3 + 4F²) and the mid-stack adjustment. The x-axis is therefore honest.
 
-**Diagnostics** (`online_router/*` in wandb and the job log): `keep_frac`, `dense`,
+**Diagnostics** (`online_router/*` in wandb and the job log): `fid_mass_router` / `fid_mass_oracle` /
+`fid_mass_random` (full-context steps only: share of full-pass squared gradient mass kept by the router's row-level
+top-k vs the true top-k vs random), `keep_frac`, `dense`,
 `rank_corr_explore` / `rank_corr_kept` (Spearman of the pre-update scores with the measured targets), `leak_auc`,
 `fit_samples`, weight norms, `w_in_query`, `w_gold`, `mid_row_frac`.
 
@@ -141,13 +163,28 @@ What it says:
 
 Recorded with `ops result add --check` (metric prefix `otrprobe_`, run `otr-probe-base-mt4s488`).
 
+## Gradient fidelity of truncated passes (offline, parameter gradient)
+
+`research/token_routing/online_router/grad_fidelity.py`, Beaker 01M5HBH3XHQ45E55RA7XZ3N77X.
+
+* **Setup.** Base markerfix on mt4s488. Held-out rows 80-91 of each task (⚠ eval_size=12 per task), disjoint from
+  every fit row. One full pass per row gives `g_full`. Then one truncated pass per rule × budget {0.1, 0.3, 0.5} ×
+  drop point {input, mid8}.
+* **Metrics.** `cos(g_drop, g_full)` over all parameters and over the blocks only,
+  `||g_drop − g_full|| / ||g_full||`, the norm ratio, and ΔCE. The reference is the cosine between two unrelated
+  rows' full gradients.
+* **Results.** _pending_.
+
 ## Smoke training (step 5)
 
-`f8k-mt4-otr30L4-s488-otr-lr2e-06`, Beaker 01M5H9TS9V980WP6V5BPESTSTQ.
+`f8k-mt4-otr30L4-s488-otr-lr2e-06` and companions (Beaker ids below).
 
 * **Recipe.** mt4s488, 122 steps, 16 rows/step, 2 GPUs, LR 2e-6 (the rule arms' LR), input drop.
-* **Router.** keep 0.3, doc_share 1, explore 0.1, layer-4 prefix features, ridge 1.0, 512 samples per row (set
-  before the probe's λ result).
+* **Router.** keep 0.3, doc_share 1, explore 0.1, layer-4 prefix features, ridge 0.1, 2,048 samples per row, a
+  full-context step every 8 steps.
+* **Runs.** Arms otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBBZ426B8A5Y0G3K4N9KCG, otr30M8
+  01M5HBD2K8W5772DDZN4RY1H1J. Two earlier launches were cancelled while still pending: one ran on a stale commit,
+  the other predated the full-context steps.
 * **Results.** _pending_.
 
 ## Proposed run matrix
