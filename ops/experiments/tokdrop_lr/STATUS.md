@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-lra-q35-4b
-next_step: UNIVERSAL-RULE SCREEN running (4-task mt4s488 mix, LR 2e-6, Lambda). Round 1 node02: bfd33/bfd50 (gold + 1/3, 1/2 decoys whole + p8fl20), gbfl20p8, gbflk64p8; dense at 31/61 steps (+ existing 122) = matched-FLOP curve. Round 2 node05: tier33fl, tier33sp (two-tier keep, kept_doc_k 0.5 / k 0.1), gbsp20 (gold-blind random 12-token spans 20%), tier33leansp (spans, 0.3 / 0.05). Evals auto-queued by scratchpad watchers; compare with research/token_routing/ds64_fast8k/collect_rule_screen.py. Goal (Prasann 2026-10-21): one rule, optional per-doc gold flag, Pareto on all 22 tasks; iterate.
+next_step: Round 5 (lrc, true two-tier + floor rules after the option-field fix) training on Lambda; evals auto-queued (batched decode). Then matched-FLOP table via collect_rule_screen.py, ops result add for all screen rows, artifact update. LABEL WARNING: lrb runs named tier33*/tier67* actually ran gold+decoys WHOLE with rest at --st-keep-token-k (kept_doc_k dropped); gbfl20m32p8/m48p8 (lrb) are plain gbfl20p8 repeats (floor dropped).
 ---
 
 # tokdrop_lr
@@ -84,6 +84,17 @@ tokens per step, so its best LR may differ from dense's. Stage T2-LR of
 
 ## Next step
 See `next_step` above.
+
+## Universal-rule screen (2026-10-21/22)
+- Goal (Prasann): ONE keep rule, optional per-doc 0/1 gold flag, Pareto on all 22 tasks; start with the 4-task mix.
+- Recipe: mt4s488 mix (1,952 rows, 122 steps), LR 2e-6 for rules; dense 5e-6 at 31/61/122 steps = matched-FLOP curve.
+- Results so far (8k, Δf1 vs dense at matched FLOPs, eval_size 500): gold-blind fraction rules (fl20p8, spans20) fail
+  contradiction (−0.17 / −0.39); gold-aware rules with decoys whole fail outlier (bfd33 −0.13, bfd50 −0.07, gold+⅔ whole
+  −0.06); gold-blind fixed 64 tokens/doc (gbflk64p8, 0.66× FLOPs) is closest (worst −0.03 nq); gbflk32p8 (0.47×) ties
+  contradiction/outlier/oolong, nq −0.07. At 2k several rules tie/beat dense on all four.
+- Run-to-run noise (3 accidental gbfl20p8 repeats): ±~0.02 contradiction, ±~0.03 outlier at 8k.
+- BUG (fixed 2026-10-22, commit after f889c827e): --st-kept-doc-k / --st-keep-token-min / --st-pad-multiple /
+  --st-span-len were not SoftTokenOptions fields → silently defaulted. recipes/train/variants_options_test.py guards it.
 
 ## Open issues / traps
 - The Beaker image (OLMoCoreBeakerImage.stable) now ships torch 2.13.0+cu129, while this branch was
