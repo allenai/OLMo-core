@@ -56,10 +56,17 @@ def list_pool(api):
 def read_docs(path):
     import pyarrow as pa
 
+    bad = 0
     with pa.input_stream(path, compression="zstd") as s:
         for line in io.TextIOWrapper(s, encoding="utf-8"):
-            d = json.loads(line)
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:  # a few pool lines are truncated; skip, never guess
+                bad += 1
+                continue
             yield d["id"], d["text"]
+    if bad:
+        log(f"skipped {bad} malformed JSON line(s) in {os.path.basename(path)}")
 
 
 def windows(ids, row_len, max_windows):
@@ -165,28 +172,42 @@ def build_dev(api, tok, by, n_rows, row_len, cache, rng, train_ids):
     return rows[:n_rows], prov[:n_rows]
 
 
-def build_short(n_rows, row_len, work):
-    """Cut the EOS-separated document stream of one stage-3 shard into row_len windows, using only
-    documents shorter than row_len (so every row is short-document text, several documents per row)."""
-    dst = os.path.join(work, "longmino0625_000500.npy")
-    if not os.path.exists(dst):
-        log(f"[short] downloading {SHORT_SHARD_URL}")
-        # olmo-data.org rejects urllib's default User-Agent with 403
-        req = urllib.request.Request(SHORT_SHARD_URL, headers={"User-Agent": "curl/8.5.0"})
-        with urllib.request.urlopen(req) as r, open(dst + ".part", "wb") as f:
-            while chunk := r.read(1 << 24):
-                f.write(chunk)
-        os.replace(dst + ".part", dst)
-    a = np.fromfile(dst, dtype=np.uint32)
-    cuts = np.flatnonzero(a == EOS)
-    starts = np.concatenate([[0], cuts[:-1] + 1])
-    keep = [(s, e) for s, e in zip(starts, cuts) if 64 <= e + 1 - s <= row_len - 1]
-    stream = np.concatenate([a[s : e + 1] for s, e in keep])  # each doc keeps its trailing EOS
+def build_short(n_rows, row_len, work, shards, seed):
+    """Cut a shuffled stream of short (< row_len) documents drawn from several already-tokenized OLMo 3
+    stage-3 shards into row_len windows (several documents per row). One shard alone is a single narrow
+    source (000500 = LLM-written math solutions), hence the spread."""
+    docs = []
+    for sh in shards:
+        url = SHORT_SHARD_URL.replace("000500", sh)
+        dst = os.path.join(work, f"longmino0625_{sh}.npy")
+        if not os.path.exists(dst):
+            log(f"[short] downloading {url}")
+            # olmo-data.org rejects urllib's default User-Agent with 403
+            req = urllib.request.Request(url, headers={"User-Agent": "curl/8.5.0"})
+            with urllib.request.urlopen(req) as r, open(dst + ".part", "wb") as f:
+                while chunk := r.read(1 << 24):
+                    f.write(chunk)
+            os.replace(dst + ".part", dst)
+        a = np.fromfile(dst, dtype=np.uint32)
+        cuts = np.flatnonzero(a == EOS)
+        starts = np.concatenate([[0], cuts[:-1] + 1])
+        mine = [(sh, a[s : e + 1]) for s, e in zip(starts, cuts) if 64 <= e + 1 - s <= row_len - 1]
+        log(f"[short] shard {sh}: {len(mine)} short docs")
+        docs += mine
+    random.Random(seed).shuffle(docs)
     w = row_len - 1
-    n = min(n_rows, len(stream) // w)
-    rows = [np.concatenate([[EOS], stream[i * w : (i + 1) * w]]).astype(np.uint32) for i in range(n)]
-    prov = [(f"000500:win{i}", "short", 0, 0, w) for i in range(n)]
-    log(f"[short] {len(keep)} short docs -> {n} rows")
+    rows, prov, buf, used = [], [], [], set()
+    for sh, d in docs:  # each doc keeps its trailing EOS
+        buf.append(d)
+        used.add(sh)
+        if sum(len(b) for b in buf) >= w:
+            flat = np.concatenate(buf)
+            rows.append(np.concatenate([[EOS], flat[:w]]).astype(np.uint32))
+            prov.append((f"shards:{'+'.join(sorted(used))}", "short", 0, 0, w))
+            buf, used = [flat[w:]] if len(flat) > w else [], set()
+            if len(rows) >= n_rows:
+                break
+    log(f"[short] {len(docs)} short docs from {len(shards)} shards -> {len(rows)} rows")
     return rows, prov
 
 
@@ -203,6 +224,10 @@ def main():
     ap.add_argument("--train-buckets", default="15,16")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--only", default="train,dev,short")
+    ap.add_argument("--dev-name", default="dev32k")
+    ap.add_argument("--short-name", default="short4k")
+    ap.add_argument("--short-shards", default="000500",
+                    help="comma list of dolma3_longmino_0625 shard ids for the short-document guard")
     a = ap.parse_args()
 
     from huggingface_hub import HfApi
@@ -241,13 +266,15 @@ def main():
 
     if "dev" in only:
         rows, prov = build_dev(api, tok, by, a.dev_rows, a.row_len, a.cache, rng, train_ids)
-        write_shard(os.path.join(a.out_root, "dev32k"), rows, prov, a.row_len,
+        write_shard(os.path.join(a.out_root, a.dev_name), rows, prov, a.row_len,
                     {"source": POOL, "buckets": ">=17", "seed": a.seed})
 
     if "short" in only:
-        rows, prov = build_short(a.short_rows, a.short_row_len, a.cache)
-        write_shard(os.path.join(a.out_root, "short4k"), rows, prov, a.short_row_len,
-                    {"source": SHORT_SHARD_URL, "note": "packed short docs, EOS-separated, EOS-padded tail"})
+        shards = a.short_shards.split(",")
+        rows, prov = build_short(a.short_rows, a.short_row_len, a.cache, shards, a.seed)
+        write_shard(os.path.join(a.out_root, a.short_name), rows, prov, a.short_row_len,
+                    {"source": SHORT_SHARD_URL.replace("000500", "{" + ",".join(shards) + "}"),
+                     "note": "short docs (< row_len) shuffled across shards, EOS-separated, packed"})
     log("DONE")
 
 
