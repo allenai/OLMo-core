@@ -204,3 +204,68 @@ def test_online_rule_requires_router():
         model.enable_pooled_soft_tokens(
             DS, DE, EOS, placeholder_id=PH, drop_slots=True, keep_token_rule="online", keep_token_k=0.3
         )
+
+
+def _gpu_hybrid():
+    """3 blocks: GDN, attention, GDN (the Qwen3.5 hybrid's shape in miniature)."""
+    from olmo_core.nn.attention import AttentionConfig, GatedDeltaNetConfig
+    from olmo_core.nn.feed_forward import FeedForwardConfig
+    from olmo_core.nn.layer_norm import LayerNormConfig, LayerNormType
+    from olmo_core.nn.lm_head import LMHeadConfig
+    from olmo_core.nn.rope import RoPEConfig, RoPEType
+    from olmo_core.nn.transformer import TransformerBlockConfig, TransformerBlockType, TransformerConfig
+
+    torch.manual_seed(0)
+    ln = LayerNormConfig(name=LayerNormType.rms, bias=False)
+    ff = FeedForwardConfig(hidden_size=512, bias=False)
+    gdn = TransformerBlockConfig(name=TransformerBlockType.reordered_norm, sequence_mixer=GatedDeltaNetConfig(n_heads=8),
+                                 layer_norm=ln, feed_forward=ff)
+    attn = TransformerBlockConfig(name=TransformerBlockType.reordered_norm,
+                                  attention=AttentionConfig(n_heads=8, rope=RoPEConfig(name=RoPEType.default)),
+                                  layer_norm=ln, feed_forward=ff)
+    cfg = TransformerConfig(d_model=256, vocab_size=9100, n_layers=3, block=gdn, block_overrides={1: attn},
+                            lm_head=LMHeadConfig(layer_norm=ln, bias=False))
+    model = cfg.build(init_device="cuda")
+    model.init_weights()
+    return model
+
+
+@pytest.mark.gpu
+def test_online_rule_on_gdn_hybrid_gpu():
+    """GPU, GDN + attention: features from a no-grad prefix pass through blocks [0, 2) (GDN and
+    attention on the FULL row), compaction to the budget, targets at the compacted embedding output,
+    a refit, and the prefix pass charged as forward-only FLOPs."""
+    from olmo_core.testing import requires_gpu  # noqa: F401
+    from olmo_core.testing.utils import requires_fla  # noqa: F401
+
+    if not torch.cuda.is_available():
+        pytest.skip("needs a GPU")
+    pytest.importorskip("fla")
+    model = _gpu_hybrid()
+    router = OnlineTokenRouter(
+        OnlineRouterConfig(keep_frac=0.3, explore_frac=0.2, feature_layer=2, samples_per_row=64),
+        doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=256,
+    )
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.3, online_router=router,
+    )
+    model.train()
+    ids, cid, labels = _row(B=2)
+    ids, labels = ids.cuda(), labels.cuda()
+    prefix_flops = sum(int(b.num_flops_per_token(ids.shape[1])) for b in list(model.blocks.values())[:2]) / 3.0
+    for step in (1, 2, 3):
+        router.begin_step(step, model=model)
+        model._flop_extra_actual = 0.0
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+        e = router._pending[-1]
+        assert e["target"] is not None and e["ok"].all() and torch.isfinite(e["target"]).all()
+        # the prefix pass ran on the full (trimmed) row and was charged
+        assert model._flop_extra_actual >= prefix_flops * ids.numel() * 0.99
+        comp = model._soft_token_compaction
+        if step >= 2:
+            assert comp["tokens_out"] < comp["tokens_in"]
+        model._soft_token_compaction = None
+    assert router.w is not None and torch.isfinite(router.w).all()
