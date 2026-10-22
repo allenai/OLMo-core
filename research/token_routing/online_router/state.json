@@ -89,6 +89,46 @@
    "arm": "otr10M8",
    "budget": "s1464",
    "lr": 2e-06
+  },
+  "f8k-mt4-otr30M8sd1-s976-tdb-lr2e-06": {
+   "ex": "01M5J7S4K2C6N44NSDJJVWZBK6",
+   "arm": "otr30M8",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 1
+  },
+  "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06": {
+   "ex": "01M5J7TE07F3DMXK52R9YF49JE",
+   "arm": "otr30M8",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 1
+  },
+  "f8k-mt11-otr30M8-s480-tdb-lr2e-06": {
+   "ex": "01M5J7W2ZJV68KSEC4RC38V804",
+   "arm": "otr30M8",
+   "budget": "s480",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr30M8-s720-tdb-lr2e-06": {
+   "ex": "01M5J7X0NJDTDXHHQFM2QK32HX",
+   "arm": "otr30M8",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-rnd30M8-s720-tdb-lr2e-06": {
+   "ex": "01M5J7XXDX36FDB55MB6TT62YW",
+   "arm": "rnd30M8",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
