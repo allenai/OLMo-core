@@ -1741,6 +1741,32 @@ def parse_args() -> argparse.Namespace:
         "0 = marker documents (historical).",
     )
     ap.add_argument(
+        "--st-keep-recent",
+        type=int,
+        default=0,
+        help="softtoken positional-block mode: the last N content tokens of every row are always "
+        "kept (dense recent context); the keep rule applies to the tokens before them. 0 = off.",
+    )
+    ap.add_argument(
+        "--st-keep-ramp",
+        default="",
+        help="softtoken positional-block mode: 'a,b' = the per-block keep fraction ramps linearly "
+        "from a on the row's first block to b on its last (far context compressed hardest when "
+        "a < b). Replaces --st-keep-token-k when a token rule (first_last / first / rule / spans) "
+        "is set, else --st-keep-prob (whole blocks). Empty = off.",
+    )
+    ap.add_argument(
+        "--tokexit-layer",
+        dest="st_tokexit_layer",
+        type=int,
+        default=-1,
+        help="softtoken positional-block mode, token exit (olmo_core.nn.token_exit): the tokens "
+        "the keep rule drops run blocks [0, L) on the full row and are compacted out (original "
+        "positions kept) at the input of block L; kept tokens run every block, dropped tokens' "
+        "labels get no loss. 0 = identical to the input drop. -1 (default) = off. Needs "
+        "--st-block-size > 0 and --st-drop-slots.",
+    )
+    ap.add_argument(
         "--st-span-len",
         type=int,
         default=12,
@@ -2147,6 +2173,12 @@ def parse_args() -> argparse.Namespace:
                 ap.error(f"--variant softtoken with --pack (segment mode): {', '.join(bad)}")
         if opts.st_block_size > 0 and (not opts.st_gold_blind or opts.st_header_stop_id is not None):
             ap.error("--st-block-size needs --st-gold-blind and no --st-header-stop-id")
+        if (opts.st_keep_recent > 0 or opts.st_keep_ramp) and opts.st_block_size <= 0:
+            ap.error("--st-keep-recent / --st-keep-ramp need --st-block-size > 0")
+        if opts.st_tokexit_layer >= 0 and (opts.st_block_size <= 0 or not opts.st_drop_slots):
+            ap.error("--tokexit-layer needs --st-block-size > 0 and --st-drop-slots")
+        if opts.st_tokexit_layer >= 0 and opts.pack:
+            ap.error("--tokexit-layer runs on padded one-example rows (no --pack)")
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False
@@ -2159,6 +2191,10 @@ def parse_args() -> argparse.Namespace:
     )
     if opts.st_block_size > 0 and opts.variant != "softtoken":
         ap.error(f"--st-block-size is only honoured by --variant softtoken (got {opts.variant!r})")
+    if opts.variant != "softtoken" and (
+        opts.st_keep_recent > 0 or opts.st_keep_ramp or opts.st_tokexit_layer >= 0
+    ):
+        ap.error("--st-keep-recent / --st-keep-ramp / --tokexit-layer need --variant softtoken")
     if opts.st_slot_mode != "mean" and opts.variant != "softtoken":
         ap.error(
             f"--st-slot-mode is only honoured by --variant softtoken (got {opts.variant!r}); "

@@ -47,7 +47,7 @@ it reduces to plain causal attention.
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -108,7 +108,7 @@ def resolve_keep_docs(
     n_docs: int,
     *,
     holder: Optional["PooledDocKeepHolder"],
-    keep_prob: float,
+    keep_prob: Union[float, torch.Tensor],
     keep_seed: int,
     mix_p_full: float = 0.0,
     mix_call: int = 0,
@@ -135,6 +135,10 @@ def resolve_keep_docs(
         signature. The signature is a hash of the CHUNK LAYOUT only, which is identical for every
         row when the documents are fixed position blocks (``positional_block_size``) -- without a
         salt every such row would keep the same blocks. ``None`` is bit-identical to before.
+
+    ``keep_prob`` may be a ``(B, n_docs)`` (or broadcastable) tensor of per-document keep
+    probabilities, e.g. a position ramp over positional blocks; the uniform draw is unchanged, so
+    a scalar and a constant tensor keep exactly the same documents.
     """
     B = chunk_ids.shape[0]
     device = chunk_ids.device

@@ -160,6 +160,8 @@ class Transformer(nn.Module):
         self._block_skip: Optional[Dict[str, Any]] = None
         # Train-time whole-block skipping (fixed set / LayerDrop): set by ``enable_layer_drop``.
         self._layer_drop: Optional[Any] = None
+        # Token exit (input-drop keep rule, dropped tokens leave at a layer): ``enable_token_exit``.
+        self._token_exit: Optional[Any] = None
         # Deliver router budget gradients through each block's output instead of a separate loss
         # term (olmo_core.nn.budget_attach): required under activation checkpointing, where the
         # separate term forces every block to be recomputed at the start of backward.
@@ -369,6 +371,8 @@ class Transformer(nn.Module):
         kept_doc_k: Optional[float] = None,
         keep_token_min: int = 0,
         positional_block_size: int = 0,
+        keep_recent: int = 0,
+        keep_ramp: Optional[Tuple[float, float]] = None,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -504,6 +508,15 @@ class Transformer(nn.Module):
             :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep` hook); refuses
             ``header_stop_id`` (no header to anchor) and paired distillation. ``0`` (default) =
             marker documents, bit-identical to before.
+        :param keep_recent: Positional-block mode only. ``> 0`` = the last ``keep_recent`` content
+            tokens of every row are always kept (dense recent context); the keep rule applies to
+            the tokens before them, so a block that straddles the boundary is ruled on its
+            earlier part only. ``0`` (default) = off.
+        :param keep_ramp: Positional-block mode only. ``(a, b)`` = the per-block keep fraction
+            ramps linearly over a row's blocks, from ``a`` on the first block to ``b`` on the last
+            (far context compressed hardest when ``a < b``). It replaces ``keep_token_k`` when a
+            per-block token rule is active (``first_last`` / ``first`` / ``rule`` / ``spans``),
+            else ``keep_prob`` (whole-block draw). ``None`` (default) = the scalar fraction.
         """
         if self._document_chunk_attention is not None:
             raise OLMoConfigurationError(
@@ -540,6 +553,19 @@ class Transformer(nn.Module):
             )
         if positional_block_size < 0:
             raise OLMoConfigurationError("positional_block_size must be >= 0")
+        if (keep_recent > 0 or keep_ramp is not None) and positional_block_size <= 0:
+            raise OLMoConfigurationError(
+                "keep_recent / keep_ramp are position-aware rules of positional-block mode; "
+                "set positional_block_size > 0"
+            )
+        if keep_recent < 0:
+            raise OLMoConfigurationError("keep_recent must be >= 0")
+        if keep_ramp is not None:
+            keep_ramp = (float(keep_ramp[0]), float(keep_ramp[1]))
+            if not all(0.0 <= v <= 1.0 for v in keep_ramp):
+                raise OLMoConfigurationError(f"keep_ramp fractions must be in [0, 1], got {keep_ramp}")
+            if kept_doc_k is not None or cat_keep is not None:
+                raise OLMoConfigurationError("keep_ramp does not combine with kept_doc_k / cat_keep")
         if positional_block_size > 0:
             bad_pos = [
                 name
@@ -657,6 +683,10 @@ class Transformer(nn.Module):
             "keep_token_min": int(keep_token_min),
             # Positional-block mode (marker-free rows): documents = fixed position blocks.
             "positional_block_size": int(positional_block_size),
+            # Position-aware keep rules (positional-block mode): always-kept recent tail and a
+            # linear per-block keep-fraction ramp over the row.
+            "keep_recent": int(keep_recent),
+            "keep_ramp": keep_ramp,
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -672,6 +702,45 @@ class Transformer(nn.Module):
         for mod in self.modules():
             if hasattr(mod, "detach_masked_writes"):
                 mod.detach_masked_writes = bool(detach_soft_kv and detach_soft_gdn)
+
+    def enable_token_exit(self, exit_layer: int, *, log_every: int = 50) -> None:
+        """
+        Enable token exit (see :mod:`olmo_core.nn.token_exit`) on top of the positional-block
+        input drop: the tokens the soft-token keep rule drops run blocks ``[0, exit_layer)`` on the
+        full row and are compacted out (original positions kept) at the input of block
+        ``exit_layer``; kept tokens run every block; dropped tokens' labels get no loss.
+        ``exit_layer = 0`` is the plain input drop. Training forwards only (eval is untouched, as
+        for the input drop). No new parameters.
+
+        Call AFTER :meth:`enable_pooled_soft_tokens` (positional-block mode, ``drop_slots``).
+        """
+        from ..token_exit import TokenExitHolder
+
+        cfg = self._pooled_soft_tokens
+        if cfg is None or int(cfg.get("positional_block_size", 0)) <= 0:
+            raise OLMoConfigurationError(
+                "token exit reuses the positional-block keep rule: call enable_pooled_soft_tokens("
+                "positional_block_size > 0, drop_slots=True) first"
+            )
+        bad = [
+            name
+            for name, on in (
+                ("slots (set drop_slots)", not cfg.get("drop_slots", False)),
+                ("aux matching", cfg["aux_match_weight"] > 0.0),
+                ("len_bias", bool(cfg.get("len_bias"))),
+                ("paired distillation", cfg["distill_prob"] > 0.0),
+                ("oracle cache", cfg.get("oracle_cache") is not None),
+            )
+            if on
+        ]
+        if bad:
+            raise OLMoConfigurationError(f"token exit does not support: {', '.join(bad)}")
+        if not 0 <= int(exit_layer) < len(self.blocks):
+            raise OLMoConfigurationError(
+                f"token exit layer {exit_layer} outside the block stack [0, {len(self.blocks)})"
+            )
+        self._token_exit = TokenExitHolder(exit_layer=int(exit_layer), log_every=log_every)
+        log.info("Token exit enabled: dropped tokens leave at the input of block %d", exit_layer)
 
     def enable_role_gated_ffn(
         self,
@@ -1125,6 +1194,41 @@ class Transformer(nn.Module):
                 f"pooled soft tokens on PACKED rows (doc_lens) do not support: {', '.join(bad)}"
             )
 
+    @staticmethod
+    def _positional_keep_features(
+        chunk_ids: torch.Tensor, cfg: Dict[str, Any]
+    ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
+        """
+        Position-aware keep rules of positional-block mode (``keep_ramp`` / ``keep_recent``).
+
+        :returns: ``(ramp_frac, chunk_ids)`` -- ``ramp_frac`` is ``(B, n_blocks)`` float32, block
+            ``d`` of a row with ``n`` blocks getting ``a + (b - a) * d / (n - 1)`` (``None`` when no
+            ramp is configured); ``chunk_ids`` has the row's last ``keep_recent`` content tokens
+            re-labelled ``FREE`` (always kept). The ramp is laid over the blocks BEFORE the recent
+            tail is freed, so a block's fraction depends only on where it sits in the row.
+        """
+        from ..attention.chunked_mask import FREE_CHUNK_ID, PAD_CHUNK_ID
+
+        ramp = cfg.get("keep_ramp")
+        recent = int(cfg.get("keep_recent", 0))
+        ramp_frac = None
+        cid = chunk_ids.to(torch.long)
+        if ramp is not None:
+            n_blk = int(cid.max().item()) + 1
+            if n_blk > 0:
+                nb = (cid.max(dim=1, keepdim=True).values + 1).clamp(min=1).to(torch.float32)
+                d = torch.arange(n_blk, device=chunk_ids.device, dtype=torch.float32)[None, :]
+                t = (d / (nb - 1.0).clamp(min=1.0)).clamp(max=1.0)
+                ramp_frac = ramp[0] + (ramp[1] - ramp[0]) * t
+        if recent > 0:
+            S = chunk_ids.shape[1]
+            pos = torch.arange(S, device=chunk_ids.device)[None, :].expand_as(cid)
+            content = cid != PAD_CHUNK_ID
+            end = torch.where(content, pos, torch.full_like(pos, -1)).max(dim=1, keepdim=True).values
+            tail = (pos > end - recent) & (cid >= 0)
+            chunk_ids = torch.where(tail, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+        return ramp_frac, chunk_ids
+
     def _compact_pooled_soft_tokens(
         self,
         input_ids: torch.Tensor,
@@ -1163,11 +1267,13 @@ class Transformer(nn.Module):
                 input_ids, block_size=block, eos_id=cfg["eos_id"]
             )
             doc_start_id = doc_end_id = -1
+            ramp_frac, chunk_ids = self._positional_keep_features(chunk_ids, cfg)
             # The block layout is the same for every row, so the seeded whole-block draw needs a
             # per-row salt or every row keeps the same blocks: a position-weighted token hash.
             w = torch.arange(1, input_ids.shape[1] + 1, dtype=torch.int64, device=input_ids.device)
             row_salt = ((input_ids.to(torch.int64) + 1) * w).sum(dim=-1)
         else:
+            ramp_frac = None
             doc_start_id, doc_end_id = cfg["doc_start_id"], cfg["doc_end_id"]
             chunk_ids = build_chunk_ids_from_tokens(
                 input_ids,
@@ -1179,6 +1285,8 @@ class Transformer(nn.Module):
         n_docs = int(chunk_ids.max().item()) + 1
         if n_docs <= 0:
             return None
+        if ramp_frac is not None:
+            ramp_frac = ramp_frac[:, :n_docs]
         # Which body tokens stay REAL. "first" IS --st-header-extra-tokens (same call, so
         # bit-identical); "rule" adds a non-contiguous per-document top-k afterwards.
         keep_rule = cfg.get("keep_token_rule", "none")
@@ -1265,7 +1373,9 @@ class Transformer(nn.Module):
                 doc_end_id=doc_end_id,
                 k=float(cfg["keep_token_k"]),
                 n_docs=n_docs,
+                k_doc_frac=ramp_frac,
             )
+            ramp_frac = None  # consumed by the token rule; whole-block keep_prob stays scalar
             if int(cfg.get("keep_token_min", 0)) > 0:
                 # floor: also free each document's top keep_token_min tokens by the SAME scores, so
                 # the union is the top max(keep_token_min, k * |body|)
@@ -1370,7 +1480,7 @@ class Transformer(nn.Module):
                 chunk_ids,
                 n_docs,
                 holder=self._pooled_keep_holder,
-                keep_prob=cfg["keep_prob"],
+                keep_prob=cfg["keep_prob"] if ramp_frac is None else ramp_frac,
                 keep_seed=cfg["keep_seed"],
                 mix_p_full=p_full,
                 mix_call=cfg["mix_calls"] if mix_on else 0,
@@ -1601,8 +1711,15 @@ class Transformer(nn.Module):
         all_block_kwargs: Dict[str, Any],
         per_block_kwargs: Dict[int, Dict[str, Any]],
         capture_layers: Optional[Set[int]] = None,
+        token_exit: Optional[Dict[str, Any]] = None,
     ) -> Tuple[torch.Tensor, Dict[int, torch.Tensor]]:
-        """Run the block stack; optionally capture (attached) hidden states at given layer indices."""
+        """Run the block stack; optionally capture (attached) hidden states at given layer indices.
+
+        ``token_exit`` (:mod:`olmo_core.nn.token_exit`): ``{"layer": L, "idx": (B, T') kept
+        columns, "all_block_kwargs": ..., "per_block_kwargs": ...}`` -- blocks ``< L`` run on the
+        full row with the FULL-row kwargs given there, ``h`` is gathered to the kept columns at the
+        input of block ``L``, and the remaining blocks use the (compacted) kwargs passed in.
+        """
         captured: Dict[int, torch.Tensor] = {}
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
@@ -1615,6 +1732,22 @@ class Transformer(nn.Module):
                 continue
             h_in = h
             block_kwargs = per_block_kwargs.get(block_idx, {})
+            if token_exit is not None:
+                if block_idx == token_exit["layer"]:
+                    from ..token_exit import gather_kept
+
+                    h = gather_kept(h, token_exit["idx"])
+                elif block_idx < token_exit["layer"]:
+                    if self.compile_enabled:
+                        mark_dynamic(h, (0, 1), strict=False)
+                    h = block(
+                        h,
+                        **token_exit["all_block_kwargs"],
+                        **token_exit["per_block_kwargs"].get(block_idx, {}),
+                    )
+                    if capture_layers is not None and block_idx in capture_layers:
+                        captured[block_idx] = h
+                    continue
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
             # Routers evaluated on the block INPUT, outside the checkpoint region (router_fn.py):
@@ -2503,6 +2636,22 @@ class Transformer(nn.Module):
 
             lens = example_lengths(input_ids, kwargs.get("doc_lens"), self._flop_pad_id)
             self._record_example_lens(lens, lens)
+        # Token exit: keep the FULL row (and its kwargs) for blocks [0, L); the soft-token
+        # compaction below decides which tokens survive past block L.
+        tx_full: Optional[Tuple[torch.Tensor, Dict[str, Any]]] = None
+        tx_idx: Optional[torch.Tensor] = None
+        if (
+            self._token_exit is not None
+            and self._pooled_soft_tokens is not None
+            and self.training
+            and not input_ids.is_floating_point()
+        ):
+            if kwargs.get("doc_lens") is not None or input_embeddings is not None:
+                raise NotImplementedError(
+                    "token exit runs on padded one-example rows (no doc_lens packing, no "
+                    "input_embeddings)"
+                )
+            tx_full = (input_ids, dict(kwargs))
         if (
             self._pooled_soft_tokens is not None
             and self.training
@@ -2598,6 +2747,16 @@ class Transformer(nn.Module):
                 self._record_example_lens(dense_lens, dense_lens)
             if compacted is not None:
                 cb, soft_inject, oracle_ovr = compacted
+                if tx_full is not None:
+                    # Slot-less compaction keeps tokens in order at their original positions, so
+                    # the compacted row's position_ids ARE the kept columns of the full row (pad
+                    # columns point at T - 1: no label, after every real token).
+                    assert soft_inject is not None and soft_inject[0].numel() == 0
+                    soft_inject = None
+                    tx_idx = cb.position_ids
+                    self._token_exit.record(  # type: ignore[union-attr]
+                        int(tx_full[0].numel()), int(cb.row_lens.sum().item())
+                    )
                 input_ids, labels = cb.input_ids, cb.labels
                 if track_lens:
                     self._record_example_lens(dense_lens, [int(x) for x in cb.row_lens.tolist()])
@@ -2730,6 +2889,30 @@ class Transformer(nn.Module):
             **kwargs,
         )
 
+        tx_plan: Optional[Dict[str, Any]] = None
+        if tx_idx is not None:
+            assert tx_full is not None and self._token_exit is not None
+            # Full-row block kwargs for blocks [0, L): no position_ids (contiguous), so every
+            # attention layer takes its normal backend path there.
+            _, _, tx_abk, tx_pbk, _ = self._prepare_inputs(
+                tx_full[0],
+                None,
+                ignore_index=ignore_index,
+                loss_reduction=loss_reduction,
+                z_loss_multiplier=z_loss_multiplier,
+                loss_div_factor=loss_div_factor,
+                return_logits=return_logits,
+                logits_to_keep=logits_to_keep,
+                **tx_full[1],
+            )
+            tx_plan = {
+                "layer": self._token_exit.exit_layer,
+                "idx": move_to_device(tx_idx, self.device),
+                "all_block_kwargs": tx_abk,
+                "per_block_kwargs": tx_pbk,
+            }
+            input_ids = move_to_device(tx_full[0], self.device)  # the embedding sees the full row
+
         # Get embeddings but pass-through for non-existent layers to allow easy
         # pipeline parallel configuration.
         if input_embeddings is not None:
@@ -2764,7 +2947,9 @@ class Transformer(nn.Module):
             if distill_teacher is not None
             else None
         )
-        h, s_caps = self._run_blocks(h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set)
+        h, s_caps = self._run_blocks(
+            h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set, token_exit=tx_plan
+        )
 
         # Aux attention-contribution matching loss (soft-token pooling; see aux_matching_loss).
         aux_loss: Optional[torch.Tensor] = None
