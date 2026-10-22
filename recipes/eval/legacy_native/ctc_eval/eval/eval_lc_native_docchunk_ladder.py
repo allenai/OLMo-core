@@ -610,6 +610,14 @@ def main():
             return _f
         return None
 
+    # FLA's GDN kernels autotune per length-derived NB: every new prompt-length bucket cost ~25-50 s
+    # of Triton compiles here (this loop calls gm.model directly, so the generation module's own
+    # freeze in generate_batch never ran). OLMO_FLA_LENGTH_AUTOTUNE=1 keeps per-length tuning.
+    if os.environ.get("OLMO_FLA_LENGTH_AUTOTUNE") != "1":
+        from olmo_core.nn.attention.fla_autotune import freeze_fla_length_autotune
+
+        print(f"[docchunk-ladder] FLA length autotune frozen on {freeze_fla_length_autotune()} kernel(s)", flush=True)
+
     @torch.no_grad()
     def generate_one(prefill, max_new_tokens, answer_complete):
         # Size the KV cache to THIS example's actual need (prefill + decode budget), not the raised
