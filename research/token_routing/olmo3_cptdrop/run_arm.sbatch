@@ -40,7 +40,7 @@ STEPS="${MAX_STEPS_TOTAL:?MAX_STEPS_TOTAL=<budget in steps>}"
 case "$ARM" in
   D)     DATA=train32k SEQ=32768 GB=16 VAR="--variant full" ;;
   C1)    DATA=c8k      SEQ=8192  GB=64 MB=4 VAR="--variant full" ;;  # 4 x 8k = 32k tokens per micro-batch, as the 32k arms
-  C2)    DATA=train32k SEQ=32768 GB=16 VAR="--variant full" ;;
+  C2)    DATA=train32k_head SEQ=32768 GB=16 VAR="--variant full" ;;  # rows 0..39,159: never the tail rows c8k was cut from
   IRAND) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1" ;;
   IFL)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
   *) echo "FATAL: unknown ARM=$ARM"; exit 2 ;;
