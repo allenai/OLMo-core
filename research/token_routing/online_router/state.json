@@ -191,6 +191,26 @@
    "ex": "01M5HS40R94AFTTY9X3KHMSVJ6",
    "train_run": "f8k-mt4-rnd30-s976-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt4-rnd30M8-s976-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5HS6H6VMD561V27Z64A047G",
+   "train_run": "f8k-mt4-rnd30M8-s976-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-rnd30M8-s976-tdb-lr2e-06-evnq": {
+   "ex": "01M5HS7KVYH94KQ56C6VDR6WRR",
+   "train_run": "f8k-mt4-rnd30M8-s976-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-rnd30M8-s976-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5HS8J8Q5B178XT9P4QWVEX0",
+   "train_run": "f8k-mt4-rnd30M8-s976-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-rnd30M8-s976-tdb-lr2e-06-evoolong": {
+   "ex": "01M5HS9MFGSWH0BVH1J6CKYTFV",
+   "train_run": "f8k-mt4-rnd30M8-s976-tdb-lr2e-06",
+   "task": "oolong"
   }
  }
 }
