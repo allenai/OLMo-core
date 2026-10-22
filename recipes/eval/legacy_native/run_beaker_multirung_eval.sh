@@ -218,6 +218,11 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT recipes/eval/legacy_nati
     scifact) RUNGS="4k,8k,16k,32k"; LTASK=scifact;       EXTRA="" ;;  # OOD generalization (BEIR)
     outlier_review) RUNGS="3k,8k,16k,32k"; LTASK=outlier_review; EXTRA="" ;;  # OOD outlier (Amazon reviews)
     contra_fever)   RUNGS="2k,8k,16k,32k"; LTASK=contra_fever;   EXTRA="--contra-max-new-tokens 512" ;;  # OOD contradiction (FEVER)
+    # CTC-suite tasks graded by the vendored ctc spec (docchunk ladder only; rung files come from
+    # DC_RUNG_FILES or CTC_SUITE_ROWS_ROOT -- there is no weka bundle for them)
+    hotpotqa|qdmatch_nq|xabsence|reorder|strmatch|grouping)
+      RUNGS="2k,8k"; LTASK=$TASK; EXTRA=""
+      [ "$VARIANT" = docchunk ] || { echo "ERROR TASK=$TASK is graded only by the docchunk ladder (VARIANT=docchunk)"; exit 2; } ;;
     *) echo "ERROR unknown TASK=$TASK"; exit 2 ;;
   esac
 # Explicit rung labels (with DC_RUNG_FILES): score exactly the rung files a dense campaign used.

@@ -12,6 +12,10 @@
 # node-local /tmp checkpoints and eval files. Submit with explicit gres and node, e.g.
 #   sbatch --gres=gpu:A100:2 --qos=preemptive_high -w lambda-hyperplane02 --job-name=<run>-ev<task> \
 #     --export=ALL,RUN=<run>,TASK=<contradiction|nq|outlier|oolong>,ROOT=/tmp/prasann/tdlr run_eval_lambda.sbatch
+# CTC-suite tasks (TASK=hotpotqa|qdmatch_nq|xabsence|reorder|strmatch|grouping, 2026-10-21) read the
+# suite's own r2k/r8k rows from $ROOT/eval/suite/<subset>/rung_{2048,8192}.jsonl (fetched with
+# fetch_suite_eval_rows.py, staged to node /tmp) and are graded by the vendored ctc spec exactly as
+# olmo-eval grades the suite row (eval_lc_native_docchunk_ladder.py SUITE_TASKS).
 # Results: $ROOT/ckpts/<run>/eval/<key>_multirung.json (+ predictions), copied to $LROOT/eval_results/.
 set -o pipefail   # no -u: it kills the conda-pack activate
 LROOT=/accounts/projects/sewonm/prasann/ctc_suite
@@ -26,6 +30,8 @@ case "$TASK" in
   outlier) KEY=outlier; R8=outlier_lengthmix/eval_rungs/outlier/rung_8192.jsonl; R2=outlier_lengthmix/eval_rungs/outlier/rung_2048.jsonl ;;
   oolong)  KEY=oolong;  R8=_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx8192_spliteval.jsonl
            R2=_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx2048_spliteval.jsonl ;;
+  hotpotqa|qdmatch_nq|xabsence|reorder|strmatch|grouping)
+           KEY=$TASK;   R8=suite/$TASK/rung_8192.jsonl; R2=suite/$TASK/rung_2048.jsonl ;;
   *) echo "unknown TASK=$TASK"; exit 2 ;;
 esac
 RUN_DIR=$ROOT/ckpts/$RUN

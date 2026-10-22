@@ -24,6 +24,10 @@ Per-task chunk granularity (matches the training converter):
     rerank                       = (task=rerank,        chunk_by=document)
 ``cot_mode='none'`` (NO-CoT) throughout.
 
+Plus 6 CTC-suite tasks (see ``SUITE_TASKS``): hotpotqa, qdmatch_nq, xabsence, reorder, strmatch,
+grouping -- rendered like the setA converter and graded by the vendored ctc spec exactly as olmo-eval
+grades the suite row. Their rung files come from ``DC_RUNG_FILES`` or ``CTC_SUITE_ROWS_ROOT``.
+
 The rung ladder files resolve against ``EVAL500_ROOT`` (env), exactly like ``eval_lc_native.py`` -- on
 Beaker the runner sets ``EVAL500_ROOT=$PRASANNS/_eval_bundle_eval500_v2`` (v2) so ``{E5}/<sub>/<file>``
 lands on the weka bundle. The relative base-rung / v1-oolong files resolve via ``--root`` (chdir to the
@@ -71,7 +75,7 @@ DOC_START_ID = 151648  # <|box_start|>
 DOC_END_ID = 151649  # <|box_end|>
 PAD_TOKEN_ID = 151863
 
-# Full task order (5 in-distribution v2 tasks + 4 OOD ladders).
+# Full task order (5 in-distribution v2 tasks + 4 OOD ladders + the CTC-suite tasks below).
 ALL_TASKS = [
     "contradiction",
     "nq",
@@ -83,6 +87,147 @@ ALL_TASKS = [
     "outlier_review",
     "contra_fever",
 ]
+
+# ----------------------------------------------------------------------------------------------------
+# CTC-suite tasks (2026-10-21): every setA training task the ladder did not already grade. Each is
+# RENDERED exactly as the setA converter renders its training rows (recipes/data/ctc_sft/
+# build_ctc_sft.py SET_A: olmo_core build_prompt spec + chunk_by="document") and GRADED exactly as
+# olmo-eval grades the matching 22-task-suite roster row: the vendored ctc spec's stop preset ->
+# parse(text, n_docs) -> score(parsed, gold) (olmo-eval ctc_suite._score_output). The default decode
+# budget is olmo-eval's (_decode_budget: max(stop-preset budget, spec budget)). They have no default
+# rung files: pass them with DC_RUNG_FILES (fetch them with
+# research/token_routing/ds64_fast8k/fetch_suite_eval_rows.py), or set CTC_SUITE_ROWS_ROOT to a
+# <subset>/rung_<tokens>.jsonl tree.
+#   ladder task: (build_prompt spec, ctc grader spec, HF subset of PrasannSinghal/ctc-suite-eval)
+SUITE_TASKS = {
+    "hotpotqa": ("retrieval", "retrieval", "hotpotqa"),  # suite row ctc_hpqa
+    "qdmatch_nq": ("qdmatch", "qdmatch", "qdmatch_nq"),  # ctc_qdmatch_nq
+    "xabsence": ("xabsence", "xabsence", "xabsence"),  # ctc_xabsence (exact-copy Gutenberg build)
+    "reorder": ("reorder", "reorder", "reorder"),  # ctc_reorder (kendall_tau in [-1, 1])
+    "strmatch": ("strmatch", "strmatch", "strmatch"),  # ctc_strmatch
+    "grouping": ("grouping", "grouping", "grouping"),  # ctc_grouping (unlabeled OpenAlex)
+}
+ALL_TASKS += list(SUITE_TASKS)
+#: rung label -> token count in the fetched <subset>/rung_<tokens>.jsonl names (olmo-eval RUNG_TOKENS)
+SUITE_RUNG_TOKENS = {"2k": 2048, "4k": 4096, "8k": 8192, "16k": 16384, "32k": 32768}
+
+
+def _ctc_registry():
+    """
+    The vendored ``ctc`` task registry with the six suite graders registered.
+
+    ``ctc`` is stdlib-only. It is imported from the environment when installed, else from this
+    repo's ``ctc/src`` (the eval runners put only ``src`` and ``recipes/eval/legacy_native`` on the
+    path). Plain ``grouping`` is not in ctc's canonical set; it is registered here from the vendored
+    factory with the same arguments olmo-eval's ``ctc_suite`` uses.
+    """
+    try:
+        import ctc  # noqa: F401
+    except ImportError:
+        here = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, os.path.normpath(os.path.join(here, *[os.pardir] * 5, "ctc", "src")))
+    import importlib
+
+    from ctc.format import registry
+    from ctc.format.prompts import GROUPING_INSTRUCTION
+    from ctc.tasks._grouping import make_grouping_spec
+
+    for mod in ("retrieval", "qdmatch", "xabsence", "reorder", "strmatch"):
+        importlib.import_module(f"ctc.tasks.{mod}")  # registers on first import
+    if "grouping" not in registry.names():
+        registry.register(
+            make_grouping_spec(
+                name="grouping",
+                description="Partition abstracts into their (unnamed) field clusters.",
+                instruction=GROUPING_INSTRUCTION,
+                rungs=("2k", "4k", "8k", "16k", "32k"),
+                query_builder=lambda ex: ex["queries"][0] if ex.get("queries") else "",
+                sources=("openalex",),
+            )
+        )
+    return registry
+
+
+def ctc_spec(name):
+    """:returns: The vendored ctc :class:`TaskSpec` named ``name``."""
+    return _ctc_registry().get(name)
+
+
+def ctc_decode_budget(spec):
+    """olmo-eval's decode budget for a suite row with no override: the larger of the stop preset's
+    and the spec's budgets (none of the six rows here carries a roster override)."""
+    from ctc.eval.stopping import STOP_PRESETS
+
+    return max(STOP_PRESETS[spec.stop].max_new_tokens, spec.max_new_tokens)
+
+
+def ctc_score_one(spec, example, text):
+    """
+    Grade one generation exactly as olmo-eval's ``ctc_suite._score_output`` does: the spec's stop
+    preset cleans it up (strip think, truncate at the first firing text stop), a generation still
+    inside an unclosed ``<think>`` is a parse failure, then ``parse(text, n_docs)`` and
+    ``score(parsed, gold)`` with the spec's declared gold field.
+
+    :returns: ``(parsed, scored)``.
+    """
+    from ctc.eval.stopping import STOP_PRESETS
+    from ctc.eval.stopping import apply as apply_stop
+    from ctc.eval.stopping import in_unclosed_think
+
+    cleaned = apply_stop(text or "", STOP_PRESETS[spec.stop])
+    parsed = None if in_unclosed_think(cleaned) else spec.parse(cleaned, len(example["documents"]))
+    if spec.extra.get("score_takes_example") or spec.name == "oolong":
+        gold = example
+    else:
+        gold = example.get(spec.extra.get("gold_field", "gold_doc_indices"))
+        if gold is None:
+            gold = example
+    return parsed, {k: float(v) for k, v in spec.score(parsed, gold).items()}
+
+
+def make_ctc_score_fn(spec_name):
+    """
+    A ladder ``score_fn(examples, responses) -> (metrics, per_row)`` for one suite grader: the mean
+    of every metric the spec returns over ALL rows (a too-long row is an empty response, scored 0),
+    plus ``parse_rate`` and ``eval_size``. The primary key is ``spec.primary_metric``.
+    """
+    spec = ctc_spec(spec_name)
+
+    def score_fn(examples, responses):
+        rows, sums, n_parsed = [], {}, 0
+        for ex, resp in zip(examples, responses):
+            parsed, scored = ctc_score_one(spec, ex.get("ex", ex), resp or "")
+            n_parsed += parsed is not None
+            rows.append(scored)
+            for k, v in scored.items():
+                if k != "parsed":
+                    sums[k] = sums.get(k, 0.0) + v
+        n = max(1, len(rows))
+        res = {k: v / n for k, v in sums.items()}
+        res["parse_rate"] = n_parsed / n
+        res["eval_size"] = len(rows)
+        return res, rows
+
+    return score_fn
+
+
+def make_ctc_answer_complete(spec_name, decode):
+    """
+    Early stop for a suite task: True once the spec's stop preset would end the generation (the
+    ladder checks this at newline tokens only). ``None`` for an EOS-only preset. Whatever this
+    leaves on, :func:`ctc_score_one` re-applies the same preset before parsing, so the bs=1 and
+    batched paths score the same text.
+    """
+    from ctc.eval.stopping import STOP_PRESETS, should_stop
+
+    cond = STOP_PRESETS[ctc_spec(spec_name).stop]
+    if not cond.text_stops:
+        return None
+
+    def _f(content_ids):
+        return should_stop(decode(content_ids), cond) is not None
+
+    return _f
 
 
 # ----------------------------------------------------------------------------------------------------
@@ -214,6 +359,14 @@ def build_ladders(args):
                     if _hits:
                         ladders_v2[_t].append((_s, _hits[0]))
             print(f"[xlong] appended ultra-long rungs where files exist under {E5}", flush=True)
+        # CTC-suite tasks: no default files. CTC_SUITE_ROWS_ROOT=<dir> with <subset>/rung_<tokens>.jsonl
+        # (fetch_suite_eval_rows.py writes <out>/suite/<subset>/...) supplies every rung present.
+        _suite_root = os.environ.get("CTC_SUITE_ROWS_ROOT")
+        if _suite_root:
+            for _t, (_, _, _sub) in SUITE_TASKS.items():
+                _r = [(lab, os.path.join(_suite_root, _sub, f"rung_{tok}.jsonl"))
+                      for lab, tok in SUITE_RUNG_TOKENS.items()]
+                ladders_v2[_t] = [(lab, p) for lab, p in _r if os.path.exists(p)]
         # FLOP-scaling study: explicit rung files per task, e.g. to score a marker-trained model
         # on EXACTLY the rung files a prior dense campaign used (outlier_lengthmix/eval_rungs/...).
         # DC_RUNG_FILES = JSON {"outlier": {"8k": "/weka/.../rung_8192.jsonl", ...}, ...}; a task
@@ -291,7 +444,7 @@ def build_ladders(args):
 # grader + primary-metric key match eval_lc_native.py's LSPEC (OOD tasks reuse the base graders).
 #   primary_key=None -> rerank: take the first "mrr*" metric.
 def build_task_spec(args):
-    return {
+    spec = {
         # task:            (loadtask,        chunk_by,   item_regex, primary_key, max_new_tokens,            stopkind)
         "contradiction": (
             "contradiction",
@@ -318,6 +471,27 @@ def build_task_spec(args):
             "contra",
         ),
     }
+    # CTC-suite tasks (only those asked for, so a run of the tasks above never imports ctc): the
+    # setA converter's spec + chunk_by="document", the ctc spec's primary metric, olmo-eval's
+    # decode budget unless --suite-max-new-tokens overrides it, and the spec's stop preset.
+    asked = {t.strip() for t in args.tasks.split(",") if t.strip()}
+    override = {}
+    for kv in filter(None, (s.strip() for s in (args.suite_max_new_tokens or "").split(","))):
+        k, v = kv.split("=")
+        override[k.strip()] = int(v)
+    for task, (prompt_spec, grader, _sub) in SUITE_TASKS.items():
+        if task not in asked:
+            continue
+        sp = ctc_spec(grader)
+        spec[task] = (
+            prompt_spec,
+            "document",
+            r"\|\|",
+            sp.primary_metric,
+            override.get(task, ctc_decode_budget(sp)),
+            f"ctc:{grader}",
+        )
+    return spec
 
 
 
@@ -389,8 +563,9 @@ def main():
     # ---- task/rung filters (let the launcher split a slow ladder to dodge wall-clock timeouts) ----
     ap.add_argument(
         "--tasks",
-        default=",".join(ALL_TASKS),
-        help="comma list restricting which of the 9 tasks to run.",
+        default=",".join(t for t in ALL_TASKS if t not in SUITE_TASKS),
+        help="comma list of tasks to run: default = the 9 ladder tasks; the CTC-suite tasks "
+        "(SUITE_TASKS) run only when named.",
     )
     ap.add_argument(
         "--rungs",
@@ -417,6 +592,12 @@ def main():
     ap.add_argument("--oolong-max-new-tokens", type=int, default=200)
     ap.add_argument("--rerank-max-new-tokens", type=int, default=256)
     ap.add_argument("--outlier-max-new-tokens", type=int, default=200)
+    ap.add_argument(
+        "--suite-max-new-tokens",
+        default=os.environ.get("LADDER_SUITE_MAX_NEW_TOKENS", ""),
+        help="CTC-suite tasks: 'task=N,...' decode-budget overrides. Default = olmo-eval's budget "
+        "(hotpotqa 64, qdmatch_nq 512, xabsence 200, reorder 2048, strmatch 512, grouping 4096).",
+    )
 
     # ---- per-task default (2k/3k) base eval JSONLs used only for --ladder-version v1 ----
     ap.add_argument("--contra-data", default="data/contradiction_eval_pubmed_both_n100_k3.jsonl")
@@ -614,6 +795,13 @@ def main():
                 return "contradicting pairs:" in txt
 
             return _f
+        if stopkind is not None and stopkind.startswith("ctc:"):
+            return make_ctc_answer_complete(
+                stopkind[len("ctc:"):],
+                lambda ids: tok.decode(
+                    [t for t in ids if t != LANDMARK_TOKEN_ID], skip_special_tokens=True
+                ),
+            )
         return None
 
     # FLA's GDN kernels autotune per length-derived NB: every new prompt-length bucket cost ~25-50 s
@@ -763,6 +951,9 @@ def main():
     ladders = build_ladders(args)
     task_spec = build_task_spec(args)
     task_filter = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    for _t, (_, _grader, _) in SUITE_TASKS.items():
+        if _t in task_filter:
+            SCORE_FNS[_t] = make_ctc_score_fn(_grader)
     rung_filter = set(r.strip() for r in args.rungs.split(",")) if args.rungs else None
 
     for task in ALL_TASKS:
@@ -848,7 +1039,7 @@ def main():
                 with open(resp_path, "w") as rf:
                     for gi, resp in enumerate(full):
                         raw = examples[gi].get("ex", examples[gi])
-                        gold = {k: raw[k] for k in ("gold_doc_indices", "gold_pairs", "answers") if k in raw}
+                        gold = {k: raw[k] for k in ("gold_doc_indices", "gold_pairs", "answers", "gold_order") if k in raw}
                         rf.write(json.dumps({"i": gi, "response": resp, **gold}) + "\n")
                 res, _ = score_fn(examples, full)
                 if primary_key is not None:
@@ -858,12 +1049,17 @@ def main():
                 summary[f"{task}_{label}"] = float(prim) if prim is not None else None
                 if "_meta" in summary:  # too-long examples are scored (as wrong), so all count
                     summary["_meta"]["eval_size"][f"{task}_{label}"] = len(examples)
+                    if task in SUITE_TASKS:  # suite graders: parse rate beside the number
+                        summary["_meta"].setdefault("parse_rate", {})[f"{task}_{label}"] = res["parse_rate"]
                 print(
                     f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
                     f"{prim if prim is None else round(float(prim), 3)} "
                     f"(n={len(examples)}, skipped_too_long={skipped})",
                     flush=True,
                 )
+                if task in SUITE_TASKS:
+                    print(f"[ladder:{task}@{label}] ctc metrics: "
+                          f"{ {k: round(v, 4) for k, v in res.items()} }", flush=True)
                 flush()
             if world > 1:
                 torch.distributed.barrier()
