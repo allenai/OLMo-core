@@ -8,6 +8,7 @@ the model, so it runs on a CPU machine without the GPU kernel packages some sequ
 """
 
 import copy
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -196,7 +197,7 @@ class MaxTextModelConfig:
         assert self.kda is not None and self.moe is not None
         k, m = self.kda, self.moe
         overrides = [
-            # Embeddings are scaled, then normalized.
+            # Embeddings are scaled by sqrt(d_model), then normalized.
             "scale_embeddings_by_sqrt_emb_dim=True",
             "use_embedding_norm=True",
             f"qk_norm_per_head={self.attention.per_head_qk_norm}",
@@ -242,6 +243,11 @@ def get_maxtext_config(model_config: Mapping[str, Any]) -> MaxTextModelConfig:
     normalize_legacy_config_dict(model_config)
     if model_config.get("tie_word_embeddings"):
         raise NotImplementedError("tied embeddings aren't supported yet")
+    if model_config.get("n_extra_vocab"):
+        raise NotImplementedError(
+            "split vocabularies (n_extra_vocab > 0) aren't supported yet: the extra input-only "
+            "embedding rows have no MaxText counterpart"
+        )
     blocks = _blocks(model_config)
     first = blocks[0]
     if first.get("use_peri_norm") and first.get("shared_experts") is not None:
@@ -284,6 +290,73 @@ def _norm_eps(norms: list) -> float:
     return eps.pop()
 
 
+def _lm_head_norm(model_config: Mapping[str, Any], decoder: MaxTextDecoderBlock) -> Dict[str, Any]:
+    """
+    The LM head's norm config. Both decoders normalize the final hidden state with a bias-free
+    RMS norm (``decoder_norm``) and have no LM head bias.
+    """
+    lm_head = model_config.get("lm_head") or {}
+    if lm_head.get("name", "default") != "default" or lm_head.get("bias"):
+        raise ValueError(f"MaxText's {decoder} decoder has a default LM head without bias")
+    if lm_head.get("layer_norm") is None:
+        raise ValueError(f"MaxText's {decoder} decoder normalizes the LM head input (layer_norm)")
+    return lm_head["layer_norm"]
+
+
+def _check_router(i: int, router: Mapping[str, Any]) -> None:
+    """
+    MaxText's olmoe3 router has exactly one weighting: pick the top-k experts by logit, softmax
+    over their logits, and multiply by ``top_k``. That's OLMo Core's softmax gating with
+    ``normalize_expert_weights=1.0`` and ``restore_weight_scale=True`` (the L1-normalized gather
+    of the full softmax equals the softmax over the top-k logits), or ``topk_softmax`` gating
+    with ``restore_weight_scale=True``.
+    """
+    gating = router.get("gating_function", "softmax")
+    normalize = router.get("normalize_expert_weights")
+    weighting = {
+        "gating_function": gating,
+        "normalize_expert_weights": normalize,
+        "restore_weight_scale": bool(router.get("restore_weight_scale")),
+    }
+    if (gating, normalize) not in (("softmax", 1.0), ("topk_softmax", None), ("topk_softmax", 1.0)):
+        raise ValueError(
+            f"block {i}: MaxText's olmoe3 router weights experts by top_k * softmax(top-k logits), "
+            f"i.e. gating_function='softmax' with normalize_expert_weights=1.0, not {weighting}"
+        )
+    if not router.get("restore_weight_scale"):
+        raise ValueError(
+            f"block {i}: MaxText's olmoe3 router scales expert weights by top_k "
+            f"(restore_weight_scale=True), not {weighting}"
+        )
+    if router.get("expert_weight_scale") is not None or router.get("original_top_k") not in (
+        None,
+        router["top_k"],
+    ):
+        raise ValueError(
+            f"block {i}: MaxText's olmoe3 router can't rescale expert weights "
+            "(expert_weight_scale, original_top_k)"
+        )
+    if (
+        router.get("bias")
+        or router.get("bias_gamma") is not None
+        or router.get("score_correction_bias")
+    ):
+        raise ValueError(
+            f"block {i}: MaxText's olmoe3 router has no bias and no score-correction bias "
+            "(bias, bias_gamma, score_correction_bias)"
+        )
+    if (
+        router.get("uniform_expert_assignment")
+        or router.get("random_expert_assignment")
+        or router.get("n_group") is not None
+        or router.get("topk_group") is not None
+    ):
+        raise ValueError(
+            f"block {i}: MaxText's olmoe3 router picks the top-k experts by score, without expert "
+            "groups or forced assignment"
+        )
+
+
 def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModelConfig:
     d_model = model_config["d_model"]
     mixer = blocks[0]["sequence_mixer"]
@@ -303,14 +376,18 @@ def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModel
         raise ValueError("MaxText's olmo3 decoder uses a SwiGLU feed-forward")
     if model_config.get("embedding_norm") is not None or model_config.get("embed_scale"):
         raise ValueError("MaxText's olmo3 decoder has no embedding norm or scale")
-    if (model_config.get("lm_head") or {}).get("bias"):
-        raise ValueError("MaxText's olmo3 decoder has no LM head bias")
+    lm_head_norm = _lm_head_norm(model_config, MaxTextDecoderBlock.olmo3)
 
     rope = mixer.get("rope")
     if rope is None or rope.get("name", "default") != "default" or rope.get("scaling") is not None:
         raise NotImplementedError("only unscaled default RoPE is supported for the olmo3 decoder")
     if rope.get("partial_rotary_factor", 1.0) != 1.0:
         raise NotImplementedError("partial RoPE isn't supported")
+    if rope.get("no_global_rope"):
+        raise ValueError(
+            "MaxText's olmo3 decoder applies RoPE on every layer, so it can't express "
+            "no_global_rope=True"
+        )
 
     n_layers = len(blocks)
     window = None
@@ -332,7 +409,6 @@ def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModel
         window = windows.pop()
 
     qk_norm = mixer.get("qk_norm")
-    lm_head_norm = (model_config.get("lm_head") or {}).get("layer_norm")
     eps = _norm_eps([blocks[0]["layer_norm"], qk_norm, lm_head_norm])
     return MaxTextModelConfig(
         decoder_block=MaxTextDecoderBlock.olmo3,
@@ -397,6 +473,7 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
             routed = _same(routed, block["routed_experts"], ("num_experts", "hidden_size"), "MoE")
             latent = _same(latent, block["latent_moe"], ("latent_dim",), "latent MoE")
             router = _same(router, block["routed_experts_router"], ("top_k", "emo"), "MoE router")
+            _check_router(i, block["routed_experts_router"])
             if block["routed_experts"].get("bias") or block["latent_moe"].get("bias"):
                 raise ValueError(f"block {i}: MaxText's olmoe3 experts have no bias")
             if block["routed_experts"].get("activation", "swiglu") != "swiglu":
@@ -412,10 +489,17 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
         raise ValueError("MaxText's olmoe3 decoder needs KDA, full-attention, and MoE blocks")
     if kda["n_v_heads"] != kda["n_heads"]:
         raise ValueError("MaxText's olmoe3 KDA needs n_v_heads == n_heads")
-    # MaxText scales embeddings by sqrt(d_model) before this norm; the RMS norm undoes any scale,
-    # so OLMo Core's embed_scale doesn't have to match.
+    # MaxText scales embeddings by sqrt(d_model) before this norm. The norm's epsilon keeps a
+    # different scale from cancelling out, so OLMo Core's embed_scale has to match.
     if model_config.get("embedding_norm") is None:
         raise ValueError("MaxText's olmoe3 decoder normalizes the embeddings")
+    embed_scale = model_config.get("embed_scale")
+    if embed_scale is None or not math.isclose(embed_scale, math.sqrt(d_model), rel_tol=1e-6):
+        raise ValueError(
+            f"MaxText's olmoe3 decoder scales embeddings by sqrt(d_model) = {math.sqrt(d_model):g} "
+            f"before the embedding norm, so it can't express embed_scale={embed_scale}"
+        )
+    lm_head_norm = _lm_head_norm(model_config, MaxTextDecoderBlock.olmoe3)
     emo = router.get("emo")
     kda_head_dim = _head_dim(d_model, kda)
     config = MaxTextModelConfig(
@@ -425,7 +509,7 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
         layers=tuple(layers),
         # The decoder puts full attention on the last layer of every cycle.
         cycle=next(i for i, layer in enumerate(layers) if layer.sequence_mixer == "attention") + 1,
-        norm_eps=_norm_eps(norms + [model_config["embedding_norm"]]),
+        norm_eps=_norm_eps(norms + [model_config["embedding_norm"], lm_head_norm]),
         attention=AttentionSpec(
             n_heads=attn["n_heads"],
             n_kv_heads=attn.get("n_kv_heads") or attn["n_heads"],

@@ -498,7 +498,7 @@
     "_CLASS_": "olmo_core.nn.ddp.block.OLMoDDPTransformerBlockConfig"
    }
   },
-  "embed_scale": 32.0,
+  "embed_scale": 16.0,
   "tie_word_embeddings": false,
   "two_batch_overlap": false,
   "recompute_all_blocks_by_chunk": false,

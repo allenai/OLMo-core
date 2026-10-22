@@ -46,7 +46,7 @@ def shrink_hybrid(config: dict, *, n_layers: int = 16) -> dict:
     """
     config = copy.deepcopy(config)
     d_model, latent, hidden, experts = 24, 12, 20, 6
-    config.update(d_model=d_model, vocab_size=40, n_layers=n_layers)
+    config.update(d_model=d_model, vocab_size=40, n_layers=n_layers, embed_scale=d_model**0.5)
 
     def fix_block(block):
         mixer = block["sequence_mixer"]
@@ -387,4 +387,101 @@ def test_unsupported_model_fails():
     config = load_fixture("dense_small_config.json")
     config["block"]["name"] = "default"
     with pytest.raises(NotImplementedError, match="no MaxText decoder"):
+        get_maxtext_config(config)
+
+
+# The settings below change the model's forward pass without changing any parameter shape, so a
+# weight round-trip can't catch them. They have to be rejected (or translated) at config time.
+
+FIXTURE_FILES = {
+    "dense": "dense_small_config.json",
+    "hybrid_moe": "hybrid_moe_small_config.json",
+}
+
+
+def moe_blocks(config: dict) -> list:
+    """Every block config in ``config`` that has routed experts."""
+    blocks = [config["block"], *(config.get("block_overrides") or {}).values()]
+    return [b for b in blocks if b.get("routed_experts") is not None]
+
+
+def test_dense_no_global_rope_fails():
+    # MaxText's olmo3 decoder applies RoPE on every layer.
+    config = load_fixture("dense_small_config.json")
+    config["block"]["sequence_mixer"]["rope"]["no_global_rope"] = True
+    with pytest.raises(ValueError, match="no_global_rope"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize(
+    "setting, value",
+    [
+        ("restore_weight_scale", False),
+        ("normalize_expert_weights", None),
+        ("normalize_expert_weights", 2.0),
+        ("gating_function", "sigmoid"),
+        ("expert_weight_scale", 0.5),
+        ("original_top_k", 4),
+        ("bias", True),
+        ("bias_gamma", 1e-4),
+        ("score_correction_bias", True),
+        ("uniform_expert_assignment", True),
+        ("random_expert_assignment", True),
+        ("n_group", 2),
+    ],
+)
+def test_hybrid_router_maxtext_cannot_build_fails(setting, value):
+    # MaxText's olmoe3 router has exactly one weighting: top_k * softmax(top-k logits), with no
+    # biases and no grouping.
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in moe_blocks(config):
+        block["routed_experts_router"][setting] = value
+    with pytest.raises(ValueError, match="router"):
+        get_maxtext_config(config)
+
+
+def test_hybrid_topk_softmax_router_is_equivalent():
+    # softmax over the top-k logits is the L1-normalized gather of the full softmax, so this
+    # router computes the same weights as the fixture's.
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in moe_blocks(config):
+        block["routed_experts_router"].update(
+            gating_function="topk_softmax", normalize_expert_weights=None
+        )
+    assert get_maxtext_config(config) == get_maxtext_config(
+        load_fixture("hybrid_moe_small_config.json")
+    )
+
+
+@pytest.mark.parametrize("embed_scale", [None, 8.0])
+def test_hybrid_embed_scale_fails(embed_scale):
+    # MaxText scales by sqrt(d_model) before the embedding norm; the norm's epsilon keeps a
+    # different scale from cancelling out.
+    config = load_fixture("hybrid_moe_small_config.json")
+    config["embed_scale"] = embed_scale
+    with pytest.raises(ValueError, match="embed_scale"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_lm_head_norm_epsilon_fails(name):
+    config = load_fixture(FIXTURE_FILES[name])
+    config["lm_head"]["layer_norm"]["eps"] = 1e-5
+    with pytest.raises(ValueError, match="epsilon"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_missing_lm_head_norm_fails(name):
+    config = load_fixture(FIXTURE_FILES[name])
+    config["lm_head"]["layer_norm"] = None
+    with pytest.raises(ValueError, match="LM head"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_extra_vocab_fails(name):
+    config = load_fixture(FIXTURE_FILES[name])
+    config["n_extra_vocab"] = 2
+    with pytest.raises(NotImplementedError, match="n_extra_vocab"):
         get_maxtext_config(config)
