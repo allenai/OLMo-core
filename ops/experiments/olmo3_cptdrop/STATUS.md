@@ -2,7 +2,7 @@
 experiment: olmo3_cptdrop
 title: Token-dropping CPT screen on OLMo 3 7B — stage2 → 32k on the Dolma 3 Longmino pool; dense vs length curriculum vs input-drop (random-20% blocks, first+last 25%), full-context dev CE at 3 matched FLOP budgets
 status: active
-updated: 2026-10-21
+updated: 2026-10-22
 branch: prasann/flopdrop_clean (uncommitted: research/token_routing/olmo3_cptdrop/)
 launcher: research/token_routing/olmo3_cptdrop/
 records:
@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: Merge o3cd/swa-position-window (eae16ae0b) + o3cd/positional-blocks (2a0d30ef8) + o3cd/devce-eval (a151f921d) with the uncommitted trainer flags (Prasann OK pending); rebuild short4k from several stage-3 files; decide dev size (256 rows: paired SE ~0.006 per bin vs 0.046 total stage2->stage3 headroom at 16-32k); then smoke-test all four arms.
+next_step: LR 2e-5 everywhere. cubbins 4017693 (dense curve Dlr20-12/24/48 + Dlr10-120 -> eval -> IRANDlr20 + HOlr20 -> Dlr20-480 -> eval) and 10 Beaker jobs bk11 (C120/240/480, IFL, IFL10, IFL05, D64lr20, IFL10x64, IFL05x64, IFL25x64; weka dirs beaker_<NAME>_lr20). When the dense curve's low end lands, run analyze.py (--ref Dlr20|D64lr20; keep lr20 devce JSONs in their own dir: Beaker labels C-*/IFL-* repeat the old-LR ones) and promote anything >=10x.
 ---
 
 # olmo3_cptdrop
@@ -58,6 +58,49 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
   and the per-example FLOP meter charging every EOS-led row as length 1 (affected dense too). Adds
   `flop_meter/kept_label_frac`; logged train CE on drop arms = true CE x kept fraction (divisor counts labels
   before dropping). Pass `--skip-marker-audit` (shards have no markers).
+- 2026-10-21 (Prasann): OK to preempt Rhys on ONE node, the shortest-running: cubbins (his `preemptive` RL job
+  4012765, 6 min old; sneetches' had run 5.5 h). mooney/mcfuzz are `preemptive_high` (danat / Rhys), not preemptible.
+- 2026-10-21 (Prasann): dev set to 1,024 rows (paired SE ~0.006/bin at 256); short guard rebuilt from 7 stage-3 shards.
+- 2026-10-21 (agent): merged into prasann/flopdrop_clean (local, not pushed): d81c4ab2d (experiment files),
+  86d5c328d (o3cd/swa-position-window), a7364ca3a (o3cd/positional-blocks; conflicts in variants.py / model.py were
+  two independent new kwargs, both kept), f022f00c3 (o3cd/devce-eval files + its ctc_devloss_grid hunk; another
+  session's uncommitted edit to that file left uncommitted). Launcher run_arm.sbatch + driver_dense.sbatch (d59e1ac8b).
+  All arms run --no-compile (compacted lengths vary per step) so wall-clock stays comparable.
+- 2026-10-21 (agent): matched-FLOP budgets from the smoke FLOP meter (actual/dense per step): IRAND 0.184 ->
+  650 / 1,300 / 2,600 steps (save every 585); IFL 0.223 -> 540 / 1,080 / 2,160 (save every 486); C phase-1 8k
+  0.89 -> C at equal tokens 120 / 240 / 480 (~0.945x dense FLOPs). m is read from ACTUAL FLOPs on the dense
+  curve, so budgets need only be close. Dense FLOP meter: 36.6 PF per 524,288-token step.
+- 2026-10-22 (Prasann): run overnight, never wait long, use all compute, test small first, goal = a curve that is
+  Pareto-better than dense at every budget; token/layer skipping may use is-gold (SFT only), position within the
+  document and document length. Agent: (1) handoff arms HO (drop -> dense) as the 'envelope' candidate, branched
+  from IRAND checkpoints; HO FLOPs = IRAND part (S0 x 0.184 x 36.6 PF) + the HO run's own meter; (2) background
+  agent porting token exit (layer skipping for dropped tokens) + position-aware keep rules (recent window, ramp)
+  in a separate worktree, for the next small-budget screen.
+- 2026-10-22 (Prasann): TARGET = 10-20x FLOP Pareto-optimality. Minimum bar = the earlier positive Pareto results
+  (softdetach sd20 ~4x at <=1.5k PF on Qwen3.5-4B 64k; ds64 soft tokens 2.2-4x on 4 tasks). Longer context allowed.
+  Agent: (a) aggressive keep (I-fl 10% / 5%) at TINY budgets (dense-equivalent 12/24/48 steps) against dense
+  120/240/480 + a measured dense low end (DLOW: 24, 48) so m=10-20 is read off measured points, not
+  extrapolated; (b) a 64k screen (train64k from 2^16 docs, dev64k_512 from 2^17+, YaRN x8, 8 rows/step), since
+  attention's share grows with length; (c) budgets for new keep rates use estimated FLOP ratios (~0.09 at 10%,
+  ~0.046 at 5%); m always uses the measured actual_pflops.
+- 2026-10-22 (agent): token exit + position-aware keep rules (background agent, commit 00f302d90, kept as branch
+  o3cd/tokexit-posrules) merged as a7855efa8; flop_meter conflicted with another session's layer-drop feature:
+  both kept, token exit + layer drop in one step refused by the meter. Arms in run_arm.sbatch: IFL_R4K
+  (--st-keep-recent 4096), IFL_RAMP (--st-keep-ramp 0.1,0.5), IFL_X4/X8, IRAND_X4/X8 (--tokexit-layer).
+  Measured meter actual/dense on synthetic 32k rows: I-rand 0.176, I-fl 0.223, recent4k+I-fl 0.312,
+  ramp 0.271, I-fl L4 0.315 / L8 0.408, I-rand L4 0.274 / L8 0.373. Token exit's full-row prefix caps its
+  saving near 32/L, so it cannot reach 10-20x on FLOPs alone; screen it only as a learning-per-FLOP probe.
+  GPU tests (job 4017524, berkeleynlp normal) still queued; doc-position (window/doc_tokens) features not built.
+- 2026-10-22 (Prasann): use Beaker as well ("jobs may take longer to allocate, keep an eye on that"). Agent: C120 /
+  C240 / C480 / IFL on Beaker in parallel, IRAND on cubbins after dense. Pushed prasann/flopdrop_clean (e81d2c747;
+  the branch was otherwise already pushed by another session).
+- 2026-10-22 (agent, deviation from 'dense LR as is', reported to Prasann): LR probe (cubbins 4017622) at 120 / 240
+  steps: peak LR 2e-5 beats the OLMo recipe's 2.07e-4 by -0.133 +-0.002 nats at 120 steps (paired) and 6.5e-5
+  by -0.026 +-0.0003; at 2e-5 dense still improves 120 -> 240 (-0.0026 +-0.0001) and short-document CE barely
+  moves (1.161 / 1.165 vs 1.156 at the start; 2.07e-4 forgot to 1.33-1.49). DECISION: peak LR 2e-5 for dense
+  AND every drop arm. All old-LR Beaker jobs cancelled and relaunched at LR=2e-5 DIRTAG=lr20 (bk11, code
+  40925312f); cubbins driver_lr20.sbatch (4017693). Most of the gain (stage2 -> 120 steps: -0.162) arrives inside
+  the first 120 steps, so the 10-20x question lives at dense-equivalent 12 / 24 / 48 steps: measured there.
 - 2026-10-21 (agent): converter's built-in validation is skipped in favour of `check_conversion.py`
   (fp32 + bf16 parity incl. a 6,144-token row so the sliding window is exercised).
 
@@ -69,12 +112,43 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 | convert stage2 HF -> OLMo-core | slurm 4012907 (mooney) | checkpoint SAVED; converter's bf16 self-check "failed" (atol 1e-4 vs bf16 noise). fp32 parity (4012938) PASS: max logit diff 4e-5 (random 512) / 1.4e-3 (real 6,144, SWA exercised), CE identical; bf16 CE diff 3e-4. 4012906 failed earlier: converter needs a local HF dir |
 | convert stage3 + parity | slurm 4012946 (mooney) | DONE: fp32 parity PASS (max logit diff 4e-5 random / 4e-4 real 6,144, CE identical; bf16 CE diff 3e-5) |
 | upload c8k to S3 | slurm 4012971 (mooney) | DONE |
+| dev32k_1024 + short4k_v2 rebuild | slurm 4015937 (mooney, CPU) | RUNNING (4015752 failed: a malformed JSON line in a pool file; now skipped and counted) |
+| S3 -> cubbins: data + stage2 base | slurm 4016138 (cubbins, CPU) | RUNNING |
+| dense driver 4016185 / 4016562 / 4016652 / 4016772 | cubbins | FAILED or CANCELLED in turn: base path not the model_and_optim subdir; SMOKE mode disabled checkpointing; 0-step WSD decay in a 5-step smoke; c8k empty-epoch livelock (80 min). Fixed in turn (f0bef5564, 1bb94f267, ae477fd8b, 5622d24ac) |
+| dense driver 4017418 (code 5622d24ac) | cubbins 8xH200 | SMOKE PASSED (all six; earlier attempt passed pytest 85/85, D, decay branch from step3, C2 optim-only). RUNNING o3cd-D-480 (12.3 s/step, ETA ~01:20 10-22) -> o3cd-D-120 / o3cd-D-240 branches -> o3cd-D-120-s1 |
+| rest driver 4017424 | cubbins | CANCELLED before start: IFL + C moved to Beaker |
+| rest driver 4017448 | cubbins | CANCELLED before start: replaced by 4017452 |
+| rest driver 4017452 (code b91b22b93) | cubbins, after 4017418 | QUEUED: EVALD (8-GPU row-chunked dev CE: stage2 + D-120/240/480/120-s1) -> o3cd-IRAND-2600 (saves every 195; +650, +1300 branches) -> HO-120/240/480 (IRAND 390/585/1170 steps then dense to the budget, trainer state kept) -> EVALI |
+| Beaker C120 / C240 / C480 / IFL | 01M5H7ZSCJJ9HCWS89SMXTK8MB / 01M5H7ZYHY2YNE0K0910AJR16J / 01M5H80459Q9A5DW6X1SR2HS5P / 01M5H80948ZEMYGSAATK1Z8VM2 (jupiter 8xH100, urgent, minRuntime 1h, code e81d2c747) | PENDING since ~00:20 10-22. Each: S3 -> weka `.../prasanns/olmo3_cptdrop/beaker_<FAM>`, run_arm recipe, in-job dev CE on dev32k_1024 + short4k_v2, eval JSONs + exports -> S3 `devce/`, `runs/` |
+| Beaker GEN wave 2 (32k, code 66ded0975) | DLOW 01M5H8QY86S1D371P8MWRDTCXR / IFL10 01M5H8R3573J2CPPG9BDACYM22 / IFL05 01M5H8R89Y432STWCVTACJQW1A | PENDING: DLOW = D-48 (+D-24 branch); IFL10 = keep 0.10, 533 steps (+133, +267); IFL05 = keep 0.05, 1,040 steps (+260, +520). First launch of the three (01M5H8P...) cancelled: a concurrent push race made gantry's ref uncertain |
+| Beaker attempts 1-3 | C/IFL/GEN ids 01M5H7Z.../01M5H8Q.../01M5H9F... | all FAILED or CANCELLED: image has no boto3 (C240 died in 5 s); then gantry --install true = empty venv (no torch). Fixed in 0b16ebdba: --no-python + /opt/conda/bin/python + missing light deps; CPU CHECK job 01M5H9SCR80NCBWGKZ325STGGA passed |
+| Beaker attempt 4 (code 0b16ebdba) | C120 01M5H9SW0JE7RZPT0AR2RJWYMP, C240 01M5H9T1DEJTWY580K5K6XP86F, C480 01M5H9T6FPZ943TECXW2H5JWAC, IFL 01M5H9TC39E64ZHNKW4STAK997, DLOW 01M5H9THF152NHBXCYQ5MSAENQ, IFL10 01M5H9TPQFEKP5QT39C9ZRHSZH, IFL05 01M5H9TWK5D5D3EEN8K649MPCF | PENDING since ~01:00 10-22 (ops rows o3cd-bk3-*) |
+| data train64k + dev64k_512 | slurm 4017455 (mooney, CPU) | DONE 25 min: train64k 20,000 x 65,536 (1.31B tokens; doc p10/p50/p90 68k/85k/117k), dev64k_512 512 rows (2^17+). On S3 |
+| Beaker 64k screen (code 0b16ebdba, YaRN x8, 8 rows/step) | D64 01M5HA5K5BN4K6EWRVBGNDMBWC (480 +120,+240), D64LOW 01M5HA5T0QNTF7E6FXARAS9Q79 (48 +24), IFL10x64 01M5HA62V26HZ3EAR8S7AZ5Z38 (658 +164,+329), IFL05x64 01M5HA67X8S89DR32XYQF1F1Q0 (1333 +333,+667), IFL25x64 01M5HA6FPA82AGH9BBQYBETY0V (1200 +600) | PENDING since ~01:10. Budgets from ESTIMATED 64k FLOP ratios (~0.073 at 10%, ~0.036 at 5%); m uses measured actual_pflops |
+| dense driver 4017418 | cubbins | o3cd-D-480 DONE (480 steps, 1 h 43 m; checkpoints 216/324/432/480 kept, 108 pruned); D-120 branch FAILED (step108 gone) -> driver ended |
+| rest driver 4017452 | cubbins | CANCELLED 2 min in (IRAND would have lost branch points) |
+| rest driver 4017567 (code f1cc054c6) | cubbins | RUNNING/QUEUED: DFIX (D-240 from step216, D-120 fresh s0, D-120-s1) -> EVALD -> IRAND-2600 (all ckpts kept) -> HO-120/240/480 -> EVALI |
+| Beaker relaunch (code 3e590babf, own weka dir per job) | IFL 01M5HBA9128MWQ1RS3G1DRNSM3, IFL10 01M5HBAE4TNGZG938G5HBEVNC4, IFL05 01M5HBAKJB8VZX8G6979WK733Q, D64 01M5HBASMD94ERBHD378BR9HB7, IFL10x64 01M5HBAZ0H7E581ED55NK8568J, IFL05x64 01M5HBB4518X6FB61QZ604GTYY, IFL25x64 01M5HBBAKYWAHGE5HXN502X6TB | PENDING (previous launches cancelled before start for the max_checkpoints trap). Still running from attempt 4: C120 / C240 / C480; DLOW pending on 0b16ebdba (only 2 saves, unaffected) |
+| dev32k_1024 + short4k_v2 | mooney 4015937 | DONE: 1,024 dev rows (1 malformed pool line skipped); short guard 256 rows from 354,747 short docs over 7 stage-3 shards. Uploading to S3 (4017421) |
 | upload data + both bases to S3 hub (`s3_upload.sbatch`) | slurm 4012955 (mooney) | DONE 5.5 min: data/{train32k,dev32k,short4k,c8k} + base/{stage2-step47684,stage3-step11921} at s3://ai2-llm/checkpoints/prasanns/_transfer/olmo3_cptdrop/ (4012954 failed at once: `--wrap` runs sh) |
+| LR probe driver (cubbins) | slurm 4017622 | DONE: Dlr65-240 (+120 branch), Dlr20-240 (+120 branch), stage3-yarn8 rescored on dev32k_1024 |
+| Beaker old-LR waves bk3-bk10 | (ops rows o3cd-bk*-*) | CANCELLED 2026-10-22 ~05:25 while pending: superseded by LR 2e-5 |
+| LR-2e-5 driver (cubbins, code 40925312f) | slurm 4017693 | RUNNING from 05:30: DC (Dlr20-12/24/48, Dlr10-120) -> EV -> IR (IRANDlr20-2600, +650/+1300) -> HO (HOlr20-120/240/480) -> D480 (Dlr20-480) -> EV |
+| Beaker bk11 (LR 2e-5, code 40925312f, weka beaker_<NAME>_lr20) | C120 01M5HSDVWGB5HABHZVH2H7YH4C, C240 01M5HSE1W2WMJHRH65V18V5QM8, C480 01M5HSE7BNP0Z7JR80JBVC10J6, IFL 01M5HSECB5PQ16CNA3B9MVZ64J, IFL10 01M5HSEHH1PWTATYBC5RNFYRCV, IFL05 01M5HSEPCT5ATWAZ1E4MBRXE33, D64lr20 01M5HSEW1E99JNJPFXAT1GXMD3, IFL10x64 01M5HSF114C1WVDGYW6B8Q5SZ6, IFL05x64 01M5HSF5KWPNYKF5WDR9VQFMSF, IFL25x64 01M5HSF9VY0MV1ETJB0CE4NGN1 | PENDING since 05:26 |
 | dev-CE sanity (`eval_devce.py`, branch `claude/vigorous-agnesi-20ecb0` @ a151f921d): stage2 none/x4, stage3 x8 on dev32k + short4k | slurm 4012959 (mooney, 1 H200) | DONE: 6 CPU tests pass; per checkpoint load ~30 s + dev32k 372 s (1.45 s/row) + short4k 40 s; JSONs `/data/prasann/olmo3_cptdrop/devce/` (mooney) |
 
 ## Current best numbers
 | arm | task / rung | metric | eval_size | ±SE | cot | source |
 |---|---|---|---|---|---|---|
+| stage2 YaRN x4 (start) | dev32k_1024 / 32k | CE 1.8477 (16-32k 1.8400); short4k_v2 1.1559 | 1024 rows (short 256 ⚠) | paired below | no-cot | cubbins /data/prasann/olmo3_cptdrop/devce/ |
+| D-120 (OLMo LR 2.07e-4) | dev32k_1024 / 32k | CE 1.8185 (16-32k 1.8153); short 1.3270 | 1024 | vs stage2 -0.0291 ±0.0053 | no-cot | same |
+| D-120-s1 | dev32k_1024 / 32k | CE 1.8096 (16-32k 1.8068); short 1.3260 | 1024 | vs D-120 -0.0090 ±0.0011 (seed noise) | no-cot | same |
+| D-240 | dev32k_1024 / 32k | CE 1.8290 (16-32k 1.8248); short 1.3854 | 1024 | vs D-120 +0.0105 ±0.0011 | no-cot | same |
+| D-480 | dev32k_1024 / 32k | CE 1.8237 (16-32k 1.8206); short 1.4917 | 1024 | vs D-120 +0.0052 ±0.0012 | no-cot | same |
+| Dlr65-120 / -240 (LR 6.5e-5) | dev32k_1024 / 32k | CE 1.7113 / 1.7102; short 1.1889 / 1.1969 | 1024 | Dlr65->Dlr20 at 120: -0.0260 ±0.0003 | no-cot | cubbins devce/ |
+| **Dlr20-120 (LR 2e-5)** | dev32k_1024 / 32k | CE 1.6853 (16-32k 1.6827); short 1.1610 | 1024 | vs stage2 -0.1623 ±0.0044; vs D-120 -0.1332 ±0.0018 | no-cot | cubbins devce/ |
+| **Dlr20-240** | dev32k_1024 / 32k | CE 1.6827 (16-32k 1.6797); short 1.1651 | 1024 | vs Dlr20-120 -0.0026 ±0.0001 | no-cot | cubbins devce/ |
+| stage3 x8 (OLMo's own long-context model) | dev32k_1024 / 32k | CE 1.8289 (16-32k 1.8014); short 1.1774 | 1024 | — | no-cot | cubbins devce/ |
 | stage3 x8 (reference) | devce_dev32k 16k-32k | CE | 256 rows ⚠<500 (4.19M tok) | Δ vs stage2-x4 −0.0455 ±0.0063 paired | no-cot | /data/prasann/olmo3_cptdrop/devce/stage3-yarn8_dev32k.json |
 | stage2 x4 (CPT start) | devce_dev32k overall / 0-4k / 4-8k / 8-16k / 16-32k | CE | 256 rows ⚠<500 | — | no-cot | 1.9307 / 1.9698 / 1.9489 / 1.9289 / 1.9173 (stage2-yarn4_dev32k.json) |
 | stage3 x8 | same bins | CE | 256 rows ⚠<500 | Δ −0.026±.006 / −0.004±.006 / +0.016±.010 / −0.018±.007 / −0.046±.006 | no-cot | 1.9051 / 1.9661 / 1.9653 / 1.9113 / 1.8718 |
@@ -103,6 +177,49 @@ See `next_step` above.
 - Train topic mix follows the pool (45% science_math_and_technology, 13 of 22 topics sampled); dev is
   topic-balanced over 23 topics. Same for every arm, so arm comparisons are unaffected; absolute CE is not
   comparable to OLMo's own stage-3 numbers.
+- TRAP (hit 2026-10-21, cost 80 GPU-min): the trainer splits a shard into documents at EOS and silently DROPS
+  any document longer than --seq-len. If no document fits, every epoch is empty and fit() loops forever on
+  "Starting epoch N / Epoch complete" with GPUs idle (no error). The first c8k cut 32k rows into 8k pieces with
+  only one leading EOS per four, so every document was 32k. Fixed in 5622d24ac (every 8k row = EOS + 8,191).
+  Smokes now carry a 20-min timeout.
+- TRAP: `--no-final-checkpoint` (run_arm SMOKE=1) disables the whole checkpointer, mid-run saves included.
+- TRAP (hit 2026-10-22, every Beaker drop arm): EOS-FIRST rows make the trainer's EOS-split stream start with a
+  lone EOS = a degenerate 1-token document (43,001 instances for 43,000 rows). The soft-token variant's
+  length-sorted micro-batching gives the rank holding it a different micro-batch structure -> FSDP collectives
+  desync -> NCCL watchdog after 15 min. Seed 34521 puts it at step 118 on rank 7 (verified from the dense run's
+  global_indices: position 1887 = batch 117, slot 15). IFL / IFL10 / IFL05 all hung at step 118; dense unaffected.
+  Fixed 9dbacf5cf: EOS-LAST shards *_ee (eos_to_end.py; same [body, EOS] instances, 43,000 of them) for every
+  training shard; Beaker data check requires exactly one EOS per row at the end. Drop arms relaunched (bk6).
+- TRAP (hit 2026-10-22): Beaker preempted D64 exactly at its 1h minRuntime and REQUEUED it; the requeue would
+  have refused its own step checkpoints (run_arm's anti-auto-resume guard). Fixed 3fc6ae705: beaker_job exports
+  RESUME=1 (resume own latest stepN) and skips runs whose export exists. D64 rerun FRESH as D64e (its old
+  checkpoints were on EOS-first train64k; resuming onto *_ee data would mix data orders).
+- FOR PRASANN: Beaker's preemption notice says our job's workspace group is "ai2/oe-scaling" (15% over target).
+  CLAUDE.md says our jobs must never run from an oe-scaling workspace (ai2/flex2 under ai2/oe-other). Launches
+  were from -w ai2/flex2 -b ai2/oe-other as documented; worth checking whether flex2 is now in that group.
+- FINDING 2026-10-22 03:00: at the OLMo recipe LR (2.07e-4) with our 512k-token batches (OLMo used 4M), dense CPT
+  PLATEAUS by ~120 steps (63M tokens) and then gets slightly WORSE (240: +0.010, 480: +0.005 vs 120, paired
+  ±0.001), while short-document CE climbs 1.16 -> 1.33 -> 1.39 -> 1.49. Seed noise at 120 steps is 0.009. Most of
+  the stage2 -> D-120 gain is the 0-4k bin (-0.078, domain adaptation to PDFs), not long range (16-32k -0.025).
+  A flat dense curve cannot support a 10-20x Pareto claim, so: LR probe (6.5e-5, 2e-5; 240 + 120 branch) on
+  cubbins (4017622). Beaker jobs at the OLMo LR kept: they sit in the steep 0-120-step regime (DLOW = 24/48).
+- TRAP (hit 2026-10-22, ~35 min x 3 Beaker jobs): s3_sync skipped files on equal SIZE, so the rebuilt (same-size)
+  c8k never replaced the broken one on S3; C120/C240/C480 livelocked on empty epochs and wrote ~400k
+  global_indices_*.npy files each under weka beaker_C*/work/o3cd-C-*-p1/ (+300 MB logs). Fixed 71d519e65
+  (mtime metadata / ETag record; beaker_job refuses shards whose rows do not all start with EOS). Weka junk
+  cleanup pending until the relaunched C jobs finish phase 1 (same dirs).
+- TRAP (hit 2026-10-22): eval_devce refused every TRAINED checkpoint: config.json records the patched OLMo 3 marker
+  tokenizer (same ids as dolma2). Fixed df2218269 (accept same-id tokenizers). The cubbins driver 4017567's staged
+  copy code_f1cc054c6 was HOT-PATCHED with that eval_devce.py (only file changed) before its EVALD stage. Beaker
+  jobs on older commits will fail their in-job eval but still upload exports to S3 -> score centrally.
+  DLOW (01M5H9THF152NHBXCYQ5MSAENQ) trained D-48 + D-24 fine (exports on S3 runs/o3cd-DLOW-{24,48}); eval failed.
+- Token exit / position rules: GPU tests NOT run (job 4017524 preempted while pending); run before any
+  token-exit arm.
+- TRAP (hit 2026-10-22): CheckpointerCallback.max_checkpoints defaults to 3, so --save-interval checkpoints older
+  than the newest three are deleted. D-480/step108 vanished and the D-120 branch failed; IRAND's saves-every-195
+  and six queued Beaker jobs would have lost branch points. Fixed f1cc054c6: train_ctc_suite --max-checkpoints
+  (0 = keep all), run_arm passes 0 with SAVE_INTERVAL. D-120 is now a fresh 120-step run (+ seed 1).
+- TRAP: WSD decay = round(t_max * decay_fraction); a 0-step decay divides by zero. Only tiny smoke budgets hit it.
 - Arm C's two phases use different shards: phase 2 must load model + optimizer only (`--branch-optim-only`),
   never trainer state, or the data loader resumes at a position in the wrong shard.
 
