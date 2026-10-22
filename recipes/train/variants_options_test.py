@@ -1,4 +1,4 @@
-"""Every softtoken flag the trainer parses must reach the variant.
+"""Every softtoken (and layer-drop) flag the trainer parses must reach the variant.
 
 ``Variant.options_from_namespace`` copies only the option dataclass's FIELDS from the argparse namespace;
 a ``--st-*`` flag without a matching field is parsed and then silently dropped. On 2026-10-22 four flags
@@ -17,7 +17,7 @@ VARIANTS = os.path.join(HERE, "variants.py")
 TRAINER = os.path.join(HERE, "research_trainer", "train_ctc_suite.py")
 
 
-def _softtoken_fields():
+def _option_fields(cls_name):
     tree = ast.parse(open(VARIANTS).read())
     classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
 
@@ -29,7 +29,11 @@ def _softtoken_fields():
                 out |= fields(base.id)
         return out
 
-    return fields("SoftTokenOptions")
+    return fields(cls_name)
+
+
+def _softtoken_fields():
+    return _option_fields("SoftTokenOptions")
 
 
 def test_every_trainer_st_flag_is_a_softtoken_option_field():
@@ -44,3 +48,13 @@ def test_softtoken_variant_reads_only_declared_fields():
     used = set(re.findall(r"\bo\.(st_[a-z0-9_]+)", src)) | set(re.findall(r'getattr\(o, "(st_[a-z0-9_]+)"', src))
     missing = sorted(used - _softtoken_fields())
     assert not missing, f"variants.py reads softtoken options that are not dataclass fields: {missing}"
+
+
+def test_every_trainer_layer_drop_flag_is_a_layerdrop_option_field():
+    flags = re.findall(r'add_argument\(\s*"--((?:layer-drop|train-skip)-[a-z0-9-]+)"', open(TRAINER).read())
+    assert "train-skip-layers" in flags and "layer-drop-p" in flags, flags
+    fields = _option_fields("LayerDropOptions")
+    missing = sorted(f for f in flags if f.replace("-", "_") not in fields)
+    assert not missing, f"layer-drop flags parsed by the trainer but dropped by options_from_namespace: {missing}"
+    used = set(re.findall(r"\bo\.((?:layer_drop|train_skip)_[a-z0-9_]+)", open(VARIANTS).read()))
+    assert not (used - fields), f"variants.py reads layer-drop options that are not fields: {sorted(used - fields)}"
