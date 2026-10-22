@@ -327,6 +327,30 @@
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
+  },
+  "f8k-mt4-otr05M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5JTB3MMA2WV0F7E8B9EDXR1",
+   "arm": "otr05M8",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8sk3-s1464-tdb-lr2e-06": {
+   "ex": "01M5JTBXYTBGKMYWE61Z0CCD90",
+   "arm": "otr10M8sk3",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8-s1952-tdb-lr2e-06": {
+   "ex": "01M5JTCRFCCR8371AYWF9PK2G3",
+   "arm": "otr10M8",
+   "budget": "s1952",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
