@@ -12,6 +12,9 @@
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
 #   D480 Dlr20-480 fresh (the long end of the dense curve)
 #   EV  8-GPU row-chunked dev CE of everything above
+#   CTX the same plus ctx_gain (--ctx-window 8192: last 4k targets with full context vs the last 8k only) for
+#       every finished run + stage2 / stage3, into devce_ctx/ (dev CE saturates by ~12 dense steps = domain
+#       adaptation; ctx_gain tracks long-context learning, which OLMo's 50B-token stage 3 is about)
 #   STAGES="DC IR HO EV" CODE_SHA=<sha> sbatch -w cubbins research/token_routing/olmo3_cptdrop/driver_lr20.sbatch
 #SBATCH --job-name=o3cd-lr20
 #SBATCH --partition=jsteinhardt
@@ -35,7 +38,7 @@ run() {
   log "START $name"; env "$@" RUN="$name" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1; local rc=$?
   log "END $name rc=$rc"; return $rc
 }
-for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV}; do
+for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
   case $st in
     DC)
       for b in 12 24 48; do run "o3cd-Dlr20-$b" ARM=D MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 4 + 8)) || exit 10; done
@@ -74,6 +77,20 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV}; do
         bash "$CODE/research/token_routing/olmo3_cptdrop/devce_multi.sh" > "$ROOT/logs/devce-lr20-$SLURM_JOB_ID.log" 2>&1 \
         || log "WARN: eval had failures"
       grep -h "merged" "$ROOT/logs/devce-lr20-$SLURM_JOB_ID.log" ;;
+    CTX)
+      SPECS=""; OD="$ROOT/devce_ctx"
+      [ -f "$OD/stage2-yarn4_dev32k_1024.json" ] || SPECS="$SPECS stage2-yarn4:base/stage2-step47684:4"
+      [ -f "$OD/stage3-yarn8_dev32k_1024.json" ] || SPECS="$SPECS stage3-yarn8:base/stage3-step11921:8"
+      for d in "$ROOT"/runs/o3cd-*; do
+        r=${d##*/o3cd-}
+        case "$r" in *-p1|*lr65*|D-*|DLOW*) continue ;; esac
+        [ -f "$d/model_and_optim/.metadata" ] && [ ! -f "$OD/${r}_dev32k_1024.json" ] && SPECS="$SPECS $r:runs/o3cd-$r:4"
+      done
+      log "CTX specs:$SPECS"
+      SPECS="$SPECS" SHARDS="dev32k_1024:128" OUT_DIR="$OD" EVAL_EXTRA="--ctx-window 8192" CODE="$CODE" PY="$PY" ROOT="$ROOT" \
+        bash "$CODE/research/token_routing/olmo3_cptdrop/devce_multi.sh" > "$ROOT/logs/devce-ctx-$SLURM_JOB_ID.log" 2>&1 \
+        || log "WARN: ctx eval had failures"
+      grep -h "merged" "$ROOT/logs/devce-ctx-$SLURM_JOB_ID.log" ;;
   esac
 done
 log "LR20 DONE"
