@@ -5,8 +5,12 @@
 # --allow-dirty: the shared checkout carries other sessions' uncommitted files; gantry ships the pushed HEAD.
 set -euo pipefail
 GANTRY=/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/gantry
+# GEN jobs: pass the plan as env, e.g.  GEN_ENV="NAME=o3cd-IFL10 ARM=IFL KEEP=0.1 TOP=533 SAVE=120 BRANCHES=133@120,267@240"
+# (the job name then uses NAME).
+ENVARGS=(); for kv in ${GEN_ENV:-}; do ENVARGS+=(--env "$kv"); done
 for FAM in "$@"; do
-  "$GANTRY" run --name "o3cd-$FAM-$(date +%m%d%H%M)" -w ai2/flex2 -b ai2/oe-other \
+  JN="o3cd-$FAM"; for kv in ${GEN_ENV:-}; do [[ "$kv" == NAME=* ]] && JN="${kv#NAME=}"; done
+  "$GANTRY" run --name "$JN-$(date +%m%d%H%M)" "${ENVARGS[@]}" -w ai2/flex2 -b ai2/oe-other \
     --cluster ai2/jupiter-cirrascale-2 --gpus 8 --shared-memory 256GiB --priority urgent --min-runtime 1h \
     --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
     --weka oe-training-default:/weka/oe-training-default \

@@ -3,7 +3,9 @@
 # Pulls data + the stage-2 base from the S3 hub to local disk, trains with the SAME run_arm.sbatch recipe as
 # Berkeley, scores every final export with eval_devce.py (dev32k_1024 + short4k_v2), then pushes eval JSONs
 # and model-only exports to s3://ai2-llm/checkpoints/prasanns/_transfer/olmo3_cptdrop/{devce,runs}/.
-#   FAMILY = C120 | C240 | C480 | IFL | IRAND
+#   FAMILY = C120 | C240 | C480 | IFL | IRAND | GEN
+#   GEN reads env: NAME (run prefix), ARM (D|IRAND|IFL), KEEP (optional), CTX (32k|64k), TOP (steps of the main
+#   WSD run), SAVE (save interval, optional), BRANCHES ("B@S,B@S" decay branches to B steps from stepS)
 set -euo pipefail
 FAMILY="${1:?FAMILY}"
 # ROOT on weka (one dir per family: no two jobs ever write the same file); JIT caches on node-local /tmp.
@@ -19,12 +21,15 @@ ARM_SH="$CODE/research/token_routing/olmo3_cptdrop/run_arm.sbatch"
 df -h "$ROOT" | tail -1
 nvidia-smi -L
 
+CTX="${CTX:-32k}"; export CTX
 case "$FAMILY" in
   C*) NEED="c8k train32k_head" ;;
   IFL|IRAND) NEED="train32k" ;;
+  GEN) NEED=$([ "$CTX" = 64k ] && echo train64k || echo train32k) ;;
   *) echo "unknown FAMILY $FAMILY"; exit 2 ;;
 esac
-for d in $NEED dev32k_1024 short4k_v2; do "$PY" -u "$S3SYNC" down "$ROOT/data/$d" "data/$d" | tail -1; done
+if [ "$CTX" = 64k ]; then DEV=dev64k_512; YF=8; else DEV=dev32k_1024; YF=4; fi
+for d in $NEED $DEV short4k_v2; do "$PY" -u "$S3SYNC" down "$ROOT/data/$d" "data/$d" | tail -1; done
 "$PY" -u "$S3SYNC" down "$ROOT/base/stage2-step47684" base/stage2-step47684 | tail -1
 
 FINALS=()
@@ -54,20 +59,26 @@ case "$FAMILY" in
     run o3cd-IRAND-650 ARM=IRAND MAX_STEPS_TOTAL=650 BRANCH_FROM="$ROOT/runs/o3cd-IRAND-2600/step585"
     run o3cd-IRAND-1300 ARM=IRAND MAX_STEPS_TOTAL=1300 BRANCH_FROM="$ROOT/runs/o3cd-IRAND-2600/step1170"
     FINALS=(o3cd-IRAND-650 o3cd-IRAND-1300 o3cd-IRAND-2600) ;;
+  GEN)
+    : "${NAME:?}" "${ARM:?}" "${TOP:?}"
+    run "$NAME-$TOP" ARM="$ARM" MAX_STEPS_TOTAL="$TOP" ${SAVE:+SAVE_INTERVAL=$SAVE}
+    FINALS=("$NAME-$TOP")
+    BL="${BRANCHES:-}"; for br in ${BL//,/ }; do
+      B=${br%@*}; S0=${br#*@}
+      run "$NAME-$B" ARM="$ARM" MAX_STEPS_TOTAL="$B" BRANCH_FROM="$ROOT/runs/$NAME-$TOP/step$S0"
+      FINALS+=("$NAME-$B")
+    done ;;
 esac
 
-# Score each final export (YaRN x4, as trained); one GPU per (run, shard), all in parallel.
-export PYTHONPATH="$CODE/src:$CODE/research/token_routing/olmo3_cptdrop" HF_HOME="$ROOT/hf_cache" TMPDIR="$TMPBASE"
-g=0; pids=()
-for r in "${FINALS[@]}"; do
-  for sh in dev32k_1024 short4k_v2; do
-    CUDA_VISIBLE_DEVICES=$g "$PY" -u "$CODE/research/token_routing/olmo3_cptdrop/eval_devce.py" \
-      --ckpt "$ROOT/runs/$r" --yarn-factor 4 --dev "$ROOT/data/$sh" --label "$r" \
-      --out "$ROOT/devce/${r}_${sh}.json" > "$ROOT/logs/devce-${r}-${sh}.log" 2>&1 &
-    pids+=($!); g=$(( (g + 1) % 8 ))
-  done
-done
-ok=1; for p in "${pids[@]}"; do wait "$p" || ok=0; done
+# Score each final export with the 8-GPU row-chunked scorer (YaRN as trained).
+SPECS=""; for r in "${FINALS[@]}"; do SPECS="$SPECS ${r#o3cd-}:runs/$r:$YF"; done
+ok=1
+set +e +o pipefail
+SPECS="$SPECS" SHARDS="$DEV:$([ "$DEV" = dev64k_512 ] && echo 64 || echo 128) short4k_v2:256" \
+  CODE="$CODE" PY="$PY" ROOT="$ROOT" TMPBASE="$TMPBASE" \
+  bash "$CODE/research/token_routing/olmo3_cptdrop/devce_multi.sh" 2>&1 | tee "$ROOT/logs/devce.log" | grep -E "merged|WARN"
+[ "${PIPESTATUS[0]}" -eq 0 ] || ok=0
+set -e -o pipefail
 log "evals done ok=$ok"; ls -la "$ROOT/devce"
 "$PY" -u "$S3SYNC" up "$ROOT/devce" devce | tail -1
 for r in "${FINALS[@]}"; do

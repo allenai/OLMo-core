@@ -224,6 +224,7 @@ def main():
     ap.add_argument("--train-buckets", default="15,16")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--only", default="train,dev,short")
+    ap.add_argument("--train-name", default="train32k")
     ap.add_argument("--dev-name", default="dev32k")
     ap.add_argument("--short-name", default="short4k")
     ap.add_argument("--short-shards", default="000500",
@@ -253,16 +254,16 @@ def main():
         random.Random(a.seed + 1).shuffle(order)
         q = np.percentile(lens, [10, 50, 90, 99]).astype(int).tolist()
         write_shard(
-            os.path.join(a.out_root, "train32k"), [rows[i] for i in order], [prov[i] for i in order],
+            os.path.join(a.out_root, a.train_name), [rows[i] for i in order], [prov[i] for i in order],
             a.row_len,
             {"source": POOL, "buckets": sorted(buckets), "max_windows_per_doc": a.max_windows,
              "seed": a.seed, "docs_seen": int(len(lens)), "docs_used": len({p[0] for p in prov}),
              "doc_tokens_p10_p50_p90_p99": q, "doc_tokens_max": int(lens.max())},
         )
-        with open(os.path.join(a.out_root, "train32k", "doc_ids.txt"), "w") as f:
+        with open(os.path.join(a.out_root, a.train_name, "doc_ids.txt"), "w") as f:
             f.write("\n".join(sorted(train_ids)))
-    elif os.path.exists(os.path.join(a.out_root, "train32k", "doc_ids.txt")):
-        train_ids = set(open(os.path.join(a.out_root, "train32k", "doc_ids.txt")).read().split())
+    elif os.path.exists(os.path.join(a.out_root, a.train_name, "doc_ids.txt")):
+        train_ids = set(open(os.path.join(a.out_root, a.train_name, "doc_ids.txt")).read().split())
 
     if "dev" in only:
         rows, prov = build_dev(api, tok, by, a.dev_rows, a.row_len, a.cache, rng, train_ids)

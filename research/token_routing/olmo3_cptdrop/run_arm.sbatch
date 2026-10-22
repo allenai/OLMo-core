@@ -15,6 +15,8 @@
 #   BRANCH_FROM    stepN dir to branch from; BRANCH_OPTIM_ONLY=1 for arm C phase 2
 #   WARMUP / DECAY_FRAC   WSD warmup fraction (0.017) / decay fraction (0.1)
 #   SEED, EXTRA (appended trainer flags), NOWANDB=1, CODE_SHA (staged tree)
+#   CTX=64k        64k rows (train64k), 8 rows/step, YaRN x8      KEEP=<f>  drop-arm keep fraction / prob
+#   ST_EXTRA       extra --st-* flags (e.g. --st-keep-recent 4096 once that lands)
 #   SMOKE=1        no model-only export and NO checkpoints at all (--no-final-checkpoint disables the
 #                  checkpointer callback, mid-run SAVE_INTERVAL saves included)
 #SBATCH --job-name=o3cd-arm
@@ -47,6 +49,20 @@ case "$ARM" in
   IFL)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
   *) echo "FATAL: unknown ARM=$ARM"; exit 2 ;;
 esac
+# KEEP overrides the drop arms' aggressiveness (I-rand: block keep-prob; I-fl: first_last fraction per block)
+if [ -n "${KEEP:-}" ]; then
+  case "$ARM" in
+    IRAND) VAR="${VAR/--st-keep-prob 0.2/--st-keep-prob $KEEP}" ;;
+    IFL)   VAR="${VAR/--st-keep-token-k 0.25/--st-keep-token-k $KEEP}" ;;
+    *) echo "FATAL: KEEP only applies to IRAND / IFL"; exit 2 ;;
+  esac
+fi
+# CTX=64k: one 64k window per row, 8 rows/step (same 524,288 tokens/step), YaRN x8 (8192 -> 65536, as OLMo stage 3)
+YARN=4
+if [ "${CTX:-32k}" = "64k" ]; then
+  case "$ARM" in D|IRAND|IFL) DATA=train64k; SEQ=65536; GB=8; YARN=8 ;; *) echo "FATAL: CTX=64k not wired for ARM=$ARM"; exit 2 ;; esac
+fi
+VAR="$VAR ${ST_EXTRA:-}"
 SAVE="$ROOT/runs/$RUN"
 if [ -d "$SAVE" ] && ls -d "$SAVE"/step* >/dev/null 2>&1 && [ -z "${RESUME:-}" ]; then
   echo "FATAL: $SAVE already has step checkpoints; the trainer would silently resume (set RESUME=1 to mean it)"; exit 3
@@ -64,7 +80,7 @@ fi
 
 ARGS=(--task cpt --model-family olmo3 --model-scale 7b $VAR
   --data "$ROOT/data/$DATA" --seq-len "$SEQ" --global-batch "$GB" --micro-batch-instances "${MB:-1}" --epochs 1
-  --base-checkpoint "$ROOT/base/stage2-step47684/model_and_optim" --skip-marker-audit --rope-yarn-factor 4
+  --base-checkpoint "$ROOT/base/stage2-step47684/model_and_optim" --skip-marker-audit --rope-yarn-factor "$YARN"
   --lr 2.0712352850360292e-4 --weight-decay 0.1 --z-loss 1e-5
   --scheduler wsd --warmup-fraction "${WARMUP:-0.017}" --wsd-decay-fraction "${DECAY_FRAC:-0.1}"
   --max-tokens $(( STEPS * TOK_PER_STEP ))
