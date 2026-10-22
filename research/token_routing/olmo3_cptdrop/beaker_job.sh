@@ -59,8 +59,13 @@ for d in sys.argv[2:]:
 PYEOF
 
 FINALS=()
+# Beaker preempts urgent jobs after their minRuntime (D64 at 1h, 2026-10-22) and REQUEUES them: the rerun resumes
+# each run from its own latest stepN (RESUME=1; branch points are kept, max_checkpoints 0) and skips runs whose
+# final export already exists.
+export RESUME=1
 run() {  # name, then env for run_arm
   local name=$1; shift
+  if [ -f "$ROOT/runs/$name/model_and_optim/.metadata" ]; then log "SKIP $name (final export exists)"; return 0; fi
   log "START $name"
   set +e +o pipefail
   env "$@" RUN="$name" bash "$ARM_SH" 2>&1 | tee "$ROOT/logs/$name.log" | grep -E "\[step=[0-9]|train/CE loss|Error|error|Traceback" --line-buffered
