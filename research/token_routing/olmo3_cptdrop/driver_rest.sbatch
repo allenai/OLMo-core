@@ -41,6 +41,18 @@ for st in ${STAGES:-IRAND IFL C}; do
       run o3cd-D-240 ARM=D RUN=o3cd-D-240 MAX_STEPS_TOTAL=240 BRANCH_FROM="$ROOT/runs/o3cd-D-480/step216" EXPECTED_MIN=15 || exit 70
       run o3cd-D-120 ARM=D RUN=o3cd-D-120 MAX_STEPS_TOTAL=120 EXPECTED_MIN=30 || exit 71
       run o3cd-D-120-s1 ARM=D RUN=o3cd-D-120-s1 MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 72 ;;
+    LRPROBE)  # dense plateaued at 2.07e-4 / 512k-token batches: probe lower peak LRs (240 steps + 120 branch each)
+      "$PY" -u "$ROOT/s3_sync.py" down "$ROOT/base/stage3-step11921" base/stage3-step11921 | tail -1   # eval reference
+      for pair in "6.5e-5:lr65" "2e-5:lr20"; do
+        lr=${pair%%:*}; tag=${pair##*:}
+        run "o3cd-D$tag-240" ARM=D LR=$lr RUN="o3cd-D$tag-240" MAX_STEPS_TOTAL=240 SAVE_INTERVAL=108 EXPECTED_MIN=60 || exit 80
+        run "o3cd-D$tag-120" ARM=D LR=$lr RUN="o3cd-D$tag-120" MAX_STEPS_TOTAL=120 BRANCH_FROM="$ROOT/runs/o3cd-D$tag-240/step108" EXPECTED_MIN=10 || exit 81
+      done
+      SPECS="Dlr65-120:runs/o3cd-Dlr65-120:4 Dlr65-240:runs/o3cd-Dlr65-240:4 Dlr20-120:runs/o3cd-Dlr20-120:4 Dlr20-240:runs/o3cd-Dlr20-240:4 stage3-yarn8:base/stage3-step11921:8" \
+      SHARDS="dev32k_1024:128 short4k_v2:256" CODE="$CODE" PY="$PY" ROOT="$ROOT" \
+        bash "$CODE/research/token_routing/olmo3_cptdrop/devce_multi.sh" > "$ROOT/logs/devce-lrprobe-$SLURM_JOB_ID.log" 2>&1 \
+        || log "WARN: LR-probe eval had failures"
+      grep -h "merged" "$ROOT/logs/devce-lrprobe-$SLURM_JOB_ID.log" ;;
     EVALD)  # dense family + the CPT start, 8-GPU row-chunked scoring
       for d in dev32k_1024 short4k_v2; do \
         "$PY" -u "$ROOT/s3_sync.py" down "$ROOT/data/$d" "data/$d" | tail -1; done

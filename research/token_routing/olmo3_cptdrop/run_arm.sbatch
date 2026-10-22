@@ -18,6 +18,7 @@
 #   SEED, EXTRA (appended trainer flags), NOWANDB=1, CODE_SHA (staged tree)
 #   CTX=64k        64k rows (train64k), 8 rows/step, YaRN x8      KEEP=<f>  drop-arm keep fraction / prob
 #   ST_EXTRA       extra --st-* flags (e.g. --st-keep-recent 4096 once that lands)
+#   LR             peak LR (default: the OLMo 3 stage-3 recipe's 2.0712e-4)
 #   SMOKE=1        no model-only export and NO checkpoints at all (--no-final-checkpoint disables the
 #                  checkpointer callback, mid-run SAVE_INTERVAL saves included)
 #SBATCH --job-name=o3cd-arm
@@ -90,7 +91,7 @@ fi
 ARGS=(--task cpt --model-family olmo3 --model-scale 7b $VAR
   --data "$ROOT/data/$DATA" --seq-len "$SEQ" --global-batch "$GB" --micro-batch-instances "${MB:-1}" --epochs 1
   --base-checkpoint "$ROOT/base/stage2-step47684/model_and_optim" --skip-marker-audit --rope-yarn-factor "$YARN"
-  --lr 2.0712352850360292e-4 --weight-decay 0.1 --z-loss 1e-5
+  --lr "${LR:-2.0712352850360292e-4}" --weight-decay 0.1 --z-loss 1e-5
   --scheduler wsd --warmup-fraction "${WARMUP:-0.017}" --wsd-decay-fraction "${DECAY_FRAC:-0.1}"
   --max-tokens $(( STEPS * TOK_PER_STEP ))
   --activation-checkpointing full --shard-degree "$NGPU" --attn-backend flash_2 --no-compile
