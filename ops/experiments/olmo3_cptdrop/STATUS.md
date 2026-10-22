@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: LR 2e-5 everywhere. cubbins 4017693 (dense curve Dlr20-12/24/48 + Dlr10-120 -> eval -> IRANDlr20 + HOlr20 -> Dlr20-480 -> eval) and 10 Beaker jobs bk11 (C120/240/480, IFL, IFL10, IFL05, D64lr20, IFL10x64, IFL05x64, IFL25x64; weka dirs beaker_<NAME>_lr20). When the dense curve's low end lands, run analyze.py (--ref Dlr20|D64lr20; keep lr20 devce JSONs in their own dir: Beaker labels C-*/IFL-* repeat the old-LR ones) and promote anything >=10x.
+next_step: cubbins 4018016 (after the seed replicate): SD20 smoke -> LOW (dense 4/8, I-rand 22/43, SD20 = sd20 slot geometry 65/130/260, Dlr10-12, Dlr05-120) -> CTX -> EV -> D480 -> CTX. Beaker: C480 (requeued), D64lr20, IFL25x64 running. So far NO drop arm beats dense at any measured budget on dev CE or ctx_gain; the open bets are the steep <12-step end and slots (the earlier sd20 success) instead of pure removal.
 ---
 
 # olmo3_cptdrop
@@ -170,6 +170,13 @@ See `next_step` above.
   harder it drops. Overall dev CE cannot support a 10-20x reading here, so the eval gained ctx_gain
   (--ctx-window 8192, commit 5408335a6): last 4k targets with full context vs only the last 8k tokens = how much
   the model uses context beyond 8k. CTX stage of cubbins 4017768 scores every run + stage2/stage3 on it.
+- FINDING 2026-10-22 10:20 (ctx_gain, --ctx-window 8192, dev32k_1024, 1,024 rows; paired SE): long-context use
+  ALSO saturates fast and drop arms trail it. ctx_gain: stage2 0.0169, stage3 0.0456 (OLMo's 50B-token stage:
+  +0.0287 ±0.0018), Dlr20-12 0.0671 (+0.0502 ±0.0019 vs stage2), -24 0.0700, -48 0.0726, -120 0.0743, -240 0.0762
+  (12 -> 240: +0.0090 ±0.0002, ~+0.002 per doubling). DB8lr20-12 +0.0029 ±0.0001 vs Dlr20-12. Drop arms at
+  matched FLOPs: IRANDlr20-65 -0.0054 ±0.0002 vs Dlr20-12; -130 -0.0066 vs Dlr20-24; IRANDlr20-260 (48-step FLOPs)
+  still -0.0023 below Dlr20-12; IFLlr20-54 -0.0107. Dlr10-120 (LR 1e-5) overall CE 1.6828 (best at 120 steps)
+  with ctx_gain -0.0011 vs Dlr20-120. No m > 1 anywhere yet (both metrics), so no Pareto plot to draw.
 - TRAP (hit 2026-10-22 08:33): weka `No space left on device` under prasanns/olmo3_cptdrop: IFL10x64 / IFL05x64 died
   at data staging; IFL10 / IFL05 in-job evals lost chunks. Every Beaker job keeps full model+optim checkpoints
   (~88 GB each, max_checkpoints 0) in its own dir, plus superseded old-LR dirs. du job 01M5J458P3MAFN3MPD3CFNKPXQ.
