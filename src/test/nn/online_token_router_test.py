@@ -401,8 +401,8 @@ def test_first_last_control_keeps_document_edges():
     assert kept == [2000, 2001, 2002, 2003, 2036, 2037, 2038, 2039], kept
 
 
-@pytest.mark.parametrize("target", ["gxh", "dh", "mix"])
-def test_mid_stack_targets_cpu(target):
+@pytest.mark.parametrize("target,score", [("gxh", "router"), ("dh", "router"), ("mix", "router"), ("gnorm", "dh")])
+def test_mid_stack_targets_cpu(target, score):
     """Every target trains end to end in mid-stack mode, records the gradient norm too, and refits."""
     from olmo_core.config import DType
     from olmo_core.nn.transformer import TransformerConfig
@@ -413,7 +413,7 @@ def test_mid_stack_targets_cpu(target):
     D = int(model.embeddings.weight.shape[1])
     router = OnlineTokenRouter(
         OnlineRouterConfig(keep_frac=0.25, explore_frac=0.2, samples_per_row=64, drop_layer=1, target=target,
-                           dense_every=2),
+                           dense_every=2, score=score),
         doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D,
     )
     model.enable_pooled_soft_tokens(
@@ -431,6 +431,9 @@ def test_mid_stack_targets_cpu(target):
         assert e["gn"] is not None and torch.isfinite(e["gn"]).all()
         if target == "mix":
             assert (e["target"] >= 0).all() and (e["target"] <= 1).all()
+        if score == "dh" and step == 3:
+            # fit-free rule: no exploration, and every document keeps its own top tokens by the residual change
+            assert not bool(e["explore"].any())
     router.begin_step(4, model=model)
     assert router.w is not None and torch.isfinite(router.w).all()
     assert "online_router/fid_mass_router" in router.metrics()
@@ -439,3 +442,8 @@ def test_mid_stack_targets_cpu(target):
 def test_dh_target_needs_mid_stack():
     with pytest.raises(ValueError):
         OnlineRouterConfig(target="dh").validate()
+
+
+def test_dh_score_needs_mid_stack():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(score="dh").validate()

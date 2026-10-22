@@ -69,6 +69,10 @@ ARMS = {
     "otr10M8gxh": otr(0.1, drop=8, extra="--st-otr-target gxh"),
     "otr10M8dh": otr(0.1, drop=8, extra="--st-otr-target dh"),
     "otr10M8mix": otr(0.1, drop=8, extra="--st-otr-target mix"),
+    # fit-free rule (parent, 2026-10-22): each document's top 10% by ||h^8 - h^0|| at block 8; no exploration.
+    # dh10M8 keeps otr10M8's charged full-context step every 8 (matched structure); dh10M8de0 is the pure rule
+    "dh10M8": otr(0.1, drop=8, extra="--st-otr-score dh"),
+    "dh10M8de0": otr(0.1, drop=8, dense_every=0, extra="--st-otr-score dh"),
     "otr10M8de16": otr(0.1, drop=8, dense_every=16),
     "otr10M4de16": otr(0.1, drop=4, dense_every=16),
 }

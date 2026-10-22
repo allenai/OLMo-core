@@ -93,7 +93,9 @@ class OnlineRouterConfig:
     score: str = "router"
     """Who picks the tokens: ``router`` (the learned scorer), or a CONTROL with the same budget, allocation and
     drop point: ``random`` (uniform; also ``explore_frac >= 1``) or ``first_last`` (each document's first and
-    last tokens). Controls still fit and log the router, so the fidelity metrics stay comparable."""
+    last tokens). Controls still fit and log the router, so the fidelity metrics stay comparable.
+    ``dh`` (mid-stack only): a fixed, gold-blind, fit-free RULE -- each document's top tokens by the residual
+    change ||h_t^L - h_t^0|| through blocks [0, L), read off the forward itself (no exploration)."""
     use_hidden: bool = True
     use_query: bool = True
     use_gold: bool = False
@@ -119,8 +121,10 @@ class OnlineRouterConfig:
             raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
-        if self.score not in ("router", "random", "first_last"):
-            raise ValueError(f"online router score must be router / random / first_last, got {self.score!r}")
+        if self.score not in ("router", "random", "first_last", "dh"):
+            raise ValueError(f"online router score must be router / random / first_last / dh, got {self.score!r}")
+        if self.score == "dh" and self.drop_layer <= 0:
+            raise ValueError("online router score 'dh' needs the mid-stack drop (drop_layer > 0)")
         if self.target not in TARGETS:
             raise ValueError(f"online router target must be one of {TARGETS}, got {self.target!r}")
         if self.target in ("dh", "mix") and self.drop_layer <= 0:
@@ -519,6 +523,9 @@ class OnlineTokenRouter:
             elif c.score == "first_last":
                 # fixed gold-blind rule (control): each document's first and last tokens, same allocation
                 score, c_explore = -fp["_edge"].to(torch.float32) + 1e-3 * u, 0.0
+            elif c.score == "dh":
+                # fixed fit-free rule: residual change through blocks [0, L) (set by mid_compact)
+                score, c_explore = fp["_dh"] + 1e-6 * u, 0.0
             else:
                 c_explore = c.explore_frac
             k = torch.ceil(n_body.to(torch.float32) * c.keep_frac).to(torch.long)
@@ -584,6 +591,16 @@ class OnlineTokenRouter:
         B, Tw, D = h.shape
         if self.cfg.use_hidden:
             self.add_hidden(fp, h[:, :Tr])
+        dh_all = None
+        if self.cfg.score == "dh" or self.cfg.target in ("dh", "mix"):
+            # residual change of every real token through blocks [0, L), on the full row (no grad)
+            with torch.no_grad():
+                e0 = model.embeddings(ids)
+                if model.embed_scale is not None:
+                    e0 = e0 * model.embed_scale
+                dh_all = torch.log((h[:, :Tr].float() - e0.float()).norm(dim=-1) + 1e-12)
+            fp["_dh"] = dh_all
+            self._flop(model, 3.0 * self.d_model * float((cid != -2).sum()))
         keep_body, entry = self._choose(model, fp, ids, cid)
         body = fp["body"]
         real = cid != -2
@@ -608,15 +625,8 @@ class OnlineTokenRouter:
         rows, pos = entry["rows"], entry["pos"]
         entry["ok"] = keep_all[rows, pos]
         entry["cols"] = newcol[rows, pos].clamp(min=0)
-        if self.cfg.target in ("dh", "mix"):
-            # residual change of the sampled tokens through blocks [0, L), on the full row (no grad)
-            with torch.no_grad():
-                e0 = model.embeddings(ids)
-                if model.embed_scale is not None:
-                    e0 = e0 * model.embed_scale
-                d = (h[:, :Tr][rows, pos].float() - e0[rows, pos].float()).norm(dim=-1)
-            entry["dh"] = torch.log(d + 1e-12)
-            self._flop(model, 3.0 * self.d_model * int(rows.numel()))
+        if dh_all is not None:
+            entry["dh"] = dh_all[rows, pos]
         self._register_target(model, entry, h_new)
         # FLOP adjustment, per row: blocks before drop_layer at the full length, the rest + head at the
         # kept length, minus the dense charge the meter applies to the (uncompacted) row
