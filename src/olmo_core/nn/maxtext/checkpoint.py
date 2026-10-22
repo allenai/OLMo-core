@@ -9,6 +9,8 @@ into the same environment (CPU JAX is enough).
 
 import json
 import logging
+import os
+import sys
 import tempfile
 from typing import Any, Dict, Mapping
 
@@ -36,6 +38,7 @@ __all__ = [
     "save_olmo_core_weights",
     "load_maxtext_params",
     "save_maxtext_params",
+    "initialize_maxtext_config",
     "scan_params",
     "unscan_params",
     "is_scanned",
@@ -204,6 +207,37 @@ def save_maxtext_params(output_dir: str, params: Mapping[str, torch.Tensor]) -> 
         use_ocdbt=True,
         use_zarr3=True,
     )
+
+
+def initialize_maxtext_config(
+    config: MaxTextModelConfig, *overrides: str, scan_layers: bool = True
+) -> Any:
+    """
+    MaxText's ``pyconfig`` for :attr:`config.model_name <MaxTextModelConfig.model_name>` sized to
+    this model (one device, no distributed system), plus any ``key=value`` ``overrides``. This is
+    the config a converted checkpoint loads into.
+    """
+    from maxtext.configs import pyconfig  # type: ignore
+    from maxtext.utils.globals import MAXTEXT_PKG_DIR  # type: ignore
+
+    # MaxText code paths may hand sys.argv to absl, which rejects the caller's flags.
+    argv, sys.argv = sys.argv, sys.argv[:1]
+    try:
+        return pyconfig.initialize(
+            [
+                "",
+                os.path.join(MAXTEXT_PKG_DIR, "configs", "base.yml"),
+                f"model_name={config.model_name}",
+                "override_model_config=True",
+                *config.overrides(),
+                f"scan_layers={scan_layers}",
+                "skip_jax_distributed_system=True",
+                "per_device_batch_size=1",
+                *overrides,
+            ]
+        )
+    finally:
+        sys.argv = argv
 
 
 #: Unscanned layer parameters live under ``decoder/layers_{i}/``.

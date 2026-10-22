@@ -14,17 +14,12 @@ from olmo_core.nn.maxtext import (  # noqa: E402
     get_maxtext_config,
 )
 from olmo_core.nn.maxtext.checkpoint import (  # noqa: E402
+    initialize_maxtext_config,
+    load_maxtext_params,
     save_maxtext_params,
     scan_params,
 )
 from olmo_core.nn.maxtext.convert import maxtext_shapes  # noqa: E402
-from olmo_core.nn.maxtext.parity import (  # noqa: E402
-    compare_summaries,
-    default_positions,
-    initialize_maxtext_config,
-    maxtext_logit_summary,
-    summarize_logits,
-)
 from olmo_core.nn.transformer import TransformerConfig  # noqa: E402
 
 from .convert_test import load_fixture  # noqa: E402
@@ -84,6 +79,60 @@ def test_converted_tree_matches_maxtext(name, scan_layers):
     assert shapes == maxtext_param_shapes(config, scan_layers)
 
 
+def maxtext_logits(config, items_path: str, tokens: np.ndarray, scan_layers: bool) -> np.ndarray:
+    """
+    Run a converted checkpoint in MaxText, in fp32 at the highest matmul precision, and return
+    its ``[B, S, V]`` logits. Weights load through MaxText's own ``load_parameters_path``, and
+    every loaded parameter is checked against the checkpoint so a model that fell back to its
+    own init can't pass.
+    """
+    import jax
+    import jax.numpy as jnp
+    from flax import nnx
+    from maxtext.common.common_types import MODEL_MODE_TRAIN
+    from maxtext.utils import maxtext_utils, model_creation_utils
+
+    B, S = tokens.shape
+    mt_config = initialize_maxtext_config(
+        config,
+        "run_name=olmo_core_parity",
+        "enable_checkpointing=True",
+        f"load_parameters_path={items_path}",
+        f"max_target_length={S}",
+        "dtype=float32",
+        "weight_dtype=float32",
+        "matmul_precision=highest",
+        scan_layers=scan_layers,
+    )
+    mesh = jax.sharding.Mesh(maxtext_utils.create_device_mesh(mt_config), mt_config.mesh_axes)
+    model = model_creation_utils.from_pretrained(mt_config, mesh=mesh, model_mode=MODEL_MODE_TRAIN)
+
+    stored = load_maxtext_params(items_path)
+    loaded = {
+        "/".join(str(p) for p in path): np.asarray(v[...])
+        for path, v in nnx.to_flat_state(nnx.state(model, nnx.Param))
+    }
+    assert loaded.keys() == stored.keys()
+    for k, v in loaded.items():
+        assert np.array_equal(v, stored[k].numpy()), f"{k}: MaxText isn't running the checkpoint"
+
+    global_batch = mt_config.global_batch_size_to_load
+    positions = jnp.broadcast_to(jnp.arange(S, dtype=jnp.int32), (global_batch, S))
+    segments = jnp.ones((global_batch, S), dtype=jnp.int32)
+    logits = []
+    for row in tokens:
+        # One sequence per call, replicated across the global batch.
+        ids = jnp.broadcast_to(jnp.asarray(row, dtype=jnp.int32), (global_batch, S))
+        out = model(
+            decoder_input_tokens=ids,
+            decoder_positions=positions,
+            decoder_segment_ids=segments,
+            enable_dropout=False,
+        )
+        logits.append(np.asarray(out[0], dtype=np.float32))
+    return np.stack(logits)
+
+
 @pytest.mark.parametrize("scan_layers", [False, True], ids=["unscanned", "scanned"])
 def test_dense_logits_match(tmp_path, scan_layers):
     """
@@ -103,20 +152,15 @@ def test_dense_logits_match(tmp_path, scan_layers):
 
     # Longer than the sliding window, so the window matters.
     tokens = np.random.default_rng(0).integers(0, config.vocab_size, size=(2, 32))
-    positions = default_positions(tokens.shape[1])
     with torch.no_grad():
-        logits = model(input_ids=torch.from_numpy(tokens)).float().numpy()
-    reference = summarize_logits(tokens, logits, positions)
+        expected = model(input_ids=torch.from_numpy(tokens)).float().numpy()
 
     state = {k: v.detach() for k, v in model.named_parameters()}
     params = convert_state_to_maxtext(config, state)
     if scan_layers:
         params = scan_params(params, config.scan_layout, config.n_layers)
     save_maxtext_params(str(tmp_path), params)
-    actual = maxtext_logit_summary(
-        config, str(tmp_path / "0" / "items"), tokens, positions, scan_layers=scan_layers
-    )
+    actual = maxtext_logits(config, str(tmp_path / "0" / "items"), tokens, scan_layers)
 
-    metrics = compare_summaries(reference, actual)
-    assert metrics["max_rel_logit_err"] < 1e-5, metrics
-    assert metrics["top1_agreement"] == 1.0, metrics
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5 * np.abs(expected).max())
+    assert np.array_equal(actual.argmax(-1), expected.argmax(-1))
