@@ -394,25 +394,23 @@ All otr10M8-style (keep 0.1, a full-context step every 8, LR 2e-6, mt4s1464 = 36
 (Beaker H100, interpolated: at 471 PF contra 0.904, nq 0.902, oolong 0.608, outlier 0.339). Single seed per cell.
 Lambda runs (2 × A100, node02, name `-lro-...-lam`) are compared with a same-cluster otr10M8 run (seed 1).
 
-**1. Drop layer: block 8, not earlier.** contra / nq / oolong / outlier:
+**1. Split point: a depth threshold at about 7 blocks, not a full-attention layer.** Lambda, otr10M*, mt4s1464,
+contra / nq / oolong / outlier at 8k, per seed (s0 / s1 / s2):
 
-| run | where | PF | scores |
-|---|---|---|---|
-| otr10M12 | Lambda | 565 | 0.938 / 0.912 / 0.638 / 0.523 |
-| otr10M8-s1 | Lambda | 471 | 0.928 / 0.902 / 0.664 / 0.641 |
-| otr10M6 | Lambda | 422 | 0.839 / 0.904 / 0.614 / 0.404 |
-| otr10M4 | Lambda | — | 0.781 / 0.884 / 0.613 / 0.372 |
-| otr10M1 | Lambda | — | 0.767 / 0.882 / 0.617 / 0.322 |
-| otr10M8-s976 | Beaker | 319 | 0.895 (+0.018) / 0.908 / 0.614 / 0.386 |
-| otr10M4-s976 | Beaker | 256 | 0.728 (−0.130) / 0.848 / 0.578 / 0.333 |
-| otr10M1-s976 | Beaker | 209 | 0.667 (−0.173) / 0.872 / 0.598 / 0.317 |
+| drop after block | PF | contradiction | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| 1 | 306 / 310 | 0.767 / 0.763 | 0.882 / 0.870 | 0.617 / 0.616 | 0.322 / 0.314 |
+| 4 | 378 / 381 | 0.781 / 0.777 | 0.884 / 0.894 | 0.613 / 0.641 | 0.372 / 0.385 |
+| 6 | 422 / 425 | 0.839 / 0.864 | 0.904 / 0.878 | 0.614 / 0.636 | 0.404 / 0.374 |
+| 7 | 444 (s0) | 0.929 | 0.902 | 0.621 | 0.558 |
+| **8** | 471 (s0 / s1) | 0.929 / 0.928 | 0.898 / 0.902 | 0.617 / 0.664 | 0.627 / 0.641 |
+| 12 | 565 / 565 | 0.938 / 0.943 | 0.912 / 0.908 | 0.638 / 0.649 | 0.523 / 0.649 |
 
-Routing after block 1 or 4 falls back to input-drop behaviour (contradiction −0.15, outlier −0.27 to −0.32 vs M8).
-Full attention sits at blocks 3, 7, 11, … (3:1 GDN). M6 (blocks 0-5, one full-attention layer) is still far behind M8
-(contradiction −0.09, outlier −0.24): the SECOND full-attention pass, block 7, is what matters. M12 (+20% PF) matches
-M8 on contradiction / nq and is lower on oolong (−0.03) and outlier (−0.12, inside the 0.13 seed noise): later splits
-do not keep improving. Against dense at 565 PF (≈ 0.914 / 0.907 / 0.599 / 0.373, interpolated) M12 is ≈ +0.02 / +0.01
-/ +0.04 / +0.15; M8 at 471 PF is +0.02 / +0.00 / +0.06 / +0.30. Block 8 is the cheapest split past block 7.
+Beaker at s976 agrees (contradiction M1 0.667, M4 0.728, M8 0.895). Full attention sits at blocks 3, 7, 11, … (3:1
+GDN). The parent's hypothesis was that block 7's full-attention pass is what matters; M7 (blocks 0-6, which EXCLUDES
+it) matches M8 on contradiction and nq and is within seed noise on oolong, so it is not. The jump is M6 → M7 (adding
+GDN block 6): contradiction +0.08, outlier +0.17. M7's outlier is 0.07 below M8 (seed noise at this size is up to
+0.13: M12 s0 / s1 = 0.523 / 0.649). Splitting later (M12, +20% PF) gains nothing. Pending: M7 s1, M5, M8 s2.
 
 **2. Router target (Prasann: "keep important tokens that are already good").** Targets: `gnorm` log ||dL/dh8||;
 `gxh` log |<dL/dh8, h8>|; `dh` log ||h8 − h0||, the residual change through blocks 0-7 (activation strength, no backward,
