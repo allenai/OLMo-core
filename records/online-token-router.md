@@ -185,6 +185,15 @@ Recorded with `ops result add --check` (metric prefix `otrprobe_`, run `otr-prob
 * **Runs.** Arms otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
   01M5HBD2K8W5772DDZN4RY1H1J. Two earlier launches were cancelled while still pending: one ran on a stale commit,
   the other predated the full-context steps.
+* **Fresh-data setting** (Prasann, 2026-10-22: at matched FLOPs a drop method gets MORE steps on FRESH rows, same
+  16-row batch). Shards mt4s976 (3,904 rows, 244 steps) and mt4s1464 (5,856 rows, 366 steps) are first-N supersets
+  of mt4s488. Runs are named to parse in `collect_pareto_points.py` (`-tdb`):
+  * input drop: f8k-mt4-otr30L4-s976 / -s1464-tdb-lr2e-06 (01M5HBY9A2YM6E74V9950H2APH / 01M5HC0D3HR75297V8AFTWPH55);
+  * mid-stack: otr30M8 s976 / s1464 (01M5HC2NEG323SKEE60DF3XDX5 / 01M5HC4SYNDB344T66VR8GW5G6);
+  * random control: rnd30 s976 / s1464 (01M5HC76FY3TVXA8XWCPATVXK0 / 01M5HC9EJ69DF6DW69W0NCM19J).
+
+  The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
+  tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
 * **Results.** _pending_.
 
 ## Proposed run matrix
