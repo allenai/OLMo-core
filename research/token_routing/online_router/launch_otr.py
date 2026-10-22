@@ -72,6 +72,8 @@ ARMS = {
 #: per-mix training window: >= the shard's max_example_len (the trainer refuses a shorter one). mt11 rows reach
 #: 10,231 tokens at s240 and the larger first-N shards can be longer.
 SEQ_LEN = {"mt4": 10240, "mt11": 12288}
+#: single-task fast8k pools (``--task``): the parent session's per-task -tdp campaign uses seq 12288
+SINGLE_TASK_SEQ = 12288
 
 
 def run_name(arm, budget, lr, mix="mt4", seed=0):
@@ -93,17 +95,25 @@ def do_launch(a, mode):
     st = load()
     for arm in a.arms.split(","):
         for budget in a.budgets.split(","):
-            name = run_name(arm, budget, a.lr, a.mix, a.seed)
+            if a.task:
+                # single-task pool <task>_<budget> (budget g16M / g16M_eg); name f8k-<task>-<arm>-16M[_eg]...
+                name = f"f8k-{a.task}-{arm}{f'sd{a.seed}' if a.seed else ''}-{budget.lstrip('g')}{SUFFIX}-lr{a.lr:g}"
+            else:
+                name = run_name(arm, budget, a.lr, a.mix, a.seed)
             if name in st["runs"] and mode == "launch" and not a.force:
                 print(f"[skip] {name} ({st['runs'][name]['ex']})")
                 continue
             rows, _, steps = budget[1:].partition("@")
-            cmd = [sys.executable, "-u", LAUNCHER, "--task", a.mix, "--variant", "softtoken",
-                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", f"{SHARDS}/{a.mix}s{rows}",
+            data = f"{SHARDS}/{a.task}_{budget}" if a.task else f"{SHARDS}/{a.mix}s{rows}"
+            if a.task:
+                steps = ""
+            cmd = [sys.executable, "-u", LAUNCHER, "--task", a.task or a.mix, "--variant", "softtoken",
+                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", data,
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", "2",
                    "--epochs", str(a.epochs), "--lr", str(a.lr), "--cluster", "ai2/jupiter-cirrascale-2",
                    "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--no-follow", "--no-compile",
-                   "--seq-len", str(SEQ_LEN[a.mix]), "--global-batch", "16", "--micro-batch-instances", "2",
+                   "--seq-len", str(SINGLE_TASK_SEQ if a.task else SEQ_LEN[a.mix]), "--global-batch", "16",
+                   "--micro-batch-instances", "2",
                    "--seed", str(a.seed),
                    "--base-checkpoint", BASE, "--experiment", "learned_router", "--extra-args", ARMS[arm]]
             if steps:
@@ -112,14 +122,16 @@ def do_launch(a, mode):
             ex = parse_id(out)
             print(f"{name} -> rc={rc} {ex or out[-400:]}")
             if mode == "launch" and ex:
-                st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": a.lr, "mix": a.mix, "seed": a.seed}
+                st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": a.lr, "mix": a.task or a.mix,
+                                    "seed": a.seed, **({"task": a.task} if a.task else {})}
                 save(st)
 
 
 def do_eval(a):
     st = load()
     for name in a.runs.split(","):
-        for task in MT4_TASKS:
+        single = st["runs"].get(name, {}).get("task")
+        for task in ([single] if single else MT4_TASKS):
             ename = f"{name}-ev{task}"
             if ename in st["evals"] and not a.force:
                 print(f"[skip] {ename}")
@@ -145,6 +157,8 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-6, help="the rule arms' LR in the tokdrop_lr screen")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--mix", default="mt4", choices=sorted(SEQ_LEN), help="task mix: shard <mix>s<rows>")
+    ap.add_argument("--task", default="", help="single-task fast8k pool <task>_<budget> (budget g16M / g16M_eg) "
+                    "instead of a mix; evals on that task only")
     ap.add_argument("--seed", type=int, default=0, help="run seed (data order, router exploration); tags the arm")
     ap.add_argument("--runs", default="")
     ap.add_argument("--force", action="store_true")
