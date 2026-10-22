@@ -522,6 +522,7 @@ class OnlineTokenRouter:
             "explore": explore[rows, cols],
             "pred": (score[rows, cols] if score is not None else None),
             "target": None,
+            "dense": dense,
         }
         # diagnostics: realised keep, gold leak (does per-document kept density name gold?)
         self._stat("keep_frac", float(keep.sum()) / max(1.0, float(body.sum())))
@@ -666,7 +667,7 @@ class OnlineTokenRouter:
         F = self.n_features
         if self.step == 0:
             self._pending = []  # forwards before the first step = the trainer's dry-run batch
-        X, y, rows_all, expl, preds = [], [], [], [], []
+        X, y, rows_all, expl, preds, dense_e = [], [], [], [], [], []
         for e in self._pending:
             if e["target"] is None:
                 continue
@@ -686,6 +687,7 @@ class OnlineTokenRouter:
             expl.append(e["explore"][ok])
             if e["pred"] is not None:
                 preds.append(e["pred"][ok])
+            dense_e.append(torch.full_like(t, float(bool(e.get("dense")))).bool())
         self._pending = []
         dev = None
         if model is not None:
@@ -713,6 +715,25 @@ class OnlineTokenRouter:
                 vals = [v for v in vals if not math.isnan(v)]
                 if vals:
                     self._stat(name, sum(vals) / len(vals))
+            # gradient-fidelity estimate on FULL-CONTEXT (dense) steps: of the full-pass squared
+            # embedding-gradient mass, the share the current scorer's top keep_frac would keep (row-level
+            # top-k over a uniform token sample), vs the oracle top-k and random (= keep_frac)
+            dc = torch.cat(dense_e).to(dev)
+            if bool(dc.any()):
+                fr, fo = [], []
+                for rid in torch.unique(rc[dc]).tolist():
+                    mm = dc & (rc == rid)
+                    yy, pp = yc[mm], pc[mm]
+                    if yy.numel() < 10:
+                        continue
+                    k = max(1, int(math.ceil(self.cfg.keep_frac * yy.numel())))
+                    w = torch.exp(2.0 * (yy - yy.max()))
+                    fr.append(float(w[pp.argsort(descending=True)[:k]].sum() / w.sum()))
+                    fo.append(float(w[yy.argsort(descending=True)[:k]].sum() / w.sum()))
+                if fr:
+                    self._stat("fid_mass_router", sum(fr) / len(fr))
+                    self._stat("fid_mass_oracle", sum(fo) / len(fo))
+                    self._stat("fid_mass_random", self.cfg.keep_frac)
         G = Xc.T @ Xc
         b = Xc.T @ yc
         cnt = torch.tensor([float(Xc.shape[0])], dtype=torch.float64, device=dev)

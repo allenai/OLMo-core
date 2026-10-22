@@ -350,3 +350,26 @@ def test_mid_stack_drop_cpu():
     model.train()
     out = model(ids, labels=labels)
     assert torch.allclose(out.loss, ref, atol=1e-5), (out.loss, ref)
+
+
+def test_fidelity_mass_logged_on_dense_steps():
+    """On a dense (full-context) step with fitted weights, the router logs the share of full-pass
+    gradient mass its top keep_frac would keep, plus the oracle share."""
+    torch.manual_seed(0)
+    m = _Emb()
+    ids, cid, labels = _row(B=2)
+    r = _router(use_hidden=False, doc_share=0.0, dense_every=2)
+    r.w = torch.zeros(r.n_features)
+    r.w[r.feature_names().index("in_query")] = 1.0
+    r.step = 2
+    assert r.dense_now()
+    r.select(m, ids, cid, labels)
+    e = r._current
+    e["ok"] = torch.ones_like(e["rows"], dtype=torch.bool)
+    e["target"] = torch.log1p(9.0 * (ids[e["rows"], e["pos"]] == QTOK).float())
+    r._pending.append(e)
+    r._current = None
+    r.begin_step(3, model=m)
+    met = r.metrics()
+    assert met["online_router/fid_mass_router"] == pytest.approx(met["online_router/fid_mass_oracle"])
+    assert met["online_router/fid_mass_router"] > met["online_router/fid_mass_random"]
