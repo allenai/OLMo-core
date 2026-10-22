@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from typing import Any
@@ -39,7 +40,13 @@ from olmo_core.nn.moe.v2.ep_config import ExpertParallelConfig, ExpertParallelPa
 from olmo_core.nn.moe.v2.routed_experts import RoutedExpertsConfig
 from olmo_core.nn.moe.v2.router import MoERouterConfigV2
 from olmo_core.nn.moe.v2.shared_experts import SharedExpertsConfig
-from olmo_core.nn.rope import RoPEConfig, RoPEType
+from olmo_core.nn.rope import (
+    PIRoPEScalingConfig,
+    RoPEConfig,
+    RoPEType,
+    StepwiseRoPEScalingConfig,
+    YaRNRoPEScalingConfig,
+)
 from olmo_core.nn.transformer import TransformerBlockType, TransformerType
 from olmo_core.nn.transformer.config import OLMoDDPModelConfig, TransformerBlockConfig
 
@@ -50,6 +57,174 @@ OLMO3_LINEAR_ATTENTION = "linear_attention"
 
 def _as_mapping(config: PretrainedConfig | Mapping[str, Any]) -> Mapping[str, Any]:
     return config.to_dict() if isinstance(config, PretrainedConfig) else config
+
+
+def _positive_rope_value(parameters: Mapping[str, Any], key: str, default: Any = None) -> Any:
+    value = parameters.get(key, default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"RoPE {key} must be a finite positive number, got {value!r}.")
+    return value
+
+
+def _build_olmo3_moe_rope_config(config: Mapping[str, Any], layer_type: str) -> RoPEConfig | None:
+    """Resolve HF RoPE settings without mutating the source or approximating unsupported variants."""
+    if not config.get("use_rope", True) or layer_type == OLMO3_LINEAR_ATTENTION:
+        return None
+
+    # Match Olmo3MoeConfig's constructor: an explicitly supplied modern field wins,
+    # even when it is None or empty (which selects default RoPE).
+    parameters = config.get("rope_parameters", config.get("rope_scaling"))
+    if parameters is None:
+        parameters = {}
+    if not isinstance(parameters, Mapping):
+        raise ValueError("RoPE parameters must be a mapping.")
+    nested = any(isinstance(value, Mapping) for value in parameters.values())
+    if nested:
+        if set(parameters) - set(config.get("layer_types") or [OLMO3_FULL_ATTENTION]):
+            raise ValueError("Nested RoPE parameters must contain only configured layer types.")
+        if layer_type not in parameters or not isinstance(parameters[layer_type], Mapping):
+            raise ValueError(f"Missing RoPE parameters for {layer_type!r}.")
+        parameters = parameters[layer_type]
+
+    rope_type = parameters.get("rope_type", parameters.get("type", "default"))
+    if "type" in parameters and parameters["type"] != rope_type:
+        raise ValueError("Conflicting RoPE 'type' and 'rope_type'.")
+    supported_keys: dict[str, set[str]] = {
+        "default": set(),
+        "linear": {"factor"},
+        "llama3": {
+            "factor",
+            "original_max_position_embeddings",
+            "low_freq_factor",
+            "high_freq_factor",
+        },
+        "yarn": {
+            "factor",
+            "original_max_position_embeddings",
+            "beta_fast",
+            "beta_slow",
+            "attention_factor",
+            "mscale",
+            "mscale_all_dim",
+            "truncate",
+        },
+    }
+    if not isinstance(rope_type, str) or rope_type not in supported_keys:
+        raise NotImplementedError(f"Unsupported Olmo3Moe RoPE type: {rope_type!r}.")
+    unknown = (
+        set(parameters)
+        - supported_keys[rope_type]
+        - {"rope_type", "type", "rope_theta", "partial_rotary_factor"}
+    )
+    if unknown:
+        raise NotImplementedError(f"Unsupported {rope_type} RoPE parameters: {sorted(unknown)}.")
+    # The bundled HF Olmo3Moe attention applies rotations to the complete Q/K head.
+    if (
+        parameters.get("partial_rotary_factor", 1.0) != 1.0
+        or config.get("partial_rotary_factor", 1.0) != 1.0
+    ):
+        raise NotImplementedError("Partial rotary embeddings are unsupported for Olmo3Moe import.")
+    theta = _positive_rope_value(parameters, "rope_theta", config.get("rope_theta", 10_000))
+    rope = RoPEConfig(name=RoPEType.default, theta=theta, full_precision=True)
+    if rope_type == "default":
+        return rope
+
+    # HF standardizes the original context length before initializing scaling. In the flat
+    # legacy format, a top-level original_max_position_embeddings takes precedence.
+    original_context = parameters.get(
+        "original_max_position_embeddings", config.get("max_position_embeddings")
+    )
+    if not nested and "original_max_position_embeddings" in config:
+        original_context = config["original_max_position_embeddings"]
+    if rope_type in ("llama3", "yarn"):
+        if (
+            isinstance(original_context, bool)
+            or not isinstance(original_context, int)
+            or original_context <= 0
+        ):
+            raise ValueError("RoPE original_max_position_embeddings must be a positive integer.")
+    factor_parameters = dict(parameters)
+    if rope_type == "yarn" and factor_parameters.get("factor") is None:
+        factor_parameters["factor"] = (
+            _positive_rope_value(config, "max_position_embeddings") / original_context
+        )
+    factor = _positive_rope_value(factor_parameters, "factor")
+    if factor < 1:
+        raise ValueError("RoPE factor must be at least 1.")
+    if rope_type == "linear":
+        rope.scaling = PIRoPEScalingConfig(factor=factor)
+    elif rope_type == "llama3":
+        low = _positive_rope_value(parameters, "low_freq_factor")
+        high = _positive_rope_value(parameters, "high_freq_factor")
+        if high <= low:
+            raise ValueError("RoPE high_freq_factor must exceed low_freq_factor.")
+        if 1 - 1 / low == 1:
+            raise NotImplementedError(
+                "RoPE low_freq_factor cannot be represented by Core's proportions."
+            )
+        rope.scaling = StepwiseRoPEScalingConfig(
+            factor=factor,
+            old_context_len=original_context,
+            low_freq_proportion=1 - 1 / low,
+            high_freq_proportion=1 / high,
+        )
+    else:
+        beta_parameters = {
+            key: default if parameters.get(key) is None else parameters[key]
+            for key, default in (("beta_fast", 32), ("beta_slow", 1))
+        }
+        beta_fast = _positive_rope_value(beta_parameters, "beta_fast")
+        beta_slow = _positive_rope_value(beta_parameters, "beta_slow")
+        if beta_fast < beta_slow:
+            raise ValueError("RoPE beta_fast must be at least beta_slow.")
+        if int(beta_fast) != beta_fast or int(beta_slow) != beta_slow:
+            raise NotImplementedError("Olmo3Moe import requires integral YaRN beta values.")
+        if parameters.get("truncate", True) is not True:
+            raise NotImplementedError("Olmo3Moe import only supports YaRN with truncate=True.")
+        yarn = YaRNRoPEScalingConfig(
+            factor=factor,
+            old_context_len=original_context,
+            beta_fast=int(beta_fast),
+            beta_slow=int(beta_slow),
+        )
+        attention_factor = parameters.get("attention_factor")
+        if attention_factor is None:
+            mscale, mscale_all_dim = parameters.get("mscale"), parameters.get("mscale_all_dim")
+            if mscale and mscale_all_dim:
+                mscale = _positive_rope_value(parameters, "mscale")
+                mscale_all_dim = _positive_rope_value(parameters, "mscale_all_dim")
+                attention_factor = (1 + 0.1 * mscale * math.log(factor)) / (
+                    1 + 0.1 * mscale_all_dim * math.log(factor)
+                )
+            else:
+                attention_factor = yarn.get_attention_rescale_factor()
+        attention_factor = _positive_rope_value(
+            {"attention_factor": attention_factor}, "attention_factor"
+        )
+        if attention_factor != yarn.get_attention_rescale_factor():
+            raise NotImplementedError(
+                "Olmo3Moe import does not support custom YaRN attention_factor."
+            )
+        # Core clamps the ramp's high boundary at dim/2 - 1; HF clamps at dim - 1.
+        # Reject the configurations where this changes the frequencies, rather than silently
+        # changing Core's existing training behavior to match a different YaRN implementation.
+        dim = int(config["head_dim"])
+        if theta <= 1:
+            raise ValueError("YaRN rope_theta must exceed 1.")
+        high = math.ceil(
+            dim * math.log(original_context / (beta_slow * 2 * math.pi)) / (2 * math.log(theta))
+        )
+        if high < 0 or high > dim // 2 - 1:
+            raise NotImplementedError(
+                "YaRN correction range exceeds Core's supported frequency range."
+            )
+        rope.scaling = yarn
+    return rope
 
 
 def build_olmo3_moe_config_from_hf_config(
@@ -64,7 +239,13 @@ def build_olmo3_moe_config_from_hf_config(
     router_z_loss_weight: float | None = None,
     init_seed: int = 2026,
 ) -> OLMoDDPModelConfig:
-    """Build an OLMoDDP model from a supported Olmo3Moe checkpoint config."""
+    """Build an OLMoDDP model from a supported Olmo3Moe checkpoint config.
+
+    Preserves flat or per-layer-type RoPE settings, including legacy ``rope_scaling``.
+    Supports default, linear, Llama-3, and compatible YaRN scaling. Unsupported variants
+    raise :class:`NotImplementedError` instead of silently changing positional embeddings.
+    This does not expand the supported configurations of the model-to-HF config exporter.
+    """
     config = _as_mapping(hf_config)
     if config.get("model_type") != "olmo3moe":
         raise ValueError(f"Expected model_type='olmo3moe', got {config.get('model_type')!r}.")
@@ -77,9 +258,6 @@ def build_olmo3_moe_config_from_hf_config(
         )
     ):
         raise NotImplementedError("The OLMo3 MoE builder does not support EMo.")
-    rope_parameters = config.get("rope_parameters") or config.get("rope_scaling") or {}
-    if rope_parameters and rope_parameters.get("rope_type", "default") != "default":
-        raise NotImplementedError("The OLMo3 MoE builder does not support scaled RoPE.")
     if config.get("attention_bias", False):
         raise NotImplementedError("Biased Olmo3Moe attention is not supported.")
     if config.get("hidden_act", "silu") != "silu":
@@ -205,15 +383,7 @@ def build_olmo3_moe_config_from_hf_config(
             head_dim=int(config["head_dim"]),
             bias=False,
             dropout=float(config.get("attention_dropout", 0.0)),
-            rope=(
-                RoPEConfig(
-                    name=RoPEType.default,
-                    theta=config.get("rope_theta", 10_000),
-                    full_precision=True,
-                )
-                if config.get("use_rope", True)
-                else None
-            ),
+            rope=_build_olmo3_moe_rope_config(config, layer_type),
             gate=(
                 GateConfig(
                     granularity=GateGranularity(config["attention_gate_type"]),
