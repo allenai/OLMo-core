@@ -16,12 +16,17 @@
 #
 # Env in (set by the launcher):
 #   RUN         run name (checkpoints live at $WEKA_LLM/checkpoints/prasanns/$RUN/step*)
-#   TASK        contra | nq | rerank | outlier | oolong
+#   TASK        contra | nq | rerank | outlier | oolong (+ fiqa | scifact | outlier_review | contra_fever;
+#               docchunk only: the CTC-suite tasks hotpotqa | qdmatch_nq | xabsence | reorder | strmatch | grouping)
 #   VARIANT     dense | landmark | compressive | docchunk   (docchunk -> OOLONG only)
 #   WEKA_LLM    weka ai2-llm root (e.g. /weka/oe-training-default/ai2-llm)
 #   STEP        optional: pin a specific step dir (e.g. step580); empty -> latest complete step
 #   MAX_TEST    default 600 ; MAX_LENGTH default 40960 ; BATCH_SIZE default 8 ; NGPU default 8
 #   QUERY_POSITION  both (default) | after -- MUST match the SFT shards (qafter data -> after)
+#   DC_RUNG_FILES / DC_RUNGS  docchunk: explicit {ladder task: {rung: file}} + rung labels (every file
+#               must exist, else the job fails before loading the model)
+#   LADDER_CTC_GRADE  docchunk: grade nq/outlier/oolong/contradiction with the ctc spec (suite rows)
+#   REQUIRE_EVAL_SIZE=1  fail (rc=5) if any rung of the result scored 0 rows (set by --suite-rows)
 set -uo pipefail
 TASK="${TASK:?set TASK=contra|nq|rerank|outlier|oolong}"
 VARIANT="${VARIANT:?set VARIANT=dense|landmark|compressive|docchunk}"
@@ -227,6 +232,19 @@ TR="torchrun --nproc_per_node=$NGPU --master_port=$PORT recipes/eval/legacy_nati
   esac
 # Explicit rung labels (with DC_RUNG_FILES): score exactly the rung files a dense campaign used.
 [ -n "${DC_RUNGS:-}" ] && RUNGS="$DC_RUNGS"
+# Every DC_RUNG_FILES path must exist: the ladder silently skips a missing rung file and writes an
+# EMPTY result with rc=0 (2026-10-20, the Lambda contra override keyed "contra" not "contradiction").
+if [ -n "${DC_RUNG_FILES:-}" ]; then
+  python - <<'PYEOF' || { echo "ERROR: DC_RUNG_FILES names a missing/empty rung file (stage it first)"; exit 3; }
+import json, os, sys
+files = json.loads(os.environ["DC_RUNG_FILES"])
+bad = [p for rungs in files.values() for p in rungs.values() if not (os.path.isfile(p) and os.path.getsize(p))]
+for task, rungs in files.items():
+    for lab, p in rungs.items():
+        print(f"    rung file {task}@{lab}: {p}" + ("  <-- MISSING" if p in bad else ""))
+sys.exit(1 if bad else 0)
+PYEOF
+fi
 if [ "$LADDER_XLONG" = "1" ]; then
   case "$TASK" in
     contra|nq|outlier)
@@ -295,6 +313,17 @@ else
       --root "$BUNDLE" --max-test-samples "$MAX_TEST" --batch-size "$BATCH_SIZE" --skip-ruler --skip-gen \
       --ladder $VFLAG $XLFLAG --ladder-tasks "$LTASK" --ladder-rungs "$RUNGS" $EXTRA
   rc=$?
+fi
+if [ "${REQUIRE_EVAL_SIZE:-0}" = "1" ]; then
+  python - "$OUT" <<'PYEOF' || { echo "ERROR: empty or missing result (a rung scored 0 rows)"; rc=5; }
+import json, sys
+try:
+    n = json.load(open(sys.argv[1])).get("_meta", {}).get("eval_size") or {}
+except Exception as e:  # noqa: BLE001
+    print(f"cannot read {sys.argv[1]}: {e}"); sys.exit(1)
+print("eval_size per rung:", n)
+sys.exit(0 if n and all(n.values()) else 1)
+PYEOF
 fi
 if [ -f "$OUT" ]; then
   cp "$OUT" "$RESULTS/${RUN}_${TASK}_multirung.json" 2>/dev/null || true

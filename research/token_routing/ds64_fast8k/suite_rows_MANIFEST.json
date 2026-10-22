@@ -1,0 +1,147 @@
+{
+  "dataset": "PrasannSinghal/ctc-suite-eval",
+  "revision": "04ab86006124b3f34c566f44bbc82d4fec98fcda",
+  "rows_requested": 500,
+  "files": {
+    "hotpotqa/rung_2048.jsonl": {
+      "subset": "hotpotqa",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "694705d2ea286e8132edafa3d87b2a89b328ccef5e083cbda3ca9ace21a2597b"
+    },
+    "hotpotqa/rung_8192.jsonl": {
+      "subset": "hotpotqa",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "ce225e47f7b7a28090f67f4751d7184f865b306596cd71c90bc14a7c41d18594"
+    },
+    "qdmatch_nq/rung_2048.jsonl": {
+      "subset": "qdmatch_nq",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "0926b493b8124fce16d6415d8952ab86881ca95cd7f09e82157d74d08029eb11"
+    },
+    "qdmatch_nq/rung_8192.jsonl": {
+      "subset": "qdmatch_nq",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "720de5e291a833edc9eb36e08118ff63789f3809b208b5bffa572465b71f4512"
+    },
+    "xabsence/rung_2048.jsonl": {
+      "subset": "xabsence",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "579f79b181920a38676a4484788e44fa8c8218f299696376cde6fc45d2f19c31"
+    },
+    "xabsence/rung_8192.jsonl": {
+      "subset": "xabsence",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "d1d719fe32b225fb0574c0e08ce1f5060a96309e7f2c4aaff7c747063ceedab2"
+    },
+    "reorder/rung_2048.jsonl": {
+      "subset": "reorder",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "a7d661d7e3159313919224eb52780b0712ed22cc6406026e6db04de733f2707b"
+    },
+    "reorder/rung_8192.jsonl": {
+      "subset": "reorder",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "84069728d86baa27a4e8d59ebf088b0343cbbb754a85d38cc1504ea3d58500c4"
+    },
+    "strmatch/rung_2048.jsonl": {
+      "subset": "strmatch",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "85146bba3259fdf0e6bbada5d4fc10f309a6b89db24f7c5523017cce7f8d7335"
+    },
+    "strmatch/rung_8192.jsonl": {
+      "subset": "strmatch",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "91eebe92c6d6dcfb9a4e8848e4271237ec75049864d6d78ebf202ee4d62784bd"
+    },
+    "grouping/rung_2048.jsonl": {
+      "subset": "grouping",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "9f41b063f3ce51171e50f4f333bc9278a8c6b095432464692c73e1bc34a0885f"
+    },
+    "grouping/rung_8192.jsonl": {
+      "subset": "grouping",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "74bc7a0b6c3a2a0ef00eeda5680b887369e49a114acad3a36ba10b0f6873b195"
+    },
+    "nq/rung_2048.jsonl": {
+      "subset": "nq",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "e993e24e35001e1054adb72d8b069b8bf1f3f159a262d34294aa922a755d9676"
+    },
+    "nq/rung_8192.jsonl": {
+      "subset": "nq",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "3313e510009dc9cbb7e3cd544ec83adeb0dd8fcf7bc5b7cc033fd86299eabaa8"
+    },
+    "outlier/rung_2048.jsonl": {
+      "subset": "outlier",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "a515abc7da74a0427ff4848ac3c1617df5118064c73f1deac3d52bfe84bf9853"
+    },
+    "outlier/rung_8192.jsonl": {
+      "subset": "outlier",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "ebd43db50599297915027dbf01f1e0bb2a1f6bc03b414fd1f307fea6b08be0b7"
+    },
+    "oolong/rung_2048.jsonl": {
+      "subset": "oolong",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "d767c97d1c55fc2d1a589d86ac5faf6456bf5ff37b6db49bc2db7804e24e8f45"
+    },
+    "oolong/rung_8192.jsonl": {
+      "subset": "oolong",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "c463825f4672c51648f715f0285d2f9946b57e88bc5615f70eb5c4eeb3bfca04"
+    },
+    "contradiction_iid/rung_2560.jsonl": {
+      "subset": "contradiction_iid",
+      "rung": "r2k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "292b5ae4c8e92091ba2d7b482d1d590e30b6198c61bed0cbc037b821ccc0f88b"
+    },
+    "contradiction_iid/rung_8192.jsonl": {
+      "subset": "contradiction_iid",
+      "rung": "r8k",
+      "rows": 500,
+      "parquet_rows": 500,
+      "sha256": "9e7612bb1ec2b96e7a2ed2d84fecb467d6fb9699de2d9aa00c96e34a1b731c5d"
+    }
+  }
+}

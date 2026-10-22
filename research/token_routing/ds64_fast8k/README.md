@@ -161,6 +161,15 @@ PYTHONPATH=src $PY research/token_routing/ds64_fast8k/launch_fast8k.py parity
 $PY research/token_routing/ds64_fast8k/collect_fast8k.py
 ```
 
+**mt11 runs on Beaker** (2026-10-22): `eval` scores an mt11 checkpoint once per task on 10 tasks
+(rerank has no suite rows) on the CTC-suite r8k + r2k rows (500 each, HF revision pinned by olmo-eval)
+staged at `/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle/ctc_suite_rows/`
+(`stage_suite_rows_beaker.sh`, verified against `suite_rows_MANIFEST.json`), with query position
+`both` and the ctc-spec grading olmo-eval uses (`run_q4b_beaker_multirung_eval.py --suite-rows`):
+the same eval as the Lambda path (`run_eval_lambda.sbatch`, `EVAL_ROWS=suite`). mt4 runs keep the ds64
+files at query position `after`. Preview the jobs with
+`launch_fast8k.py --task mt11 --runs <run> --eval-dry-run eval` (submits nothing, leaves state.json alone).
+
 State lives in `state.json`; every launch also appends to `LAUNCH_LEDGER.tsv`. Per-launch stdout is
 kept in `launch_logs/`; Beaker logs are cached in `logs/` **only once a job is finalized** (a mid-run
 cache freezes a partial FLOP meter — ds64 trap 6).

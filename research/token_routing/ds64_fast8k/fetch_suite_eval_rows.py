@@ -13,6 +13,11 @@ decoded back to dicts.
 Small I/O, stdlib + huggingface_hub + pyarrow; fine on a login node:
 
     python3 research/token_routing/ds64_fast8k/fetch_suite_eval_rows.py --out /data/prasann/tdlr_eval
+
+``--verify ROOT`` checks an existing ``<subset>/rung_*.jsonl`` tree instead of fetching: every file in
+the reference manifest (``--manifest``, default the checked-in ``suite_rows_MANIFEST.json``, an
+independent fetch at the pinned revision) must exist with the same row count and sha256. Exit 1 on any
+mismatch. The Beaker staging job (``stage_suite_rows_beaker.sh``) runs it on the weka copy.
 """
 
 import argparse
@@ -30,6 +35,29 @@ EXISTING_SUBSETS = ["nq", "outlier", "oolong", "contradiction_iid"]
 RUNG_TOKENS = {"r2k": 2048, "r4k": 4096, "r8k": 8192, "r16k": 16384, "r32k": 32768}
 #: olmo-eval ROSTER rung_alias: the IID contradiction ladder starts one step up at r2k
 RUNG_ALIAS = {("contradiction_iid", "r2k"): 2560}
+#: reference manifest of the default fetch (10 subsets x r2k/r8k x 500 rows at HF_REVISION)
+REF_MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "suite_rows_MANIFEST.json")
+
+
+def verify(root: str, manifest: str) -> int:
+    """Compare ``root``'s rung files with ``manifest`` (rows + sha256); returns the mismatch count."""
+    ref = json.load(open(manifest))
+    bad = 0
+    for rel, want in sorted(ref["files"].items()):
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            print(f"MISSING {rel}")
+            bad += 1
+            continue
+        data = open(path, "rb").read()
+        rows, sha = data.count(b"\n"), hashlib.sha256(data).hexdigest()
+        ok = rows == want["rows"] and sha == want["sha256"]
+        bad += not ok
+        print(f"{'ok' if ok else 'MISMATCH'} {rel}: rows={rows} (want {want['rows']}) "
+              f"sha256={sha[:12]} (want {want['sha256'][:12]})")
+    print(f"verify {root} vs {manifest} (revision {ref.get('revision')}): "
+          f"{len(ref['files']) - bad}/{len(ref['files'])} files match")
+    return bad
 
 
 def _normalize(ex: dict) -> dict:
@@ -46,13 +74,20 @@ def _normalize(ex: dict) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", required=True, help="output root; files land under <out>/suite/")
+    ap.add_argument("--out", default=None, help="output root; files land under <out>/suite/")
+    ap.add_argument("--verify", default=None, metavar="ROOT",
+                    help="check ROOT/<subset>/rung_*.jsonl against --manifest instead of fetching")
+    ap.add_argument("--manifest", default=REF_MANIFEST, help="reference manifest for --verify")
     ap.add_argument("--subsets", nargs="+", default=NEW_SUBSETS + EXISTING_SUBSETS)
     ap.add_argument("--rungs", nargs="+", default=["r2k", "r8k"])
     ap.add_argument("--rows", type=int, default=500)
     ap.add_argument("--revision", default=HF_REVISION)
     ap.add_argument("--cache", default=None, help="parquet download dir (default <out>/.hf_parquet)")
     args = ap.parse_args()
+    if args.verify:
+        raise SystemExit(1 if verify(args.verify, args.manifest) else 0)
+    if not args.out:
+        ap.error("--out is required unless --verify is given")
 
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download

@@ -34,6 +34,13 @@ Usage::
     # validate without submitting
     PYTHONPATH=src python recipes/eval/legacy_native/run_q4b_beaker_multirung_eval.py \\
         q4b-dense-contra-ladder32k-10k ai2/neptune --task contra --dry-run
+
+    # CTC-suite rows (--suite-rows, 2026-10-22): score any of the 10 mt11 / setA tasks on the suite's
+    # own r8k + r2k rows staged on weka (research/token_routing/ds64_fast8k/stage_suite_rows_beaker.sh),
+    # graded by the vendored ctc spec exactly as olmo-eval grades the suite row. Docchunk ladder only.
+    PYTHONPATH=src python recipes/eval/legacy_native/run_q4b_beaker_multirung_eval.py \\
+        f8k-mt11-dense-s480-evhotpotqa ai2/jupiter-cirrascale-2 --task hotpotqa --variant docchunk \\
+        --ckpt <weka model dir> --suite-rows --query-position both --dry-run
 """
 
 import argparse
@@ -59,6 +66,21 @@ ALL_TASKS = [
     "contra_fever",
 ]
 VARIANTS = ["dense", "landmark", "compressive", "docchunk"]
+#: CTC-suite tasks the docchunk ladder grades with the vendored ctc spec (eval_lc_native_docchunk_ladder.py
+#: SUITE_TASKS). Not in ALL_TASKS, so ``--task all`` is unchanged; they need --suite-rows or --dc-rung-files.
+SUITE_TASKS = ["hotpotqa", "qdmatch_nq", "xabsence", "reorder", "strmatch", "grouping"]
+#: --suite-rows: launcher task -> (ladder task, suite subset, {rung label: file tokens}, ctc-grade the
+#: base task). Contradiction reads ``contradiction_iid`` (its r2k rung is rung_2560, olmo-eval's alias);
+#: nq / outlier / oolong / contradiction are graded by the ctc spec (ladder --ctc-grade) as olmo-eval does.
+SUITE_ROWS = {
+    **{t: (t, t, {"8k": 8192, "2k": 2048}, False) for t in SUITE_TASKS},
+    "nq": ("nq", "nq", {"8k": 8192, "2k": 2048}, True),
+    "outlier": ("outlier", "outlier", {"8k": 8192, "2k": 2048}, True),
+    "oolong": ("oolong", "oolong", {"8k": 8192, "2k": 2048}, True),
+    "contra": ("contradiction", "contradiction_iid", {"8k": 8192, "2k": 2560}, True),
+}
+#: rows staged by stage_suite_rows_beaker.sh (verified against ds64_fast8k/suite_rows_MANIFEST.json)
+SUITE_ROWS_ROOT = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns/_eval_bundle/ctc_suite_rows"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -203,6 +225,18 @@ def build_eval_launch_config(
     return launch_config
 
 
+def suite_rows_args(task, root):
+    """(DC_RUNG_FILES json, DC_RUNGS, extra env) scoring ``task`` on the staged CTC-suite rows."""
+    import json
+
+    ltask, subset, rungs, ctc_grade = SUITE_ROWS[task]
+    files = {ltask: {lab: f"{root}/{subset}/rung_{tok}.jsonl" for lab, tok in rungs.items()}}
+    # REQUIRE_EVAL_SIZE: the runner fails the job if any rung scored 0 rows (a missing/unread rung
+    # file otherwise writes an empty result with rc=0)
+    env = ["REQUIRE_EVAL_SIZE=1"] + ([f"LADDER_CTC_GRADE={ltask}"] if ctc_grade else [])
+    return json.dumps(files, separators=(",", ":")), ",".join(rungs), env
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -212,7 +246,8 @@ def main():
     ap.add_argument(
         "--task",
         default="all",
-        help=f"comma list from {ALL_TASKS}, or 'all' (one Beaker job per task).",
+        help=f"comma list from {ALL_TASKS + SUITE_TASKS}, or 'all' (= {ALL_TASKS}; one Beaker job "
+        "per task). The CTC-suite tasks need --suite-rows (or --dc-rung-files) and --variant docchunk.",
     )
     ap.add_argument(
         "--variant",
@@ -314,6 +349,15 @@ def main():
     )
     ap.add_argument("--dc-rungs", default="", help="docchunk: comma rung labels to score (pairs with --dc-rung-files)")
     ap.add_argument(
+        "--suite-rows",
+        action="store_true",
+        help="docchunk only: score on the CTC-suite eval rows (r8k + r2k, 500 each) staged on weka "
+        f"({sorted(SUITE_ROWS)}; contra = contradiction_iid), with the ctc-spec grading olmo-eval uses "
+        "(LADDER_CTC_GRADE for nq/outlier/oolong/contra). Sets --dc-rung-files/--dc-rungs per task. "
+        "Use --query-position both for setA / mt11-trained checkpoints.",
+    )
+    ap.add_argument("--suite-rows-root", default=SUITE_ROWS_ROOT, help="<subset>/rung_<tokens>.jsonl tree")
+    ap.add_argument(
         "--env",
         action="append",
         default=[],
@@ -342,15 +386,31 @@ def main():
     tasks = (
         ALL_TASKS if args.task == "all" else [t.strip() for t in args.task.split(",") if t.strip()]
     )
-    bad = [t for t in tasks if t not in ALL_TASKS]
+    bad = [t for t in tasks if t not in ALL_TASKS + SUITE_TASKS]
     if bad:
-        raise SystemExit(f"unknown task(s) {bad}; choose from {ALL_TASKS}.")
+        raise SystemExit(f"unknown task(s) {bad}; choose from {ALL_TASKS + SUITE_TASKS}.")
+    if args.suite_rows:
+        if variant != "docchunk":
+            raise SystemExit("--suite-rows is graded by the docchunk ladder only (--variant docchunk)")
+        if args.dc_rung_files or args.dc_rungs:
+            raise SystemExit("--suite-rows sets the rung files itself; drop --dc-rung-files/--dc-rungs")
+        bad = [t for t in tasks if t not in SUITE_ROWS]
+        if bad:
+            raise SystemExit(f"--suite-rows: no suite rows for {bad}; choose from {sorted(SUITE_ROWS)}")
+    else:
+        bad = [t for t in tasks if t in SUITE_TASKS and not args.dc_rung_files]
+        if bad:
+            raise SystemExit(f"{bad} have no default rung files: pass --suite-rows (or --dc-rung-files)")
 
     print(
         f"=== Beaker multirung eval | run={args.run_name} variant={variant} "
         f"tasks={tasks} cluster={args.cluster} dry_run={args.dry_run} ==="
     )
     for task in tasks:
+        dc_rung_files, dc_rungs, extra_env = args.dc_rung_files, args.dc_rungs, list(args.env)
+        if args.suite_rows:
+            dc_rung_files, dc_rungs, suite_env = suite_rows_args(task, args.suite_rows_root)
+            extra_env = suite_env + extra_env
         # docchunk now evaluates the FULL ladder (all 9 tasks incl. OOD) via
         # eval_lc_native_docchunk_ladder.py (box-marker chunked prefill + bs=1 KV-cached decode).
         lc = build_eval_launch_config(
@@ -373,9 +433,9 @@ def main():
             xlong_rungs=args.xlong_rungs,
             cot_mode=args.cot_mode,
             tokenizer=args.tokenizer,
-            dc_rung_files=args.dc_rung_files,
-            dc_rungs=args.dc_rungs,
-            extra_env=args.env,
+            dc_rung_files=dc_rung_files,
+            dc_rungs=dc_rungs,
+            extra_env=extra_env,
         )
         # Each eval pass is its own ops run; the driver writes this id into the result's _meta.
         run_id = eval_pass_id(lc)

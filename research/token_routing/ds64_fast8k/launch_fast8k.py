@@ -28,6 +28,14 @@ can do the task but its compaction throws away the answer", which an f1 number a
     python research/token_routing/ds64_fast8k/launch_fast8k.py status
     python research/token_routing/ds64_fast8k/launch_fast8k.py eval        # 8k + 2k rungs, 500 rows each
     python research/token_routing/ds64_fast8k/launch_fast8k.py parity      # eval-time CE parity, the primary signal
+
+mt11 runs (``--task mt11``) are scored on Beaker per task (10 jobs; rerank has no suite rows) on the
+CTC-suite r8k + r2k rows staged on weka (stage_suite_rows_beaker.sh), query position ``both`` (the setA
+shards' layout) and ctc-spec grading -- the same eval the Lambda path (run_eval_lambda.sbatch,
+EVAL_ROWS=suite) runs. mt4 runs keep the ds64 files at query position ``after``. Preview the submit
+commands without touching state.json:
+
+    python research/token_routing/ds64_fast8k/launch_fast8k.py --task mt11 --runs <run> --eval-dry-run eval
 """
 
 from __future__ import annotations
@@ -380,45 +388,72 @@ RUNGS = {"outlier": {"8k": f"{W}/outlier_lengthmix/eval_rungs/outlier/rung_8192.
              "8k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx8192_spliteval.jsonl",
              "2k": f"{W}/_eval_bundle_eval500_v2_clean/oolong/oolong_test_synth_ctx2048_spliteval.jsonl"}}
 TASK_KEY = {"nq": "nq", "outlier": "outlier", "oolong": "oolong", "contradiction": "contra"}
+#: mt11: tasks scored on the CTC-suite rows (run_q4b_beaker_multirung_eval.py --suite-rows); rerank has none
+SUITE_EVAL_TASKS = ["nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "xabsence",
+                    "reorder", "strmatch", "grouping"]
+SUITE_ROW_RUNS = {"mt11"}
+#: batched greedy decode, as run_eval_lambda.sbatch (validated vs bs=1: contradiction@8k f1 0.641 vs 0.639)
+SUITE_EVAL_ENV = ["LADDER_GEN_BATCH=32", "LADDER_GEN_BATCH_TOKENS=196608"]
+
+
+def eval_cmd(ename, task, ckpt, suite):
+    """The run_q4b_beaker_multirung_eval.py command scoring ``task`` of checkpoint ``ckpt``.
+
+    ``suite`` (mt11): the CTC-suite rows at query position ``both`` with ctc-spec grading; else the ds64
+    files (RUNGS) at query position ``after`` (mt4 / single-task runs, unchanged)."""
+    cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, EVAL_CLUSTER,
+           "--task", TASK_KEY.get(task, task), "--variant", "docchunk", "--ckpt", ckpt,
+           "--query-position", "both" if suite else "after", "--cot-mode", "none",
+           "--tokenizer", TOKENIZER, "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
+           # >= the 8k rung's prompt + generation, with headroom: a --max-length BELOW the
+           # prompt truncates it away and the run scores exactly 0.000 (records/ memory
+           # "Goldgrad eval MAXLEN truncation bug"). 20000 covers an 8k-rung outlier row.
+           "--max-length", "20000", "--batch-size", "8"]
+    if suite:
+        return cmd + ["--suite-rows"] + [a for kv in SUITE_EVAL_ENV for a in ("--env", kv)]
+    return cmd + ["--dc-rung-files", json.dumps({task: RUNGS[task]}), "--dc-rungs", ",".join(RUNGS[task])]
 
 
 def do_eval(args):
     st = load_state()
     names = args.runs.split(",") if args.runs else list(st["runs"])
+    dry = args.eval_dry_run
     for name in names:
         r = st["runs"].get(name)
+        if r is None and dry:  # preview a run that is not (yet) in state.json
+            r = {"task": args.task, "state": "DONE", "steps_expected": 0}
         if r is None:
             print(f"[skip] {name} not in state.json")
             continue
-        if st["evals"].get(name, {}).get("ex") and not args.force:
+        if st["evals"].get(name, {}).get("ex") and not args.force and not dry:
             print(f"[skip] eval {name} already launched ({st['evals'][name]['ex']})")
             continue
         # Only score a FINISHED run: the eval reads the model-only export written after fit(), so
         # launching against a still-training save folder finds no checkpoint and burns a GPU slot
         # failing.
-        if r.get("state") != "DONE" and not args.force and not (args.eval_step_dir and r.get("state") == "FAILED"):
+        if (r.get("state") != "DONE" and not args.force and not dry
+                and not (args.eval_step_dir and r.get("state") == "FAILED")):
             print(f"[wait] {name} train={r.get('state')} -- eval deferred")
             continue
-        # A multi-task (mt4) checkpoint is scored once PER TASK, as `<run>-ev<task>`.
-        tasks = MT_TASKS.get(r["task"], [r["task"]])
+        # A multi-task (mt4/mt11) checkpoint is scored once PER TASK, as `<run>-ev<task>`.
+        # mt11 trains on setA rows (IID with the CTC suite, query position both): score it on the suite
+        # rows, every task but rerank (no suite rows).
+        suite = r["task"] in SUITE_ROW_RUNS
+        tasks = SUITE_EVAL_TASKS if suite else MT_TASKS.get(r["task"], [r["task"]])
         for task in tasks:
             ename = f"{name}-ev{task}" if r["task"] in MT_TASKS else name
-            if ename != name and st["evals"].get(ename, {}).get("ex") and not args.force:
+            if ename != name and st["evals"].get(ename, {}).get("ex") and not args.force and not dry:
                 print(f"[skip] eval {ename} already launched ({st['evals'][ename]['ex']})")
                 continue
-            files = {task: RUNGS[task]}
             # --eval-step-dir: score the trainer's final distcp step dir instead of the post-fit export (the
             # 10-22 tdb runs finished every step, then died in wandb.finish before the export was written)
             ckpt = f"{CKPTS}/{name}/step{r['steps_expected']}" if args.eval_step_dir else f"{CKPTS}/{name}"
-            cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, EVAL_CLUSTER,
-                   "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", ckpt,
-                   "--query-position", "after", "--cot-mode", "none", "--tokenizer", TOKENIZER,
-                   "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
-                   # >= the 8k rung's prompt + generation, with headroom: a --max-length BELOW the
-                   # prompt truncates it away and the run scores exactly 0.000 (records/ memory
-                   # "Goldgrad eval MAXLEN truncation bug"). 20000 covers an 8k-rung outlier row.
-                   "--max-length", "20000", "--batch-size", "8",
-                   "--dc-rung-files", json.dumps(files), "--dc-rungs", ",".join(RUNGS[task])]
+            cmd = eval_cmd(ename, task, ckpt, suite)
+            if dry:
+                rc, out = sh(cmd + ["--dry-run"])
+                print(f"eval {ename} [dry-run rc={rc}]: " + " ".join(
+                    ln.strip() for ln in out.splitlines() if ln.strip().startswith("cmd:")), flush=True)
+                continue
             rc, out = sh(cmd)
             ex = parse_id(out)
             _log(ename, "eval", out)
@@ -524,6 +559,9 @@ def main():
     ap.add_argument("--parity-rows", default=PARITY_ROWS)
     ap.add_argument("--parity-gen-rows", default=PARITY_GEN_ROWS)
     ap.add_argument("--force", action="store_true", help="relaunch even if state.json has it")
+    ap.add_argument("--eval-dry-run", action="store_true",
+                    help="eval: build each job with the launcher's --dry-run (nothing submitted, state.json "
+                    "untouched; a run not in state.json is previewed as a --task run)")
     ap.add_argument("--eval-step-dir", action="store_true",
                     help="eval: read <run>/step<steps_expected> (no post-fit export); also scores FAILED runs")
     ap.add_argument("mode", choices=["launch", "dry_run", "eval", "parity", "status"])
