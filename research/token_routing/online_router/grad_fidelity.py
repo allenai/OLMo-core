@@ -65,7 +65,12 @@ def find_ckpt(path):
         return path
     c = sorted(glob.glob(f"{path}/step*/model_and_optim"), key=lambda p: int(p.split("/step")[-1].split("/")[0]))
     if not c:
-        raise SystemExit(f"no model_and_optim under {path}")
+        def ls(d):
+            try:
+                return sorted(os.listdir(d))[:40]
+            except OSError as exc:
+                return f"<{exc}>"
+        raise SystemExit(f"no model_and_optim under {path}; contents: {ls(path)}; parent: {ls(os.path.dirname(path.rstrip('/')))}")
     return c[-1]
 
 
