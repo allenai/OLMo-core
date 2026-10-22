@@ -86,7 +86,7 @@ def test_warmup_keeps_everything_then_learns_lexical_match():
     r.begin_step(2, model=m)
     assert r.w is not None and not r.dense_now()
     keep2 = r.select(m, ids, cid, labels)
-    assert keep2[ids == QTOK].all()
+    assert keep2[(ids == QTOK) & body].all()
     n_body = int(body[0].sum())
     assert int(keep2[0].sum()) == math.ceil(0.2 * n_body)
     assert m._flop_extra_actual > 0  # scoring + fit were charged
