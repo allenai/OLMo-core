@@ -247,6 +247,12 @@ What it says:
   * mid-stack: otr30M8 s976 / s1464 (01M5HKC241SVX9V8J3FVCK57M1 / 01M5HKD7HD0RHZBG6AC6RB5V9Z);
   * random control: rnd30 s976 / s1464 (01M5HKE537S3Y0Y27XHK1ZKV7M / 01M5HKF5CM1ZFBJ2SA9WC5869M).
 
+  * where-vs-which controls (parent session's request): mid-stack random rnd30M8 (01M5HM848904Y7QG4CSQZH0Y9F /
+    01M5HM965QX3VJE61BT3410R9X), mid-stack first/last fl30M8 (01M5HMA8KXE5GZ9V1JJW5X77KY / 01M5HMBKT869Z0H66PEYSMFPHF),
+    and the mid-stack router at keep 0.1, otr10M8 (01M5HMCSDHQMCG2S86Z2DMV51F / 01M5HME5F5PKNCFJ6ERSRNSTMA).
+    `--st-otr-score random|first_last` swaps the scorer for a fixed one, with the same budget, allocation and drop
+    point.
+
   The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
   tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
 * **Results.** _pending_.
