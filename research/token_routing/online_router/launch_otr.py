@@ -58,6 +58,7 @@ ARMS = {
     "otr10M8": otr(0.1, drop=8),
     # cheaper mid-stack settings (parent session, 2026-10-22): shallower full-context prefix, fewer dense steps
     "otr10M4": otr(0.1, drop=4),
+    "otr10M7": otr(0.1, drop=7),    # right before the block-7 full attention (direct test of the full-attention hypothesis)
     "otr10M6": otr(0.1, drop=6),    # split-point bracket around 8 (parent, 2026-10-22): before the block-7 full attention
     "otr10M12": otr(0.1, drop=12),  # later split: floor 12/32 of the dense cost
     "otr10M1": otr(0.1, drop=1),   # Prasann: route after block 1 (one GDN layer of full-context mixing)

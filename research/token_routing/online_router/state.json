@@ -1314,6 +1314,55 @@
    "arm": "otr10M12",
    "commit": "513ad5af6",
    "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M7-lro-lr2e-06-lam": {
+   "slurm": 113740,
+   "arm": "otr10M7",
+   "seed": 0,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M8-lro-lr2e-06-lam": {
+   "slurm": 113741,
+   "arm": "otr10M8",
+   "seed": 0,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M6-s1-lro-lr2e-06-lam": {
+   "slurm": 113742,
+   "arm": "otr10M6",
+   "seed": 1,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M12-s1-lro-lr2e-06-lam": {
+   "slurm": 113743,
+   "arm": "otr10M12",
+   "seed": 1,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M8-s2-lro-lr2e-06-lam": {
+   "slurm": 113744,
+   "arm": "otr10M8",
+   "seed": 2,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M4-s1-lro-lr2e-06-lam": {
+   "slurm": 113745,
+   "arm": "otr10M4",
+   "seed": 1,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M1-s1-lro-lr2e-06-lam": {
+   "slurm": 113746,
+   "arm": "otr10M1",
+   "seed": 1,
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
   }
  }
 }
