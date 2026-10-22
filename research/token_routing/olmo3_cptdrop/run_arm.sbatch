@@ -18,6 +18,7 @@
 #   SEED, EXTRA (appended trainer flags), NOWANDB=1, CODE_SHA (staged tree)
 #   CTX=64k        64k rows (train64k), 8 rows/step, YaRN x8      KEEP=<f>  drop-arm keep fraction / prob
 #   ST_EXTRA       extra --st-* flags (e.g. --st-keep-recent 4096 once that lands)
+#   GB_OVERRIDE    rows per step (default 16 at 32k / 8 at 64k); same token budget, more optimizer steps
 #   LR             peak LR (default: the OLMo 3 stage-3 recipe's 2.0712e-4)
 #   SMOKE=1        no model-only export and NO checkpoints at all (--no-final-checkpoint disables the
 #                  checkpointer callback, mid-run SAVE_INTERVAL saves included)
@@ -75,6 +76,9 @@ YARN=4
 if [ "${CTX:-32k}" = "64k" ]; then
   case "$ARM" in D|IRAND|IFL) DATA=train64k_ee; SEQ=65536; GB=8; YARN=8 ;; *) echo "FATAL: CTX=64k not wired for ARM=$ARM"; exit 2 ;; esac
 fi
+# GB_OVERRIDE: rows per optimizer step (dense small-batch control). MAX_STEPS_TOTAL stays in 524,288-token units,
+# so the token / FLOP budget is unchanged and the run takes (16 / GB) x as many optimizer steps.
+GB="${GB_OVERRIDE:-$GB}"
 VAR="$VAR ${ST_EXTRA:-}"
 SAVE="$ROOT/runs/$RUN"
 if [ -d "$SAVE" ] && ls -d "$SAVE"/step* >/dev/null 2>&1 && [ -z "${RESUME:-}" ]; then

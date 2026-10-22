@@ -38,7 +38,7 @@ EST[("IFL", "64k")] = 0.19 * EST[("D", "64k")]
 def segments(label: str):
     """[(arm_key, ctx, steps)] for a run label (o3cd- prefix stripped). None if not a training run."""
     ctx = "64k" if "x64" in label or label.startswith("D64") else "32k"
-    m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|D64lr\d+|Dlr\d+)-(\d+)(-s\d+)?", label)
+    m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|D64lr\d+|Dlr\d+|DB\d+lr\d+)-(\d+)(-s\d+)?", label)
     if m:
         return [("D", ctx, int(m.group(2)))]
     m = re.fullmatch(r"(IRAND|IFL)(?:lr\d+)?-(\d+)", label)
