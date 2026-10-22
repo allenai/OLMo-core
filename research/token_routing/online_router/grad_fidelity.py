@@ -158,13 +158,16 @@ def main():
     ap.add_argument("--fit-rows", type=int, default=32)
     ap.add_argument("--test-rows", type=int, default=12)
     ap.add_argument("--ridge", type=float, default=0.01)
+    ap.add_argument("--row-offset", type=int, default=0,
+                    help="first row per task used; a trained checkpoint needs rows it never trained on "
+                    "(e.g. 1000 on mt4s1464 for anything trained on mt4s488 / mt4s976)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     torch.manual_seed(0)
     model = build_model(find_ckpt(a.ckpt))
-    fit = load_rows(a.shard, a.fit_rows, 0)
+    fit = load_rows(a.shard, a.fit_rows, a.row_offset)
     # held-out rows: after the offline probe's fit + test rows (48 + 32), so neither probe saw them
-    test = load_rows(a.shard, a.test_rows, 80)
+    test = load_rows(a.shard, a.test_rows, a.row_offset + 80)
 
     # ---- fit the router scorers (hidden-state gradients only; parameters frozen)
     fits = {"input": ("L4+q", "gnorm@emb"), "mid8": ("L8+q", "gnorm@L8")}
@@ -259,7 +262,7 @@ def main():
             summ.append(dict(task=task, mode=mode, rule=rule, rho=rho, eval_size=len(rr),
                              **{m: med([r[m] for r in rr if m in r]) for m in
                                 ("cos_all", "cos_blocks", "rel_err_all", "norm_ratio_all", "dce", "kept_frac")}))
-    json.dump(dict(ckpt=a.ckpt, shard=a.shard, test_rows_per_task=a.test_rows, fit_rows_per_task=a.fit_rows,
+    json.dump(dict(ckpt=a.ckpt, shard=a.shard, row_offset=a.row_offset, test_rows_per_task=a.test_rows, fit_rows_per_task=a.fit_rows,
                    rows=res, summary=summ), open(a.out, "w"), indent=1)
     log("=== medians over held-out rows (cos_all / rel_err / norm_ratio / dCE) ===")
     for s in summ:
