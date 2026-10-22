@@ -3,6 +3,7 @@
 # the tokdrop_lr geometry (seq 10240, gb 16, micro 2, unpacked, no compile). Arms run back to back
 # in ONE allocation so they share the node:
 #   dense | dense + LayerDrop p=0.25 | tier67a50m32 | tier67a50m32 + LayerDrop p=0.25
+# (ARMS=... also: dense_ldlin / tier67_ldlin = linear p=0.4 excl. first 4 / last 2; dense_fix3)
 # Run on the node with the code staged under $ROOT (git archive | srun tar -x), e.g.
 #   srun --partition=jsteinhardt --qos=preemptive -w sneetches --gres=gpu:2 ... bash smoke_layerdrop.sh
 # Per arm: logs/<arm>.log (trainer step times + flop_meter metrics). MAX_STEPS (default 12).
@@ -27,6 +28,9 @@ for arm in $ARMS; do
     dense_ld25) V=full; X="$LD" ;;
     tier67) V=softtoken; X="$RULE" ;;
     tier67_ld25) V=softtoken; X="$RULE $LD" ;;
+    dense_ldlin) V=full; X="--layer-drop-p 0.4 --layer-drop-schedule linear --layer-drop-exclude-first 4 --layer-drop-exclude-last 2" ;;
+    dense_fix3) V=full; X="--train-skip-layers 20,24,28" ;;  # three GatedDeltaNet blocks
+    tier67_ldlin) V=softtoken; X="$RULE --layer-drop-p 0.4 --layer-drop-schedule linear --layer-drop-exclude-first 4 --layer-drop-exclude-last 2" ;;
     *) echo "unknown arm $arm"; exit 2 ;;
   esac
   run=layerdrop-smoke-$arm

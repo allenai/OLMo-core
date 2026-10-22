@@ -44,8 +44,10 @@ def run_fsdp2_layer_drop_matches_single_process():
     for m in (model, ref):
         m.enable_layer_drop(p=0.5, seed=0)
         m.train()
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    ref_opt = torch.optim.AdamW(ref.parameters(), lr=1e-3)
+    # SGD, not Adam: Adam's first step is ~lr * sign(g), which turns reduction-order noise in
+    # near-zero grads into lr-sized parameter differences. The grads are compared directly below.
+    opt = torch.optim.SGD(model.parameters(), lr=0.05)
+    ref_opt = torch.optim.SGD(ref.parameters(), lr=0.05)
     rank, world = get_rank(), dist.get_world_size()
     g = torch.Generator().manual_seed(1)
     seen = []
@@ -65,15 +67,21 @@ def run_fsdp2_layer_drop_matches_single_process():
                 assert not any(has), (step, k)
             else:
                 assert all(has), (step, k)
-        for p in model.parameters():
-            if p.grad is not None:
-                assert torch.isfinite(get_full_tensor(p.grad)).all()
+        for (n, p), (_, rp) in zip(model.named_parameters(), ref.named_parameters()):
+            if p.grad is None:
+                assert rp.grad is None, n  # skipped in both
+                continue
+            g = get_full_tensor(p.grad)
+            assert torch.isfinite(g).all(), n
+            torch.testing.assert_close(g, rp.grad, atol=1e-6, rtol=1e-3, msg=lambda m: f"{n} step {step}: {m}")
         opt.step()
         ref_opt.step()
         opt.zero_grad(set_to_none=True)
         ref_opt.zero_grad(set_to_none=True)
         for (n, p), (_, rp) in zip(model.named_parameters(), ref.named_parameters()):
-            torch.testing.assert_close(get_full_tensor(p).detach(), rp.detach(), atol=2e-5, rtol=1e-4, msg=n)
+            torch.testing.assert_close(
+                get_full_tensor(p).detach(), rp.detach(), atol=1e-5, rtol=1e-4, msg=lambda m: f"{n} step {step}: {m}"
+            )
     assert any(seen) and len(set(seen)) > 1, seen  # the draw skipped something and varied
     # eval runs every block: FSDP output equals the reference model with no skipping
     model.eval()
