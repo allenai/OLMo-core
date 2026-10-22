@@ -129,6 +129,70 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt4-otr10M4-s1464-tdb-lr2e-06": {
+   "ex": "01M5JB3XB5ZC3JXMM658Q0YKEB",
+   "arm": "otr10M4",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M4-s976-tdb-lr2e-06": {
+   "ex": "01M5JB4VXJ7M3HVDJGT8TJ2WRC",
+   "arm": "otr10M4",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8de16-s1464-tdb-lr2e-06": {
+   "ex": "01M5JB5TMS81Z78TGBKFY7TBA3",
+   "arm": "otr10M8de16",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8de16-s976-tdb-lr2e-06": {
+   "ex": "01M5JB6TKERP0W5QNH1K50GNDG",
+   "arm": "otr10M8de16",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M4de16-s1464-tdb-lr2e-06": {
+   "ex": "01M5JB89FM42SS4M12RN3JNAEA",
+   "arm": "otr10M4de16",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M4de16-s976-tdb-lr2e-06": {
+   "ex": "01M5JB94CH6TBKDHVME6E0PRJ1",
+   "arm": "otr10M4de16",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06": {
+   "ex": "01M5JBA0MSJFA4X9DNMZ5VHKRV",
+   "arm": "otr10M8",
+   "budget": "s480",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06": {
+   "ex": "01M5JBAWC3GMN0CF3TQH3MQ1QS",
+   "arm": "otr10M8",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
