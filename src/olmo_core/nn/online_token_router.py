@@ -741,6 +741,15 @@ class OnlineTokenRouter:
             # top-k over a uniform token sample), vs the oracle top-k and random (= keep_frac)
             dc = torch.cat(dense_e).to(dev)
             if bool(dc.any()):
+                # held-out rank correlation on FULL-CONTEXT steps: there the sampled tokens are a uniform sample of
+                # every body token, so this is unbiased for any explore_frac (including 0)
+                vals = []
+                for rid in torch.unique(rc[dc]).tolist():
+                    mm = dc & (rc == rid)
+                    vals.append(_spearman(pc[mm], yc[mm]))
+                vals = [v for v in vals if not math.isnan(v)]
+                if vals:
+                    self._stat("rank_corr_fullctx", sum(vals) / len(vals))
                 fr, fo = [], []
                 for rid in torch.unique(rc[dc]).tolist():
                     mm = dc & (rc == rid)

@@ -373,6 +373,7 @@ def test_fidelity_mass_logged_on_dense_steps():
     met = r.metrics()
     assert met["online_router/fid_mass_router"] == pytest.approx(met["online_router/fid_mass_oracle"])
     assert met["online_router/fid_mass_router"] > met["online_router/fid_mass_random"]
+    assert met["online_router/rank_corr_fullctx"] > 0.5  # held-out correlation on the full-context step
 
 
 def test_random_control_keeps_doc_share_without_router():
