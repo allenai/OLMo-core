@@ -79,7 +79,10 @@ def do_launch(a, mode):
                        "--base-checkpoint", L.BASE, "--extra-args", extra, mode]
                 rc, out = sh(cmd)
                 ex = parse_id(out)
-                print(f"{name} -> rc={rc} {ex or out[-300:]}")
+                for ln in out.splitlines():
+                    if ln.startswith("[beaker_ctc_suite] cmd=") or ln.startswith("[beaker_ctc_suite] data="):
+                        print("  " + ln[:900])
+                print(f"{name} -> rc={rc} {ex or out[-200:]}")
                 if mode == "launch" and ex:
                     st["runs"][name] = {"ex": ex, "task": task, "arm": arm, "budget": budget, "lr": a.lr}
                     save(st)
