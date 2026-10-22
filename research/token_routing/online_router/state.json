@@ -209,6 +209,70 @@
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
+  },
+  "f8k-mt4-otr10M8x00-s1464-tdb-lr2e-06": {
+   "ex": "01M5JCWZ8MB7HMRXTRV13W6JZS",
+   "arm": "otr10M8x00",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8x00-s976-tdb-lr2e-06": {
+   "ex": "01M5JCXSA7JHNB8WHJM3Z71RT6",
+   "arm": "otr10M8x00",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8x30-s1464-tdb-lr2e-06": {
+   "ex": "01M5JCYMA2SKD87G0SK3J2TEGZ",
+   "arm": "otr10M8x30",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8x30-s976-tdb-lr2e-06": {
+   "ex": "01M5JCZG3NS76GE06RGW86GQ4H",
+   "arm": "otr10M8x30",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8x50-s1464-tdb-lr2e-06": {
+   "ex": "01M5JD09EFBR1G7WJEZF8DEA6D",
+   "arm": "otr10M8x50",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M8x50-s976-tdb-lr2e-06": {
+   "ex": "01M5JD12W8ZCPNX4077VB0R0SG",
+   "arm": "otr10M8x50",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06": {
+   "ex": "01M5JD1Z4J625KQMN1BGHNDD4H",
+   "arm": "rnd10M8",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-rnd10M8-s976-tdb-lr2e-06": {
+   "ex": "01M5JD2RXHX0621HFQMSBCKKTY",
+   "arm": "rnd10M8",
+   "budget": "s976",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
