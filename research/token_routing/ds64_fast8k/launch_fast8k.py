@@ -180,6 +180,8 @@ def _gr(frac):
 ARM_EXTRA.update({
     "tier67a50m32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.5 --st-keep-token-min 32 {_P8}",
     "tier67flm16": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 16 {_P8}",
+    "tier67a50m64": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.5 --st-keep-token-min 64 {_P8}",
+    "tier67a60m48": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.6 --st-keep-token-min 48 {_P8}",
     "tier67flm32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 32 {_P8}",
     "tier50flm32": f"{_gr(0.5)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.4 --st-keep-token-min 32 {_P8}",
     "tier33fl": f"{_gr(0.3333)} {_FL} --st-keep-token-k 0.1 --st-kept-doc-k 0.5 {_P8}",
