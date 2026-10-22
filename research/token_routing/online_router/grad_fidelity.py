@@ -19,6 +19,9 @@ Rules (body tokens only; markers, prompt, query and answer always stay):
   first_last_doc            each document's first and last tokens (reference heuristic, gold-blind)
 Drop points: input (dropped tokens skip every block; router features h4 + h4*q, target ||dL/de||) and mid8 (every
 token runs blocks 0-7, dropped tokens skip 8-31; features h8 + h8*q, target ||dL/dh8||; doc rules only).
+Router-target ablation (mid8, doc rules): router_<t> / oracle_<t> for the trainer's other targets (--st-otr-target)
+  gxh  log |<dL/dh8, h8>|      dh  log ||h8 - h0|| (residual change through blocks 0-7; known for every token before
+  the drop, so oracle_dh is realizable at train time with no backward)      mix  within-row mean of the gnorm and dh ranks
 
     python research/token_routing/online_router/grad_fidelity.py --ckpt <distcp dir> --shard <mt4s488> --out x.json
 """
@@ -50,7 +53,8 @@ from offline_probe import (  # noqa: E402
 
 BUDGETS = (0.1, 0.3, 0.5)
 INPUT_RULES = ("router_doc", "router_row", "oracle_doc", "oracle_row", "random_doc", "random_row", "first_last_doc")
-MID_RULES = ("router_doc", "oracle_doc", "random_doc")
+MID_TARGETS = ("gxh", "dh", "mix")
+MID_RULES = ("router_doc", "oracle_doc", "random_doc") + tuple(f"{k}_{t}_doc" for t in MID_TARGETS for k in ("router", "oracle"))
 MID_LAYER = 8
 
 
@@ -72,6 +76,20 @@ def find_ckpt(path):
                 return f"<{exc}>"
         raise SystemExit(f"no model_and_optim under {path}; contents: {ls(path)}; parent: {ls(os.path.dirname(path.rstrip('/')))}")
     return c[-1]
+
+
+def _ranks(x):
+    return x.argsort().argsort().double() / max(1, x.numel() - 1)
+
+
+def mid_targets(o, tg, b):
+    """Body-token targets for the mid8 router-target ablation (all on the full-context pass)."""
+    g8, h8, e = o["g8"].float(), o["h8"].float(), o["e"].float()
+    t = {"gnorm": tg["gnorm@L8"][b].double(),
+         "gxh": torch.log((g8 * h8).sum(-1).abs() + 1e-12)[b].double(),
+         "dh": torch.log((h8 - e).norm(dim=-1) + 1e-12)[b].double()}
+    t["mix"] = 0.5 * (_ranks(t["gnorm"]) + _ranks(t["dh"]))
+    return t
 
 
 def grad_pass(model, row, keep_pos=None, mid_layer=0):
@@ -175,7 +193,7 @@ def main():
     test = load_rows(a.shard, a.test_rows, a.row_offset + 80)
 
     # ---- fit the router scorers (hidden-state gradients only; parameters frozen)
-    fits = {"input": ("L4+q", "gnorm@emb"), "mid8": ("L8+q", "gnorm@L8")}
+    fits = {"input": ("L4+q", "gnorm@emb"), "mid8": ("L8+q", "gnorm@L8"), **{f"mid8_{t}": ("L8+q", t) for t in MID_TARGETS}}
     stats = {k: [0, 0] for k in fits}
     t0 = time.time()
     for i, row in enumerate(fit):
@@ -183,9 +201,11 @@ def main():
         tg = targets_of(o)
         parts = feature_parts(row, o)
         b = parts["body"]
+        mt = mid_targets(o, tg, b)
         for k, (fs, t) in fits.items():
             X = design(parts, fs)
-            y = (tg[t][b] - tg[t][b].mean()).double()
+            yt = mt[t] if t in mt else tg[t][b].double()
+            y = yt - yt.mean()
             stats[k][0] = stats[k][0] + X.T @ X
             stats[k][1] = stats[k][1] + X.T @ y
         if (i + 1) % 32 == 0:
@@ -225,6 +245,14 @@ def main():
             "input": {"router": design(parts, "L4+q") @ W["input"], "oracle": tg["gnorm@emb"][b].double()},
             "mid8": {"router": design(parts, "L8+q") @ W["mid8"], "oracle": tg["gnorm@L8"][b].double()},
         }
+        mt = mid_targets(o, tg, b)
+        X8 = design(parts, "L8+q")
+        for t in MID_TARGETS:
+            scores["mid8"][f"router_{t}"] = X8 @ W[f"mid8_{t}"]
+            scores["mid8"][f"oracle_{t}"] = mt[t]
+        for t in MID_TARGETS:
+            res.append(dict(task=row["task"], row=i, mode="tgt", rule=f"spearman_gnorm_vs_{t}", rho=1.0,
+                            cos_all=float(np.corrcoef(_ranks(mt["gnorm"]).cpu(), _ranks(mt[t]).cpu())[0, 1])))
         for p in model.parameters():
             p.requires_grad_(True)
         ce_full = grad_pass(model, row)
@@ -238,8 +266,7 @@ def main():
             for rho in BUDGETS:
                 for rule in rules:
                     kind, alloc = rule.rsplit("_", 1)
-                    sc = {"router": scores[mode]["router"], "oracle": scores[mode]["oracle"], "random": rnd,
-                          "first": fl_score}[kind.split("_")[0]].float()
+                    sc = {**scores[mode], "random": rnd, "first_last": fl_score}[kind].float()
                     keep_b = doc_topk(sc, doc, rho) if alloc == "doc" else row_topk(sc, rho)
                     keep = ~b.clone()
                     keep[body_pos[keep_b]] = True
