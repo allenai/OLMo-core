@@ -35,7 +35,9 @@ check_smoke() {  # $1 = run log
 run() {  # ARM-specific env passed by caller; $1 = log name
   local name=$1; shift
   log "START $name"
-  env "$@" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1
+  local tmo; tmo=$(env "$@" bash -c 'echo ${TIMEOUT_MIN:-0}')
+  if [ "$tmo" != "0" ]; then timeout "${tmo}m" env "$@" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1
+  else env "$@" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1; fi
   local rc=$?
   log "END $name rc=$rc"
   return $rc
@@ -55,8 +57,10 @@ log "pytest"
 rc=$?; tail -5 "$ROOT/logs/pytest-$J.log"; [ $rc -eq 0 ] || { log "pytest FAILED rc=$rc"; exit 10; }
 fi
 
-# 2. smoke
+# 2. smoke. SMOKE_FROM=C1 skips D / decay-branch / optim-only-branch smokes already passed on this code
+#    (driver 4016772: all three ok). An empty-epoch livelock (no instance fits --seq-len) fails fast below.
 S=o3cd-smoke-$J
+if [ "${SMOKE_FROM:-D}" = "D" ]; then
 # NOT SMOKE=1 here: --no-final-checkpoint disables the whole checkpointer, mid-run saves included, and the
 # branch smokes below need step3. Its checkpoints + export are deleted after the smoke.
 run "$S-D" ARM=D RUN="$S-D" MAX_STEPS_TOTAL=10 HARD_STOP=4 SAVE_INTERVAL=3 NOWANDB=1 || exit 11
@@ -68,13 +72,14 @@ grep -q "Will resume training from step 3" "$ROOT/logs/$S-Dbr.log" || { log "SMO
 run "$S-C2" ARM=C2 RUN="$S-C2" MAX_STEPS_TOTAL=5 BRANCH_FROM="$ROOT/runs/$S-D/step3" BRANCH_OPTIM_ONLY=1 WARMUP=0 DECAY_FRAC=0.2 SMOKE=1 NOWANDB=1 || exit 13
 check_smoke "$ROOT/logs/$S-C2.log" || exit 13
 grep -q "Will resume training from step" "$ROOT/logs/$S-C2.log" && { log "SMOKE FAIL: optim-only branch restored trainer state"; exit 13; }
-run "$S-C1" ARM=C1 RUN="$S-C1" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 14
+fi
+run "$S-C1" ARM=C1 RUN="$S-C1" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 TIMEOUT_MIN=20 || exit 14
 check_smoke "$ROOT/logs/$S-C1.log" || exit 14
-run "$S-IRAND" ARM=IRAND RUN="$S-IRAND" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 15
+run "$S-IRAND" ARM=IRAND RUN="$S-IRAND" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 TIMEOUT_MIN=20 || exit 15
 check_smoke "$ROOT/logs/$S-IRAND.log" || exit 15
-run "$S-IFL" ARM=IFL RUN="$S-IFL" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 16
+run "$S-IFL" ARM=IFL RUN="$S-IFL" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 TIMEOUT_MIN=20 || exit 16
 check_smoke "$ROOT/logs/$S-IFL.log" || exit 16
-rm -rf "$ROOT/runs/$S-D" "$ROOT/runs/o3cd-smoke-4016652-D"   # dense smoke checkpoints + export (~200 GB each); branch smokes save nothing
+rm -rf "$ROOT"/runs/o3cd-smoke-*   # smoke checkpoints + exports (~200 GB per dense smoke)
 log "SMOKE PASSED"
 
 # 3. dense family
