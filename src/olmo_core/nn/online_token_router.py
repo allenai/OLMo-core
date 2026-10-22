@@ -630,13 +630,19 @@ class OnlineTokenRouter:
         self._register_target(model, entry, h_new)
         # FLOP adjustment, per row: blocks before drop_layer at the full length, the rest + head at the
         # kept length, minus the dense charge the meter applies to the (uncompacted) row
-        blocks = list(model.blocks.values())
+        # (blocks skipped whole this step by layer drop ran for no token: the meter already leaves them out of
+        # its charge, so they are left out of both sides here)
+        ld = getattr(model, "_layer_drop", None)
+        skip = ld.skipped() if (ld is not None and model.training) else frozenset()
+        if self.cfg.drop_layer in skip:
+            raise RuntimeError(f"online router drop_layer {self.cfg.drop_layer} is skipped by layer drop")
+        blocks = [b if i not in skip else None for i, b in enumerate(model.blocks.values())]
         L0 = self.cfg.drop_layer
         head = int(model.lm_head.num_flops_per_token(0)) if model.lm_head is not None else 0
         adj = 0.0
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
-            fb = [int(b.num_flops_per_token(int(L))) for b in blocks]
-            fk = [int(b.num_flops_per_token(int(Lk))) for b in blocks[L0:]]
+            fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
+            fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
             actual = L * sum(fb[:L0]) + Lk * (sum(fk) + head)
             adj += actual - L * (sum(fb) + head)
         self._flop(model, adj)

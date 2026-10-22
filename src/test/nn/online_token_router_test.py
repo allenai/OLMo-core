@@ -447,3 +447,73 @@ def test_dh_target_needs_mid_stack():
 def test_dh_score_needs_mid_stack():
     with pytest.raises(ValueError):
         OnlineRouterConfig(score="dh").validate()
+
+
+def test_mid_stack_composes_with_layer_drop_cpu():
+    """Mid-stack drop + whole-block skip of a later block: the skipped block's forward is never called, and the
+    FLOP adjustment charges exactly blocks [0, L) at the full length + the blocks that ran past L at the kept length."""
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
+    cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=4, fused_ops=False, dtype=DType.float32)
+    model = cfg.build(init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(
+        OnlineRouterConfig(keep_frac=0.25, explore_frac=0.2, samples_per_row=64, drop_layer=1, dense_every=0),
+        doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D,
+    )
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.25, online_router=router,
+    )
+    model.enable_layer_drop(fixed={3})
+    calls = []
+    model.blocks["3"].register_forward_hook(lambda *a: calls.append(1))
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    model.train()
+    ids, cid, labels = _row(B=1)
+    for step in (1, 2):
+        router.begin_step(step, model=model)
+        flops.clear()
+        router.metrics()  # reset the per-forward stats: mid_row_frac below is step 2's alone
+        out = model(ids, labels=labels)
+        out.loss.backward()
+    assert not calls, "a layer-drop-skipped block ran"
+    st = router._pending[-1]
+    real = int((ids != PH).sum())
+    kept = int(round(router.metrics().get("online_router/mid_row_frac", 0.0) * real))
+    blocks = list(model.blocks.values())
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    expect = (real * f(blocks[0], real) + kept * (f(blocks[1], kept) + f(blocks[2], kept) + head)
+              - real * (f(blocks[0], real) + f(blocks[1], real) + f(blocks[2], real) + head))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)
+    assert st["target"] is not None
+
+
+def test_mid_stack_drop_layer_cannot_be_skipped():
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=3, fused_ops=False, dtype=DType.float32)
+    model = cfg.build(init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(OnlineRouterConfig(drop_layer=1, dense_every=0), doc_start_id=DS, doc_end_id=DE,
+                               eos_id=EOS, d_model=D)
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.3, online_router=router,
+    )
+    model.enable_layer_drop(fixed={1})
+    model.train()
+    ids, cid, labels = _row(B=1)
+    for step in (1, 2):
+        router.begin_step(step, model=model)
+        if step == 2:
+            with pytest.raises(RuntimeError):
+                model(ids, labels=labels)
+        else:
+            model(ids, labels=labels).loss.backward()
