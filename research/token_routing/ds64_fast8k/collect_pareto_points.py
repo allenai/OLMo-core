@@ -51,10 +51,24 @@ def parse_name(run):
 
 
 def lambda_runs():
-    out = subprocess.run([OPS, "runs", "--experiment", "tokdrop_lr", "--cluster", "lambda", "--json"],
-                         capture_output=True, text=True, timeout=60).stdout
-    rows = json.loads(out) if out.strip().startswith("[") else []
-    return sorted({r["run_id"] for r in rows if r.get("kind") == "train" and r["run_id"].startswith("f8k-mt")})
+    """{run: registered log_path} for Lambda training runs of tokdrop_lr and learned_router (the online-router
+    session runs from its own staged checkout, so its logs are not under LOGS)."""
+    out = {}
+    for exp in ("tokdrop_lr", "learned_router"):
+        txt = subprocess.run([OPS, "runs", "--experiment", exp, "--cluster", "lambda", "--json"],
+                             capture_output=True, text=True, timeout=60).stdout
+        for r in (json.loads(txt) if txt.strip().startswith("[") else []):
+            if r.get("kind") == "train" and r["run_id"].startswith("f8k-mt"):
+                out[r["run_id"]] = r.get("log_path") or ""
+    return out
+
+
+def train_pf_from(path):
+    """(PF, last step) from a Lambda training log outside LOGS."""
+    out = ssh(f"grep -E 'flop_meter/actual_pflops|\\[step=' {path} | tail -40")
+    pf = [float(x) for x in re.findall(r"flop_meter/actual_pflops[ =]+([0-9.]+)", out)]
+    steps = [int(x) for x in re.findall(r"\[step=(\d+)/", out)]
+    return (pf[-1] if pf else None), (max(steps) if steps else None)
 
 
 def lambda_wall(run):
@@ -126,14 +140,19 @@ def main():
     ap.add_argument("--no-beaker", action="store_true")
     a = ap.parse_args()
     rows, runs = [], {}
-    for run in lambda_runs():
+    for run, log_path in lambda_runs().items():
         meta = parse_name(run)
         if meta is None:
             continue
-        sc = scores(run)
+        outside = bool(log_path) and not log_path.startswith(LOGS)
+        sc = _ops_scores(run) if outside else scores(run)
         if not sc:
             continue
-        pf, steps, per_example = train_pf(run)
+        if outside:
+            pf, steps = train_pf_from(log_path)
+            per_example = True
+        else:
+            pf, steps, per_example = train_pf(run)
         wall, state = lambda_wall(run)
         # 2026-10-22 option-field bug: lrb runs named tier* kept the keep set WHOLE (--st-kept-doc-k dropped)
         # and lrb *m<N>p8 runs lost their --st-keep-token-min floor. Never plot them under their names.
