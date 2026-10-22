@@ -1,0 +1,11 @@
+{
+ "runs": {
+  "f8k-mt4-otr30L4-s488-otr-lr2e-06": {
+   "ex": "01M5H9TS9V980WP6V5BPESTSTQ",
+   "arm": "otr30L4",
+   "budget": "s488",
+   "lr": 2e-06
+  }
+ },
+ "evals": {}
+}

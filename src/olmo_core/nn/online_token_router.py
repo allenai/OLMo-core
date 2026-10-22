@@ -89,7 +89,7 @@ class OnlineRouterConfig:
     use_query: bool = True
     use_gold: bool = False
     target: str = "gnorm"
-    ridge: float = 1.0
+    ridge: float = 0.1
     """Ridge strength, relative to the mean diagonal of the (decayed) Gram matrix."""
     decay: float = 0.9
     """Per-step forgetting factor of the ridge statistics."""
@@ -97,7 +97,7 @@ class OnlineRouterConfig:
     """Leading optimizer steps (1-based) that train uncompressed (keep-all) and collect targets."""
     dense_every: int = 0
     """If > 0, every ``dense_every``-th step is also uncompressed (fresh unbiased targets)."""
-    samples_per_row: int = 512
+    samples_per_row: int = 2048
     proj_dim: int = 0
     """Random-project the hidden features to this many dims (0: use all d_model dims)."""
     seed: int = 0

@@ -1,0 +1,129 @@
+"""Launch / evaluate ONLINE-router training arms on the fast8k multi-task mix (Beaker jupiter, 2 GPUs).
+
+Same geometry as the tokdrop_lr screen (``research/token_routing/ds64_fast8k/launch_fast8k.py``, which this
+imports read-only): repaired Qwen3.5-4B base, unpacked rows, 16 rows/step, micro 2, seq 10240, per-example FLOP
+meter, eval per task on the 8k + 2k rungs x 500 rows with the legacy native multirung eval (no-cot, query after).
+Arms are ``--st-keep-token-rule online`` flag strings (``olmo_core.nn.online_token_router``); see
+``records/online-token-router.md`` for the design and the run matrix.
+
+    python research/token_routing/online_router/launch_otr.py --arms otr30L4 --budgets s488 launch
+    python research/token_routing/online_router/launch_otr.py --runs f8k-mt4-otr30L4-s488-otr-lr2e-06 eval
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "research", "token_routing", "ds64_fast8k"))
+sys.path.insert(0, os.path.join(REPO, "research", "token_routing", "ds64_fast2k"))
+from launch_fast2k import BASE, CKPTS, W, parse_id, sh  # noqa: E402
+from launch_fast8k import EVAL_LAUNCHER, MT4_TASKS, RUNGS, TASK_KEY, TOKENIZER  # noqa: E402
+
+LAUNCHER = f"{REPO}/recipes/train/research_trainer/beaker_ctc_suite.py"
+SHARDS = f"{W}/ds64/fast8k/shards"
+STATE = f"{HERE}/state.json"
+SUFFIX = os.environ.get("OTR_SUFFIX", "-otr")
+WANDB_GROUP = os.environ.get("OTR_WANDB_GROUP", "f8k-otr")
+
+_OTR = "--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --attn-backend flash_2"
+
+
+def otr(keep, *, layer=4, drop=0, share=1.0, explore=0.1, extra=""):
+    feat = f"--st-otr-drop-layer {drop}" if drop else f"--st-otr-feature-layer {layer}"
+    return (f"{_OTR} --st-otr-keep-frac {keep} --st-otr-explore-frac {explore} --st-otr-doc-share {share} "
+            f"{feat} {extra}").strip()
+
+
+#: arm -> trainer flags. Names: otr<keep%><L<feature layer> | M<mid-stack drop layer>>[-variant].
+ARMS = {
+    "otr30L4": otr(0.3),                                       # smoke: input drop, layer-4 prefix features
+    "otr30M8": otr(0.3, drop=8),                               # mid-stack: dropped tokens skip blocks 8..31
+    "otr30L4-ds05": otr(0.3, share=0.5),                       # half the budget row-level (leak test)
+    "otr30L4-gold": otr(0.3, share=0.5, extra="--st-otr-use-gold"),
+    "otr15L4": otr(0.15),
+    "otr50L4": otr(0.5),
+    "otr30L4-de4": otr(0.3, extra="--st-otr-dense-every 4"),   # every 4th step full context
+    "rnd30": otr(0.3, explore=1.0),                            # control: same budget, uniformly random tokens
+}
+
+
+def run_name(arm, budget, lr):
+    return f"f8k-mt4-{arm}-{budget}{SUFFIX}-lr{lr:g}"
+
+
+def load():
+    return json.load(open(STATE)) if os.path.exists(STATE) else {"runs": {}, "evals": {}}
+
+
+def save(st):
+    json.dump(st, open(STATE + ".tmp", "w"), indent=1)
+    os.replace(STATE + ".tmp", STATE)
+
+
+def do_launch(a, mode):
+    st = load()
+    for arm in a.arms.split(","):
+        for budget in a.budgets.split(","):
+            name = run_name(arm, budget, a.lr)
+            if name in st["runs"] and mode == "launch" and not a.force:
+                print(f"[skip] {name} ({st['runs'][name]['ex']})")
+                continue
+            rows, _, steps = budget[1:].partition("@")
+            cmd = [sys.executable, "-u", LAUNCHER, "--task", "mt4", "--variant", "softtoken",
+                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", f"{SHARDS}/mt4s{rows}",
+                   "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", "2",
+                   "--epochs", str(a.epochs), "--lr", str(a.lr), "--cluster", "ai2/jupiter-cirrascale-2",
+                   "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--no-follow", "--no-compile",
+                   "--seq-len", "10240", "--global-batch", "16", "--micro-batch-instances", "2",
+                   "--base-checkpoint", BASE, "--experiment", "learned_router", "--extra-args", ARMS[arm]]
+            if steps:
+                cmd[cmd.index("--extra-args"):cmd.index("--extra-args")] = ["--max-steps", steps]
+            rc, out = sh(cmd + [mode])
+            ex = parse_id(out)
+            print(f"{name} -> rc={rc} {ex or out[-400:]}")
+            if mode == "launch" and ex:
+                st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": a.lr}
+                save(st)
+
+
+def do_eval(a):
+    st = load()
+    for name in a.runs.split(","):
+        for task in MT4_TASKS:
+            ename = f"{name}-ev{task}"
+            if ename in st["evals"] and not a.force:
+                print(f"[skip] {ename}")
+                continue
+            files = {task: RUNGS[task]}
+            cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, "ai2/jupiter-cirrascale-2",
+                   "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", f"{CKPTS}/{name}",
+                   "--query-position", "after", "--cot-mode", "none", "--tokenizer", TOKENIZER,
+                   "--ngpu", "2", "--max-test", "500", "--priority", "urgent", "--max-length", "20000",
+                   "--batch-size", "8", "--dc-rung-files", json.dumps(files), "--dc-rungs", ",".join(RUNGS[task])]
+            rc, out = sh(cmd)
+            ex = parse_id(out)
+            print(f"eval {ename} -> {ex or 'FAILED: ' + out[-400:]}")
+            if ex:
+                st["evals"][ename] = {"ex": ex, "train_run": name, "task": task}
+                save(st)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--arms", default="otr30L4")
+    ap.add_argument("--budgets", default="s488", help="s<rows/task>[@<max steps>] (mt4s488 / mt4s976 / mt4s1464)")
+    ap.add_argument("--lr", type=float, default=2e-6, help="the rule arms' LR in the tokdrop_lr screen")
+    ap.add_argument("--epochs", type=int, default=1)
+    ap.add_argument("--runs", default="")
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("mode", choices=["launch", "dry_run", "eval"])
+    a = ap.parse_args()
+    do_eval(a) if a.mode == "eval" else do_launch(a, a.mode)
+
+
+if __name__ == "__main__":
+    main()

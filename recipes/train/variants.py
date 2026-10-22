@@ -244,11 +244,11 @@ class SoftTokenOptions(VariantOptions):
     st_otr_no_query: bool = False
     st_otr_use_gold: bool = False
     st_otr_target: str = "gnorm"
-    st_otr_ridge: float = 1.0
+    st_otr_ridge: float = 0.1
     st_otr_decay: float = 0.9
     st_otr_warmup_steps: int = 1
     st_otr_dense_every: int = 0
-    st_otr_samples_per_row: int = 512
+    st_otr_samples_per_row: int = 2048
     st_otr_proj_dim: int = 0
     st_otr_log_every: int = 10
 

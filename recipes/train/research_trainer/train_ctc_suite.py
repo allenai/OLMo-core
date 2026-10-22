@@ -1742,13 +1742,14 @@ def parse_args() -> argparse.Namespace:
                     help="online router: per-document 0/1 gold flag (gold sidecar) as a feature")
     ap.add_argument("--st-otr-target", choices=["gnorm", "gxh"], default="gnorm",
                     help="online router target: log ||dL/de_t|| or log |<dL/de_t, e_t>| at the embedding output")
-    ap.add_argument("--st-otr-ridge", type=float, default=1.0)
+    ap.add_argument("--st-otr-ridge", type=float, default=0.1,
+                    help="online router: ridge strength relative to the mean Gram diagonal (offline probe: 0.01 > 0.1 > 1.0 at 1M samples)")
     ap.add_argument("--st-otr-decay", type=float, default=0.9, help="online router: per-step forgetting")
     ap.add_argument("--st-otr-warmup-steps", type=int, default=1,
                     help="online router: leading keep-all steps (targets over every token, no heuristic init)")
     ap.add_argument("--st-otr-dense-every", type=int, default=0,
                     help="online router: every N-th step trains uncompressed (0 = never after warmup)")
-    ap.add_argument("--st-otr-samples-per-row", type=int, default=512)
+    ap.add_argument("--st-otr-samples-per-row", type=int, default=2048)
     ap.add_argument("--st-otr-proj-dim", type=int, default=0,
                     help="online router: random projection of hidden features (0 = all d_model dims)")
     ap.add_argument("--st-otr-log-every", type=int, default=10)
