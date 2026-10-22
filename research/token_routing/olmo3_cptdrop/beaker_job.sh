@@ -13,7 +13,9 @@ FAMILY="${1:?FAMILY}"
 # runs an EMPTY venv (no torch, no pip).
 export CODE="$PWD" PY=/opt/conda/bin/python TMPBASE=/tmp/o3cd_tmp
 # GEN jobs differ only by NAME: key the dir on it so concurrent GEN jobs never share a data folder
-export ROOT="${ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/olmo3_cptdrop/beaker_${NAME:-$FAMILY}}"
+# DIRTAG gives a fresh dir without renaming runs (old dirs hold checkpoints from the EOS-first shards, which RESUME
+# would otherwise try to load: "fingerprints don't match").
+export ROOT="${ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/olmo3_cptdrop/beaker_${NAME:-$FAMILY}${DIRTAG:+_$DIRTAG}}"
 mkdir -p "$ROOT/data" "$ROOT/base" "$ROOT/runs" "$ROOT/logs" "$ROOT/devce" ~/.aws
 printf '%s\n' "$AWS_CREDS" > ~/.aws/credentials
 printf '%s\n' "$AWS_CFG" > ~/.aws/config
