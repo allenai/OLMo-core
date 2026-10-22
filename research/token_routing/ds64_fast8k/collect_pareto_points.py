@@ -105,7 +105,7 @@ def main():
             meta["label_warning"] = "lrb flag-drop bug: ran without --st-kept-doc-k / --st-keep-token-min"
             meta["arm"] = meta["arm"] + "~lrbbug"
         runs[run] = dict(meta, run=run, cluster="lambda-a100", pf=pf, steps=steps, per_example=per_example,
-                         train_seconds=wall, gpus=2, dense=meta["arm"].startswith("dense"))
+                         train_seconds=wall, gpus=2, dense=meta["arm"] == "dense")  # dense-sk3 etc. are rules, not the reference
         for (task, rung), (v, n) in sc.items():
             rows.append(dict(run=run, task=task, rung=rung, score=v, eval_size=n))
     # old dense runs without the per-example meter: scale per-step PF from the longest per-example dense run

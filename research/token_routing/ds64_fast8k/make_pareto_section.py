@@ -20,8 +20,10 @@ DENSE_LR = 5e-6
 
 
 def family(arm):
-    if arm.startswith("dense"):
+    if arm == "dense":
         return "dense"
+    if re.search(r"-(sk\d+|ldl?\d+)$", arm):
+        return "+ train-time layer skip"
     if arm.startswith("tier"):
         return "two-tier (gold + decoys at a larger budget)"
     if arm.startswith("bfd"):
@@ -52,7 +54,7 @@ def build(d):
         score.setdefault(p["run"], {})[(p["task"], p["rung"])] = (p["score"], p["eval_size"])
     out = []
     for xkey in ("pf", "train_seconds"):
-        dense = [r for r in runs.values() if r["dense"] and abs(r["lr"] - DENSE_LR) < 1e-12 and r.get(xkey)]
+        dense = [r for r in runs.values() if r["arm"] == "dense" and abs(r["lr"] - DENSE_LR) < 1e-12 and r.get(xkey)]
         for r in runs.values():
             if r["dense"] and abs(r["lr"] - DENSE_LR) > 1e-12:
                 continue
@@ -102,7 +104,7 @@ FRAGMENT = r"""<!--PARETO-BEGIN-->
 const PR = __DATA__;
 const PCELLS = __CELLS__;
 const FAMC = {"dense": "var(--dense)", "two-tier (gold + decoys at a larger budget)": "var(--teal)", "gold + decoys whole": "var(--warn)",
-              "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "other": "var(--muted)"};
+              "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "+ train-time layer skip": "var(--bar)", "other": "var(--muted)"};
 document.getElementById("pareto-legend").innerHTML = Object.entries(FAMC).filter(([f]) => PR.some(r => r.family === f))
   .map(([f, c]) => `<span><span class="sw" style="background:${c}"></span>${f}</span>`).join("");
 function pmark(r, x, y, sz) {

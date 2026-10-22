@@ -187,6 +187,19 @@ ARM_EXTRA.update({
     "gbflk64p8": f"{_GB} {_FL} --st-keep-token-k 64 {_P8}",
     "gbfl10m32p8": f"{_GB} {_FL} --st-keep-token-k 0.1 --st-keep-token-min 32 {_P8}",
 })
+# Train-time whole-block skipping (olmo_core.nn.layer_drop, 2026-10-22): a skipped block's forward is never
+# called during TRAINING (eval runs every block); the flop meter charges only blocks that ran. Qwen3.5-4B has 32
+# blocks, full attention at 3,7,...,31; the sets below are GDN blocks in the back half, where the 2-GPU smoke
+# showed skipping 20,24,28 costs nothing in train CE (0.347 vs 0.351) while LayerDrop p=0.25 uniform wrecked it.
+_SK3 = "--train-skip-layers 20,24,28"
+_SK8 = "--train-skip-layers 16,17,18,20,21,22,24,25"
+_LDL = "--layer-drop-p 0.2 --layer-drop-schedule linear --layer-drop-exclude-first 4 --layer-drop-exclude-last 2"
+#: dense + a train-time modifier (variant full with extra flags)
+DENSE_EXTRA = {"dense-sk3": _SK3, "dense-sk8": _SK8, "dense-ldl20": _LDL}
+for _r in ("tier67a50m32", "tier67flm16", "gbflk64p8"):
+    ARM_EXTRA[f"{_r}-sk3"] = f"{ARM_EXTRA[_r]} {_SK3}"
+    ARM_EXTRA[f"{_r}-sk8"] = f"{ARM_EXTRA[_r]} {_SK8}"
+    ARM_EXTRA[f"{_r}-ldl20"] = f"{ARM_EXTRA[_r]} {_LDL}"
 ARM_MICRO = {}          # every arm at micro 2: the FLOP audit (09-15 10:30) requires identical
 DEFAULT_MICRO = 2       # gpus/micro across any pair that will be compared at matched FLOPs.
 
@@ -289,6 +302,8 @@ def arm_args(task, arm, budget):
     if recipe == "dense":
         # NOT --pack: every arm trains unpacked so rows/step and step counts match exactly.
         return "full", data, common, ""
+    if recipe in DENSE_EXTRA:
+        return "full", data, common, DENSE_EXTRA[recipe]
     if recipe in ARM_EXTRA:
         return "softtoken", data, common, f"{ARM_EXTRA[recipe]} --attn-backend {SOFT_BACKEND}"
     raise SystemExit(f"unknown arm {arm} (known: dense, {', '.join(ARM_EXTRA)}, "
