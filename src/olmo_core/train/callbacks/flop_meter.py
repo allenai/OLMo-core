@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from olmo_core.distributed.utils import get_rank
+from olmo_core.nn.layer_drop import flops_per_token_ran
 
 from .callback import Callback
 
@@ -29,6 +30,9 @@ class FlopMeterCallback(Callback):
     - **pooled soft tokens**: the model runs on the COMPACTED sequence, so the dense formula is
       applied to the compacted token count (attention on the compacted row length); read from
       the counters the model accumulates in ``_soft_token_compaction``.
+    - **layer drop** (whole-block skipping, :mod:`olmo_core.nn.layer_drop`): the blocks skipped
+      this step ran neither forward nor backward, so the ACTUAL cost charges only the blocks that
+      ran (composes with every mode above); the dense-equivalent still charges every block.
 
     Records ``flop_meter/actual_pflops`` (cumulative), ``flop_meter/dense_pflops`` (what the same
     tokens would have cost dense) and their ratio every step, and writes ``flops.json`` into the
@@ -64,8 +68,9 @@ class FlopMeterCallback(Callback):
             # the model records per-example lengths of every TRAINING forward while this is set
             self._model()._flop_pad_id = int(self.pad_id)
 
-    def _per_example_flops(self, m):
-        """``(dense, actual, tokens, examples)`` summed over ranks from the model's length log."""
+    def _per_example_flops(self, m, skipped=frozenset()):
+        """``(dense, actual, tokens, examples)`` summed over ranks from the model's length log;
+        ``actual`` charges only the blocks that ran (``skipped``: this step's layer-drop set)."""
         import torch
         import torch.distributed as dist
 
@@ -74,18 +79,18 @@ class FlopMeterCallback(Callback):
             self._fpt_cache = {}
         cache = self._fpt_cache
 
-        def cost(lens):
+        def cost(lens, skip=frozenset()):
             tot = 0.0
             for L in lens:
-                f = cache.get(L)
+                f = cache.get((L, skip))
                 if f is None:
-                    f = cache[L] = int(m.num_flops_per_token(int(L)))
+                    f = cache[(L, skip)] = flops_per_token_ran(m, int(L), skip)
                 tot += float(L) * f
             return tot
 
         dev = next(m.parameters()).device
         v = torch.tensor(
-            [cost(st["dense"]), cost(st["actual"]), float(sum(st["dense"])), float(len(st["dense"]))],
+            [cost(st["dense"]), cost(st["actual"], skipped), float(sum(st["dense"])), float(len(st["dense"]))],
             dtype=torch.float64,
             device=dev,
         )
@@ -112,6 +117,8 @@ class FlopMeterCallback(Callback):
     _ffn_cost_weighted: float = 0.0
     _block_flops: Optional[list] = None
     _skip_keep_weighted: float = 0.0
+    _ld_run_frac_sum: float = 0.0
+    _ld_steps: int = 0
 
     def _model(self):
         return self.trainer.train_module.model  # type: ignore[union-attr]
@@ -128,6 +135,8 @@ class FlopMeterCallback(Callback):
     def post_step(self):
         m = self._model()
         dense_tok, ffn_tok = self._per_token()
+        ld = getattr(m, "_layer_drop", None)
+        ld_skip = ld.skipped() if ld is not None else frozenset()
         tokens = int(self.trainer.global_batch_size)  # tokens in the (padded) global batch
         if self._real_tokens_this_step is not None:
             tokens = self._real_tokens_this_step
@@ -195,7 +204,7 @@ class FlopMeterCallback(Callback):
             # the counters are per rank and count PADDED input tokens; the compacted output is
             # what actually ran. Scale per-rank -> world by the padded global batch.
             scale = int(self.trainer.global_batch_size) / max(1, comp["tokens_in"])
-            actual = comp["tokens_out"] * scale * int(m.num_flops_per_token(int(out_len)))
+            actual = comp["tokens_out"] * scale * flops_per_token_ran(m, int(out_len), ld_skip)
             self.trainer.record_metric(
                 "flop_meter/compaction_ratio", comp["tokens_in"] / comp["tokens_out"]
             )
@@ -207,9 +216,18 @@ class FlopMeterCallback(Callback):
                 )
             comp["tokens_in"] = comp["tokens_out"] = comp["rows"] = 0
             comp["labels_in"] = comp["labels_out"] = 0
+        elif ld_skip:
+            # the router / dense costs above priced every block at seq_len: drop the skipped ones
+            actual *= flops_per_token_ran(m, self.seq_len, ld_skip) / max(1, dense_tok)
+
+        if ld is not None:
+            run_frac = 1.0 - len(ld_skip) / len(m.blocks)
+            self._ld_run_frac_sum += run_frac
+            self._ld_steps += 1
+            self.trainer.record_metric("flop_meter/layers_run_frac", run_frac)
 
         if self.per_example:
-            dense_flops, actual, tokens, n_ex = self._per_example_flops(m)
+            dense_flops, actual, tokens, n_ex = self._per_example_flops(m, ld_skip)
             self._examples += n_ex
             if dense_flops > 0:
                 self.trainer.record_metric("flop_meter/step_actual_over_dense", actual / dense_flops)
@@ -248,6 +266,7 @@ class FlopMeterCallback(Callback):
             "kv_route_keep_frac": (
                 self._kv_keep_weighted / self._tokens if self._kv_keep_weighted > 0 and self._tokens else None
             ),
+            "layer_drop_run_frac": (self._ld_run_frac_sum / self._ld_steps if self._ld_steps else None),
             "steps": self.step,
             "seq_len": self.seq_len,
         }

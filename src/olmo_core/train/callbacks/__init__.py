@@ -27,6 +27,7 @@ from .flop_meter import FlopMeterCallback
 from .block_skip import BlockSkipCallback
 from .kv_route import KVRouteCallback
 from .ffn_token_drop import FFNTokenDropCallback
+from .layer_drop import LayerDropCallback
 from .nested_ffn_moe import NestedFFNMoECallback
 from .profiler import (
     NvidiaProfilerCallback,
@@ -59,6 +60,7 @@ __all__ = [
     "BlockSkipCallback",
     "KVRouteCallback",
     "FFNTokenDropCallback",
+    "LayerDropCallback",
     "NestedFFNMoECallback",
     "HFConverterCallback",
     "ProfilerCallback",
