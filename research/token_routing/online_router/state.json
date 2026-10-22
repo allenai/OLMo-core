@@ -869,6 +869,66 @@
    "ex": "01M5JN1W51WBCJMS2A4Z8X1YS3",
    "train_run": "f8k-mt4-otr10M8x30-s1464-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evcontra": {
+   "ex": "01M5JN31FBNGJCWCZ2E5JAQ5ZN",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evnq": {
+   "ex": "01M5JN4067EGCYZSXPYRM3ENB4",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5JN4VX3T45EHNR1MYPHQCYJ",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evoolong": {
+   "ex": "01M5JN5Q7QN8Z8XBE3K38KZB5Z",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5JN6HBJH0TXVJCRYT4AWE31",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5JN7CSN6X6WSRPPVGWPFXRC",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5JN87XAHEWQQPYZP257WPZS",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evreorder": {
+   "ex": "01M5JN92HNM5MKM1JSEMBWEPNQ",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5JN9XM3P40SRSWWM6MBMXEE",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s480-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5JNATABH7D718TKE3X6WGPD",
+   "train_run": "f8k-mt11-otr10M8-s480-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
