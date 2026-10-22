@@ -1,0 +1,33 @@
+{
+ "runs": {
+  "ds64-contradiction-otr10M8-b128f-u64M": {
+   "ex": "01M5JE9KQT011X00V0E02HXTZB",
+   "task": "contradiction",
+   "arm": "otr10M8",
+   "budget": "64M",
+   "lr": 5e-06
+  },
+  "ds64-contradiction-otr30M8-b128f-u64M": {
+   "ex": "01M5JEADTFJDBSE4G7ZBYHRSQZ",
+   "task": "contradiction",
+   "arm": "otr30M8",
+   "budget": "64M",
+   "lr": 5e-06
+  },
+  "ds64-nq-otr10M8-b128f-u64M": {
+   "ex": "01M5JEB7G4V6K52S049RHNEW8Z",
+   "task": "nq",
+   "arm": "otr10M8",
+   "budget": "64M",
+   "lr": 5e-06
+  },
+  "ds64-nq-otr30M8-b128f-u64M": {
+   "ex": "01M5JEC3F4S6ZP9GN1JAN3XBCZ",
+   "task": "nq",
+   "arm": "otr30M8",
+   "budget": "64M",
+   "lr": 5e-06
+  }
+ },
+ "evals": {}
+}
