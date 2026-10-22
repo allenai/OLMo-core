@@ -20,7 +20,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BEAKER = os.path.expanduser("~/.local/bin/beaker")
 SCORE_RE = re.compile(r"\[ladder:([a-z_]+)@(\d+k)\] ([a-z0-9_]+)=(-?[0-9.]+) \(n=(\d+)")
 FLOP_RE = re.compile(r"'actual_pflops': ([0-9.]+), 'dense_equivalent_pflops': ([0-9.]+).*?'overhead_pflops': (-?[0-9.]+), 'steps': (\d+)")
-TASK_METRIC = {"contradiction": "f1", "nq": "f1", "outlier": "f1", "oolong": "score"}
 
 
 def logs(ex):
@@ -28,7 +27,11 @@ def logs(ex):
 
 
 #: dense run names on Lambda: f8k-mt4s[<rows>]-dense-<campaign>-lr<lr>[-s<steps>]-lam (rows '' = 488, 1 epoch)
-DENSE_RE = re.compile(r"^f8k-mt4s(\d*)-dense-(lra|lrb|lre|lri)-lr([0-9.e-]+?)(?:-s(\d+))?-lam$")
+DENSE_RE = re.compile(r"^f8k-(mt\d+)s(\d*)-dense-(lr[a-z])-lr([0-9.e-]+?)(?:-s(\d+))?-lam$")
+#: tasks per mix (rows per step = 16; steps = rows_per_task x n_tasks / 16)
+MIX_TASKS = {"mt4": 4, "mt11": 11}
+#: mt4 dense campaigns that are plain one-epoch runs (lrd = 2 epochs is excluded)
+MT4_CAMPAIGNS = ("lra", "lrb", "lre", "lri")
 
 
 def dense_curves():
@@ -43,9 +46,12 @@ def dense_curves():
         m = DENSE_RE.match(r.get("train_run", ""))
         if not m:
             continue
-        rows_per_task = int(m.group(1) or 488)
-        steps = int(m.group(4)) if m.group(4) else rows_per_task * 4 // 16
-        curves.setdefault(float(m.group(3)), {})[r["train_run"]] = steps
+        mix, camp = m.group(1), m.group(3)
+        if mix == "mt4" and camp not in MT4_CAMPAIGNS:
+            continue
+        rows_per_task = int(m.group(2) or 488)
+        steps = int(m.group(5)) if m.group(5) else rows_per_task * MIX_TASKS.get(mix, 4) // 16
+        curves.setdefault((mix, float(m.group(4))), {})[r["train_run"]] = steps
         res[(r["train_run"], r["task"], r["rung"])] = float(r["value"])
     return curves, res
 
@@ -77,24 +83,35 @@ def main():
                           overhead=float(m.group(3)) if m else None, steps=int(m.group(4)) if m else None, scores={})
     for ename, e in st["evals"].items():
         for m in SCORE_RE.finditer(logs(e["ex"])):
-            runs[e["train_run"]]["scores"][(m.group(1), m.group(2))] = (float(m.group(4)), int(m.group(5)), e["ex"])
-    per_step = [r["dense_eq"] / r["steps"] for r in runs.values() if r["dense_eq"] and r["steps"]]
-    dense_pf_step = sorted(per_step)[len(per_step) // 2] if per_step else None
+            runs[e["train_run"]]["scores"][(m.group(1), m.group(2))] = (float(m.group(4)), int(m.group(5)), e["ex"],
+                                                                         m.group(3))
+    def mix_of(n):
+        return "mt11" if n.startswith("f8k-mt11") else "mt4"
+
+    # dense PF per step, per mix (the mixes' rows differ in length): median over our runs' dense-equivalent
+    pf_step = {}
+    for mx in {mix_of(n) for n in runs}:
+        ps = sorted(r["dense_eq"] / r["steps"] for n, r in runs.items() if mix_of(n) == mx and r["dense_eq"] and r["steps"])
+        pf_step[mx] = ps[len(ps) // 2] if ps else None
     curves, dsc = dense_curves()
     rows, lines = [], ["| run | PF | x dense-eq | task@rung | score | dense @ same PF (best LR) | delta | eval_size |",
                        "|---|---|---|---|---|---|---|---|"]
     for name, r in sorted(runs.items()):
-        for (task, rung), (v, n, ex) in sorted(r["scores"].items()):
-            se = math.sqrt(max(v * (1 - v), 1e-6) / n) if 0 <= v <= 1 else float("nan")
+        for (task, rung), (v, n, ex, metric) in sorted(r["scores"].items()):
+            se = math.sqrt(max(v * (1 - v), 1e-6) / n) if 0 <= v <= 1 and metric != "kendall_tau" else float("nan")
             rows.append(dict(run_id=f"{name}-ev{task}", train_run=name, experiment="learned_router", task=task,
-                             rung=rung, metric=TASK_METRIC.get(task, "score"), value=v, eval_size=n, se=round(se, 3),
+                             rung=rung, metric=metric, value=v, eval_size=n, se=round(se, 3),
                              cot_label="no-cot", eval_backend="legacy_native multirung (olmo_core)",
                              ckpt_path=f"/weka/oe-training-default/ai2-llm/checkpoints/prasanns/ctc_suite/ckpts/{name}",
                              eval_job_id=ex))
             dv, ext, delta = None, False, None
+            mix = mix_of(name)
+            dense_pf_step = pf_step.get(mix)
             if r["pf"] and dense_pf_step:
                 best = None
-                for lr, runs_lr in sorted(curves.items()):
+                for (cmix, lr), runs_lr in sorted(curves.items()):
+                    if cmix != mix:
+                        continue
                     curve = sorted((st_ * dense_pf_step, dsc[(d, task, rung)]) for d, st_ in runs_lr.items()
                                    if (d, task, rung) in dsc)
                     if len(curve) < 2:
@@ -105,12 +122,13 @@ def main():
                 if best is not None:
                     dv, ext = best[0], best[1]
                     delta = v - dv
-            lines.append(f"| {name.replace('f8k-mt4-', '').replace('-tdb-lr2e-06', '')} | {r['pf'] or 0:.0f} | "
+            lines.append(f"| {name.replace('f8k-mt4-', '').replace('f8k-mt11-', 'mt11:').replace('-tdb-lr2e-06', '')} | {r['pf'] or 0:.0f} | "
                          f"{(r['pf'] or 0) / (r['dense_eq'] or 1):.2f} | {task}@{rung} | {v:.3f} | "
                          f"{'' if dv is None else f'{dv:.3f}'}{' (extrap)' if ext else ''}"
                          f"{'' if dv is None else f' @lr{best[2]:g}'} | "
                          f"{'' if delta is None else f'{delta:+.3f}'} | {n} |")
-    lines.append(f"\ndense per-step PF (from our runs' dense-equivalent) = {dense_pf_step:.3f}" if dense_pf_step else "")
+    lines.append("\ndense per-step PF (median of our runs' dense-equivalent): "
+                 + ", ".join(f"{mx} {v:.3f}" for mx, v in sorted(pf_step.items()) if v))
     print("\n".join(lines))
     if a.rows:
         with open(a.rows, "w") as f:
