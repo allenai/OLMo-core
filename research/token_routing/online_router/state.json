@@ -829,6 +829,26 @@
    "ex": "01M5JMTK25B5SHCDVWNSTPTP5J",
    "train_run": "f8k-mt4-otr10M8x00-s1464-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5JMVPV9DBPP3J24X63ZHZEQ",
+   "train_run": "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06-evnq": {
+   "ex": "01M5JMWK2ANKMGBGHB3FEJM6RV",
+   "train_run": "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5JMXE0NV5CPNVY3QWYK38D1",
+   "train_run": "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06-evoolong": {
+   "ex": "01M5JMY8DJ6SN4HNR6HHPP708M",
+   "train_run": "f8k-mt4-rnd10M8-s1464-tdb-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
