@@ -24,6 +24,7 @@ import re
 # Measured PF per optimizer step (524,288 tokens): FLOP-meter smoke runs on cubbins, 2026-10-21.
 PF_PER_STEP = {
     ("D", "32k"): 36.558, ("IRAND", "32k"): 6.726, ("IFL", "32k"): 8.137, ("C1", "32k"): 32.547,
+    ("SD20", "32k"): 6.726,  # = IRAND + one slot per pooled block (~0.2% more tokens); refresh from its meter
 }
 # Estimates until measured (relative to dense at the same ctx): keep 10% / 5% I-fl, and 64k dense.
 EST = {
@@ -41,7 +42,7 @@ def segments(label: str):
     m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|D64lr\d+|Dlr\d+|DB\d+lr\d+)-(\d+)(-s\d+)?", label)
     if m:
         return [("D", ctx, int(m.group(2)))]
-    m = re.fullmatch(r"(IRAND|IFL)(?:lr\d+)?-(\d+)", label)
+    m = re.fullmatch(r"(IRAND|IFL|SD20)(?:lr\d+)?-(\d+)", label)
     if m:
         return [(m.group(1), ctx, int(m.group(2)))]
     m = re.fullmatch(r"(IFL10|IFL05|IFL25)(x64)?-(\d+)", label)

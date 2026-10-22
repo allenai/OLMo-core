@@ -7,6 +7,10 @@
 #   HO  HOlr20-{120,240,480}: IRAND for 390 / 585 / 1170 steps, then dense to the budget (trainer state kept)
 #   SB  dense small-batch control DB8lr20-{12,24,48}: 8 rows/step at the same token budget = 2x the optimizer
 #       steps (do drop arms win by dropping, or only by taking more optimizer steps per FLOP?)
+#   SMK  20-step SD20 smoke (slots in positional-block mode were never trained before), SMOKE=1 = no checkpoints
+#   LOW  the steep end, where dense still moves (12 steps already give 0.150 of 0.165 nats): dense 4 / 8 steps
+#        (4: decay 1 step), I-rand 22 / 43 (= 4 / 8 dense steps), SD20 260 (+65, +130 branches), LR checks
+#        Dlr10-12 and Dlr05-120 (1e-5 beat 2e-5 at 120 steps)
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
@@ -45,6 +49,18 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       run o3cd-Dlr10-120 ARM=D LR=1e-5 MAX_STEPS_TOTAL=120 EXPECTED_MIN=30 || exit 11 ;;
     SB)
       for b in 12 24 48; do run "o3cd-DB8lr20-$b" ARM=D GB_OVERRIDE=8 MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 3 + 8)) || exit 13; done ;;
+    SMK)
+      run o3cd-SD20smoke ARM=SD20 MAX_STEPS_TOTAL=20 SMOKE=1 NOWANDB=1 EXPECTED_MIN=12 || exit 40 ;;
+    LOW)
+      run o3cd-Dlr20-4 ARM=D MAX_STEPS_TOTAL=4 DECAY_FRAC=0.25 EXPECTED_MIN=8 || exit 41
+      run o3cd-Dlr20-8 ARM=D MAX_STEPS_TOTAL=8 EXPECTED_MIN=9 || exit 42
+      run o3cd-IRANDlr20-22 ARM=IRAND MAX_STEPS_TOTAL=22 EXPECTED_MIN=9 || exit 43
+      run o3cd-IRANDlr20-43 ARM=IRAND MAX_STEPS_TOTAL=43 EXPECTED_MIN=10 || exit 44
+      run o3cd-SD20lr20-260 ARM=SD20 MAX_STEPS_TOTAL=260 SAVE_INTERVAL=58 EXPECTED_MIN=30 || exit 45
+      run o3cd-SD20lr20-65 ARM=SD20 MAX_STEPS_TOTAL=65 BRANCH_FROM="$ROOT/runs/o3cd-SD20lr20-260/step58" EXPECTED_MIN=8 || exit 46
+      run o3cd-SD20lr20-130 ARM=SD20 MAX_STEPS_TOTAL=130 BRANCH_FROM="$ROOT/runs/o3cd-SD20lr20-260/step116" EXPECTED_MIN=8 || exit 47
+      run o3cd-Dlr10-12 ARM=D LR=1e-5 MAX_STEPS_TOTAL=12 EXPECTED_MIN=10 || exit 48
+      run o3cd-Dlr05-120 ARM=D LR=5e-6 MAX_STEPS_TOTAL=120 EXPECTED_MIN=30 || exit 49 ;;
     SEED)
       run o3cd-Dlr20-120-s1 ARM=D MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 14 ;;
     IRS)
@@ -69,7 +85,7 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       done ;;
     EV)
       SPECS=""
-      for r in Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
+      for r in Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
         [ -f "$ROOT/runs/o3cd-$r/model_and_optim/.metadata" ] && [ ! -f "$ROOT/devce/${r}_dev32k_1024.json" ] && SPECS="$SPECS $r:runs/o3cd-$r:4"
       done
       log "EV specs:$SPECS"

@@ -7,7 +7,7 @@
 #     sbatch -w mooney --gres=gpu:8 research/token_routing/olmo3_cptdrop/run_arm.sbatch
 #
 # Knobs (env):
-#   ARM            D | C1 (8k phase) | C2 (32k phase) | IRAND | IFL
+#   ARM            D | C1 (8k phase) | C2 (32k phase) | IRAND | IFL | SD20 (IRAND blocks -> detached mean slots)
 #                  follow-ups: IFL_R4K | IFL_RAMP | IFL_X4 | IFL_X8 | IRAND_X4 | IRAND_X8
 #   RUN            run name = save folder basename (must be NEW unless RESUME=1)
 #   MAX_STEPS_TOTAL  budget in optimizer steps at 524,288 tokens/step (sets --max-tokens)
@@ -52,6 +52,9 @@ case "$ARM" in
   C1)    DATA=c8k_ee   SEQ=8192  GB=64 MB=4 VAR="--variant full" ;;  # 4 x 8k = 32k tokens per micro-batch, as the 32k arms
   C2)    DATA=train32k_head_ee SEQ=32768 GB=16 VAR="--variant full" ;;  # rows 0..39,159: never the tail rows c8k was cut from
   IRAND) DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1" ;;
+  # SD20: softdetach's sd20 geometry (records/softdetach-cpt-crossover.md, ~4x on Qwen3.5-4B): random 20% of the
+  # 512-token blocks whole, every other block -> ONE detached mean slot token (not removed, as in IRAND)
+  SD20)  DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-keep-prob 0.2 --st-pad-multiple 1" ;;
   IFL)   DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
   # follow-up arms (2026-10-22, not in the round-1 plan): position-aware keep rules and token exit.
   # L=4 / L=8 = dropped tokens leave after the first / second full-attention layer (3, 7).
@@ -66,7 +69,7 @@ esac
 # KEEP overrides the drop arms' aggressiveness (I-rand: block keep-prob; I-fl: first_last fraction per block)
 if [ -n "${KEEP:-}" ]; then
   case "$ARM" in
-    IRAND) VAR="${VAR/--st-keep-prob 0.2/--st-keep-prob $KEEP}" ;;
+    IRAND|SD20) VAR="${VAR/--st-keep-prob 0.2/--st-keep-prob $KEEP}" ;;
     IFL)   VAR="${VAR/--st-keep-token-k 0.25/--st-keep-token-k $KEEP}" ;;
     *) echo "FATAL: KEEP only applies to IRAND / IFL"; exit 2 ;;
   esac
