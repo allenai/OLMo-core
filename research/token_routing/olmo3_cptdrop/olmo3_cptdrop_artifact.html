@@ -1,0 +1,192 @@
+<title>OLMo 3 CPT Drop Screen</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: one lab-notebook column; status band first, then setup, arms, steps, runs, provenance. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #18202b;
+  --muted: #5b6676;
+  --rule: #d9dee6;
+  --accent: #2b5fb8;      /* our method / drop arms */
+  --dense: #b26a12;       /* dense reference */
+  --ok: #2f7d4f;
+  --wait: #8a6d1d;
+  --pill-bg: #e8edf6;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b4; --rule: #2c3440;
+    --accent: #7ea6f0; --dense: #e0a050; --ok: #6cc08e; --wait: #d4b45a; --pill-bg: #232c3a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e8ef; --muted: #9aa5b4; --rule: #2c3440;
+  --accent: #7ea6f0; --dense: #e0a050; --ok: #6cc08e; --wait: #d4b45a; --pill-bg: #232c3a;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 920px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 34px; }
+h1, h2 { font-family: var(--f-display); text-wrap: balance; margin: 0; letter-spacing: 0.005em; }
+h1 { font-size: 2rem; font-weight: 600; line-height: 1.15; }
+h2 { font-size: 1.3rem; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+section { display: grid; gap: 12px; min-width: 0; }
+.status { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 20px; display: grid; gap: 10px; }
+.pill { display: inline-block; font-family: var(--f-mono); font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; background: var(--pill-bg); color: var(--fg); white-space: nowrap; }
+.pill.run { color: var(--wait); } .pill.done { color: var(--ok); } .pill.todo { color: var(--muted); }
+.tbl { overflow-x: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--f-mono); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+td.num, .mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+code { font-family: var(--f-mono); font-size: 0.86em; overflow-wrap: anywhere; }
+ol.steps { margin: 0; padding-left: 1.4em; display: grid; gap: 6px; }
+ol.steps li { padding-left: 4px; }
+ol.steps li .pill { margin-left: 6px; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 14px 10px; display: grid; gap: 8px; }
+figure svg { width: 100%; height: auto; max-width: 100%; display: block; }
+figcaption { font-size: 0.86rem; color: var(--muted); max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.85rem; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 0; border-top: 2.5px solid; display: inline-block; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.two > div { min-width: 0; display: grid; gap: 6px; align-content: start; }
+ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.flag { color: var(--wait); font-family: var(--f-mono); font-size: 0.85em; }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:10px">
+    <div class="eyebrow">ops experiment · olmo3_cptdrop · updated 2026-10-21</div>
+    <h1>Token-dropping continued pretraining on OLMo 3 7B: an empirical screen</h1>
+    <p>Starting from a 7B base that has only ever seen 8k contexts, does dropping tokens during long-context
+      continued pretraining reach dense's dev loss for less compute, at every budget, not only the smallest?</p>
+  </header>
+
+  <div class="status">
+    <div><span class="pill run">in progress</span> &nbsp;<strong>No results yet.</strong> Data build and checkpoint conversion are running; engineering for the drop arms comes next.</div>
+    <p style="color:var(--muted)">Verdict will go here first once round 1 is scored: for each arm, the FLOP multiplier m against the dense curve at 60M, 125M and 250M dense-token budgets.</p>
+  </div>
+
+  <section>
+    <h2>Why this experiment</h2>
+    <p>Earlier token-drop CPT ran on Qwen3.5-4B, which had already been through long-context training. Soft-detached pooling (<code>sd20</code>) beat dense about 4× at small budgets, then lost near 2k PF; the deficit sat at long-range positions and grew with budget. OLMo 3 publishes its stage-2 checkpoint, the point right before its own long-context stage, so long-range learning is what this CPT has to do.</p>
+    <figure>
+      <div class="legend" aria-hidden="true">
+        <span><i class="sw" style="border-color:var(--dense)"></i>dense</span>
+        <span><i class="sw" style="border-color:var(--accent)"></i>sd20, 1B shard</span>
+        <span><i class="sw" style="border-color:var(--accent);border-top-style:dashed"></i>sd20, 128M shard</span>
+      </div>
+      <svg viewBox="0 0 660 300" role="img" aria-label="Dev cross-entropy versus training petaFLOPs for dense and sd20 on Qwen3.5-4B; sd20 is lower up to about 1.5k PF and higher beyond about 2k PF.">
+        <g stroke="var(--rule)" stroke-width="1" fill="none">
+          <line x1="58" y1="256" x2="640" y2="256"/><line x1="58" y1="195.5" x2="640" y2="195.5"/>
+          <line x1="58" y1="135" x2="640" y2="135"/><line x1="58" y1="74.5" x2="640" y2="74.5"/>
+          <line x1="58" y1="14" x2="640" y2="14"/>
+        </g>
+        <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="end">
+          <text x="52" y="260">1.24</text><text x="52" y="199.5">1.26</text><text x="52" y="139">1.28</text>
+          <text x="52" y="78.5">1.30</text><text x="52" y="18">1.32</text>
+        </g>
+        <g fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" text-anchor="middle">
+          <text x="86.2" y="274">100</text><text x="225" y="274">300</text><text x="377.2" y="274">1k</text><text x="516" y="274">3k</text>
+          <text x="349" y="294">training compute (actual PF, log)</text>
+        </g>
+        <text x="14" y="135" fill="var(--muted)" font-family="IBM Plex Mono, monospace" font-size="11" transform="rotate(-90 14 135)" text-anchor="middle">dev CE (nats)</text>
+        <polyline fill="none" stroke="var(--dense)" stroke-width="2.5" points="171.2,32.1 258.2,65.4 342.5,86.6 430.0,125.9 516.5,207.6 603.6,240.9"/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="6 4" points="82.4,47.3 169.3,101.7 255.9,138.0 343.0,159.2"/>
+        <polyline fill="none" stroke="var(--accent)" stroke-width="2.5" points="343.0,131.4 430.4,157.7 517.8,185.2 602.4,200.0"/>
+        <g fill="var(--dense)"><circle cx="171.2" cy="32.1" r="3.5"/><circle cx="258.2" cy="65.4" r="3.5"/><circle cx="342.5" cy="86.6" r="3.5"/><circle cx="430" cy="125.9" r="3.5"/><circle cx="516.5" cy="207.6" r="3.5"/><circle cx="603.6" cy="240.9" r="3.5"/></g>
+        <g fill="var(--accent)"><circle cx="82.4" cy="47.3" r="3.5"/><circle cx="169.3" cy="101.7" r="3.5"/><circle cx="255.9" cy="138" r="3.5"/><circle cx="343" cy="159.2" r="3.5"/><circle cx="343" cy="131.4" r="3.5"/><circle cx="430.4" cy="157.7" r="3.5"/><circle cx="517.8" cy="185.2" r="3.5"/><circle cx="602.4" cy="200" r="3.5"/></g>
+      </svg>
+      <figcaption>Prior result (softdetach, Qwen3.5-4B, 64k rows). Full-attention dev CE on 32 held-out rows <span class="flag">⚠ eval_size=32 rows</span>, seed noise about ±0.004. The two sd20 segments come from different training shards and should not be joined. Source: <code>records/softdetach-cpt-crossover.md</code>.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Setup</h2>
+    <div class="tbl"><table>
+      <tr><th>item</th><th>value</th></tr>
+      <tr><td>start</td><td><code>allenai/Olmo-3-1025-7B@stage2-step47684</code>: midtrained, 8k context, no long-context training</td></tr>
+      <tr><td>context</td><td class="mono">32,768 · YaRN ×4 on the full-attention layers (64k later)</td></tr>
+      <tr><td>data</td><td>Dolma 3 Longmino pool, 2<sup>15</sup>/2<sup>16</sup> length buckets; one document window per row; ~1.41B tokens</td></tr>
+      <tr><td>batch</td><td class="mono">16 rows × 32k = 512k tokens/step</td></tr>
+      <tr><td>optimizer</td><td>OLMo 3 stage-3 recipe as is: peak LR 2.07e-4, linear decay, AdamW (0.9, 0.95), wd 0.1, z-loss 1e-5; warmup 1.7% of the run</td></tr>
+      <tr><td>budgets</td><td class="mono">60M / 125M / 250M dense tokens ≈ 3.8k / 7.9k / 15.7k PF</td></tr>
+      <tr><td>dev</td><td>256 rows from 2<sup>17</sup>+ buckets (never in OLMo's 7B long-context mix); full-context CE by position 0–4k / 4–8k / 8–16k / 16–32k</td></tr>
+      <tr><td>guard</td><td>256 × 4k short-document rows, to catch forgetting</td></tr>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Arms</h2>
+    <div class="tbl"><table>
+      <tr><th>arm</th><th>strategy</th><th>FLOPs / token vs dense</th><th>state</th></tr>
+      <tr><td class="mono">D</td><td>dense, 32k</td><td class="num">1.0</td><td><span class="pill todo">not started</span></td></tr>
+      <tr><td class="mono">C</td><td>8k windows for the first half, then 32k</td><td class="num">~0.9</td><td><span class="pill todo">not started</span></td></tr>
+      <tr><td class="mono">I-rand</td><td>random 20% of 512-token blocks kept whole, the rest removed at the input</td><td class="num">~0.2</td><td><span class="pill todo">not started</span></td></tr>
+      <tr><td class="mono">I-fl</td><td>first + last 25% of every 512-token block kept</td><td class="num">~0.3</td><td><span class="pill todo">not started</span></td></tr>
+    </table></div>
+    <p><strong>Selection rule, fixed in advance.</strong> m = FLOPs dense needs to reach the arm's dev CE ÷ the arm's FLOPs. An arm wins only with m &gt; 1 at all three budgets, beyond dense seed-to-seed noise.</p>
+  </section>
+
+  <section>
+    <h2>Steps</h2>
+    <ol class="steps">
+      <li>Experiment page, plan record, this page <span class="pill done">done</span></li>
+      <li>Convert stage 2 (start) and stage 3 (reference) to OLMo-core, checked against Hugging Face <span class="pill run">stage 2 done, stage 3 running</span></li>
+      <li>Build train / dev / guard data; upload to the S3 hub for weka (Beaker) and Lambda <span class="pill run">built, uploading</span></li>
+      <li>Sliding-window mask by original position after dropping, plus a keep-everything parity check <span class="pill todo">todo</span></li>
+      <li>Positional 512-token blocks in the input-drop path <span class="pill todo">todo</span></li>
+      <li>OLMo 3 dev-CE eval by position bin; check stage 3 beats stage 2 at 8–32k <span class="pill todo">todo</span></li>
+      <li>Trainer: YaRN-factor option, LR-decay branches, the 8k → 32k switch, FLOP meter <span class="pill run">flags added; switch + meter open</span></li>
+      <li>Smoke test of all four arms <span class="pill todo">todo</span></li>
+      <li>Dense curve to 250M + second seed at 60M <span class="pill todo">todo</span></li>
+      <li>C, I-rand, I-fl to 15.7k PF <span class="pill todo">todo</span></li>
+      <li>Score, record, verdict <span class="pill todo">todo</span></li>
+    </ol>
+    <p style="color:var(--muted)">Estimated cost through step 11: about 73 H200-hours, across jsteinhardt H200s, Beaker jupiter and Lambda A100s.</p>
+  </section>
+
+  <section>
+    <h2>Runs</h2>
+    <div class="tbl"><table>
+      <tr><th>what</th><th>job</th><th>state</th></tr>
+      <tr><td>data build: train 43,000 × 32k = 1.41B tokens (32,382 documents); dev 256 rows over 23 topics; short-document guard 256 × 4k</td><td class="mono">slurm 4012904 · mooney</td><td><span class="pill done">done</span></td></tr>
+      <tr><td>convert stage 2; fp32 parity vs Hugging Face: max logit diff 4e-5 (random) / 1.4e-3 (6k real row), identical CE</td><td class="mono">slurm 4012907 + 4012938 · mooney</td><td><span class="pill done">done</span></td></tr>
+      <tr><td>convert stage 3 + parity</td><td class="mono">slurm 4012946 · mooney</td><td><span class="pill run">running</span></td></tr>
+      <tr><td>upload data + stage-2 checkpoint to the S3 hub</td><td class="mono">slurm 4012954 · mooney</td><td><span class="pill run">running</span></td></tr>
+    </table></div>
+  </section>
+
+  <section class="two">
+    <div>
+      <h2>Known limits</h2>
+      <ul>
+        <li>Dropping tokens breaks OLMo 3's sliding windows unless masked by original position (step 4).</li>
+        <li>32k only for now; the long-range regime past 32k is the follow-up.</li>
+        <li>The forgetting guard comes from OLMo stage-3 training data, so it is a relative check across arms.</li>
+        <li>Dev CE only in round 1; generation-graded CTC evals come with the confirm round.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Where things live</h2>
+      <ul>
+        <li>State: <code>ops/experiments/olmo3_cptdrop/STATUS.md</code></li>
+        <li>Plan: <code>records/olmo3-cptdrop-screen-plan.md</code></li>
+        <li>Code: <code>research/token_routing/olmo3_cptdrop/</code></li>
+        <li>Data and checkpoints: <code>mooney:/data/prasann/olmo3_cptdrop/</code>, then <code>s3://ai2-llm/checkpoints/prasanns/_transfer/olmo3_cptdrop/</code></li>
+      </ul>
+    </div>
+  </section>
+</div>

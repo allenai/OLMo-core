@@ -102,7 +102,8 @@ def olmo3_7B_ctc_swa(**kwargs) -> TransformerConfig:
       document-chunked while its neighbours stay windowed.
 
     :param kwargs: Passed to :meth:`TransformerConfig.olmo3_7B`; ``document_chunked`` /
-        ``cross_doc_mode`` are intercepted and applied to the full-attention layers only.
+        ``cross_doc_mode`` are intercepted and applied to the full-attention layers only, and
+        ``yarn_factor`` (default 8.0, the released checkpoint's) sets the YaRN factor (<= 1: none).
 
     :returns: The transformer config, ready to ``.build()``.
     """
@@ -110,16 +111,21 @@ def olmo3_7B_ctc_swa(**kwargs) -> TransformerConfig:
 
     document_chunked = kwargs.pop("document_chunked", False)
     cross_doc_mode = kwargs.pop("cross_doc_mode", None)
+    # YaRN factor on the full-attention layers. Default = the released stage-3 checkpoint's x8
+    # (8192 -> 65536). Continued pretraining from the 8k stage-2 checkpoint picks its own
+    # (olmo3_cptdrop: x4 for 32k); <= 1 means plain RoPE, as stage 2 itself was trained.
+    yarn_factor = float(kwargs.pop("yarn_factor", _YARN_FACTOR))
     # Native architecture: SWA pattern [4096, 4096, 4096, -1], YaRN on the full-attention layers.
     config = TransformerConfig.olmo3_7B(**kwargs)
-    config = config.with_rope_scaling(
-        YaRNRoPEScalingConfig(
-            factor=_YARN_FACTOR,
-            beta_fast=32,
-            beta_slow=1,
-            old_context_len=_YARN_OLD_CONTEXT,
+    if yarn_factor > 1:
+        config = config.with_rope_scaling(
+            YaRNRoPEScalingConfig(
+                factor=yarn_factor,
+                beta_fast=32,
+                beta_slow=1,
+                old_context_len=_YARN_OLD_CONTEXT,
+            )
         )
-    )
     if not document_chunked:
         return config
 
