@@ -75,7 +75,7 @@ budget beats dense at matched FLOPs. Design + numbers: `records/online-token-rou
 - Every router FLOP (prefix pass, scoring, hook, ridge stats + solve, mid-stack per-block adjustment) is charged
   via `model._flop_extra_actual` -> `flop_meter/actual_pflops` (+ `flop_meter/overhead_pflops`).
 - Tests: CPU 36 pass (horton, berkeleynlp normal); GPU 16 pass on Beaker H100 (01M5H9QQ5A1DNYDZTH7J7G3TS6;
-  mid-stack GPU test rerun 01M5HA8S24PNN2VTZCFFSFMM8C). lorax CUDA init still broken (GPU tests skipped there).
+  mid-stack rerun 01M5HA8S24PNN2VTZCFFSFMM8C: 79 passed, 0 skipped, incl. GDN-hybrid input_prefix + mid_stack modes, 2026-10-22). lorax CUDA init still broken (GPU tests skipped there).
 - Offline probe (Beaker 01M5H9AW60673FJG0AXDGC6XMP; base markerfix, mt4s488, 48 fit / 32 held-out rows per task
   ⚠ eval_size=32): held-out Spearman of a pooled ridge probe vs log||dL/de||: structure 0.16-0.30, +lexical
   0.41-0.46, +embedding 0.44-0.58, +h4*q 0.51-0.61, +h8*q 0.54-0.63 (target ||dL/dh8||: 0.65-0.67, mass@30

@@ -22,7 +22,9 @@ the fine-tuning itself.
 (per-step refit + metrics), hooks in `Transformer` (`keep_token_rule="online"`, three small insertions in
 `model.py`), FLOP-meter overhead term (`flop_meter.py`), trainer flags `--st-keep-token-rule online --st-otr-*`
 (`SoftTokenOptions` fields; `recipes/train/variants_options_test.py` guards them). Tests:
-`src/test/nn/online_token_router_test.py`. Offline probe and launcher: `research/token_routing/online_router/`.
+`src/test/nn/online_token_router_test.py`: CPU on horton; GPU on a Beaker H100 (01M5HA8S24PNN2VTZCFFSFMM8C:
+79 passed, 0 skipped, including the GDN-hybrid input-prefix and mid-stack modes). Offline probe and launcher:
+`research/token_routing/online_router/`.
 
 ## Objective (Prasann, 2026-10-22, relayed by the parent session)
 
