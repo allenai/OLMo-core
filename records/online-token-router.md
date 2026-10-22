@@ -5,7 +5,7 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (mt4 ablations evaluated: drop layer, router target, exploration, de16; M6/M12 + per-task runs in progress)
+status: active (mt4 ablations evaluated: drop layer M1-M12, router target, exploration, de16; per-task runs in progress)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop at block 8 (1 and 4 fail), gradient-norm target (activation-strength dh = random), exploration share 0-50% irrelevant.
@@ -398,7 +398,9 @@ Lambda runs (2 × A100, node02, name `-lro-...-lam`) are compared with a same-cl
 
 | run | where | PF | scores |
 |---|---|---|---|
+| otr10M12 | Lambda | 565 | 0.938 / 0.912 / 0.638 / 0.523 |
 | otr10M8-s1 | Lambda | 471 | 0.928 / 0.902 / 0.664 / 0.641 |
+| otr10M6 | Lambda | 422 | 0.839 / 0.904 / 0.614 / 0.404 |
 | otr10M4 | Lambda | — | 0.781 / 0.884 / 0.613 / 0.372 |
 | otr10M1 | Lambda | — | 0.767 / 0.882 / 0.617 / 0.322 |
 | otr10M8-s976 | Beaker | 319 | 0.895 (+0.018) / 0.908 / 0.614 / 0.386 |
@@ -406,8 +408,11 @@ Lambda runs (2 × A100, node02, name `-lro-...-lam`) are compared with a same-cl
 | otr10M1-s976 | Beaker | 209 | 0.667 (−0.173) / 0.872 / 0.598 / 0.317 |
 
 Routing after block 1 or 4 falls back to input-drop behaviour (contradiction −0.15, outlier −0.27 to −0.32 vs M8).
-The bracket otr10M6 / otr10M12 (Lambda 113719 / 113720) tests whether block 7, the second full-attention layer, is
-what matters and whether later splits keep improving.
+Full attention sits at blocks 3, 7, 11, … (3:1 GDN). M6 (blocks 0-5, one full-attention layer) is still far behind M8
+(contradiction −0.09, outlier −0.24): the SECOND full-attention pass, block 7, is what matters. M12 (+20% PF) matches
+M8 on contradiction / nq and is lower on oolong (−0.03) and outlier (−0.12, inside the 0.13 seed noise): later splits
+do not keep improving. Against dense at 565 PF (≈ 0.914 / 0.907 / 0.599 / 0.373, interpolated) M12 is ≈ +0.02 / +0.01
+/ +0.04 / +0.15; M8 at 471 PF is +0.02 / +0.00 / +0.06 / +0.30. Block 8 is the cheapest split past block 7.
 
 **2. Router target (Prasann: "keep important tokens that are already good").** Targets: `gnorm` log ||dL/dh8||;
 `gxh` log |<dL/dh8, h8>|; `dh` log ||h8 − h0||, the residual change through blocks 0-7 (activation strength, no backward,
