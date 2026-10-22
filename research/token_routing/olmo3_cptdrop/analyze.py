@@ -38,10 +38,10 @@ EST[("IFL", "64k")] = 0.19 * EST[("D", "64k")]
 def segments(label: str):
     """[(arm_key, ctx, steps)] for a run label (o3cd- prefix stripped). None if not a training run."""
     ctx = "64k" if "x64" in label or label.startswith("D64") else "32k"
-    m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|Dlr65|Dlr20)-(\d+)(-s\d+)?", label)
+    m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|D64lr\d+|Dlr\d+)-(\d+)(-s\d+)?", label)
     if m:
         return [("D", ctx, int(m.group(2)))]
-    m = re.fullmatch(r"(IRAND|IFL)-(\d+)", label)
+    m = re.fullmatch(r"(IRAND|IFL)(?:lr\d+)?-(\d+)", label)
     if m:
         return [(m.group(1), ctx, int(m.group(2)))]
     m = re.fullmatch(r"(IFL10|IFL05|IFL25)(x64)?-(\d+)", label)
@@ -52,7 +52,7 @@ def segments(label: str):
     if m:
         b = int(m.group(1))
         return [("C1", ctx, b // 2), ("D", ctx, b // 2)]
-    m = re.fullmatch(r"HO-(\d+)", label)
+    m = re.fullmatch(r"HO(?:lr\d+)?-(\d+)", label)
     if m:
         b = int(m.group(1))
         s0 = {120: 390, 240: 585, 480: 1170}[b]
@@ -75,12 +75,11 @@ def pf_of(segs, table):
     return tot, est
 
 
-def family(label: str) -> str:
-    if re.match(r"Dlr\d+-", label):          # LR-probe dense runs: their own curve, never the reference
-        return label.split("-")[0]
-    if re.match(r"(D|DLOW|D64|D64LOW|D64e)-", label):
-        return "dense"
-    return re.sub(r"-\d+(-s\d+)?$", "", label)
+def family(label: str, ref: str) -> str:
+    """'dense' for the reference dense curve (regex `ref` on the label prefix); every other dense LR / variant is
+    its own family, so the multiplier is always read off one dense recipe (2026-10-22: peak LR 2e-5, Dlr20/D64lr20)."""
+    pre = re.sub(r"-\d+(-s\d+)?$", "", label)
+    return "dense" if re.fullmatch(ref, pre) else pre
 
 
 def interp_pf(dense, ce):
@@ -107,6 +106,7 @@ def main():
     ap.add_argument("--devce-dir", action="append", required=True)
     ap.add_argument("--shard", default=None, help="dev shard name (default: dev32k_1024 / dev64k_512 by ctx)")
     ap.add_argument("--bin", default="overall", help="overall or a position bin, e.g. 16k-32k")
+    ap.add_argument("--ref", default=r"Dlr20|D64lr20", help="regex for the reference dense family's label prefix")
     ap.add_argument("--out-json", required=True)
     ap.add_argument("--out-md", required=True)
     a = ap.parse_args()
@@ -131,7 +131,7 @@ def main():
             if s is None:
                 continue
             pf, est = pf_of(segs, table)
-            rows.append({"label": label, "family": family(label), "ctx": ctx, "pf": pf, "pf_estimated": est,
+            rows.append({"label": label, "family": family(label, a.ref), "ctx": ctx, "pf": pf, "pf_estimated": est,
                          "ce": s["ce"], "row_se": s.get("row_se"), "eval_size": j["eval_size"], "file": f})
     out = []
     for ctx in sorted({r["ctx"] for r in rows}):
