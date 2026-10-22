@@ -16,7 +16,7 @@ dropped here on purpose, so the prompt has no value that differs between trainin
 Three data sources are supported via ``dataset_path``:
 
 * ``"synthetic"`` — random RGB images + random short responses (for smoke tests).
-* a ``.jsonl`` file — one object per line with ``image`` (path or URL),
+* a ``.jsonl`` file — one object per line with ``image`` (a local path),
   ``caption`` (str) and optional ``transcripts`` (list[str]).
 * a HuggingFace Arrow directory (``datasets.load_from_disk``) — the canonical
   PixMoCap layout (``image``, ``caption``, ``transcripts``).
@@ -32,7 +32,8 @@ import numpy as np
 from olmo_core.config import Config
 
 from .qwen3_layout import branch_context_ids, image_prefix_ids
-from .sequence_builder import build_branched_sequence, example_rng
+from .sequence_builder import build_branched_sequence
+from .sft_common import EpochSeededExamples
 
 __all__ = [
     "PixMoCapDataset",
@@ -64,7 +65,7 @@ TRANSCRIPT_PROMPTS = (
     "Create a transcript of a human describing this image out load",
 )
 
-_MODES = ("caption", "transcript", "transcript_and_caption", "sft_demo")
+_MODES = ("caption", "transcript", "transcript_and_caption")
 
 # Style names match mm_olmo: the caption branch is ``long_caption``, the spoken-transcript branch
 # is ``transcript``. The user turn is ``"<style>:"`` and nothing else.
@@ -120,7 +121,7 @@ class PixMoCapDatasetConfig(Config):
         return PixMoCapDataset(self, tokenizer)
 
 
-class PixMoCapDataset:
+class PixMoCapDataset(EpochSeededExamples):
     """Map-style dataset yielding packed Molmo2 caption-pretraining examples."""
 
     def __init__(self, config: PixMoCapDatasetConfig, tokenizer):
@@ -130,12 +131,6 @@ class PixMoCapDataset:
         self.tokenizer = tokenizer
         self._rows: Optional[List[Dict[str, Any]]] = None
         self._hf = None
-        self._sft_formatter = None
-        if config.mode == "sft_demo":
-            from .sft_formatter import SftFormatter
-
-            self._sft_formatter = SftFormatter(seed=config.seed)
-
         path = config.dataset_path
         if path == "synthetic":
             self._kind = "synthetic"
@@ -191,9 +186,11 @@ class PixMoCapDataset:
             return img
         if isinstance(img, str):
             path = img
-            if self.config.image_root is not None and not img.startswith(
-                ("http://", "https://", "/")
-            ):
+            if img.startswith(("http://", "https://")):
+                raise ValueError(
+                    f"Remote image URLs are not supported, got {img!r}; use a local path"
+                )
+            if self.config.image_root is not None and not img.startswith("/"):
                 import os
 
                 path = os.path.join(self.config.image_root, img)
@@ -230,13 +227,10 @@ class PixMoCapDataset:
         return pool[rng.randint(len(pool))]
 
     def __getitem__(self, index: int) -> Dict[str, np.ndarray]:
-        if self.config.mode == "sft_demo":
-            return self._getitem_sft_demo(index)
-
         from olmo_core.nn.vision.molmo2_image_processor import preprocess_image_molmo2
 
         cfg = self.config
-        rng = example_rng(cfg.seed, index)
+        rng = self.epoch_rng(index)
 
         import torch
 
@@ -315,40 +309,6 @@ class PixMoCapDataset:
         seq["images"] = images
         seq["pooled_patches_idx"] = pooled
         return seq
-
-    def _getitem_sft_demo(self, index: int) -> Dict[str, np.ndarray]:
-        from olmo_core.data.multimodal.message_weight import MessageWeight
-
-        from .message_sequence import encode_sft_example
-
-        row = self._get_row(index)
-        pil = self._load_image(row)
-        formatted = {
-            "style": "long_caption",
-            "caption": row.get("caption", ""),
-            "text": row.get("caption", ""),
-        }
-        assert self._sft_formatter is not None
-        rng = example_rng(self.config.seed, index)
-        turns = self._sft_formatter.format_turns(formatted, index=index, rng=rng)
-        return encode_sft_example(
-            self.tokenizer,
-            pil,
-            turns,
-            max_crops=self.config.max_crops,
-            loss_token_weighting="root_subsegments_root_tokens",
-            # `message_weight` has to apply on this path too: stage 2 builds this source
-            # with mode="sft_demo" (mixtures/image_only_v9.py), which returns before the
-            # branched path's scaling, so setting the option would otherwise be silent.
-            message_weight=(
-                None
-                if self.config.message_weight is None
-                else MessageWeight.from_string("root_subsegments_root_tokens").with_overrides(
-                    self.config.message_weight
-                )
-            ),
-            shuffle_rng=rng,
-        )
 
 
 def _truncate(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]:

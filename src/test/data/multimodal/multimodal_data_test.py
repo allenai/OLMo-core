@@ -3,6 +3,7 @@ assembly, text-only handling, and the weighted mixture loader."""
 
 
 import numpy as np
+import pytest
 
 from olmo_core.data.multimodal import (
     MixtureDataLoader,
@@ -406,3 +407,25 @@ def test_truncated_image_preprocesses_without_raising():
         truncated, dtype=torch.float32, device=torch.device("cpu"), max_crops=8
     )
     assert crops.shape[0] == 1 and grid.shape == (4,)
+
+
+def test_pixmo_cap_transcript_choice_rotates_with_the_epoch():
+    """A row with several transcripts must not pick the same one every epoch."""
+    ds = _pixmo_cap("transcript_and_caption")
+    row = {"caption": "a cat", "transcripts": [f"spoken {i}" for i in range(8)]}
+    picks = set()
+    for epoch in range(32):
+        ds.set_epoch(epoch)
+        branches = ds._select_branches(row, ds.epoch_rng(0))
+        picks.add(branches[-1][1])
+    assert len(picks) > 1
+    ds.set_epoch(3)
+    again = ds._select_branches(row, ds.epoch_rng(0))
+    ds.set_epoch(3)
+    assert again == ds._select_branches(row, ds.epoch_rng(0))  # deterministic within an epoch
+
+
+def test_pixmo_cap_rejects_remote_image_urls():
+    ds = _pixmo_cap("caption")
+    with pytest.raises(ValueError, match="Remote image URLs"):
+        ds._load_image({"image": "https://example.com/cat.jpg"})
