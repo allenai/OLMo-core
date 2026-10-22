@@ -5,10 +5,10 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (offline probe + gradient fidelity done; training runs queued)
+status: active (probes done; 13 training runs done, 26/52 evals in)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
-summary: Learned ONLINE keep router (ridge refit each step on per-token gradient norms, no heuristic init) + mid-stack token exit; gradient fidelity at keep 0.3 is cos 0.88 mid-stack vs 0.54 input drop (base model, 12 rows/task); training comparison pending.
+summary: Online train-time keep router (ridge refit each step on per-token gradient norms) + mid-stack drop; at matched FLOPs the mid-stack router ties or beats dense on 3 of 4 tasks at 8k (single seed); the drop point matters more than the selection.
 ---
 # Online train-time token router
 
@@ -300,7 +300,42 @@ What changes once the model is trained:
 
   The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
   tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
-* **Results.** _pending_.
+* **Results** (26 of 52 evals in; the rest have been pending on jupiter since 13:10). Δ vs dense at matched FLOPs,
+  at 8k:
+  * Dense is the tokdrop_lr LR-5e-6 curve on Lambda: s488 at 31 / 61 / 122 steps, fresh-data s976 at 244 and s1464
+    at 366.
+  * It is interpolated in log PF onto our meter: dense PF per step = 3.17 from our runs' dense-equivalent.
+  * eval_size 500 per cell, single seed; the SE of a difference is ≈ ±0.02-0.03.
+  * Full table: `research/token_routing/online_router/results/matched_flop_table.md`. Collector: `collect_otr.py`.
+    ops results: experiment `learned_router`.
+
+| run | PF (× dense-eq) | contradiction | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| **otr30M8-s976** (mid-stack router) | 417 (0.54) | **+0.029** | +0.010 | −0.022 | **+0.049** |
+| rnd30M8-s976 (mid-stack random) | 417 (0.54) | −0.019 | +0.016 | −0.009 | +0.053 |
+| fl30M8-s976 (mid-stack first/last) | 417 (0.54) | +0.015 | −0.046 | pending | pending |
+| otr30L4-s976 (input router) | 348 (0.45) | −0.100 | +0.004 | −0.019 | +0.046 |
+| rnd30-s976 (input random) | 348 (0.45) | **−0.265** | +0.002 | −0.021 | −0.023 |
+| otr30L4-s1464 (input router) | 516 (0.45) | −0.060 | −0.008 | +0.003 | +0.105 |
+| otr30L4-s488 (smoke) | 177 (0.45) | −0.229 | −0.013 | −0.030 | −0.028 |
+| otr30M8 / rnd30 / rnd30M8 / fl30M8 -s1464, otr10M8 -s976 / -s1464 | 310-620 | pending | | | |
+
+  ⚠ **Outlier@2k is confounded by LR.** Dense at LR 5e-6 scores ≈ 0.55 there, but dense at LR 2e-6 scores 0.83
+  at 122 steps. The drop arms' +0.20-0.26 at outlier@2k is an LR effect, not the method, so it is left out above.
+
+  What it says so far:
+  1. **The drop point matters more than the selection.** Moving the drop mid-stack (every token runs blocks 0-7)
+     removes the contradiction collapse even with random tokens: −0.265 at the input becomes −0.019 at block 8.
+     The mid-stack router is the only arm at or above dense on three of four tasks at 8k, with oolong −0.02
+     within noise.
+  2. **The selection matters at the input.** On contradiction the router scores −0.10 against random's −0.265, and
+     on outlier +0.05 against −0.02. Under mid-stack the router adds a little on contradiction (+0.03 vs −0.02)
+     and ties random elsewhere at this length of training.
+  3. **The input router on more data still trails dense on contradiction** (−0.06 at s1464), while gaining on
+     outlier (+0.10).
+  4. The trained-checkpoint fidelity probe predicts random / fixed mid-stack rules fall behind the router as
+     training goes on. The s1464 mid-stack evals test that.
+  5. All of this is single seed. Before calling a win, the decision rule asks for 3 seeds of the best arm.
 
 ## Proposed run matrix
 
