@@ -1052,6 +1052,18 @@
    "arm": "otr10M8gxh",
    "commit": "513ad5af6",
    "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M6-lro-lr2e-06-lam": {
+   "slurm": 113719,
+   "arm": "otr10M6",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
+  },
+  "f8k-mt4s1464-otr10M12-lro-lr2e-06-lam": {
+   "slurm": 113720,
+   "arm": "otr10M12",
+   "commit": "513ad5af6",
+   "dir": "OLMo-core-otr2"
   }
  }
 }
