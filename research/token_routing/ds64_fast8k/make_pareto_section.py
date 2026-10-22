@@ -16,7 +16,10 @@ import math
 import re
 
 CELLS = [(t, r) for r in ("8k", "2k") for t in ("contradiction", "nq", "outlier", "oolong")]
-DENSE_LR = 5e-6
+#: the dense reference is, per cell, the BEST of these LRs' curves at the same x (no single LR wins every cell:
+#: at 122 steps LR 2e-6 gives outlier@2k 0.830 vs 0.557 at 5e-6, while 5e-6 wins contradiction@8k).
+DENSE_LRS = (2e-6, 5e-6)
+DENSE_LR = 5e-6  # the plotted dense line
 
 
 def family(arm):
@@ -54,7 +57,8 @@ def build(d):
         score.setdefault(p["run"], {})[(p["task"], p["rung"])] = (p["score"], p["eval_size"])
     out = []
     for xkey in ("pf", "train_seconds"):
-        dense = [r for r in runs.values() if r["arm"] == "dense" and abs(r["lr"] - DENSE_LR) < 1e-12 and r.get(xkey)]
+        dense = [r for r in runs.values() if r["arm"] == "dense" and r.get(xkey)
+                 and any(abs(r["lr"] - l) < 1e-12 for l in DENSE_LRS)]
         for r in runs.values():
             if r["dense"] and abs(r["lr"] - DENSE_LR) > 1e-12:
                 continue
@@ -67,12 +71,17 @@ def build(d):
                 if c not in score[r["run"]]:
                     continue
                 v, n = score[r["run"]][c]
-                curve = sorted((q[xkey], score[q["run"]][c][0]) for q in same
-                               if q["run"] in score and c in score[q["run"]])
                 cell = dict(v=v, n=n)
-                if len(curve) >= 2 and not r["dense"]:
-                    dv, ext = interp(curve, r[xkey])
-                    cell.update(dense=round(dv, 4), delta=round(v - dv, 4), extrap=ext)
+                best = None
+                for lr in DENSE_LRS:  # envelope: the better dense LR at this x
+                    curve = sorted((q[xkey], score[q["run"]][c][0]) for q in same
+                                   if abs(q["lr"] - lr) < 1e-12 and q["run"] in score and c in score[q["run"]])
+                    if len(curve) >= 2 and not r["dense"]:
+                        dv, ext = interp(curve, r[xkey])
+                        if best is None or dv > best[0]:
+                            best = (dv, ext, lr)
+                if best:
+                    cell.update(dense=round(best[0], 4), delta=round(v - best[0], 4), extrap=best[1], dense_lr=best[2])
                 row["cells"][f"{c[0]}@{c[1]}"] = cell
             ds = [c["delta"] for c in row["cells"].values() if "delta" in c]
             vs = [c["v"] for c in row["cells"].values()]
@@ -98,7 +107,7 @@ FRAGMENT = r"""<!--PARETO-BEGIN-->
   <div class="charts" id="pareto-cells"></div>
   <h3>Frontier table (sorted by worst-cell Δ vs dense, matched PF)</h3>
   <div class="tbl"><table id="pareto-table"></table></div>
-  <p class="note">Δ = score − dense interpolated linearly in log x at the run's x; "(ext)" = outside the dense range. Run-to-run noise from 3 repeat runs is about ±0.02–0.03 per cell, so a worst-cell Δ within −0.03 is a tie. Updated __UPDATED__.</p>
+  <p class="note">Δ = score − dense at the run's x (per cell, the better of dense LR 2e-6 and 5e-6, each interpolated linearly in log x; a curve needs ≥2 points); "(ext)" = outside the dense range. Run-to-run noise from 3 repeat runs is about ±0.02–0.03 per cell, so a worst-cell Δ within −0.03 is a tie. Updated __UPDATED__.</p>
 </section>
 <script>
 const PR = __DATA__;
