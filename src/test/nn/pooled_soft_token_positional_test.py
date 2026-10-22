@@ -255,3 +255,114 @@ def test_gpu_smoke_olmo3_two_steps(arm):
         assert st["tokens_out"] == 2 * 8193
     else:
         assert 0.05 < frac < 0.4
+
+
+# --------------------------------------------------------------------------------------------------
+# Position-aware keep rules: keep_recent (dense recent tail) and keep_ramp (per-block fraction ramp)
+# --------------------------------------------------------------------------------------------------
+
+
+def _fl_reference_general(T=T, block=BLOCK, frac=lambda d, nb: 0.25, recent=0):
+    """first_last per block with a per-block fraction; the last ``recent`` positions kept whole
+    and cut out of the block they straddle before the rule is applied."""
+    cut = T - recent if recent > 0 else T
+    keep = [0]
+    starts = list(range(1, T, block))
+    nb = len(starts)
+    for d, start in enumerate(starts):
+        end = min(start + block, T)
+        n = max(0, min(end, cut) - start)
+        if n == 0:
+            continue
+        f = torch.as_tensor(frac(d, nb), dtype=torch.float32)  # float32, as the model computes it
+        kd = max(1, int(torch.ceil(torch.tensor(float(n)) * f))) if float(f) > 0 else 0
+        if kd >= n:
+            keep += list(range(start, start + n))
+        else:
+            a = kd // 2
+            keep += list(range(start, start + a)) + list(range(start + n - (kd - a), start + n))
+    keep += list(range(cut, T))
+    return torch.tensor(sorted(set(keep)))
+
+
+def test_keep_recent_with_ifl():
+    ids = _rows(2)
+    model = _model(keep_prob=0.0, keep_token_rule="first_last", keep_token_k=0.25, keep_recent=4096)
+    cb = _compact(model, ids)
+    ref = _fl_reference_general(recent=4096)
+    for b in range(2):
+        pos = _kept_positions(cb, b)
+        assert torch.equal(pos, ref)
+        assert torch.equal(pos[-4096:], torch.arange(T - 4096, T))
+    print(f"[keep-recent] 4096 + I-fl kept {ref.numel()} / {T} = {ref.numel() / T:.4f}")
+
+
+def test_keep_recent_with_irand_keeps_tail_whole():
+    ids = _rows(4)
+    model = _model(keep_prob=0.2, keep_recent=1000)
+    cb = _compact(model, ids)
+    cut = T - 1000
+    straddle = (cut - 1) // BLOCK
+    full = torch.tensor([512] * 63 + [511])
+    full[straddle] = cut - (1 + straddle * BLOCK)  # the straddling block is ruled on its early part
+    for b in range(4):
+        pos = _kept_positions(cb, b)
+        assert torch.equal(pos[-1000:], torch.arange(cut, T))
+        early = pos[(pos > 0) & (pos < cut)]
+        blk = torch.bincount((early - 1) // BLOCK, minlength=64)[: straddle + 1]
+        assert torch.all((blk == 0) | (blk == full[: straddle + 1])), "a block was partially kept"
+
+
+def test_keep_ramp_first_last():
+    ids = _rows(2)
+    model = _model(
+        keep_prob=0.0, keep_token_rule="first_last", keep_token_k=0.25, keep_ramp=(0.1, 0.5)
+    )
+    cb = _compact(model, ids)
+    ref = _fl_reference_general(
+        frac=lambda d, nb: 0.1
+        + (0.5 - 0.1) * (torch.tensor(float(d)) / (torch.tensor(float(nb)) - 1.0))
+    )
+    for b in range(2):
+        assert torch.equal(_kept_positions(cb, b), ref)
+    print(f"[keep-ramp] 0.1->0.5 first_last kept {ref.numel()} / {T} = {ref.numel() / T:.4f}")
+
+
+def test_constant_ramp_equals_scalar_fraction():
+    ids = _rows(2)
+    a = _compact(_model(keep_prob=0.0, keep_token_rule="first_last", keep_token_k=0.25), ids)
+    b = _compact(
+        _model(
+            keep_prob=0.0, keep_token_rule="first_last", keep_token_k=0.9, keep_ramp=(0.25, 0.25)
+        ),
+        ids,
+    )
+    assert torch.equal(a.position_ids, b.position_ids)
+    # whole blocks: a constant ramp is the scalar keep_prob draw
+    c = _compact(_model(keep_prob=0.3), ids)
+    d = _compact(_model(keep_prob=0.9, keep_ramp=(0.3, 0.3)), ids)
+    assert torch.equal(c.position_ids, d.position_ids)
+
+
+def test_keep_ramp_on_whole_blocks():
+    ids = _rows(16)
+    model = _model(keep_prob=0.0, keep_ramp=(0.0, 1.0))
+    cb = _compact(model, ids)
+    first_half = second_half = 0
+    for b in range(16):
+        pos = _kept_positions(cb, b)
+        blocks = set(((pos[1:] - 1) // BLOCK).tolist())
+        assert 0 not in blocks and 63 in blocks  # fraction 0 on the first block, 1 on the last
+        first_half += sum(1 for d in blocks if d < 32)
+        second_half += sum(1 for d in blocks if d >= 32)
+    assert second_half > 2 * first_half
+
+
+def test_position_rules_need_positional_mode():
+    from olmo_core.exceptions import OLMoConfigurationError
+
+    cfg = TransformerConfig.olmo2_30M(vocab_size=VOCAB, n_layers=1, fused_ops=False)
+    for kw in ({"keep_recent": 128}, {"keep_ramp": (0.1, 0.5)}):
+        model = cfg.build(init_device="cpu")
+        with pytest.raises(OLMoConfigurationError):
+            model.enable_pooled_soft_tokens(-5, -6, EOS, placeholder_id=100300, **kw)

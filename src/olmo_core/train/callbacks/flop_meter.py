@@ -29,6 +29,9 @@ class FlopMeterCallback(Callback):
     - **pooled soft tokens**: the model runs on the COMPACTED sequence, so the dense formula is
       applied to the compacted token count (attention on the compacted row length); read from
       the counters the model accumulates in ``_soft_token_compaction``.
+    - **token exit** (:mod:`olmo_core.nn.token_exit`, on top of the soft-token compaction): blocks
+      ``[0, L)`` are charged at the FULL row length and blocks ``[L, n)`` plus the LM head at the
+      compacted length (:func:`~olmo_core.nn.token_exit.token_exit_example_flops`).
 
     Records ``flop_meter/actual_pflops`` (cumulative), ``flop_meter/dense_pflops`` (what the same
     tokens would have cost dense) and their ratio every step, and writes ``flops.json`` into the
@@ -83,9 +86,20 @@ class FlopMeterCallback(Callback):
                 tot += float(L) * f
             return tot
 
+        exit_layer = self._exit_layer(m)
+        if exit_layer > 0:
+            # token exit: the prefix blocks ran on the full (dense) example, the rest on the kept
+            from olmo_core.nn.token_exit import token_exit_example_flops
+
+            actual = sum(
+                token_exit_example_flops(m, d, a, exit_layer, cache=cache)  # type: ignore[arg-type]
+                for d, a in zip(st["dense"], st["actual"])
+            )
+        else:
+            actual = cost(st["actual"])
         dev = next(m.parameters()).device
         v = torch.tensor(
-            [cost(st["dense"]), cost(st["actual"]), float(sum(st["dense"])), float(len(st["dense"]))],
+            [cost(st["dense"]), actual, float(sum(st["dense"])), float(len(st["dense"]))],
             dtype=torch.float64,
             device=dev,
         )
@@ -115,6 +129,18 @@ class FlopMeterCallback(Callback):
 
     def _model(self):
         return self.trainer.train_module.model  # type: ignore[union-attr]
+
+    def _model_or_none(self):
+        try:
+            return self._model()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _exit_layer(m) -> int:
+        """Token-exit layer of the model (0 = none / plain input drop)."""
+        tx = getattr(m, "_token_exit", None)
+        return int(tx.exit_layer) if tx is not None else 0
 
     def _per_token(self):
         if self._dense_per_tok is None:
@@ -196,6 +222,16 @@ class FlopMeterCallback(Callback):
             # what actually ran. Scale per-rank -> world by the padded global batch.
             scale = int(self.trainer.global_batch_size) / max(1, comp["tokens_in"])
             actual = comp["tokens_out"] * scale * int(m.num_flops_per_token(int(out_len)))
+            exit_layer = self._exit_layer(m)
+            if exit_layer > 0:
+                # token exit: blocks [0, L) ran on the full rows
+                from olmo_core.nn.token_exit import prefix_flops_per_token
+
+                in_len = comp["tokens_in"] / rows
+                actual += scale * (
+                    comp["tokens_in"] * prefix_flops_per_token(m, int(in_len), exit_layer)
+                    - comp["tokens_out"] * prefix_flops_per_token(m, int(out_len), exit_layer)
+                )
             self.trainer.record_metric(
                 "flop_meter/compaction_ratio", comp["tokens_in"] / comp["tokens_out"]
             )
@@ -250,6 +286,9 @@ class FlopMeterCallback(Callback):
             ),
             "steps": self.step,
             "seq_len": self.seq_len,
+            "token_exit_layer": (
+                self._exit_layer(m) if (m := self._model_or_none()) is not None else None
+            ),
         }
 
     def post_train(self):

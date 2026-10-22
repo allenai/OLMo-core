@@ -517,6 +517,7 @@ def mark_doc_topk_tokens_free(
     doc_end_id: int,
     k: float,
     n_docs: Optional[int] = None,
+    k_doc_frac: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Keep the ``k`` highest-scoring **body** tokens of every document REAL (re-label them ``FREE``)
@@ -545,6 +546,10 @@ def mark_doc_topk_tokens_free(
         ``ceil(k * |body_d|)`` tokens (at least 1), so compaction is controlled per document
         regardless of document length (``fl20`` = ``k=0.2`` with ``first_last`` scores).
     :param n_docs: Document-id space (see :func:`doc_body_groups`).
+    :param k_doc_frac: Optional ``(B, n_docs)`` per-document keep FRACTION that replaces ``k``
+        (position-aware budgets, e.g. a ramp over a row's positional blocks): document ``d`` of
+        row ``b`` keeps ``ceil(k_doc_frac[b, d] * |body|)`` tokens, at least 1 when the fraction
+        is ``> 0`` and none when it is ``<= 0``. ``None`` (default) = the scalar ``k``.
 
     :returns: A new ``(B, S)`` chunk-id tensor.
     """
@@ -552,7 +557,7 @@ def mark_doc_topk_tokens_free(
         input_ids = input_ids.unsqueeze(0)
     if chunk_ids.dim() == 1:
         chunk_ids = chunk_ids.unsqueeze(0)
-    if k <= 0:
+    if k <= 0 and k_doc_frac is None:
         return chunk_ids
     if scores.shape != input_ids.shape:
         raise ValueError(
@@ -576,7 +581,21 @@ def mark_doc_topk_tokens_free(
     perm = o1[torch.argsort(gid[o1], stable=True)]
     starts = torch.cumsum(counts, dim=0) - counts
     rank = torch.arange(M, device=device) - starts[gid[perm]]
-    if 0 < k < 1:
+    if k_doc_frac is not None:
+        # per-document fractional budget (position-aware keep rules)
+        frac = k_doc_frac.to(device=device, dtype=torch.float32)
+        if frac.dim() == 1:
+            frac = frac.unsqueeze(0)
+        if frac.shape[0] == 1 and B > 1:
+            frac = frac.expand(B, -1)
+        if frac.shape[1] < n_docs_eff:
+            frac = torch.cat(
+                [frac, frac[:, -1:].expand(B, n_docs_eff - frac.shape[1])], dim=1
+            )
+        frac = frac[:, :n_docs_eff].reshape(-1).clamp(max=1.0)
+        k_doc = torch.ceil(counts.to(torch.float32) * frac).to(torch.long)
+        k_doc = torch.where(frac > 0, k_doc.clamp(min=1), torch.zeros_like(k_doc))
+    elif 0 < k < 1:
         # fractional budget: per-document k_d = ceil(k * |body_d|), at least 1
         k_doc = torch.clamp(torch.ceil(counts.to(torch.float32) * float(k)).to(torch.long), min=1)
     else:

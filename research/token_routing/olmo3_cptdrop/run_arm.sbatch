@@ -8,6 +8,7 @@
 #
 # Knobs (env):
 #   ARM            D | C1 (8k phase) | C2 (32k phase) | IRAND | IFL
+#                  follow-ups: IFL_R4K | IFL_RAMP | IFL_X4 | IFL_X8 | IRAND_X4 | IRAND_X8
 #   RUN            run name = save folder basename (must be NEW unless RESUME=1)
 #   MAX_STEPS_TOTAL  budget in optimizer steps at 524,288 tokens/step (sets --max-tokens)
 #   HARD_STOP      --max-steps (arm C phase 1 stops at half its budget, LR still at peak)
@@ -45,6 +46,14 @@ case "$ARM" in
   C2)    DATA=train32k_head SEQ=32768 GB=16 VAR="--variant full" ;;  # rows 0..39,159: never the tail rows c8k was cut from
   IRAND) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1" ;;
   IFL)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
+  # follow-up arms (2026-10-22, not in the round-1 plan): position-aware keep rules and token exit.
+  # L=4 / L=8 = dropped tokens leave after the first / second full-attention layer (3, 7).
+  IFL_R4K)  DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-recent 4096" ;;
+  IFL_RAMP) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-ramp 0.1,0.5" ;;
+  IFL_X4)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 4" ;;
+  IFL_X8)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 8" ;;
+  IRAND_X4) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 4" ;;
+  IRAND_X8) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 8" ;;
   *) echo "FATAL: unknown ARM=$ARM"; exit 2 ;;
 esac
 SAVE="$ROOT/runs/$RUN"
