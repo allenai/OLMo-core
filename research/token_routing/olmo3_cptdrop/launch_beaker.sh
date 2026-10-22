@@ -12,7 +12,7 @@ for FAM in "$@"; do
   JN="o3cd-$FAM"; for kv in ${GEN_ENV:-}; do [[ "$kv" == NAME=* ]] && JN="${kv#NAME=}"; done
   "$GANTRY" run --name "$JN-$(date +%m%d%H%M)" "${ENVARGS[@]}" -w ai2/flex2 -b ai2/oe-other \
     --cluster ai2/jupiter-cirrascale-2 --gpus 8 --shared-memory 256GiB --priority urgent --min-runtime 1h \
-    --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --install true \
+    --beaker-image tylerr/olmo-core-tch291cu128-2025-11-25 --no-python \
     --weka oe-training-default:/weka/oe-training-default \
     --env-secret AWS_CREDS=PRASANNS_AWS_CREDENTIALS --env-secret AWS_CFG=PRASANNS_AWS_CONFIG \
     --env-secret WANDB_API_KEY=PRASANNS_WANDB_API_KEY \

@@ -9,14 +9,19 @@
 set -euo pipefail
 FAMILY="${1:?FAMILY}"
 # ROOT on weka (one dir per family: no two jobs ever write the same file); JIT caches on node-local /tmp.
-export CODE="$PWD" PY="$(command -v python)" TMPBASE=/tmp/o3cd_tmp
+# gantry --no-python: use the image's own interpreter (torch 2.9.1 / flash-attn 2.8.2). Under --install true gantry
+# runs an EMPTY venv (no torch, no pip).
+export CODE="$PWD" PY=/opt/conda/bin/python TMPBASE=/tmp/o3cd_tmp
 export ROOT="${ROOT:-/weka/oe-training-default/ai2-llm/checkpoints/prasanns/olmo3_cptdrop/beaker_$FAMILY}"
 mkdir -p "$ROOT/data" "$ROOT/base" "$ROOT/runs" "$ROOT/logs" "$ROOT/devce" ~/.aws
 printf '%s\n' "$AWS_CREDS" > ~/.aws/credentials
 printf '%s\n' "$AWS_CFG" > ~/.aws/config
 export AWS_PROFILE=S3
-# the baked olmo-core image has no boto3 (s3_sync.py); seconds to install
-"$PY" -c "import boto3" 2>/dev/null || "$PY" -m pip install -q boto3
+# The image lacks boto3 and some olmo-core deps; install those only (pip install -e . would pull torch>=2.10).
+"$PY" -m pip install -q boto3 "dataclass-extensions>=0.3.0" "cached-path>=1.7.2" bettermap importlib_resources
+PYTHONPATH="$CODE/src:$CODE/recipes/train/research_trainer:$CODE/recipes/train:$CODE" "$PY" -c \
+  "import torch, flash_attn, olmo_core; from olmo_core.nn.attention import position_window; import train_ctc_suite; print('imports ok', torch.__version__, flash_attn.__version__)"
+[ "$FAMILY" = CHECK ] && { echo "CHECK ok"; exit 0; }
 log() { echo "[beaker-job $(date '+%F %T')] $*"; }
 S3SYNC="$CODE/research/token_routing/olmo3_cptdrop/s3_sync.py"
 ARM_SH="$CODE/research/token_routing/olmo3_cptdrop/run_arm.sbatch"
@@ -25,7 +30,7 @@ nvidia-smi -L
 
 CTX="${CTX:-32k}"; export CTX
 case "$FAMILY" in
-  C*) NEED="c8k train32k_head" ;;
+  C1*|C2*|C4*) NEED="c8k train32k_head" ;;
   IFL|IRAND) NEED="train32k" ;;
   GEN) NEED=$([ "$CTX" = 64k ] && echo train64k || echo train32k) ;;
   *) echo "unknown FAMILY $FAMILY"; exit 2 ;;
