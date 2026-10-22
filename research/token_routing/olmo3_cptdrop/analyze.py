@@ -38,7 +38,7 @@ EST[("IFL", "64k")] = 0.19 * EST[("D", "64k")]
 def segments(label: str):
     """[(arm_key, ctx, steps)] for a run label (o3cd- prefix stripped). None if not a training run."""
     ctx = "64k" if "x64" in label or label.startswith("D64") else "32k"
-    m = re.fullmatch(r"(D|DLOW|D64|D64LOW)-(\d+)(-s\d+)?", label)
+    m = re.fullmatch(r"(D|DLOW|D64|D64LOW|D64e|Dlr65|Dlr20)-(\d+)(-s\d+)?", label)
     if m:
         return [("D", ctx, int(m.group(2)))]
     m = re.fullmatch(r"(IRAND|IFL)-(\d+)", label)
@@ -76,7 +76,9 @@ def pf_of(segs, table):
 
 
 def family(label: str) -> str:
-    if re.match(r"(D|DLOW|D64|D64LOW)-", label):
+    if re.match(r"Dlr\d+-", label):          # LR-probe dense runs: their own curve, never the reference
+        return label.split("-")[0]
+    if re.match(r"(D|DLOW|D64|D64LOW|D64e)-", label):
         return "dense"
     return re.sub(r"-\d+(-s\d+)?$", "", label)
 
