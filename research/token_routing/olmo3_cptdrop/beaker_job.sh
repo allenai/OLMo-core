@@ -39,6 +39,20 @@ esac
 if [ "$CTX" = 64k ]; then DEV=dev64k_512; YF=8; else DEV=dev32k_1024; YF=4; fi
 for d in $NEED $DEV short4k_v2; do "$PY" -u "$S3SYNC" down "$ROOT/data/$d" "data/$d" | tail -1; done
 "$PY" -u "$S3SYNC" down "$ROOT/base/stage2-step47684" base/stage2-step47684 | tail -1
+# Every row of every shard must start with EOS: the trainer splits at EOS and silently drops documents longer
+# than --seq-len, so a stale/broken shard livelocks on empty epochs (stale c8k on S3, 2026-10-22).
+"$PY" - "$ROOT/data" $NEED $DEV short4k_v2 <<'PYEOF'
+import json, sys
+import numpy as np
+root = sys.argv[1]
+for d in sys.argv[2:]:
+    m = json.load(open(f"{root}/{d}/metadata.json")); L = m["max_example_len"]
+    a = np.memmap(f"{root}/{d}/token_ids_part_0000.npy", dtype=np.uint32, mode="r").reshape(-1, L)
+    f = float((a[:, 0] == m["eos_token_id"]).mean())
+    print(f"data check {d}: {a.shape[0]} rows x {L}, rows starting with EOS {f:.4f}", flush=True)
+    if f < 1.0:
+        sys.exit(f"{d}: only {f:.4f} of rows start with EOS -- stale or broken shard, refusing to train")
+PYEOF
 
 FINALS=()
 run() {  # name, then env for run_arm
