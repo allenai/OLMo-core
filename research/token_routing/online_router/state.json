@@ -1189,6 +1189,26 @@
    "ex": "01M5JPK10F45YD8ZAGNXGWNSTM",
    "train_run": "f8k-mt4-otr10M8de16-s1464-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5JPKZQ21PC57NRDAJF687Z2",
+   "train_run": "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06-evnq": {
+   "ex": "01M5JPMTQRMMEQD5SKPA3JDGD6",
+   "train_run": "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5JPNMRJM6CHB65ENRE1PR68",
+   "train_run": "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06-evoolong": {
+   "ex": "01M5JPPMM01JKGGCY47FSPFYDZ",
+   "train_run": "f8k-mt4-otr30M8sd1-s1464-tdb-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
