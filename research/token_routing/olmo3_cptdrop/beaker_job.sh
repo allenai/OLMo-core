@@ -53,8 +53,9 @@ for d in sys.argv[2:]:
     f = float((a[:, col] == eos).mean())
     n_eos = int((a == eos).sum())
     print(f"data check {d}: {a.shape[0]} rows x {L}, EOS at {'end' if col else 'start'} {f:.4f}, total EOS {n_eos}", flush=True)
-    if f < 1.0 or n_eos != a.shape[0]:
-        sys.exit(f"{d}: rows do not have exactly one EOS at the {'end' if col else 'start'} -- refusing to train")
+    # training shards: exactly one EOS per row, at the end; eval shards: EOS at the start (short4k packs several docs)
+    if f < 1.0 or (col and n_eos != a.shape[0]):
+        sys.exit(f"{d}: EOS layout wrong ({'one EOS per row, at the end' if col else 'EOS at row start'} expected) -- refusing to train")
 PYEOF
 
 FINALS=()
