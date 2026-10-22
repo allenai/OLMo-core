@@ -394,7 +394,7 @@ def do_eval(args):
         # Only score a FINISHED run: the eval reads the model-only export written after fit(), so
         # launching against a still-training save folder finds no checkpoint and burns a GPU slot
         # failing.
-        if r.get("state") != "DONE" and not args.force:
+        if r.get("state") != "DONE" and not args.force and not (args.eval_step_dir and r.get("state") == "FAILED"):
             print(f"[wait] {name} train={r.get('state')} -- eval deferred")
             continue
         # A multi-task (mt4) checkpoint is scored once PER TASK, as `<run>-ev<task>`.
@@ -405,8 +405,11 @@ def do_eval(args):
                 print(f"[skip] eval {ename} already launched ({st['evals'][ename]['ex']})")
                 continue
             files = {task: RUNGS[task]}
+            # --eval-step-dir: score the trainer's final distcp step dir instead of the post-fit export (the
+            # 10-22 tdb runs finished every step, then died in wandb.finish before the export was written)
+            ckpt = f"{CKPTS}/{name}/step{r['steps_expected']}" if args.eval_step_dir else f"{CKPTS}/{name}"
             cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, EVAL_CLUSTER,
-                   "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", f"{CKPTS}/{name}",
+                   "--task", TASK_KEY[task], "--variant", "docchunk", "--ckpt", ckpt,
                    "--query-position", "after", "--cot-mode", "none", "--tokenizer", TOKENIZER,
                    "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
                    # >= the 8k rung's prompt + generation, with headroom: a --max-length BELOW the
@@ -519,6 +522,8 @@ def main():
     ap.add_argument("--parity-rows", default=PARITY_ROWS)
     ap.add_argument("--parity-gen-rows", default=PARITY_GEN_ROWS)
     ap.add_argument("--force", action="store_true", help="relaunch even if state.json has it")
+    ap.add_argument("--eval-step-dir", action="store_true",
+                    help="eval: read <run>/step<steps_expected> (no post-fit export); also scores FAILED runs")
     ap.add_argument("mode", choices=["launch", "dry_run", "eval", "parity", "status"])
     args = ap.parse_args()
     global LR_TAG
