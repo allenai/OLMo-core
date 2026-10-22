@@ -68,7 +68,7 @@ from olmo_core.nn.transformer import (
     TransformerActivationCheckpointingMode,
     TransformerConfig,
 )
-from olmo_core.optim import LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
+from olmo_core.optim import WSD, LinearWithWarmup, OptimGroupOverride, SkipStepAdamWConfig
 from olmo_core.train import (
     Duration,
     LoadStrategy,
@@ -498,6 +498,15 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # Applied BEFORE the YaRN copy below so per-layer rope overrides see the swapped mixer.
     variant, vopts = variant_and_options(opts)
     qwen_kwargs.update(variant.factory_kwargs(vopts))
+    # OLMo 3 7B applies its own YaRN inside the factory (default x8, the released stage-3 config),
+    # so --rope-yarn-factor is passed THROUGH to it instead of stacking a second with_rope_scaling
+    # below (olmo3_cptdrop: stage-2 checkpoint, x4 for 32k).
+    if opts.model_family == "olmo3" and opts.rope_yarn_factor:
+        if factory is not olmo3_7B_ctc_swa:
+            raise SystemExit(
+                f"--rope-yarn-factor is only wired for olmo3 scale '7b' (got {opts.model_scale!r})"
+            )
+        qwen_kwargs["yarn_factor"] = float(opts.rope_yarn_factor)
     model_config = factory(**qwen_kwargs)
     variant.apply_model_config(
         model_config, vopts, variant_context(opts, mix_total_forwards=opts._mix_total_forwards)
@@ -505,7 +514,7 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
     # YaRN RoPE context extension for long-context runs (base native ctx is 32k for Qwen3; the
     # 256k rung needs factor ~8). Off by default (--rope-yarn-factor 0) so short-rung runs are
     # byte-identical. Mirrors sft_longctx/Qwen3-4B-dense-longctx-SFT.py (factor=2 for 64k).
-    if opts.rope_yarn_factor and opts.rope_yarn_factor > 1:
+    if opts.rope_yarn_factor and opts.rope_yarn_factor > 1 and opts.model_family != "olmo3":
         if opts.model_family == "qwen3_5":
             # with_rope_scaling refuses hybrid (named-block) models; the GDN-hybrid needs a
             # per-block/theta-based extension instead. Skip here and warn -- the hybrid's RoPE
@@ -609,6 +618,19 @@ def _build_ac_config(ac_mode: str, ac_budget: float):
     return None
 
 
+def build_scheduler(opts: argparse.Namespace):
+    """LR schedule from ``--scheduler`` (default: linear warmup then linear decay to 0).
+
+    ``wsd`` = warmup, constant, then linear decay to 0 over the last ``--wsd-decay-fraction`` of
+    ``max_duration``. With ``--save-interval`` at 0.9 x a smaller budget, that run's checkpoint is
+    still at peak LR, and ``--branch-from`` it with the smaller ``--max-tokens`` gives that budget's
+    decayed point (olmo3_cptdrop decay branches).
+    """
+    if opts.scheduler == "wsd":
+        return WSD(warmup_fraction=opts.warmup_fraction, decay_fraction=opts.wsd_decay_fraction)
+    return LinearWithWarmup(warmup_fraction=opts.warmup_fraction, alpha_f=0.0)
+
+
 def build_train_module_config(
     opts: argparse.Namespace, world_size: int
 ) -> TransformerTrainModuleConfig:
@@ -645,7 +667,7 @@ def build_train_module_config(
         max_sequence_length=opts.seq_len,
         optim=SkipStepAdamWConfig(
             lr=opts.lr,
-            weight_decay=0.0,
+            weight_decay=opts.weight_decay,
             betas=(0.9, 0.95),
             group_overrides=[
                 OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
@@ -653,7 +675,7 @@ def build_train_module_config(
             # router LR groups (ffnmoe / kvroute / flexcompute): variants.Variant.optim_group_overrides
             + variant.optim_group_overrides(vopts),
         ),
-        scheduler=LinearWithWarmup(warmup_fraction=0.03, alpha_f=0.0),
+        scheduler=build_scheduler(opts),
         compile_model=opts.compile,
         dp_config=TransformerDataParallelConfig(
             name=DataParallelType.hsdp if cp_degree > 1 else DataParallelType.fsdp,
@@ -671,7 +693,7 @@ def build_train_module_config(
         # instead, which places checkpoints FLOP-optimally and avoids the all-to-all boundary.
         ac_config=_build_ac_config(ac_mode, opts.ac_budget),
         float8_config=Float8Config(enabled=False),
-        z_loss_multiplier=None,
+        z_loss_multiplier=opts.z_loss,
         max_grad_norm=1.0,
     )
 
@@ -1012,16 +1034,25 @@ def build_and_fit(opts: argparse.Namespace) -> None:
             # base does not have; the trainer's own load is strict, so those arms load the base
             # themselves below with strict=False (new keys keep their init: router -> full rung,
             # projector -> identity). load_path stays None for them so fit() does not re-load.
-            load_path=(None if variant_and_options(opts)[0].new_params else base_checkpoint),
+            # --branch-from: a decay branch resumes the stable run's checkpoint WITH optimizer and
+            # trainer state (step, tokens seen, data-loader position), so it continues on unseen data.
+            load_path=(
+                opts.branch_from
+                if opts.branch_from
+                else (None if variant_and_options(opts)[0].new_params else base_checkpoint)
+            ),
             # ...and "always" would then demand a checkpoint that no longer exists: those arms
             # resume from the save folder only if a step checkpoint is there.
             load_strategy=(
                 LoadStrategy.if_available
-                if variant_and_options(opts)[0].new_params
+                if variant_and_options(opts)[0].new_params and not opts.branch_from
                 else LoadStrategy.always
             ),
-            load_trainer_state=False,
-            load_optim_state=False,
+            # --branch-optim-only (arm C's 8k -> 32k switch): the next phase reads a DIFFERENT shard,
+            # so the data-loader position must not be restored; step/token counters restart and the
+            # phase's own --max-tokens / --warmup-fraction 0 carry the schedule on from the stable LR.
+            load_trainer_state=bool(opts.branch_from) and not opts.branch_optim_only,
+            load_optim_state=bool(opts.branch_from),
             metrics_collect_interval=1,
             cancel_check_interval=1,
             # --max-tokens: a SHORTER budget on the same arm with a complete LR schedule (warmup
@@ -1177,7 +1208,7 @@ def build_and_fit(opts: argparse.Namespace) -> None:
 
         trainer_config = trainer_config.with_callback("mem_snapshot", _MemSnapshot())
     trainer = trainer_config.build(train_module, data_loader)
-    if variant_and_options(opts)[0].new_params:
+    if variant_and_options(opts)[0].new_params and not opts.branch_from:
         _tolerant_base_load(base_checkpoint, train_module.model, save_folder)
     if opts.mem_snapshot:
         import torch
@@ -1663,6 +1694,13 @@ def parse_args() -> argparse.Namespace:
         "(re-drawn every forward, so every position of a document is eventually seen)",
     )
     ap.add_argument(
+        "--st-keep-token-min",
+        type=int,
+        default=0,
+        help="softtoken: floor for a fractional --st-keep-token-k -- every document keeps at least this "
+        "many body tokens (max(min, k * |body|)): short documents stay whole, long ones keep the fraction",
+    )
+    ap.add_argument(
         "--st-kept-doc-k",
         type=float,
         default=None,
@@ -1776,6 +1814,32 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--lr", type=float, default=LR)
+    ap.add_argument(
+        "--weight-decay", type=float, default=0.0, help="AdamW weight decay (embeddings stay at 0)"
+    )
+    ap.add_argument(
+        "--z-loss", type=float, default=None, help="z-loss multiplier (OLMo 3 recipe: 1e-5); off by default"
+    )
+    ap.add_argument("--warmup-fraction", type=float, default=0.03)
+    ap.add_argument("--scheduler", choices=["linear", "wsd"], default="linear")
+    ap.add_argument(
+        "--wsd-decay-fraction",
+        type=float,
+        default=0.1,
+        help="--scheduler wsd: final fraction of max_duration that decays linearly to 0",
+    )
+    ap.add_argument(
+        "--branch-from",
+        default=None,
+        help="a stepN checkpoint dir of a stable (wsd) run: load model + optimizer + trainer state "
+        "from it (instead of --base-checkpoint) and train to --max-tokens in a FRESH save folder",
+    )
+    ap.add_argument(
+        "--branch-optim-only",
+        action="store_true",
+        help="with --branch-from: load model + optimizer but NOT trainer state (fresh step counter and "
+        "data-loader position), for continuing on a different shard / sequence length",
+    )
     ap.add_argument(
         "--global-batch",
         type=int,

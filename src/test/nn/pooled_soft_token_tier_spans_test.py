@@ -84,3 +84,17 @@ def test_tier_a_gets_its_own_budget_instead_of_whole():
     for k, n, _ in tier[1:]:
         assert k < 0.5 * n  # tier B: the small budget
         assert k == whole[1][0]  # tier B identical to the non-tier rule
+
+
+def test_keep_token_min_floor_keeps_short_docs_whole_and_long_docs_at_fraction():
+    torch.manual_seed(0)
+    # docs of 20 and 200 body tokens: floor 32 keeps the short one whole, the long one at 20%
+    ids = [11, 12, DOC_START, *range(100, 120), DOC_END, DOC_START, *(300 + j % 400 for j in range(200)), DOC_END,
+           21, 22, EOS]
+    m = _model(keep_token_rule="first_last", keep_token_k=0.2, keep_token_min=32)
+    (k0, n0, _), (k1, n1, _) = _kept_per_doc(m, ids, torch.zeros(1, 2, dtype=torch.bool))
+    assert k0 == n0  # short doc whole
+    assert 0.2 * n1 <= k1 <= 0.2 * n1 + 2 + 1  # long doc: fraction (+2-token prefix), floor inactive
+    m0 = _model(keep_token_rule="first_last", keep_token_k=0.2)
+    (j0, _, _), _ = _kept_per_doc(m0, ids, torch.zeros(1, 2, dtype=torch.bool))
+    assert j0 < n0  # without the floor the short doc is cut

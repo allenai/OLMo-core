@@ -365,6 +365,7 @@ class Transformer(nn.Module):
         pad_multiple: int = 1,
         span_len: int = 12,
         kept_doc_k: Optional[float] = None,
+        keep_token_min: int = 0,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -481,6 +482,9 @@ class Transformer(nn.Module):
         :param kept_doc_k: Two-tier keep. When set, documents in the keep set (gold + random decoys)
             are NOT kept whole: they get the keep-token rule at this larger ``k`` (tier A) while every
             other document gets ``keep_token_k`` (tier B). ``None`` keeps them whole (historical).
+        :param keep_token_min: Floor for a fractional ``keep_token_k``: every document keeps at least
+            this many body tokens (top by the same scores), i.e. ``max(keep_token_min, k * |body|)``.
+            Short documents stay (nearly) whole; long ones keep the fraction. 0 = off.
         :param pad_multiple: Round the compacted width up to a multiple of this. The width is
             data-dependent and FLA's GDN kernels autotune at every new one (~25-50 s); ``1`` keeps
             the exact width.
@@ -617,6 +621,7 @@ class Transformer(nn.Module):
             "pad_multiple": int(pad_multiple),
             "span_len": int(span_len),
             "kept_doc_k": None if kept_doc_k is None else float(kept_doc_k),
+            "keep_token_min": int(keep_token_min),
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -1134,6 +1139,7 @@ class Transformer(nn.Module):
                     n_docs=n_docs,
                 )
             tier_scores = scores
+            hdr_only = chunk_ids
             chunk_ids = mark_doc_topk_tokens_free(
                 chunk_ids,
                 input_ids,
@@ -1143,6 +1149,23 @@ class Transformer(nn.Module):
                 k=float(cfg["keep_token_k"]),
                 n_docs=n_docs,
             )
+            if int(cfg.get("keep_token_min", 0)) > 0:
+                # floor: also free each document's top keep_token_min tokens by the SAME scores, so
+                # the union is the top max(keep_token_min, k * |body|)
+                from ..attention.chunked_mask import FREE_CHUNK_ID
+
+                floor_ids = mark_doc_topk_tokens_free(
+                    hdr_only,
+                    input_ids,
+                    scores,
+                    doc_start_id=cfg["doc_start_id"],
+                    doc_end_id=cfg["doc_end_id"],
+                    k=float(cfg["keep_token_min"]),
+                    n_docs=n_docs,
+                )
+                chunk_ids = torch.where(
+                    floor_ids == FREE_CHUNK_ID, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids
+                )
         elif keep_rule == "custom":
             # caller-supplied per-token keep mask (saliency / attention-budget selectors that the
             # model cannot score from token features alone); see chunked_mask.mark_positions_free

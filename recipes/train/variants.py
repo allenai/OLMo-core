@@ -1013,6 +1013,7 @@ class SoftToken(Variant):
             pad_multiple=getattr(o, "st_pad_multiple", 1),
             span_len=getattr(o, "st_span_len", 12),
             kept_doc_k=getattr(o, "st_kept_doc_k", None),
+            keep_token_min=getattr(o, "st_keep_token_min", 0),
             # Compression-mixing curriculum: with st_gold_blind there is NO keep hook, so the model
             # applies it to the seeded keep_prob draw itself; otherwise the hook carries it.
             mix_start_p=o.st_mix_start_p,
