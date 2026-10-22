@@ -42,6 +42,10 @@ mkdir -p "$ROOT/weka_stub/checkpoints/prasanns/_eval_bundle"
 # scipy/scikit-learn (outlier/rerank metrics) were installed offline from wheels on 2026-10-20;
 # lambda has no pypi, so the runner's own pip fallback cannot fetch them
 "$ENV/bin/python" -c "import scipy, sklearn" || { echo "FATAL: scipy/sklearn missing from $ENV"; exit 4; }
+# Batched greedy decode (eval_lc_native_docchunk_ladder.py --gen-batch, 2026-10-22): validated against
+# the bs=1 loop on contradiction@8k (f1 0.641 vs 0.639 over 500 rows, 22/24 identical generations,
+# 2.6x faster at 98k tokens/batch). LADDER_GEN_BATCH=1 restores the bs=1 loop.
+export LADDER_GEN_BATCH="${LADDER_GEN_BATCH:-32}" LADDER_GEN_BATCH_TOKENS="${LADDER_GEN_BATCH_TOKENS:-196608}"
 FILES="{\"$TASK\": {\"8k\": \"$ROOT/eval/$R8\", \"2k\": \"$ROOT/eval/$R2\"}}"
 echo "=== LAMBDA fast8k eval host=$(hostname) RUN=$RUN TASK=$TASK CKPT=$CKPT NGPU=$NGPU $(date '+%F %T') ==="
 cd "$REPO"
