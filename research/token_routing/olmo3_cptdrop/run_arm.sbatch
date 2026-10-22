@@ -25,17 +25,19 @@
 #SBATCH --time=12:00:00
 #SBATCH --output=/data/prasann/olmo3_cptdrop/logs/%x-%j.out
 set -uo pipefail
-ROOT=/data/prasann/olmo3_cptdrop
+# ROOT / PY / CODE are overridable so beaker_job.sh can run the same recipe off-cluster.
+ROOT="${ROOT:-/data/prasann/olmo3_cptdrop}"
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
-CODE="$ROOT/code_${CODE_SHA:?set CODE_SHA to a staged tree under $ROOT}"
+PY="${PY:-$ENV/bin/python}"
+CODE="${CODE:-$ROOT/code_${CODE_SHA:?set CODE_SHA to a staged tree under $ROOT (or CODE=)}}"
 ARM="${ARM:?ARM=D|C1|C2|IRAND|IFL}"
 RUN="${RUN:?RUN=<run name>}"
 NGPU="${NGPU:-$(nvidia-smi -L | wc -l)}"
 TOK_PER_STEP=524288
 STEPS="${MAX_STEPS_TOTAL:?MAX_STEPS_TOTAL=<budget in steps>}"
 [ -d "$CODE/src/olmo_core" ] || { echo "FATAL: no staged code at $CODE"; exit 2; }
-[ -x "$ENV/bin/python" ] || { echo "FATAL: no node-local env $ENV"; exit 2; }
+[ -x "$PY" ] || { echo "FATAL: no interpreter $PY"; exit 2; }
 
 case "$ARM" in
   D)     DATA=train32k SEQ=32768 GB=16 VAR="--variant full" ;;
@@ -50,9 +52,10 @@ if [ -d "$SAVE" ] && ls -d "$SAVE"/step* >/dev/null 2>&1 && [ -z "${RESUME:-}" ]
   echo "FATAL: $SAVE already has step checkpoints; the trainer would silently resume (set RESUME=1 to mean it)"; exit 3
 fi
 
-export PATH="$ENV/bin:$PATH" PYTHONPATH="$CODE/src:$CODE/recipes/train/research_trainer:$CODE/recipes/train:$CODE"
+export PATH="$(dirname "$PY"):$PATH" PYTHONPATH="$CODE/src:$CODE/recipes/train/research_trainer:$CODE/recipes/train:$CODE"
 export TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONUNBUFFERED=1 PYTHONWARNINGS=ignore
-export HF_HOME="$ROOT/hf_cache" TMPDIR="$ROOT/tmp" TRITON_CACHE_DIR="$ROOT/tmp/triton" TORCHINDUCTOR_CACHE_DIR="$ROOT/tmp/inductor"
+TMPBASE="${TMPBASE:-$ROOT/tmp}"   # Beaker: node-local /tmp while ROOT is on weka (JIT caches stay off the network fs)
+export HF_HOME="$ROOT/hf_cache" TMPDIR="$TMPBASE" TRITON_CACHE_DIR="$TMPBASE/triton" TORCHINDUCTOR_CACHE_DIR="$TMPBASE/inductor"
 mkdir -p "$TMPDIR" "$TRITON_CACHE_DIR" "$ROOT/runs" "$ROOT/work"
 if [ -z "${NOWANDB:-}" ] && [ -z "${WANDB_API_KEY:-}" ] && [ -r "$HOME/.netrc" ]; then
   WANDB_API_KEY=$(awk '/machine[[:space:]]+api\.wandb\.ai/{f=1} f&&/password/{print $2; exit}' "$HOME/.netrc"); export WANDB_API_KEY
@@ -80,8 +83,12 @@ ARGS+=(${EXTRA:-})
 echo "=== $(hostname) ARM=$ARM RUN=$RUN NGPU=$NGPU STEPS=$STEPS CODE=$CODE start $(date '+%F %T') ==="
 printf ' %q' "${ARGS[@]}"; echo
 cd "$ROOT"
-OPS_RUN_ID="$RUN" OPS_EXPERIMENT=olmo3_cptdrop OPS_ARM="$ARM" OPS_CKPT_PATH="$SAVE" \
-OPS_EXPECTED_MINUTES="${EXPECTED_MIN:-120}" OPS_FIRST_OUTPUT=1500 OPS_STALL=1800 \
-bash "$REPO/recipes/env/ops_job.sh" \
-  "$ENV/bin/python" -m torch.distributed.run --standalone --nproc_per_node="$NGPU" \
-  "$CODE/recipes/train/research_trainer/train_ctc_suite.py" "${ARGS[@]}"
+CMD=("$PY" -m torch.distributed.run --standalone --nproc_per_node="$NGPU"
+  "$CODE/recipes/train/research_trainer/train_ctc_suite.py" "${ARGS[@]}")
+if [ -f "$REPO/recipes/env/ops_job.sh" ]; then   # Berkeley: register + guard
+  OPS_RUN_ID="$RUN" OPS_EXPERIMENT=olmo3_cptdrop OPS_ARM="$ARM" OPS_CKPT_PATH="$SAVE" \
+  OPS_EXPECTED_MINUTES="${EXPECTED_MIN:-120}" OPS_FIRST_OUTPUT=1500 OPS_STALL=1800 \
+  bash "$REPO/recipes/env/ops_job.sh" "${CMD[@]}"
+else                                              # Beaker: the experiment is registered at launch
+  "${CMD[@]}"
+fi
