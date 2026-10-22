@@ -142,7 +142,7 @@ def find_distcp(root: str) -> str:
     return cands[-1]
 
 
-def load_shard(shard: str, max_rows: Optional[int], family: str) -> Tuple[np.ndarray, np.ndarray, dict]:
+def load_shard(shard: str, max_rows: Optional[int], family: str, row_start: int = 0) -> Tuple[np.ndarray, np.ndarray, dict]:
     """(rows, L) int64 tokens + (rows, L) bool target masks from a train_ctc_suite fixed-length shard.
 
     The ``.npy`` files are RAW (no header): read with memmap at offset 0, never ``np.load``.
@@ -163,10 +163,14 @@ def load_shard(shard: str, max_rows: Optional[int], family: str) -> Tuple[np.nda
     n = int(meta["num_instances"])
     if ids.size != n * L or msk.size != n * L:
         raise SystemExit(f"{shard}: {ids.size} tokens / {msk.size} mask entries != {n} rows x {L}")
+    if row_start >= n:
+        raise SystemExit(f"{shard}: --row-start {row_start} >= {n} rows")
+    n = n - row_start
     if max_rows:
         n = min(n, max_rows)
-    rows = np.asarray(ids[: n * L], dtype=np.int64).reshape(n, L)
-    masks = np.asarray(msk[: n * L], dtype=bool).reshape(n, L)
+    lo = row_start * L
+    rows = np.asarray(ids[lo : lo + n * L], dtype=np.int64).reshape(n, L)
+    masks = np.asarray(msk[lo : lo + n * L], dtype=bool).reshape(n, L)
     hi = int(rows.max())
     if hi >= OLMO3_REAL_VOCAB:
         raise SystemExit(f"{shard}: token id {hi} >= dolma2 vocab {OLMO3_REAL_VOCAB}")
@@ -267,12 +271,14 @@ def main(argv=None):
                     help="none (stage2 as is) | 4 (32k CPT runs) | 8 (stage3); full-attention layers only")
     ap.add_argument("--family", default="olmo3_7b")
     ap.add_argument("--rows", type=int, default=0, help="first N rows only (0 = all)")
+    ap.add_argument("--row-start", type=int, default=0,
+                    help="skip the first K rows (row chunks across GPUs; merge_devce.py joins the chunk JSONs)")
     ap.add_argument("--attn-backend", default="flash_2")
     ap.add_argument("--label", default="", help="free-form name stored in the JSON (e.g. stage2-yarn4)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
     t_all = time.time()
-    rows, masks, meta = load_shard(a.dev, a.rows or None, a.family)
+    rows, masks, meta = load_shard(a.dev, a.rows or None, a.family, a.row_start)
     n, L = rows.shape
     log(f"{n} rows x {L} tokens, {int(masks[:, 1:].sum())} scored targets, from {a.dev}")
     cfg = build_cfg(a.family, a.yarn_factor, a.attn_backend)
@@ -289,7 +295,7 @@ def main(argv=None):
         "summary": summ,
         "bins": [{"name": nm, "lo": lo, "hi": hi} for nm, lo, hi in sc["bins"]],
         "per_row": {"loss_sum": sc["sums"].tolist(), "tokens": sc["cnts"].tolist()},
-        "row_ids": list(range(n)),
+        "row_ids": list(range(a.row_start, a.row_start + n)),
         "shard_meta": {k: meta.get(k) for k in ("source", "buckets", "tokenizer", "num_instances", "seed")},
         **ck_info,
         "timing_s": {"load": load_s, "score": sc["score_seconds"], "total": time.time() - t_all},
