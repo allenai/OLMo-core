@@ -25,7 +25,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-otr (online); https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e (frozen)
-next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1; objective per Prasann 2026-10-22 = gradient FIDELITY of the truncated pass, train-time only) - smoke otr30L4 s488 01M5HBAQCB9N0ZWN5KMDHM81VG; FRESH-DATA setting (Prasann's focus): otr30L4 / otr30M8 / rnd30 x s976 / s1464, names f8k-mt4-<arm>-s<rows>-tdb-lr2e-06 (ids in records/online-token-router.md; all with a charged full-context step every 8); gradient-fidelity probe 01M5HBH3XHQ45E55RA7XZ3N77X; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
+next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1; objective per Prasann 2026-10-22 = gradient FIDELITY of the truncated pass, train-time only) - smoke otr30L4 s488 01M5HEBP5MNE30H9XPV1HZKGX6; FRESH-DATA setting (Prasann's focus): otr30L4 / otr30M8 / rnd30 x s976 / s1464, names f8k-mt4-<arm>-s<rows>-tdb-lr2e-06 (ids in records/online-token-router.md; all with a charged full-context step every 8); gradient-fidelity probe 01M5HBH3XHQ45E55RA7XZ3N77X; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
 ---
 
 # learned_router

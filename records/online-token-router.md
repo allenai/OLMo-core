@@ -182,15 +182,15 @@ Recorded with `ops result add --check` (metric prefix `otrprobe_`, run `otr-prob
 * **Recipe.** mt4s488, 122 steps, 16 rows/step, 2 GPUs, LR 2e-6 (the rule arms' LR), input drop.
 * **Router.** keep 0.3, doc_share 1, explore 0.1, layer-4 prefix features, ridge 0.1, 2,048 samples per row, a
   full-context step every 8 steps.
-* **Runs.** Arms otr30L4 01M5HBAQCB9N0ZWN5KMDHM81VG, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
-  01M5HBD2K8W5772DDZN4RY1H1J. Two earlier launches were cancelled while still pending: one ran on a stale commit,
-  the other predated the full-context steps.
+* **Runs.** Arms otr30L4 01M5HEBP5MNE30H9XPV1HZKGX6, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
+  01M5HBD2K8W5772DDZN4RY1H1J. Earlier launches were cancelled while still pending (stale commit; no full-context steps; then the
+  wandb-shutdown crash fixed in 0b5b21ace, which killed the parent's tdb runs after their last step).
 * **Fresh-data setting** (Prasann, 2026-10-22: at matched FLOPs a drop method gets MORE steps on FRESH rows, same
   16-row batch). Shards mt4s976 (3,904 rows, 244 steps) and mt4s1464 (5,856 rows, 366 steps) are first-N supersets
   of mt4s488. Runs are named to parse in `collect_pareto_points.py` (`-tdb`):
-  * input drop: f8k-mt4-otr30L4-s976 / -s1464-tdb-lr2e-06 (01M5HBY9A2YM6E74V9950H2APH / 01M5HC0D3HR75297V8AFTWPH55);
-  * mid-stack: otr30M8 s976 / s1464 (01M5HC2NEG323SKEE60DF3XDX5 / 01M5HC4SYNDB344T66VR8GW5G6);
-  * random control: rnd30 s976 / s1464 (01M5HC76FY3TVXA8XWCPATVXK0 / 01M5HC9EJ69DF6DW69W0NCM19J).
+  * input drop: f8k-mt4-otr30L4-s976 / -s1464-tdb-lr2e-06 (01M5HE2MSXTW735EYR4XFSC6ZY / 01M5HE4HKQRJV2QB182QYA7BMC);
+  * mid-stack: otr30M8 s976 / s1464 (01M5HE5Q24QPHDSFAZ0NTBJFM1 / 01M5HE81E9HE1PS3JC412JG3R0);
+  * random control: rnd30 s976 / s1464 (01M5HE9PPY8TACWWW3HYHTFF45 / 01M5HEAN3B6KCJS211DHP3CX2B).
 
   The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
   tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
