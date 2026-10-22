@@ -5,10 +5,10 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (13 mt4 runs evaluated; seed repeats + mt11 queued)
+status: active (mt4 ablations evaluated: drop layer, router target, exploration, de16; M6/M12 + per-task runs in progress)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
-summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop point matters most, selection grows with training.
+summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop at block 8 (1 and 4 fail), gradient-norm target (activation-strength dh = random), exploration share 0-50% irrelevant.
 ---
 # Online train-time token router
 
@@ -387,7 +387,72 @@ tdb Beaker runs; they finished training before their shutdown crash.
 * **What can close it.** The keep-0.1 / block-4 / dense-every-16 arms (queued) cut the full-row share; a CUDA-graph
   / fixed-capacity gather (as in `layerskip/fastskip.py`) would cut the rest.
 
-## Long-context screen (ds64 setting, queued 2026-10-22)
+## Follow-up ablations (2026-10-22, later)
+
+All otr10M8-style (keep 0.1, a full-context step every 8, LR 2e-6, mt4s1464 = 366 steps unless noted). Scores are
+8k, eval_size 500, no-cot, recorded with `ops result add --check`. Δ = against the best-LR dense curve at the same PF
+(Beaker H100, interpolated: at 471 PF contra 0.904, nq 0.902, oolong 0.608, outlier 0.339). Single seed per cell.
+Lambda runs (2 × A100, node02, name `-lro-...-lam`) are compared with a same-cluster otr10M8 run (seed 1).
+
+**1. Drop layer: block 8, not earlier.** contra / nq / oolong / outlier:
+
+| run | where | PF | scores |
+|---|---|---|---|
+| otr10M8-s1 | Lambda | 471 | 0.928 / 0.902 / 0.664 / 0.641 |
+| otr10M4 | Lambda | — | 0.781 / 0.884 / 0.613 / 0.372 |
+| otr10M1 | Lambda | — | 0.767 / 0.882 / 0.617 / 0.322 |
+| otr10M8-s976 | Beaker | 319 | 0.895 (+0.018) / 0.908 / 0.614 / 0.386 |
+| otr10M4-s976 | Beaker | 256 | 0.728 (−0.130) / 0.848 / 0.578 / 0.333 |
+| otr10M1-s976 | Beaker | 209 | 0.667 (−0.173) / 0.872 / 0.598 / 0.317 |
+
+Routing after block 1 or 4 falls back to input-drop behaviour (contradiction −0.15, outlier −0.27 to −0.32 vs M8).
+The bracket otr10M6 / otr10M12 (Lambda 113719 / 113720) tests whether block 7, the second full-attention layer, is
+what matters and whether later splits keep improving.
+
+**2. Router target (Prasann: "keep important tokens that are already good").** Targets: `gnorm` log ||dL/dh8||;
+`gxh` log |<dL/dh8, h8>|; `dh` log ||h8 − h0||, the residual change through blocks 0-7 (activation strength, no backward,
+does not vanish when a token is learned); `mix` the within-row mean of the gnorm and dh ranks. Attention mass was not
+used (flash attention exposes no weights). Lambda, all at 471 PF:
+
+| target | contra | nq | oolong | outlier |
+|---|---|---|---|---|
+| gnorm (seed 1) | 0.928 (+0.024) | 0.902 (+0.000) | 0.664 (+0.056) | 0.641 (+0.302) |
+| gxh | 0.924 (+0.020) | 0.918 (+0.016) | 0.618 (+0.010) | 0.622 (+0.283) |
+| mix | 0.913 (+0.009) | 0.928 (+0.026) | 0.630 (+0.022) | 0.413 (+0.074) |
+| dh | 0.890 (−0.014) | 0.928 (+0.026) | 0.622 (+0.014) | 0.359 (+0.020) |
+
+Gradient fidelity of the same choice on the BASE checkpoint (`grad_fidelity.py`, mid8, cos of the parameter gradient
+vs the full pass, medians over ⚠ 48 held-out rows only; unrelated rows 0.40):
+
+| keep | gnorm router / oracle | gxh router / oracle | mix router / oracle | dh router / oracle | random |
+|---|---|---|---|---|---|
+| 0.1 | 0.739 / 0.775 | 0.751 / 0.754 | 0.669 / 0.587 | 0.584 / 0.574 | 0.597 |
+| 0.3 | 0.879 / 0.914 | 0.907 / 0.870 | 0.791 / 0.662 | 0.605 / 0.609 | 0.661 |
+
+Spearman of the targets with gnorm over body tokens: gxh +0.64, mix +0.64, dh −0.165. Fidelity and training agree:
+gnorm ≈ gxh > mix > dh ≈ random. The tokens with the largest early residual change are not the ones the gradient
+needs (dh is slightly anti-correlated with it), and on outlier, where the needed token is the one that does not fit,
+dh throws away nearly all of the router's gain. A fit-free "top-k by dh" rule was queued (dh10M8 / dh10M8de0,
+`--st-otr-score dh`) and cancelled at 33 min because its fidelity is below random. Keep gnorm.
+
+**3. Exploration share** (otr10M8, s1464, 471 PF): 0% 0.919 / 0.898 / 0.621 / 0.595; 10% 0.947 / 0.918 / 0.629 /
+0.577; 30% 0.929 / 0.906 / 0.623 / 0.644; 50% 0.934 / 0.898 / 0.630 / 0.592; 100% (random) 0.922 / 0.910 / 0.635 /
+0.423. 0-50% are within noise; selection bias from exploiting the router does no harm. Random loses ≈ 0.17 on outlier.
+
+**4. Fewer full-context steps (de16) does not pay.** otr10M8de16-s976 (287 PF) 0.877 / 0.884 / 0.601 / 0.340 is
+roughly dense-matched, vs otr10M8-s976 (319 PF) +0.018 / +0.016 / +0.004 / +0.083. otr10M4de16 is below dense on
+contradiction at both budgets.
+
+**5. Seed noise.** otr30M8sd1-s976 0.917 / 0.916 / 0.619 / 0.494 vs seed 0 0.926 / 0.908 / 0.591 / 0.365: outlier
+moves 0.13 between seeds at s976, contradiction / nq stay within 0.01. Single-seed outlier differences below ≈ 0.15
+at s976 do not count. (s1464 repeat evaluating.)
+
+## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
+
+Cancelled before any started (Prasann: reproduce the per-task numbers instead, since the mixed runs give fewer
+per-task datapoints). Per-task runs on the fast8k per-task pools (`ds64/fast8k/shards/<task>_g16M`, oolong `_g16M_eg`,
+122 steps, query after): `f8k-<task>-otr10M8-16M-tdp-lr2e-06` for all four tasks plus otr30M8 on contradiction and
+outlier, evals running. The original ds64 plan, for reference:
 
 `research/token_routing/online_router/launch_ds64_otr.py`, state `state_ds64.json`. The parent session's reason:
 * At 8k, otr10M8-s1464 recovers about half of ds64's per-task wins. ds64 wins grow with length (contradiction +0.11
