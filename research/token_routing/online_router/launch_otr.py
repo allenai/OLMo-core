@@ -32,10 +32,13 @@ WANDB_GROUP = os.environ.get("OTR_WANDB_GROUP", "f8k-otr")
 _OTR = "--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --attn-backend flash_2"
 
 
-def otr(keep, *, layer=4, drop=0, share=1.0, explore=0.1, extra=""):
+def otr(keep, *, layer=4, drop=0, share=1.0, explore=0.1, dense_every=8, extra=""):
+    """``dense_every``: every N-th step trains on the FULL context. Those steps give the router unbiased
+    full-pass gradient targets for every token and the online fidelity estimate
+    (online_router/fid_mass_*); they are ordinary dense steps, so the FLOP meter charges them in full."""
     feat = f"--st-otr-drop-layer {drop}" if drop else f"--st-otr-feature-layer {layer}"
     return (f"{_OTR} --st-otr-keep-frac {keep} --st-otr-explore-frac {explore} --st-otr-doc-share {share} "
-            f"{feat} {extra}").strip()
+            f"--st-otr-dense-every {dense_every} {feat} {extra}").strip()
 
 
 #: arm -> trainer flags. Names: otr<keep%><L<feature layer> | M<mid-stack drop layer>>[-variant].
@@ -46,7 +49,8 @@ ARMS = {
     "otr30L4-gold": otr(0.3, share=0.5, extra="--st-otr-use-gold"),
     "otr15L4": otr(0.15),
     "otr50L4": otr(0.5),
-    "otr30L4-de4": otr(0.3, extra="--st-otr-dense-every 4"),   # every 4th step full context
+    "otr30L4-de4": otr(0.3, dense_every=4),                    # every 4th step full context
+    "otr30L4-de0": otr(0.3, dense_every=1000),                 # no full-context steps after warmup
     "rnd30": otr(0.3, explore=1.0),                            # control: same budget, uniformly random tokens
 }
 
