@@ -119,7 +119,12 @@ class WandBCallback(Callback):
                 log.warning("Finalizing failed W&B run...")
             else:
                 log.info("Finalizing successful W&B run...")
-            self.wandb.finish(exit_code=exit_code, quiet=True)
+            try:
+                self.wandb.finish(exit_code=exit_code, quiet=True)
+            except TypeError:
+                # wandb releases without the ``quiet`` kwarg (the torch 2.13 Beaker image) raised here at
+                # shutdown, AFTER the last step, so the post-fit model export never ran (2026-10-22)
+                self.wandb.finish(exit_code=exit_code)
             self._finalized = True
 
     def pre_train(self):
