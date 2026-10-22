@@ -112,6 +112,7 @@ def resolve_keep_docs(
     keep_seed: int,
     mix_p_full: float = 0.0,
     mix_call: int = 0,
+    row_salt: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     The ``(B, n_docs)`` bool keep mask for one forward: the holder's gold-aware set when the
@@ -130,6 +131,10 @@ def resolve_keep_docs(
     :param mix_call: Call index for the curriculum draw, so a given row flips between
         compressed/full across epochs while staying deterministic given the data order (and
         identical across layers and activation-checkpoint recompute within one forward).
+    :param row_salt: Optional ``(B,)`` int64 per-row salt mixed into the fallback draw's row
+        signature. The signature is a hash of the CHUNK LAYOUT only, which is identical for every
+        row when the documents are fixed position blocks (``positional_block_size``) -- without a
+        salt every such row would keep the same blocks. ``None`` is bit-identical to before.
     """
     B = chunk_ids.shape[0]
     device = chunk_ids.device
@@ -152,6 +157,8 @@ def resolve_keep_docs(
         (chunk_ids.to(torch.int64) + 5)
         * torch.arange(1, chunk_ids.shape[1] + 1, dtype=torch.int64, device=device)
     ).sum(dim=-1)
+    if row_salt is not None:
+        sig = sig ^ _splitmix64(row_salt.to(device=device, dtype=torch.int64))
     d = torch.arange(n_docs, dtype=torch.int64, device=device)
     h = _splitmix64(sig[:, None] ^ _splitmix64(d[None, :] + keep_seed))
     u = (h & 0xFFFFFF).to(torch.float32) / float(1 << 24)

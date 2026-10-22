@@ -1656,6 +1656,16 @@ def parse_args() -> argparse.Namespace:
         "eval-side grid, where gold_fl20p8_noslot == gold_fl20p8 on every cell (2026-09-22).",
     )
     ap.add_argument(
+        "--st-block-size",
+        type=int,
+        default=0,
+        help="softtoken: > 0 = positional-block mode for MARKER-FREE rows (e.g. the olmo3_cptdrop "
+        "CPT shards, EOS + one 32,767-token window): a row's 'documents' are consecutive blocks of "
+        "this many positions after the leading EOS (last partial block included) instead of "
+        "<|doc_start|>/<|doc_end|> spans; every keep rule applies per block. Needs --st-gold-blind. "
+        "0 = marker documents (historical).",
+    )
+    ap.add_argument(
         "--st-span-len",
         type=int,
         default=12,
@@ -2018,6 +2028,8 @@ def parse_args() -> argparse.Namespace:
             ]
             if bad:
                 ap.error(f"--variant softtoken with --pack (segment mode): {', '.join(bad)}")
+        if opts.st_block_size > 0 and (not opts.st_gold_blind or opts.st_header_stop_id is not None):
+            ap.error("--st-block-size needs --st-gold-blind and no --st-header-stop-id")
         if opts.compile:
             print("[ctc-suite] softtoken: forcing --no-compile (data-dependent compacted shapes)")
             opts.compile = False
@@ -2028,6 +2040,8 @@ def parse_args() -> argparse.Namespace:
     mix_requested = (
         opts.st_mix_start_p > 0.0 or opts.st_mix_end_p > 0.0 or opts.st_mix_anneal_frac != 1.0
     )
+    if opts.st_block_size > 0 and opts.variant != "softtoken":
+        ap.error(f"--st-block-size is only honoured by --variant softtoken (got {opts.variant!r})")
     if opts.st_slot_mode != "mean" and opts.variant != "softtoken":
         ap.error(
             f"--st-slot-mode is only honoured by --variant softtoken (got {opts.variant!r}); "

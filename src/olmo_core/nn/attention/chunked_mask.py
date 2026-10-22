@@ -39,6 +39,7 @@ __all__ = [
     "build_chunked_allowed_mask",
     "build_chunked_mask_mod",
     "build_chunk_ids_from_tokens",
+    "build_positional_block_chunk_ids",
     "build_is_anchor",
     "mark_doc_headers_free",
     "doc_body_groups",
@@ -288,6 +289,50 @@ def build_chunk_ids_from_tokens(
         sink = has_start & (pos < first_start) & (chunk_ids == FREE_CHUNK_ID)
         chunk_ids = torch.where(sink, torch.full_like(chunk_ids, SINK_CHUNK_ID), chunk_ids)
 
+    return chunk_ids.to(torch.int32)
+
+
+def build_positional_block_chunk_ids(
+    input_ids: torch.Tensor,
+    *,
+    block_size: int,
+    eos_id: int,
+) -> torch.Tensor:
+    """
+    Per-token ``chunk_id`` roles ``(B, S)`` for MARKER-FREE rows: each row's "documents" are
+    consecutive ``block_size``-token position blocks instead of ``<|doc_start|>``/``<|doc_end|>``
+    spans, so the pooled-soft-token keep rules (whole-block ``keep_prob``, per-block
+    ``first_last`` / ``rule`` / ``spans`` fractions) apply unchanged to plain-text pretraining rows.
+
+    Layout (the OLMo 3 CPT shards, ``chunk_by="positional512"``: EOS + one 32,767-token window):
+
+    * A leading ``eos_id`` at position 0 is ``FREE`` (always kept) and blocks start after it, so
+      a 32,768-token row is 63 full 512-token blocks plus a final 511-token block. Without a
+      leading EOS, blocks start at position 0.
+    * The last partial block is a block like any other.
+    * A trailing run of ``eos_id`` (right padding) is ``PAD`` except its first token, which stays
+      in the last block -- the same "everything strictly after the terminating EOS is pad" rule
+      as :func:`build_chunk_ids_from_tokens`. Interior EOS tokens are ordinary block tokens.
+
+    Block ids increase with position, which :func:`doc_body_groups` relies on.
+
+    :returns: An int32 tensor of shape ``(B, S)``.
+    """
+    if block_size <= 0:
+        raise ValueError(f"block_size must be > 0, got {block_size}")
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    B, S = input_ids.shape
+    device = input_ids.device
+    pos = torch.arange(S, device=device).expand(B, S)
+    lead = (input_ids[:, :1] == eos_id).to(torch.long)  # (B, 1)
+    chunk_ids = torch.div(pos - lead, block_size, rounding_mode="floor")
+    chunk_ids = torch.where(pos < lead, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+    # Trailing EOS run -> PAD, keeping its first token (the terminator) as content.
+    non_eos = (input_ids != eos_id) & (pos >= lead)
+    last_real = torch.where(non_eos, pos, torch.full_like(pos, -1)).max(dim=1, keepdim=True).values
+    pad_from = torch.maximum(last_real + 2, lead)  # first pad position
+    chunk_ids = torch.where(pos >= pad_from, torch.full_like(chunk_ids, PAD_CHUNK_ID), chunk_ids)
     return chunk_ids.to(torch.int32)
 
 

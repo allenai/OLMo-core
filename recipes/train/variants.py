@@ -216,6 +216,7 @@ class SoftTokenOptions(VariantOptions):
     st_keep_token_weights: Optional[str] = None
     st_keep_token_log_every: int = 50
     st_drop_slots: bool = False
+    st_block_size: int = 0
     st_slot_mode: str = "mean"
     st_slot_stop_topk: int = 100
     st_slot_stop_rows: int = 512
@@ -1013,6 +1014,7 @@ class SoftToken(Variant):
             pad_multiple=getattr(o, "st_pad_multiple", 1),
             span_len=getattr(o, "st_span_len", 12),
             kept_doc_k=getattr(o, "st_kept_doc_k", None),
+            positional_block_size=o.st_block_size,
             # Compression-mixing curriculum: with st_gold_blind there is NO keep hook, so the model
             # applies it to the seeded keep_prob draw itself; otherwise the hook carries it.
             mix_start_p=o.st_mix_start_p,
@@ -1037,6 +1039,7 @@ class SoftToken(Variant):
             f"[variants] softtoken: slot_mode={o.st_slot_mode} header_stop_id={o.st_header_stop_id} "
             f"(count {o.st_header_stop_count}, extra {o.st_header_extra_tokens}) "
             f"detach_gdn={not o.st_no_detach_soft_gdn} drop_slots={o.st_drop_slots} "
+            f"block_size={o.st_block_size} "
             f"detach={not o.st_no_detach_soft_kv} len_bias={o.st_len_bias} "
             f"distill_prob={o.st_distill_prob} keep_mode={o.st_keep_mode} "
             f"n_random={o.st_n_random_range or o.st_n_random} keep_frac={o.st_keep_frac} "

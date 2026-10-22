@@ -199,7 +199,14 @@ class FlopMeterCallback(Callback):
             self.trainer.record_metric(
                 "flop_meter/compaction_ratio", comp["tokens_in"] / comp["tokens_out"]
             )
+            if comp.get("labels_in"):
+                # train CE is divided by the PRE-compaction label count: divide the logged CE
+                # by this to get the mean CE over the labels that were actually trained on.
+                self.trainer.record_metric(
+                    "flop_meter/kept_label_frac", comp["labels_out"] / comp["labels_in"]
+                )
             comp["tokens_in"] = comp["tokens_out"] = comp["rows"] = 0
+            comp["labels_in"] = comp["labels_out"] = 0
 
         if self.per_example:
             dense_flops, actual, tokens, n_ex = self._per_example_flops(m)

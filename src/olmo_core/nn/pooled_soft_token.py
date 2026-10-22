@@ -355,11 +355,14 @@ def example_lengths(
     Packed rows (``doc_lens`` given, ``(B, max_docs)`` zero-padded): one entry per document of
     each row, skipping documents made only of ``pad_id`` (the packer's trailing fill). Padded rows
     (``doc_lens`` is ``None``, one example per row): the row up to and including its first
-    ``pad_id`` (== EOS on the Qwen paths), or the whole row if it has none.
+    ``pad_id`` (== EOS on the Qwen paths), or the whole row if it has none. A ``pad_id`` at
+    position 0 is a leading EOS (the OLMo 3 CPT rows are EOS + one document window), not a
+    terminator: without this every such row would be charged as one token.
     """
     out: List[int] = []
     if doc_lens is None:
         is_pad = input_ids == pad_id
+        is_pad[:, 0] = False
         has = is_pad.any(dim=1)
         first = is_pad.int().argmax(dim=1)
         lens = torch.where(has, first + 1, torch.full_like(first, input_ids.shape[1]))

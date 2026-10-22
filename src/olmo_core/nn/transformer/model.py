@@ -365,6 +365,7 @@ class Transformer(nn.Module):
         pad_multiple: int = 1,
         span_len: int = 12,
         kept_doc_k: Optional[float] = None,
+        positional_block_size: int = 0,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -484,6 +485,19 @@ class Transformer(nn.Module):
         :param pad_multiple: Round the compacted width up to a multiple of this. The width is
             data-dependent and FLA's GDN kernels autotune at every new one (~25-50 s); ``1`` keeps
             the exact width.
+        :param positional_block_size: ``> 0`` = **positional-block mode** for MARKER-FREE rows
+            (plain-text pretraining windows): a row's "documents" are consecutive blocks of this
+            many positions (a leading EOS at position 0 is kept real and not in any block; the
+            last partial block is a block too; see
+            :func:`~olmo_core.nn.attention.chunked_mask.build_positional_block_chunk_ids`)
+            instead of ``doc_start_id``/``doc_end_id`` spans, which are then unused. Every keep
+            rule applies unchanged per block (``keep_prob`` whole blocks, ``keep_token_rule`` /
+            ``keep_token_k`` per block, ``header_extra_tokens`` = the first N tokens of every
+            block). The random whole-block draw is salted with a hash of the row's tokens, since
+            the block layout alone is the same for every row. Needs the gold-blind path (no
+            :func:`~olmo_core.nn.attention.pooled_doc_kv.install_pooled_doc_keep` hook); refuses
+            ``header_stop_id`` (no header to anchor) and paired distillation. ``0`` (default) =
+            marker documents, bit-identical to before.
         """
         if self._document_chunk_attention is not None:
             raise OLMoConfigurationError(
@@ -518,6 +532,23 @@ class Transformer(nn.Module):
             raise OLMoConfigurationError(
                 f"unknown slot_mode {slot_mode!r} (expected one of {SLOT_MODES})"
             )
+        if positional_block_size < 0:
+            raise OLMoConfigurationError("positional_block_size must be >= 0")
+        if positional_block_size > 0:
+            bad_pos = [
+                name
+                for name, on in (
+                    ("header_stop_id (positional blocks have no header)", header_stop_id is not None),
+                    ("paired distillation (distill_prob > 0)", distill_prob > 0.0),
+                    ("oracle_cache", oracle_cache is not None),
+                )
+                if on
+            ]
+            if bad_pos:
+                raise OLMoConfigurationError(
+                    f"positional_block_size={positional_block_size} does not support: "
+                    f"{', '.join(bad_pos)}"
+                )
         if slot_mode != "mean" and not slot_stop_ids:
             raise OLMoConfigurationError(
                 f"slot_mode={slot_mode!r} needs a non-empty slot_stop_ids (build it with "
@@ -617,6 +648,8 @@ class Transformer(nn.Module):
             "pad_multiple": int(pad_multiple),
             "span_len": int(span_len),
             "kept_doc_k": None if kept_doc_k is None else float(kept_doc_k),
+            # Positional-block mode (marker-free rows): documents = fixed position blocks.
+            "positional_block_size": int(positional_block_size),
             "slot_stop_ids": None if slot_stop_ids is None else [int(t) for t in slot_stop_ids],
             "slot_stop_mask": None,
             "slot_centroid": str(slot_centroid),
@@ -1060,13 +1093,36 @@ class Transformer(nn.Module):
             raise OLMoConfigurationError(
                 "pooled soft tokens are not supported with context/pipeline parallelism"
             )
-        chunk_ids = build_chunk_ids_from_tokens(
-            input_ids,
-            doc_start_id=cfg["doc_start_id"],
-            doc_end_id=cfg["doc_end_id"],
-            eos_id=cfg["eos_id"],
-            mode="chunked",
-        )
+        block = int(cfg.get("positional_block_size", 0))
+        row_salt = None
+        if block > 0:
+            # Marker-free rows: documents are fixed position blocks. No token is a marker, so
+            # every downstream helper gets ids that never match (-1) and treats each block's
+            # tokens as its body.
+            from ..attention.chunked_mask import build_positional_block_chunk_ids
+
+            if self._pooled_keep_holder is not None:
+                raise OLMoConfigurationError(
+                    "positional_block_size needs the gold-blind keep path; a gold keep hook "
+                    "(install_pooled_doc_keep) is installed"
+                )
+            chunk_ids = build_positional_block_chunk_ids(
+                input_ids, block_size=block, eos_id=cfg["eos_id"]
+            )
+            doc_start_id = doc_end_id = -1
+            # The block layout is the same for every row, so the seeded whole-block draw needs a
+            # per-row salt or every row keeps the same blocks: a position-weighted token hash.
+            w = torch.arange(1, input_ids.shape[1] + 1, dtype=torch.int64, device=input_ids.device)
+            row_salt = ((input_ids.to(torch.int64) + 1) * w).sum(dim=-1)
+        else:
+            doc_start_id, doc_end_id = cfg["doc_start_id"], cfg["doc_end_id"]
+            chunk_ids = build_chunk_ids_from_tokens(
+                input_ids,
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
+                eos_id=cfg["eos_id"],
+                mode="chunked",
+            )
         n_docs = int(chunk_ids.max().item()) + 1
         if n_docs <= 0:
             return None
@@ -1076,18 +1132,31 @@ class Transformer(nn.Module):
         extra_tokens = int(cfg.get("header_extra_tokens", 0))
         # "first" with 0 < k < 1 is a per-document FRACTION (first ceil(k*|body|) tokens) and goes
         # through the top-k path with first_scores; integer k stays on the header call below.
-        frac_first = keep_rule == "first" and 0.0 < float(cfg["keep_token_k"]) < 1.0
+        # Positional blocks have no <|doc_start|> to count from, so integer "first" goes through
+        # the same top-k path (first_scores keeps the first k tokens of every block).
+        frac_first = keep_rule == "first" and (
+            block > 0 or 0.0 < float(cfg["keep_token_k"]) < 1.0
+        )
         if keep_rule == "first" and not frac_first:
             extra_tokens = int(cfg["keep_token_k"])
         pre_free_chunk_ids = chunk_ids if keep_rule != "none" else None
-        if cfg.get("header_stop_id") is not None or extra_tokens > 0:
+        if block > 0 and extra_tokens > 0:
+            # header_extra_tokens per positional block: the first N tokens of every block stay
+            # real (a block of <= N tokens is kept whole).
+            from ..attention.chunked_mask import FREE_CHUNK_ID
+
+            pos = torch.arange(input_ids.shape[1], device=input_ids.device).expand_as(chunk_ids)
+            lead = (input_ids[:, :1] == cfg["eos_id"]).to(pos.dtype)
+            head = (chunk_ids >= 0) & ((pos - lead) % block < extra_tokens)
+            chunk_ids = torch.where(head, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids)
+        elif cfg.get("header_stop_id") is not None or extra_tokens > 0:
             from ..attention.chunked_mask import mark_doc_headers_free
 
             chunk_ids = mark_doc_headers_free(
                 chunk_ids,
                 input_ids,
-                doc_start_id=cfg["doc_start_id"],
-                doc_end_id=cfg["doc_end_id"],
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
                 stop_id=cfg["header_stop_id"],
                 stop_count=cfg["header_stop_count"],
                 extra_tokens=extra_tokens,
@@ -1110,16 +1179,16 @@ class Transformer(nn.Module):
                 scores = first_scores(
                     input_ids,
                     chunk_ids,
-                    doc_start_id=cfg["doc_start_id"],
-                    doc_end_id=cfg["doc_end_id"],
+                    doc_start_id=doc_start_id,
+                    doc_end_id=doc_end_id,
                     n_docs=n_docs,
                 )
             elif keep_rule == "first_last":
                 scores = first_last_scores(
                     input_ids,
                     chunk_ids,
-                    doc_start_id=cfg["doc_start_id"],
-                    doc_end_id=cfg["doc_end_id"],
+                    doc_start_id=doc_start_id,
+                    doc_end_id=doc_end_id,
                     n_docs=n_docs,
                 )
             else:
@@ -1129,8 +1198,8 @@ class Transformer(nn.Module):
                     tables=cfg["keep_token_tables"],
                     weights=cfg.get("keep_token_weights") or DEFAULT_KEEP_TOKEN_WEIGHTS,
                     sd=cfg.get("keep_token_sd"),
-                    doc_start_id=cfg["doc_start_id"],
-                    doc_end_id=cfg["doc_end_id"],
+                    doc_start_id=doc_start_id,
+                    doc_end_id=doc_end_id,
                     n_docs=n_docs,
                 )
             tier_scores = scores
@@ -1138,8 +1207,8 @@ class Transformer(nn.Module):
                 chunk_ids,
                 input_ids,
                 scores,
-                doc_start_id=cfg["doc_start_id"],
-                doc_end_id=cfg["doc_end_id"],
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
                 k=float(cfg["keep_token_k"]),
                 n_docs=n_docs,
             )
@@ -1152,8 +1221,8 @@ class Transformer(nn.Module):
                 chunk_ids,
                 input_ids,
                 cfg["keep_token_mask"],
-                doc_start_id=cfg["doc_start_id"],
-                doc_end_id=cfg["doc_end_id"],
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
                 n_docs=n_docs,
                 free_markers=cfg.get("keep_token_mask_markers", False) or False,
             )
@@ -1234,6 +1303,7 @@ class Transformer(nn.Module):
                 keep_seed=cfg["keep_seed"],
                 mix_p_full=p_full,
                 mix_call=cfg["mix_calls"] if mix_on else 0,
+                row_salt=row_salt,
             )
         else:
             # Whole-category keep: cluster the documents by the SAME slot vectors the pooled slot
@@ -1327,8 +1397,8 @@ class Transformer(nn.Module):
                 hdr_chunk_ids,
                 input_ids,
                 tier_scores,
-                doc_start_id=cfg["doc_start_id"],
-                doc_end_id=cfg["doc_end_id"],
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
                 k=float(cfg["kept_doc_k"]),
                 n_docs=n_docs,
             )
@@ -2415,6 +2485,7 @@ class Transformer(nn.Module):
                     "caps": {li: t_caps[li][d_rows, d_pos].detach() for li in t_caps},
                 }
             n_tokens_in = int(input_ids.numel())
+            labels_in = labels
             # PACKED rows (doc_lens given): unpack to one example per row so the per-example gold
             # fingerprints and the compaction apply unchanged, then re-pack the compacted examples
             # into one varlen row below (repack_compacted_rows).
@@ -2469,6 +2540,16 @@ class Transformer(nn.Module):
                 stats["tokens_in"] += n_tokens_in
                 stats["tokens_out"] += int(input_ids.numel())
                 stats["rows"] += int(input_ids.shape[0])
+                if labels_in is not None and labels is not None:
+                    # Live labels before/after compaction. The train module's loss divisor counts
+                    # them BEFORE compaction, so the logged CE is (true CE on kept labels) x
+                    # labels_out / labels_in; FlopMeterCallback logs that ratio.
+                    stats["labels_in"] = stats.get("labels_in", 0) + int(
+                        (labels_in != ignore_index).sum().item()
+                    )
+                    stats["labels_out"] = stats.get("labels_out", 0) + int(
+                        (labels != ignore_index).sum().item()
+                    )
                 kwargs["position_ids"] = rp_pos if packed else cb.position_ids
                 if oracle_ovr is not None:
                     kwargs["soft_kv_override_layers"] = oracle_ovr
