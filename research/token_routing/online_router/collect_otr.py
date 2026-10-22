@@ -3,7 +3,7 @@ training PF (the run's flops.json line), and the matched-FLOP comparison with th
 
     python research/token_routing/online_router/collect_otr.py [--rows out.jsonl] [--md out.md]
 
-Dense reference: every dense mt4 run of tokdrop_lr in ops results (Lambda, same recipe and base; campaigns lra / lrb /
+Dense reference: every dense mt4 run of tokdrop_lr in ops results (Lambda, same recipe and base; campaigns lra / lrb / lri /
 lre: mt4s488 at 31 / 61 / 122 steps, fresh-data mt4s976 = 244, mt4s1464 = 366), one curve per LR; each cell is compared
 with the BEST LR's curve at the run's PF (an LR enters once it has two points). PF for a dense run = steps x the per-step dense PF measured on our own runs
 (dense_equivalent_pflops / steps; dense-equivalent charges every token at the full cost), so the dense curve and the
@@ -28,11 +28,11 @@ def logs(ex):
 
 
 #: dense run names on Lambda: f8k-mt4s[<rows>]-dense-<campaign>-lr<lr>[-s<steps>]-lam (rows '' = 488, 1 epoch)
-DENSE_RE = re.compile(r"^f8k-mt4s(\d*)-dense-(lra|lrb|lre)-lr([0-9.e-]+?)(?:-s(\d+))?-lam$")
+DENSE_RE = re.compile(r"^f8k-mt4s(\d*)-dense-(lra|lrb|lre|lri)-lr([0-9.e-]+?)(?:-s(\d+))?-lam$")
 
 
 def dense_curves():
-    """{lr: {run: steps}} for every dense mt4 run in ops results (campaigns lra / lrb / lre, one epoch), and the
+    """{lr: {run: steps}} for every dense mt4 run in ops results (campaigns lra / lrb / lre / lri, one epoch), and the
     scores {(run, task, rung): value}. Per-cell reference = the best LR at the same PF (Prasann / parent session
     2026-10-22: LR 2e-6 wins outlier@2k and oolong@2k, 5e-6 wins contradiction@8k)."""
     out = subprocess.run(["/accounts/projects/berkeleynlp/prasann/bin/ops", "result", "show", "--experiment",
