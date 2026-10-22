@@ -233,7 +233,8 @@ def _gpu_hybrid():
 
 
 @pytest.mark.gpu
-def test_online_rule_on_gdn_hybrid_gpu():
+@pytest.mark.parametrize("mode", ["input_prefix", "mid_stack"])
+def test_online_rule_on_gdn_hybrid_gpu(mode):
     """GPU, GDN + attention: features from a no-grad prefix pass through blocks [0, 2) (GDN and
     attention on the FULL row), compaction to the budget, targets at the compacted embedding output,
     a refit, and the prefix pass charged as forward-only FLOPs."""
@@ -244,8 +245,10 @@ def test_online_rule_on_gdn_hybrid_gpu():
         pytest.skip("needs a GPU")
     pytest.importorskip("fla")
     model = _gpu_hybrid()
+    mid = mode == "mid_stack"
     router = OnlineTokenRouter(
-        OnlineRouterConfig(keep_frac=0.3, explore_frac=0.2, feature_layer=2, samples_per_row=64),
+        OnlineRouterConfig(keep_frac=0.3, explore_frac=0.2, samples_per_row=64,
+                           feature_layer=0 if mid else 2, drop_layer=2 if mid else 0),
         doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=256,
     )
     model.enable_pooled_soft_tokens(
@@ -264,11 +267,16 @@ def test_online_rule_on_gdn_hybrid_gpu():
         out.loss.backward()
         e = router._pending[-1]
         assert e["target"] is not None and e["ok"].all() and torch.isfinite(e["target"]).all()
-        # the prefix pass ran on the full (trimmed) row and was charged
-        assert model._flop_extra_actual >= prefix_flops * ids.numel() * 0.99
         comp = model._soft_token_compaction
-        if step >= 2:
-            assert comp["tokens_out"] < comp["tokens_in"]
+        if mid:
+            assert comp["tokens_out"] == comp["tokens_in"]
+            if step >= 2:
+                assert model._flop_extra_actual < 0  # blocks [2, 3) + head ran on the kept row only
+        else:
+            # the prefix pass ran on the full (trimmed) row and was charged
+            assert model._flop_extra_actual >= prefix_flops * ids.numel() * 0.99
+            if step >= 2:
+                assert comp["tokens_out"] < comp["tokens_in"]
         model._soft_token_compaction = None
     assert router.w is not None and torch.isfinite(router.w).all()
 
