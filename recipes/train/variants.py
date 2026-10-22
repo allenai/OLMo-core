@@ -227,6 +227,12 @@ class SoftTokenOptions(VariantOptions):
     st_mix_start_p: float = 0.0
     st_mix_end_p: float = 0.0
     st_mix_anneal_frac: float = 1.0
+    # (2026-10-22) these four were read with getattr(..., default) while missing from this dataclass,
+    # so options_from_namespace dropped them and every run silently used the defaults
+    st_pad_multiple: int = 256
+    st_span_len: int = 12
+    st_kept_doc_k: Optional[float] = None
+    st_keep_token_min: int = 0
 
 
 # ----------------------------------------------------------------------------------------------
@@ -1010,10 +1016,10 @@ class SoftToken(Variant):
             keep_token_log_every=o.st_keep_token_log_every,
             detach_soft_gdn=not o.st_no_detach_soft_gdn,
             drop_slots=o.st_drop_slots,
-            pad_multiple=getattr(o, "st_pad_multiple", 1),
-            span_len=getattr(o, "st_span_len", 12),
-            kept_doc_k=getattr(o, "st_kept_doc_k", None),
-            keep_token_min=getattr(o, "st_keep_token_min", 0),
+            pad_multiple=o.st_pad_multiple,
+            span_len=o.st_span_len,
+            kept_doc_k=o.st_kept_doc_k,
+            keep_token_min=o.st_keep_token_min,
             # Compression-mixing curriculum: with st_gold_blind there is NO keep hook, so the model
             # applies it to the seeded keep_prob draw itself; otherwise the hook carries it.
             mix_start_p=o.st_mix_start_p,
