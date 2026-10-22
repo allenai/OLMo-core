@@ -186,6 +186,23 @@ class FFNDropOptions(VariantOptions):
 
 
 @dataclass
+class LayerDropOptions(VariantOptions):
+    """layerdrop: train-time WHOLE-block skipping (olmo_core.nn.layer_drop), a fixed set and/or
+    random LayerDrop per optimizer step. No params; eval runs every block."""
+
+    train_skip_layers: str = ""
+    layer_drop_p: float = 0.0
+    layer_drop_schedule: str = "uniform"
+    layer_drop_exclude_first: int = 0
+    layer_drop_exclude_last: int = 0
+    layer_drop_rescale: bool = False
+
+    @property
+    def active(self) -> bool:
+        return bool(self.train_skip_layers.strip()) or self.layer_drop_p > 0
+
+
+@dataclass
 class SoftTokenOptions(VariantOptions):
     """softtoken: pooled-document soft tokens (compacted rows) + keep policy."""
 
@@ -835,6 +852,48 @@ class FFNDrop(Variant):
         }
 
 
+class LayerDrop(Variant):
+    """Train-time whole-block skipping (fixed set and/or LayerDrop). In train_ctc_suite this is a
+    modifier (``--train-skip-layers`` / ``--layer-drop-*`` on any arm, dense or softtoken); on
+    setA it is ``--variant layerdrop``. A skipped block's forward is never called, so it saves
+    wall-clock, not just FLOPs; the draw is seeded from (seed, global step), identical on all
+    ranks and constant across a step's micro-batches (LayerDropCallback)."""
+
+    name = "layerdrop"
+    options_cls = LayerDropOptions
+
+    def validate(self, o):
+        assert isinstance(o, LayerDropOptions)
+        if not o.active:
+            raise ValueError("layerdrop needs train_skip_layers or layer_drop_p > 0")
+
+    def post_build_model(self, model, o, ctx):
+        assert isinstance(o, LayerDropOptions)
+        from olmo_core.nn.layer_drop import parse_layer_list
+
+        model.enable_layer_drop(
+            fixed=set(parse_layer_list(o.train_skip_layers, len(model.blocks))),
+            p=o.layer_drop_p,
+            schedule=o.layer_drop_schedule,
+            exclude_first=o.layer_drop_exclude_first,
+            exclude_last=o.layer_drop_exclude_last,
+            rescale=o.layer_drop_rescale,
+            seed=ctx.seed,
+        )
+        plan = model._layer_drop
+        print(
+            f"[variants] layer-drop: fixed skip {sorted(plan.fixed)}, p={o.layer_drop_p} "
+            f"({o.layer_drop_schedule}) on {len(plan.probs)} eligible blocks, rescale="
+            f"{o.layer_drop_rescale}; expected blocks run {plan.expected_run_frac():.3f}",
+            flush=True,
+        )
+
+    def extra_callbacks(self, o, ctx):
+        from olmo_core.train.callbacks import LayerDropCallback
+
+        return {"layer_drop": LayerDropCallback()}
+
+
 # -- soft tokens -------------------------------------------------------------------------------
 
 
@@ -1219,6 +1278,7 @@ VARIANTS: Dict[str, Variant] = {
         KVRoute(),
         FlexCompute(),
         FFNDrop(),
+        LayerDrop(),
     )
 }
 #: setA spells the dense arm ``dense``.

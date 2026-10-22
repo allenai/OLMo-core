@@ -158,6 +158,8 @@ class Transformer(nn.Module):
         self._joint_budget: Optional[Dict[str, Any]] = None
         # Per-token block skipping (mixture-of-depths router): set by ``enable_block_skip``.
         self._block_skip: Optional[Dict[str, Any]] = None
+        # Train-time whole-block skipping (fixed set / LayerDrop): set by ``enable_layer_drop``.
+        self._layer_drop: Optional[Any] = None
         # Deliver router budget gradients through each block's output instead of a separate loss
         # term (olmo_core.nn.budget_attach): required under activation checkpointing, where the
         # separate term forces every block to be recomputed at the start of backward.
@@ -983,6 +985,52 @@ class Transformer(nn.Module):
             compact,
         )
 
+    def enable_layer_drop(
+        self,
+        *,
+        fixed: Optional[Set[int]] = None,
+        p: float = 0.0,
+        schedule: str = "uniform",
+        exclude_first: int = 0,
+        exclude_last: int = 0,
+        rescale: bool = False,
+        seed: int = 0,
+    ) -> None:
+        """
+        Enable train-time whole-block skipping (see :mod:`olmo_core.nn.layer_drop`): the ``fixed``
+        blocks are skipped on every training forward, and each other eligible block is skipped
+        with probability ``p`` per optimizer step (drawn from ``(seed, step)``, identical on all
+        ranks; the step comes from :class:`~olmo_core.train.callbacks.LayerDropCallback`). A
+        skipped block's forward is not called. Eval forwards run every block.
+
+        :raises ValueError: On an out-of-range layer, ``p`` outside ``[0, 1)``, or nothing to skip.
+        """
+        from ..layer_drop import LayerDropPlan
+
+        plan = LayerDropPlan(
+            n_layers=len(self.blocks),
+            fixed=frozenset(fixed or ()),
+            p=float(p),
+            schedule=schedule,
+            exclude_first=int(exclude_first),
+            exclude_last=int(exclude_last),
+            rescale=bool(rescale),
+            seed=int(seed),
+        )
+        if not plan.active:
+            raise OLMoConfigurationError("enable_layer_drop: no fixed layers and p == 0")
+        self._layer_drop = plan
+        log.info(
+            "Layer drop enabled: fixed=%s p=%.3f schedule=%s eligible=%d rescale=%s "
+            "(expected run frac %.3f)",
+            sorted(plan.fixed),
+            plan.p,
+            schedule,
+            len(plan.probs),
+            rescale,
+            plan.expected_run_frac(),
+        )
+
     def _attach_block_budget(self, h: torch.Tensor, block_idx: int) -> torch.Tensor:
         """
         Hand this block's router expectations their budget gradient through ``h`` (see
@@ -1585,11 +1633,19 @@ class Transformer(nn.Module):
         captured: Dict[int, torch.Tensor] = {}
         otr = getattr(self, "_online_token_router", None) if self.training else None
         otr_layer = otr.cfg.drop_layer if otr is not None else 0
+        ld = self._layer_drop if self.training else None
+        ld_skip = ld.skipped() if ld is not None else frozenset()
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
             if otr_layer > 0 and block_idx == otr_layer:
                 # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
                 h, all_block_kwargs = otr.mid_compact(self, h, all_block_kwargs)
+            if block_idx in ld_skip:
+                # whole-block skip (olmo_core.nn.layer_drop): identity, forward never called
+                if capture_layers is not None and block_idx in capture_layers:
+                    captured[block_idx] = h
+                continue
+            h_in = h
             block_kwargs = per_block_kwargs.get(block_idx, {})
             if self.compile_enabled:
                 mark_dynamic(h, (0, 1), strict=False)
@@ -1615,6 +1671,10 @@ class Transformer(nn.Module):
                 )
             else:
                 h = block(h, **all_block_kwargs, **block_kwargs, **extra)
+            if ld is not None and ld.rescale:
+                scale = ld.run_scale(block_idx)
+                if scale != 1.0:
+                    h = h_in + (h - h_in) * scale
             if self.budget_attach and h.requires_grad:
                 h = self._attach_block_budget(h, block_idx)
             if capture_layers is not None and block_idx in capture_layers:
