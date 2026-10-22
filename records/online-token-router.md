@@ -5,10 +5,10 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (offline probe done; smoke training running)
+status: active (offline probe + gradient fidelity done; training runs queued)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
-summary: Design + first evidence for a learned ONLINE keep router (ridge refit each step on per-token gradient norms, no heuristic init) and its mid-stack layer-skip variant; offline probe says early-layer features predict gradient mass (Spearman 0.5-0.67).
+summary: Learned ONLINE keep router (ridge refit each step on per-token gradient norms, no heuristic init) + mid-stack token exit; gradient fidelity at keep 0.3 is cos 0.88 mid-stack vs 0.54 input drop (base model, 12 rows/task); training comparison pending.
 ---
 # Online train-time token router
 
@@ -175,7 +175,58 @@ Recorded with `ops result add --check` (metric prefix `otrprobe_`, run `otr-prob
 * **Metrics.** `cos(g_drop, g_full)` over all parameters and over the blocks only,
   `||g_drop − g_full|| / ||g_full||`, the norm ratio, and ΔCE. The reference is the cosine between two unrelated
   rows' full gradients.
-* **Results.** _pending_.
+* **Code and data.** Commit 834c93eef; JSON `research/token_routing/online_router/results/gradfid_base/`; ops results
+  `gradfid_*`.
+
+Pooled over the four tasks, median over held-out rows (⚠ eval_size = 48 rows, 12 per task). Cells are
+cos(g_drop, g_full) / ‖g_drop − g_full‖ / ‖g_full‖ / ΔCE. **Two unrelated rows' full gradients already have
+cos 0.40** (nq 0.67, contradiction 0.28), so on the base model raw cosine is inflated by a shared row-independent
+direction. Compare against 0.40, not 0. The gold-aware bar rules are not in this table.
+
+| drop point · rule | ρ = 0.1 | ρ = 0.3 | ρ = 0.5 |
+|---|---|---|---|
+| input · router, per-document share | 0.42 / 1.02 / +0.37 | 0.54 / 0.95 / +0.07 | 0.73 / 0.74 / −0.01 |
+| input · router, row top-k | 0.41 / 1.02 / +0.42 | 0.57 / 0.88 / +0.07 | 0.73 / 0.72 / +0.01 |
+| input · oracle, per-document | 0.47 / 1.02 / +0.19 | 0.60 / 0.89 / +0.09 | 0.75 / 0.77 / +0.03 |
+| input · oracle, row top-k | 0.45 / 0.99 / −0.04 | 0.71 / 0.76 / −0.02 | 0.83 / 0.58 / −0.01 |
+| input · random, per-document | 0.39 / 1.04 / +0.47 | 0.46 / 0.97 / +0.40 | 0.51 / 0.92 / +0.32 |
+| input · first/last per document | 0.43 / 0.99 / +0.22 | 0.59 / 0.86 / +0.09 | 0.73 / 0.73 / +0.05 |
+| **mid8 · router, per-document** | **0.74 / 0.73 / +0.13** | **0.88 / 0.48 / +0.02** | **0.96 / 0.30 / +0.01** |
+| mid8 · oracle, per-document | 0.78 / 0.67 / +0.05 | 0.91 / 0.41 / +0.01 | 0.96 / 0.28 / −0.01 |
+| mid8 · random, per-document | 0.60 / 0.86 / +0.40 | 0.66 / 0.81 / +0.25 | 0.72 / 0.77 / +0.13 |
+
+Per task at ρ = 0.3, cos for router vs random vs oracle (per-document):
+
+| | contradiction | nq | outlier | oolong |
+|---|---|---|---|---|
+| input | 0.29 / 0.26 / 0.25 | 0.73 / 0.47 / 0.77 | 0.45 / 0.44 / 0.50 | 0.77 / 0.76 / 0.81 |
+| mid8 | 0.59 / 0.39 / 0.67 | 0.97 / 0.69 / 0.97 | 0.85 / 0.61 / 0.87 | 0.98 / 0.97 / 0.98 |
+
+What it says:
+
+1. **The mid-stack drop is the big lever for gradient fidelity.** Every token runs blocks 0–7 and dropped tokens
+   skip 8–31. At ρ = 0.3 the router keeps cos 0.88 with relative error 0.48, against 0.54 / 0.95 for the same
+   router dropping at the input. Mid8 at ρ = 0.1 (0.74 / 0.73) already matches the input drop at ρ = 0.5
+   (0.73 / 0.74), and it is cheaper.
+   * Approximate forward+backward cost is 8/32 + 24/32 × (kept share of the row).
+   * Mid8 at ρ = 0.1 keeps ≈ 15–20% of the row (markers, prompt and answer always stay), so it costs ≈ 0.36–0.40 of
+     dense. The input drop at ρ = 0.5 costs ≈ 0.55.
+   * The trained runs' `actual_pflops` will give the real numbers.
+   * This is consistent with the gradient-similarity record: the gradient arriving at kept tokens is redistributed
+     when context is removed early. Keeping the early layers full keeps that signal.
+2. **Under mid8 the router is near its ceiling.** Router vs oracle with the same per-document allocation: 0.88 vs
+   0.91 at ρ = 0.3, 0.74 vs 0.78 at ρ = 0.1. Random is far behind (0.66, 0.60). The router's value is clearest on
+   nq and outlier (+0.28 and +0.24 cos over random at ρ = 0.3) and on contradiction (+0.20).
+3. **At the input, the router beats random but not the first/last heuristic** (0.54 vs 0.59 at ρ = 0.3, a tie at
+   0.5). Even the oracle gains little over first/last there with per-document allocation (0.60). The large headroom
+   at the input is in row-level allocation (oracle row 0.71), which is exactly the gold-concentrating, leaky
+   direction. For input drops the per-document constraint costs fidelity. Mid-stack recovers most of it without
+   moving budget across documents.
+4. **ΔCE tracks fidelity, roughly.** Router and first/last are near-lossless in CE at ρ ≥ 0.3; random is not.
+5. **Caveats.**
+   * This is the BASE model: the first steps of training, not mid-training (a trained-checkpoint rerun is next).
+   * Raw cosine includes the shared direction (unrelated rows 0.40), and centred cosine was not computed.
+   * Only 12 rows per task.
 
 ## Smoke training (step 5)
 
