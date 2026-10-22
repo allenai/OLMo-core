@@ -360,6 +360,33 @@ What changes once the model is trained:
   4. The input router trails dense on contradiction at every budget. Input dropping is not the method.
   5. Single seed throughout. The seed-1 repeats of otr30M8 (s976 / s1464) and the 11-task runs are queued.
 
+### Wall-clock (same cluster: Beaker jupiter, 2 × H100, same base / batch / seq)
+
+`research/token_routing/online_router/wallclock.py`, JSON `results/wallclock.json`. Method: median gap between
+consecutive `[step=` log lines (steps ≥ 5), and train time from the first to the last step. Dense is the parent's
+tdb Beaker runs; they finished training before their shutdown crash.
+
+| run | s/step | routed / full-context steps | train time | FLOPs × dense-eq |
+|---|---|---|---|---|
+| dense s488 / s976 / s1464 | 9.10 / 9.13 / 9.20 | – | 18.4 / 37.0 / 56.0 min | 1.00 |
+| otr30M8 (mid-stack, keep 0.3) s976 / s1464 | 5.40 / 5.43 | 5.38 / 7.57 | 23.4 / 34.8 min | 0.54 |
+| otr10M8 (mid-stack, keep 0.1) s976 / s1464 | 4.89 / 4.84 | 4.85 / 7.58 | 21.7 / 32.0 min | 0.41 |
+| rnd30M8 / fl30M8 s1464 | 5.43 / 5.62 | 5.40 / 7.63 | 34.8 / 36.4 min | 0.54 |
+| otr30L4 (input drop) s976 / s1464 | 4.71 / 4.74 | 4.67 / 7.92 | 21.1 / 31.4 min | 0.45 |
+
+* **Run-vs-run.** otr30M8-s1464 beats dense-s976 on all four tasks in 34.8 vs 37.0 min (0.94× wall-clock);
+  otr10M8-s1464 does it in 32.0 min (0.86×).
+* **⚠ The dense arm's wall-clock includes padding.** It trains unpacked rows padded to 10,240 tokens; mean real
+  rows are ≈ 7.3k. The soft-token path strips padding and sorts micro-batches by length. A full-context step inside
+  a router run therefore takes 7.6 s, not 9.1. The FLOP meter charges only real tokens, so the FLOP comparison is
+  fair, but against a pad-free dense step (≈ 7.6 s) the routed steps run at 0.71× (keep 0.3) and 0.64× (keep 0.1)
+  of dense time, while their FLOP ratios are 0.54 and 0.41.
+* **Where the gap goes.** About a third of the FLOP saving does not become time. Fixed costs per step are FSDP
+  collectives, the 8 full-row blocks, the router prefix / features, and the gather. Short compacted rows also use
+  GPU kernels less efficiently.
+* **What can close it.** The keep-0.1 / block-4 / dense-every-16 arms (queued) cut the full-row share; a CUDA-graph
+  / fixed-capacity gather (as in `layerskip/fastskip.py`) would cut the rest.
+
 ## Proposed run matrix
 
 All on mt4s488 (122 steps) unless noted, LR 2e-6, eval 8k + 2k × 500 per task, compared against the dense curve
