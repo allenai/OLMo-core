@@ -57,7 +57,9 @@ fi
 
 # 2. smoke
 S=o3cd-smoke-$J
-run "$S-D" ARM=D RUN="$S-D" MAX_STEPS_TOTAL=10 HARD_STOP=4 SAVE_INTERVAL=3 SMOKE=1 NOWANDB=1 || exit 11
+# NOT SMOKE=1 here: --no-final-checkpoint disables the whole checkpointer, mid-run saves included, and the
+# branch smokes below need step3. Its checkpoints + export are deleted after the smoke.
+run "$S-D" ARM=D RUN="$S-D" MAX_STEPS_TOTAL=10 HARD_STOP=4 SAVE_INTERVAL=3 NOWANDB=1 || exit 11
 check_smoke "$ROOT/logs/$S-D.log" || exit 11
 run "$S-Dbr" ARM=D RUN="$S-Dbr" MAX_STEPS_TOTAL=5 BRANCH_FROM="$ROOT/runs/$S-D/step3" SMOKE=1 NOWANDB=1 || exit 12
 check_smoke "$ROOT/logs/$S-Dbr.log" || exit 12
@@ -70,7 +72,7 @@ run "$S-IRAND" ARM=IRAND RUN="$S-IRAND" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 N
 check_smoke "$ROOT/logs/$S-IRAND.log" || exit 15
 run "$S-IFL" ARM=IFL RUN="$S-IFL" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 16
 check_smoke "$ROOT/logs/$S-IFL.log" || exit 16
-rm -rf "$ROOT/runs/$S-D"   # the step-3 smoke checkpoint (~90 GB)
+rm -rf "$ROOT/runs/$S-D"   # the dense smoke checkpoints + export (~200 GB); branch smokes save nothing
 log "SMOKE PASSED"
 
 # 3. dense family

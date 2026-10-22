@@ -15,7 +15,8 @@
 #   BRANCH_FROM    stepN dir to branch from; BRANCH_OPTIM_ONLY=1 for arm C phase 2
 #   WARMUP / DECAY_FRAC   WSD warmup fraction (0.017) / decay fraction (0.1)
 #   SEED, EXTRA (appended trainer flags), NOWANDB=1, CODE_SHA (staged tree)
-#   SMOKE=1        no model-only export and no end-of-run full checkpoint (mid-run SAVE_INTERVAL ones still)
+#   SMOKE=1        no model-only export and NO checkpoints at all (--no-final-checkpoint disables the
+#                  checkpointer callback, mid-run SAVE_INTERVAL saves included)
 #SBATCH --job-name=o3cd-arm
 #SBATCH --partition=jsteinhardt
 #SBATCH --qos=preemptive_high
