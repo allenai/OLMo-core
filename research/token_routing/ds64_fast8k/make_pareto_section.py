@@ -31,6 +31,8 @@ def family(arm):
         return "online router, mid-stack drop"
     if re.match(r"otr\d+L\d+", arm):
         return "online router, input drop"
+    if re.match(r"dh\d+M\d+", arm):
+        return "hidden-state-change rule, mid-stack"
     if re.match(r"(rnd|fl)\d+", arm):
         return "random / first-last (router's budget)"
     if re.search(r"-(sk\d+|ldl?\d+)$", arm):
@@ -124,7 +126,7 @@ const PR = __DATA__;
 const PCELLS = __CELLS__;
 const FAMC = {"dense": "var(--dense)", "two-tier (gold + decoys at a larger budget)": "var(--teal)", "gold + decoys whole": "var(--warn)",
               "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "+ train-time layer skip": "var(--bar)", "online router, mid-stack drop": "#7b4fd6",
-              "online router, input drop": "#b48ce8", "random / first-last (router's budget)": "#8a8f8c",
+              "online router, input drop": "#b48ce8", "random / first-last (router's budget)": "#8a8f8c", "hidden-state-change rule, mid-stack": "#c2410c",
               "dense (pad-free path)": "var(--dense)", "other": "var(--muted)"};
 document.getElementById("pareto-legend__SFX__").innerHTML = Object.entries(FAMC).filter(([f]) => PR.some(r => r.family === f))
   .map(([f, c]) => `<span><span class="sw" style="background:${c}"></span>${f}</span>`).join("");
