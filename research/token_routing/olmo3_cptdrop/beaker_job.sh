@@ -15,6 +15,8 @@ mkdir -p "$ROOT/data" "$ROOT/base" "$ROOT/runs" "$ROOT/logs" "$ROOT/devce" ~/.aw
 printf '%s\n' "$AWS_CREDS" > ~/.aws/credentials
 printf '%s\n' "$AWS_CFG" > ~/.aws/config
 export AWS_PROFILE=S3
+# the baked olmo-core image has no boto3 (s3_sync.py); seconds to install
+"$PY" -c "import boto3" 2>/dev/null || "$PY" -m pip install -q boto3
 log() { echo "[beaker-job $(date '+%F %T')] $*"; }
 S3SYNC="$CODE/research/token_routing/olmo3_cptdrop/s3_sync.py"
 ARM_SH="$CODE/research/token_routing/olmo3_cptdrop/run_arm.sbatch"
