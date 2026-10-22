@@ -3,8 +3,8 @@ training PF (the run's flops.json line), and the matched-FLOP comparison with th
 
     python research/token_routing/online_router/collect_otr.py [--rows out.jsonl] [--md out.md]
 
-Dense reference: the tokdrop_lr dense runs recorded in ops results (mt4s488, LR 5e-6, 31 / 61 / 122 steps on
-Lambda, same recipe and base). PF for a dense run = steps x the per-step dense PF measured on our own runs
+Dense reference: the tokdrop_lr dense runs recorded in ops results (LR 5e-6, Lambda, same recipe and base): mt4s488
+at 31 / 61 / 122 steps and the fresh-data mt4s976 (244 steps) / mt4s1464 (366 steps). PF for a dense run = steps x the per-step dense PF measured on our own runs
 (dense_equivalent_pflops / steps; dense-equivalent charges every token at the full cost), so the dense curve and the
 router runs are on the same meter. Rows for `ops result add --json` go to --rows.
 """
@@ -18,10 +18,12 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 BEAKER = os.path.expanduser("~/.local/bin/beaker")
 SCORE_RE = re.compile(r"\[ladder:([a-z_]+)@(\d+k)\] ([a-z0-9_]+)=(-?[0-9.]+) \(n=(\d+)")
-FLOP_RE = re.compile(r"'actual_pflops': ([0-9.]+), 'dense_equivalent_pflops': ([0-9.]+).*?'overhead_pflops': ([0-9.]+), 'steps': (\d+)")
+FLOP_RE = re.compile(r"'actual_pflops': ([0-9.]+), 'dense_equivalent_pflops': ([0-9.]+).*?'overhead_pflops': (-?[0-9.]+), 'steps': (\d+)")
 #: dense curve (ops results, experiment tokdrop_lr): run -> steps
 DENSE = {"f8k-mt4s-dense-lrb-lr5e-06-s31-lam": 31, "f8k-mt4s-dense-lrb-lr5e-06-s61-lam": 61,
-         "f8k-mt4s-dense-lra-lr5e-06-lam": 122}
+         "f8k-mt4s-dense-lra-lr5e-06-lam": 122,
+         # fresh-data dense (first-N supersets of mt4s488, 1 epoch): the more-data setting's reference
+         "f8k-mt4s976-dense-lre-lr5e-06-lam": 244, "f8k-mt4s1464-dense-lre-lr5e-06-lam": 366}
 TASK_METRIC = {"contradiction": "f1", "nq": "f1", "outlier": "f1", "oolong": "score"}
 
 
