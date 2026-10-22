@@ -49,13 +49,13 @@ def run_fsdp2_layer_drop_matches_single_process():
     opt = torch.optim.SGD(model.parameters(), lr=0.05)
     ref_opt = torch.optim.SGD(ref.parameters(), lr=0.05)
     rank, world = get_rank(), dist.get_world_size()
-    g = torch.Generator().manual_seed(1)
+    gen = torch.Generator().manual_seed(1)
     seen = []
     for step in range(1, 7):
         model._layer_drop.step = ref._layer_drop.step = step
         skipped = model._layer_drop.skipped()
         seen.append(skipped)
-        batch = torch.randint(0, VOCAB, (2 * world, 33), generator=g).to(dev)  # 2 micro-batches/rank
+        batch = torch.randint(0, VOCAB, (2 * world, 33), generator=gen).to(dev)  # 2 micro-batches/rank
         local = batch[2 * rank : 2 * rank + 2]
         for mb in range(2):
             (_ce(model, local[mb : mb + 1]) / 2).backward()
@@ -87,7 +87,7 @@ def run_fsdp2_layer_drop_matches_single_process():
     model.eval()
     ref.eval()
     with torch.no_grad():
-        ids = torch.randint(0, VOCAB, (1, 16), generator=g).to(dev)
+        ids = torch.randint(0, VOCAB, (1, 16), generator=gen).to(dev)
         torch.testing.assert_close(model(ids), ref(ids), atol=2e-5, rtol=1e-4)
 
 
