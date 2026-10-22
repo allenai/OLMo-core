@@ -61,18 +61,20 @@ S=o3cd-smoke-$J
 # branch smokes below need step3. Its checkpoints + export are deleted after the smoke.
 run "$S-D" ARM=D RUN="$S-D" MAX_STEPS_TOTAL=10 HARD_STOP=4 SAVE_INTERVAL=3 NOWANDB=1 || exit 11
 check_smoke "$ROOT/logs/$S-D.log" || exit 11
-run "$S-Dbr" ARM=D RUN="$S-Dbr" MAX_STEPS_TOTAL=5 BRANCH_FROM="$ROOT/runs/$S-D/step3" SMOKE=1 NOWANDB=1 || exit 12
+# budgets must give WSD >= 1 decay step (round(t_max * frac) = 0 divides by zero in the scheduler)
+run "$S-Dbr" ARM=D RUN="$S-Dbr" MAX_STEPS_TOTAL=10 BRANCH_FROM="$ROOT/runs/$S-D/step3" SMOKE=1 NOWANDB=1 || exit 12
 check_smoke "$ROOT/logs/$S-Dbr.log" || exit 12
-grep -qE "step=4/|\[step=4" "$ROOT/logs/$S-Dbr.log" || log "WARN: decay branch did not log step 4 (check resume)"
-run "$S-C2" ARM=C2 RUN="$S-C2" MAX_STEPS_TOTAL=2 BRANCH_FROM="$ROOT/runs/$S-D/step3" BRANCH_OPTIM_ONLY=1 WARMUP=0 DECAY_FRAC=0.2 SMOKE=1 NOWANDB=1 || exit 13
+grep -q "Will resume training from step 3" "$ROOT/logs/$S-Dbr.log" || { log "SMOKE FAIL: decay branch did not resume from step 3"; exit 12; }
+run "$S-C2" ARM=C2 RUN="$S-C2" MAX_STEPS_TOTAL=5 BRANCH_FROM="$ROOT/runs/$S-D/step3" BRANCH_OPTIM_ONLY=1 WARMUP=0 DECAY_FRAC=0.2 SMOKE=1 NOWANDB=1 || exit 13
 check_smoke "$ROOT/logs/$S-C2.log" || exit 13
+grep -q "Will resume training from step" "$ROOT/logs/$S-C2.log" && { log "SMOKE FAIL: optim-only branch restored trainer state"; exit 13; }
 run "$S-C1" ARM=C1 RUN="$S-C1" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 14
 check_smoke "$ROOT/logs/$S-C1.log" || exit 14
 run "$S-IRAND" ARM=IRAND RUN="$S-IRAND" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 15
 check_smoke "$ROOT/logs/$S-IRAND.log" || exit 15
 run "$S-IFL" ARM=IFL RUN="$S-IFL" MAX_STEPS_TOTAL=10 HARD_STOP=3 SMOKE=1 NOWANDB=1 || exit 16
 check_smoke "$ROOT/logs/$S-IFL.log" || exit 16
-rm -rf "$ROOT/runs/$S-D"   # the dense smoke checkpoints + export (~200 GB); branch smokes save nothing
+rm -rf "$ROOT/runs/$S-D" "$ROOT/runs/o3cd-smoke-4016652-D"   # dense smoke checkpoints + export (~200 GB each); branch smokes save nothing
 log "SMOKE PASSED"
 
 # 3. dense family
