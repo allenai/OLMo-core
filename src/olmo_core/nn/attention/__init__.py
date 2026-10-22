@@ -1956,7 +1956,9 @@ class Attention(SequenceMixer):
         :param x: The input of shape ``(batch_size, seq_len, d_model)``.
         :param position_ids: Optional explicit per-token positions ``(batch_size, seq_len)`` for
             RoPE (e.g. soft-token pooled sequences where kept tokens keep their original
-            positions). ``None`` (default) uses contiguous positions.
+            positions). ``None`` (default) uses contiguous positions. On a sliding-window layer,
+            non-contiguous positions also move the window to position space (key visible iff
+            ``0 <= pos_q - pos_k < window_size``), see :mod:`.position_window`.
         :param attn_bias: Optional ``(B, 1, T, T)`` additive attention bias replacing the causal
             mask (soft-token aux matching: position-causality + shadow-column blocking). Runs a
             direct masked SDPA instead of the configured backend.
@@ -2136,7 +2138,32 @@ class Attention(SequenceMixer):
                 # Soft-token aux path: position-causal + shadow-blocked masked SDPA.
                 from ..pooled_soft_token import masked_sdpa
 
+                if self.window_size is not None:
+                    # The additive bias replaces the backend, window included: fold the sliding
+                    # window back in, measured in (original) positions.
+                    from .position_window import apply_position_window_to_bias
+
+                    attn_bias = apply_position_window_to_bias(
+                        attn_bias, position_ids, self.window_size
+                    )
                 att = masked_sdpa(q, k, v, attn_bias, self.head_dim**-0.5)
+            elif self._use_position_window(position_ids, cu_doc_lens, cu_doc_lens_q, local_k_slice):
+                # Compacted row (dropped tokens, survivors keep their original positions): the
+                # backends window by INDEX, which after dropping reaches ~W / keep original tokens
+                # back. Window by position instead (position_window.py). Contiguous positions never
+                # get here, so dense training keeps the backend path untouched.
+                from .position_window import position_window_attention
+
+                assert position_ids is not None and self.window_size is not None
+                att = position_window_attention(
+                    q,
+                    k,
+                    v,
+                    position_ids,
+                    self.window_size,
+                    cu_doc_lens=cu_doc_lens,
+                    scale=self.backend.scale,
+                )
             else:
                 # shape: (batch_size, seq_len, n_heads, head_dim)
                 att = self.sdpa(
@@ -2166,6 +2193,38 @@ class Attention(SequenceMixer):
 
         # shape: (batch_size, seq_len, d_model)
         return self.w_out(att)
+
+    def _use_position_window(
+        self,
+        position_ids: Optional[torch.Tensor],
+        cu_doc_lens: Optional[torch.Tensor],
+        cu_doc_lens_q: Optional[torch.Tensor],
+        local_k_slice: Optional[slice],
+    ) -> bool:
+        """
+        Whether this forward must window by ORIGINAL position (:mod:`.position_window`): a sliding
+        window layer given non-contiguous ``position_ids`` (a compacted row), outside KV-cache
+        decode and context parallelism. Full-attention layers and dense rows return ``False``
+        without touching ``position_ids``.
+        """
+        if self.window_size is None or position_ids is None:
+            return False
+        if (
+            self.kv_cache_manager is not None
+            or cu_doc_lens_q is not None
+            or local_k_slice is not None
+            or self.cp_enabled
+        ):
+            return False
+        from .position_window import needs_position_window
+
+        if not needs_position_window(position_ids, cu_doc_lens):
+            return False
+        if self.sinks is not None:
+            raise NotImplementedError("attention sinks are not supported with position windows")
+        if self.training and self.backend.dropout_p > 0.0:
+            raise NotImplementedError("attention dropout is not supported with position windows")
+        return True
 
     def _apply_gate(self, att: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """
