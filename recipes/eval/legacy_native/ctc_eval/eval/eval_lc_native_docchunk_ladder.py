@@ -27,6 +27,8 @@ Per-task chunk granularity (matches the training converter):
 Plus 6 CTC-suite tasks (see ``SUITE_TASKS``): hotpotqa, qdmatch_nq, xabsence, reorder, strmatch,
 grouping -- rendered like the setA converter and graded by the vendored ctc spec exactly as olmo-eval
 grades the suite row. Their rung files come from ``DC_RUNG_FILES`` or ``CTC_SUITE_ROWS_ROOT``.
+``--ctc-grade`` (env ``LADDER_CTC_GRADE``) grades nq / outlier / oolong / contradiction the same way
+(``CTC_GRADED_BASE``), for scoring those four on the suite's own rows.
 
 The rung ladder files resolve against ``EVAL500_ROOT`` (env), exactly like ``eval_lc_native.py`` -- on
 Beaker the runner sets ``EVAL500_ROOT=$PRASANNS/_eval_bundle_eval500_v2`` (v2) so ``{E5}/<sub>/<file>``
@@ -110,11 +112,21 @@ SUITE_TASKS = {
 ALL_TASKS += list(SUITE_TASKS)
 #: rung label -> token count in the fetched <subset>/rung_<tokens>.jsonl names (olmo-eval RUNG_TOKENS)
 SUITE_RUNG_TOKENS = {"2k": 2048, "4k": 4096, "8k": 8192, "16k": 16384, "32k": 32768}
+#: Opt-in (``--ctc-grade`` / env ``LADDER_CTC_GRADE``, 2026-10-22): grade these four ladder tasks with
+#: the vendored ctc spec olmo-eval uses for their roster row (ctc_nq / ctc_outlier / ctc_oolong /
+#: ctc_contradiction) instead of the native ``ctc_eval`` graders -- for scoring the SUITE rows
+#: (``<subset>/rung_*.jsonl``; contradiction = ``contradiction_iid``) the setA training mix is IID with.
+#: Prompt rendering / segmentation stay the ladder's (loadtask, chunk_by, item_regex unchanged); the
+#: primary metric, decode budget and stop preset become the spec's, as for SUITE_TASKS.
+#:   ladder task: ctc grader spec
+CTC_GRADED_BASE = {"nq": "retrieval", "outlier": "outlier", "oolong": "oolong",
+                   "contradiction": "contradiction"}
 
 
 def _ctc_registry():
     """
-    The vendored ``ctc`` task registry with the six suite graders registered.
+    The vendored ``ctc`` task registry with the six suite graders (and the four CTC_GRADED_BASE
+    graders) registered.
 
     ``ctc`` is stdlib-only. It is imported from the environment when installed, else from this
     repo's ``ctc/src`` (the eval runners put only ``src`` and ``recipes/eval/legacy_native`` on the
@@ -137,7 +149,8 @@ def _ctc_registry():
     from ctc.format.prompts import GROUPING_INSTRUCTION
     from ctc.tasks._grouping import make_grouping_spec
 
-    for mod in ("retrieval", "qdmatch", "xabsence", "reorder", "strmatch"):
+    for mod in ("retrieval", "qdmatch", "xabsence", "reorder", "strmatch", "outlier", "oolong",
+                "contradiction"):
         importlib.import_module(f"ctc.tasks.{mod}")  # registers on first import
     if "grouping" not in registry.names():
         registry.register(
@@ -496,7 +509,24 @@ def build_task_spec(args):
             override.get(task, ctc_decode_budget(sp)),
             f"ctc:{grader}",
         )
+    # --ctc-grade: the four base tasks keep their rendering, take the ctc spec's grading knobs
+    for task in ctc_graded_tasks(args):
+        loadtask, chunk_by, item_regex = spec[task][:3]
+        sp = ctc_spec(CTC_GRADED_BASE[task])
+        spec[task] = (loadtask, chunk_by, item_regex, sp.primary_metric,
+                      override.get(task, ctc_decode_budget(sp)), f"ctc:{CTC_GRADED_BASE[task]}")
     return spec
+
+
+def ctc_graded_tasks(args):
+    """:returns: The CTC_GRADED_BASE tasks ``--ctc-grade`` names (``all`` = every one)."""
+    names = [t.strip() for t in (getattr(args, "ctc_grade", "") or "").split(",") if t.strip()]
+    if names == ["all"]:
+        names = list(CTC_GRADED_BASE)
+    bad = [t for t in names if t not in CTC_GRADED_BASE]
+    if bad:
+        raise SystemExit(f"--ctc-grade: {bad} not in {sorted(CTC_GRADED_BASE)}")
+    return names
 
 
 
@@ -597,6 +627,12 @@ def main():
     ap.add_argument("--oolong-max-new-tokens", type=int, default=200)
     ap.add_argument("--rerank-max-new-tokens", type=int, default=256)
     ap.add_argument("--outlier-max-new-tokens", type=int, default=200)
+    ap.add_argument(
+        "--ctc-grade",
+        default=os.environ.get("LADDER_CTC_GRADE", ""),
+        help="comma list of nq/outlier/oolong/contradiction (or 'all') to grade with the ctc spec "
+        "olmo-eval uses for the suite row (CTC_GRADED_BASE), e.g. when scoring suite rows.",
+    )
     ap.add_argument(
         "--suite-max-new-tokens",
         default=os.environ.get("LADDER_SUITE_MAX_NEW_TOKENS", ""),
@@ -959,6 +995,12 @@ def main():
     for _t, (_, _grader, _) in SUITE_TASKS.items():
         if _t in task_filter:
             SCORE_FNS[_t] = make_ctc_score_fn(_grader)
+    ctc_graded = set(ctc_graded_tasks(args))
+    for _t in ctc_graded:
+        SCORE_FNS[_t] = make_ctc_score_fn(CTC_GRADED_BASE[_t])
+        print(f"[ladder] {_t}: graded by the ctc '{CTC_GRADED_BASE[_t]}' spec (--ctc-grade)", flush=True)
+    if ctc_graded and "_meta" in summary:
+        summary["_meta"]["ctc_graded"] = {t: CTC_GRADED_BASE[t] for t in sorted(ctc_graded)}
     rung_filter = set(r.strip() for r in args.rungs.split(",")) if args.rungs else None
 
     for task in ALL_TASKS:
@@ -1054,7 +1096,7 @@ def main():
                 summary[f"{task}_{label}"] = float(prim) if prim is not None else None
                 if "_meta" in summary:  # too-long examples are scored (as wrong), so all count
                     summary["_meta"]["eval_size"][f"{task}_{label}"] = len(examples)
-                    if task in SUITE_TASKS:  # suite graders: parse rate beside the number
+                    if task in SUITE_TASKS or task in ctc_graded:  # ctc graders: parse rate too
                         summary["_meta"].setdefault("parse_rate", {})[f"{task}_{label}"] = res["parse_rate"]
                 print(
                     f"[ladder:{task}@{label}] {primary_key or 'mrr'}="
@@ -1062,7 +1104,7 @@ def main():
                     f"(n={len(examples)}, skipped_too_long={skipped})",
                     flush=True,
                 )
-                if task in SUITE_TASKS:
+                if task in SUITE_TASKS or task in ctc_graded:
                     print(f"[ladder:{task}@{label}] ctc metrics: "
                           f"{ {k: round(v, 4) for k, v in res.items()} }", flush=True)
                 flush()

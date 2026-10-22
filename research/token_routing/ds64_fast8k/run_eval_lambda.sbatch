@@ -12,10 +12,20 @@
 # node-local /tmp checkpoints and eval files. Submit with explicit gres and node, e.g.
 #   sbatch --gres=gpu:A100:2 --qos=preemptive_high -w lambda-hyperplane02 --job-name=<run>-ev<task> \
 #     --export=ALL,RUN=<run>,TASK=<contradiction|nq|outlier|oolong>,ROOT=/tmp/prasann/tdlr run_eval_lambda.sbatch
+# (mt11 runs: EVAL_ROWS=suite QUERY_POSITION=both, automatic for RUN=*mt11*; see below)
 # CTC-suite tasks (TASK=hotpotqa|qdmatch_nq|xabsence|reorder|strmatch|grouping, 2026-10-21) read the
 # suite's own r2k/r8k rows from $ROOT/eval/suite/<subset>/rung_{2048,8192}.jsonl (fetched with
 # fetch_suite_eval_rows.py, staged to node /tmp) and are graded by the vendored ctc spec exactly as
 # olmo-eval grades the suite row (eval_lc_native_docchunk_ladder.py SUITE_TASKS).
+# EVAL_ROWS=suite (2026-10-22; the default for RUN names containing "mt11"): the mt11 mix trains on setA
+# rows, which were built IID with the CTC-suite rows, so contradiction/nq/outlier/oolong read the suite's
+# rows too ($ROOT/eval/suite/{contradiction_iid,nq,outlier,oolong}/; contradiction's 2k rung is
+# rung_2560) and are graded by the ctc spec olmo-eval uses (ladder --ctc-grade). EVAL_ROWS=old = the
+# ds64 files below, which the mt4 runs (ds64 fast8k pools) are IID with: the default for every other RUN.
+# QUERY_POSITION must match the TRAINING SHARDS: mt4 = after, mt11/setA = both (metadata.json
+# "query_position"); it defaults to both under EVAL_ROWS=suite, else after. With after, an mt11 model's
+# prompts are out of format for nq/oolong/contradiction/hotpotqa/xabsence/reorder/strmatch
+# (validate_suite_ladder_tasks.py --train-query-position both: prefix parity 0/N).
 # Results: $ROOT/ckpts/<run>/eval/<key>_multirung.json (+ predictions), copied to $LROOT/eval_results/.
 set -o pipefail   # no -u: it kills the conda-pack activate
 LROOT=/accounts/projects/sewonm/prasann/ctc_suite
@@ -23,7 +33,15 @@ REPO=$LROOT/OLMo-core
 ROOT="${ROOT:-/tmp/prasann/tdlr}"
 RUN="${RUN:?set RUN}"; TASK="${TASK:?set TASK}"
 NGPU="${NGPU:-${SLURM_GPUS_ON_NODE:-2}}"
-case "$TASK" in
+case "$RUN" in *mt11*) EVAL_ROWS="${EVAL_ROWS:-suite}" ;; *) EVAL_ROWS="${EVAL_ROWS:-old}" ;; esac
+[ "$EVAL_ROWS" = suite ] && QUERY_POSITION="${QUERY_POSITION:-both}" || QUERY_POSITION="${QUERY_POSITION:-after}"
+case "$EVAL_ROWS:$TASK" in
+  suite:contradiction) KEY=contra; R8=suite/contradiction_iid/rung_8192.jsonl; R2=suite/contradiction_iid/rung_2560.jsonl ;;
+  suite:nq|suite:outlier|suite:oolong) KEY=$TASK; R8=suite/$TASK/rung_8192.jsonl; R2=suite/$TASK/rung_2048.jsonl ;;
+  old:*|suite:*) KEY= ;;
+  *) echo "unknown EVAL_ROWS=$EVAL_ROWS (old|suite)"; exit 2 ;;
+esac
+if [ -n "$KEY" ]; then export LADDER_CTC_GRADE="$TASK"; else case "$TASK" in
   contradiction) KEY=contra; R8=_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n190_k3.jsonl
                  R2=_eval_bundle_eval500_v3/contra/contradiction_eval_pubmed_realistic_n100_k3.jsonl ;;
   nq)      KEY=nq;      R8=outlier_lengthmix/eval_rungs/nq/rung_8192.jsonl; R2=outlier_lengthmix/eval_rungs/nq/rung_2048.jsonl ;;
@@ -33,7 +51,7 @@ case "$TASK" in
   hotpotqa|qdmatch_nq|xabsence|reorder|strmatch|grouping)
            KEY=$TASK;   R8=suite/$TASK/rung_8192.jsonl; R2=suite/$TASK/rung_2048.jsonl ;;
   *) echo "unknown TASK=$TASK"; exit 2 ;;
-esac
+esac; fi
 RUN_DIR=$ROOT/ckpts/$RUN
 CKPT=$(for d in $(find "$RUN_DIR" -name .metadata -path '*model_and_optim*' 2>/dev/null); do dirname "$(dirname "$d")"; done | sort -V | tail -1)
 [ -n "$CKPT" ] || { echo "FATAL: no complete model_and_optim under $RUN_DIR"; exit 3; }
@@ -54,9 +72,10 @@ mkdir -p "$ROOT/weka_stub/checkpoints/prasanns/_eval_bundle"
 export LADDER_GEN_BATCH="${LADDER_GEN_BATCH:-32}" LADDER_GEN_BATCH_TOKENS="${LADDER_GEN_BATCH_TOKENS:-196608}"
 FILES="{\"$TASK\": {\"8k\": \"$ROOT/eval/$R8\", \"2k\": \"$ROOT/eval/$R2\"}}"
 echo "=== LAMBDA fast8k eval host=$(hostname) RUN=$RUN TASK=$TASK CKPT=$CKPT NGPU=$NGPU $(date '+%F %T') ==="
+echo "    EVAL_ROWS=$EVAL_ROWS QUERY_POSITION=$QUERY_POSITION LADDER_CTC_GRADE=${LADDER_CTC_GRADE:-} files: $FILES"
 cd "$REPO"
 RUN="$RUN" TASK="$KEY" VARIANT=docchunk STEP='' CKPT="$CKPT" EVAL_OUT_DIR="$RUN_DIR/eval" \
-  PROMPT_FORMAT=chat QUERY_POSITION=after MAX_TEST=500 MAX_LENGTH=20000 BATCH_SIZE=8 NGPU="$NGPU" \
+  PROMPT_FORMAT=chat QUERY_POSITION="$QUERY_POSITION" MAX_TEST=500 MAX_LENGTH=20000 BATCH_SIZE=8 NGPU="$NGPU" \
   LADDER_XLONG=0 COT_MODE=none LADDER_VERSION=v2 TOKENIZER=Qwen/Qwen3.5-0.8B-Base \
   DC_RUNG_FILES="$FILES" DC_RUNGS=8k,2k WEKA_LLM="$ROOT/weka_stub" RESULTS="$ROOT/eval_results" REPO="$REPO" \
   bash recipes/eval/legacy_native/run_beaker_multirung_eval.sh
