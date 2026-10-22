@@ -25,7 +25,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-otr (online); https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e (frozen)
-next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1; objective per Prasann 2026-10-22 = gradient FIDELITY of the truncated pass, train-time only) - smoke otr30L4 s488 01M5HEBP5MNE30H9XPV1HZKGX6; FRESH-DATA setting (Prasann's focus): otr30L4 / otr30M8 / rnd30 x s976 / s1464, names f8k-mt4-<arm>-s<rows>-tdb-lr2e-06 (ids in records/online-token-router.md; all with a charged full-context step every 8); gradient-fidelity probe 01M5HBH3XHQ45E55RA7XZ3N77X; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
+next_step: ONLINE ROUTER (2026-10-22). Training on Beaker (mt4s488, 122 steps, LR 2e-6, keep 0.3, doc_share 1; objective per Prasann 2026-10-22 = gradient FIDELITY of the truncated pass, train-time only) - smoke otr30L4 s488 01M5HKH25DRTFX95WZE0E84AFW; FRESH-DATA setting (Prasann's focus): otr30L4 / otr30M8 / rnd30 x s976 / s1464, names f8k-mt4-<arm>-s<rows>-tdb-lr2e-06 (ids in records/online-token-router.md; all with a charged full-context step every 8); gradient-fidelity probe 01M5HBH3XHQ45E55RA7XZ3N77X; when DONE run `launch_otr.py --runs <run> eval` (8k+2k x 500/task) and compare at matched actual_pflops against the tdb dense curve (31/61/122 steps). Then the run matrix in records/online-token-router.md.
 ---
 
 # learned_router
@@ -81,8 +81,14 @@ budget beats dense at matched FLOPs. Design + numbers: `records/online-token-rou
   0.41-0.46, +embedding 0.44-0.58, +h4*q 0.51-0.61, +h8*q 0.54-0.63 (target ||dL/dh8||: 0.65-0.67, mass@30
   0.73-0.95 vs random 0.30); gold flag redundant given hidden features; compacted-row targets track full-context
   ones (Spearman 0.40-0.66). Recorded as `otrprobe_*` in ops results.
-- Smoke: first launch at the stale commit was cancelled while pending; relaunched with two companion arms (see
-  next_step). Results pending.
+- Gradient fidelity (Beaker 01M5HBH3XHQ45E55RA7XZ3N77X, base, ⚠ 12 held-out rows/task): at keep 0.3 the MID-STACK
+  drop (all tokens through blocks 0-7) keeps cos 0.88 / rel err 0.48 of the full parameter gradient vs 0.54 / 0.95
+  dropping at the input; mid8 at keep 0.1 (≈0.36-0.40 of dense FLOPs) ≈ input at keep 0.5 (≈0.55). Router ≈ oracle
+  under mid8 (0.88 vs 0.91); at the input the router beats random but not first_last (0.54 vs 0.59). Raw cos
+  includes a shared direction (unrelated rows 0.40). Next: same probe on a TRAINED checkpoint.
+- Launch bugs fixed 2026-10-22: wandb finish(quiet=) TypeError at shutdown (0b5b21ace; also killed the parent's tdb
+  runs before export) and a trainer argparse check that rejected the online rule (c5f8106dc + a variant-wiring
+  check, research/token_routing/online_router/check_variant_wiring.py). Arms relaunched on c5f8106dc.
 
 ## Current best numbers
 All are teacher-forced answer-CE deltas on frozen dense 4B checkpoints. Nothing here is generation-graded.
@@ -103,6 +109,7 @@ All are teacher-forced answer-CE deltas on frozen dense 4B checkpoints. Nothing 
 | **gradprobe** (oracle, uses the answer): gold first + \|grad\|@g=0.5, smallest lossless keep ratio (median ΔCE ≤ 0.1) | nq / 8k, 16k, 32k (setA) | 5% / 2% / 1% (≈330 doc tokens at each length) | 16 ⚠ eval_size=16 | bootstrap 10-90%: 2-5% / 2% / 1% | no-cot (TF CE) | ops results (`gradprobe_min_keep_ratio_goldga_tau0.1`); records/gradprobe-token-importance.md |
 | gradprobe, same rule | contradiction / 8k, 16k, 32k (per-task) | 10% / 10% / 10% (771 / 1,582 / 3,214 tokens) | 16 ⚠ | bootstrap 5-10% | no-cot (TF CE) | same |
 | gradprobe, same rule | outlier / 8k, 16k, 32k (setA) | 10% / 5% / 5% | 16 ⚠ | bootstrap ≤ 10% | no-cot (TF CE) | same |
+| online-router gradient FIDELITY, cos(g_drop, g_full) / rel err, pooled 4 tasks, keep 0.3, per-document allocation | mt4 8k; q35-4b-base-markerfix | mid-stack drop @L8: router 0.88 / 0.48 (oracle 0.91 / 0.41, random 0.66 / 0.81); input drop: router 0.54 / 0.95 (first_last 0.59 / 0.86, random 0.46 / 0.97); unrelated rows 0.40 | 48 rows (12/task) ⚠ eval_size=48 | row-level medians | no-cot (TF grad) | ops results `gradfid_*`; records/online-token-router.md |
 | online-router offline probe: Spearman(pred, log‖dL/de‖), pooled ridge, h⁸ + h⁸·q features | contradiction / nq / outlier / oolong, 8k; q35-4b-base-markerfix | +0.54 / +0.59 / +0.63 / +0.60 (structure only +0.30 / +0.25 / +0.26 / +0.16; random 0) | 32/task ⚠ eval_size=32 | row-level, not binomial | no-cot (TF grad) | ops results `otrprobe_*`; records/online-token-router.md |
 | gradprobe: ΔCE at 10% kept, \|grad\|@g=1 vs @g=0.5 vs gold-first | outlier / 8k (per-task) | +0.68 vs +0.08 vs −0.03 (random +1.25) | 16 ⚠ | ~0.07-0.12 | no-cot (TF CE) | ops results (`gradprobe_dCE_keep10pct_*`) |
 | same | contradiction / 8k (per-task) | +1.56 vs +0.33 vs +0.05 (random +1.68) | 16 ⚠ | ~0.06-0.12 | no-cot (TF CE) | same |

@@ -235,15 +235,17 @@ What it says:
 * **Recipe.** mt4s488, 122 steps, 16 rows/step, 2 GPUs, LR 2e-6 (the rule arms' LR), input drop.
 * **Router.** keep 0.3, doc_share 1, explore 0.1, layer-4 prefix features, ridge 0.1, 2,048 samples per row, a
   full-context step every 8 steps.
-* **Runs.** Arms otr30L4 01M5HEBP5MNE30H9XPV1HZKGX6, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
+* **Runs.** Arms otr30L4 01M5HKH25DRTFX95WZE0E84AFW, rnd30 control 01M5HBRN5SC8E4DVBW848BM5C0, otr30M8
   01M5HBD2K8W5772DDZN4RY1H1J. Earlier launches were cancelled while still pending (stale commit; no full-context steps; then the
-  wandb-shutdown crash fixed in 0b5b21ace, which killed the parent's tdb runs after their last step).
+  wandb-shutdown crash fixed in 0b5b21ace, which killed the parent's tdb runs after their last step). The launch on
+  0b5b21ace died in the trainer's argparse (`--st-keep-token-rule online needs --st-keep-token-k > 0`), fixed in
+  c5f8106dc together with `check_variant_wiring.py`.
 * **Fresh-data setting** (Prasann, 2026-10-22: at matched FLOPs a drop method gets MORE steps on FRESH rows, same
   16-row batch). Shards mt4s976 (3,904 rows, 244 steps) and mt4s1464 (5,856 rows, 366 steps) are first-N supersets
   of mt4s488. Runs are named to parse in `collect_pareto_points.py` (`-tdb`):
-  * input drop: f8k-mt4-otr30L4-s976 / -s1464-tdb-lr2e-06 (01M5HE2MSXTW735EYR4XFSC6ZY / 01M5HE4HKQRJV2QB182QYA7BMC);
-  * mid-stack: otr30M8 s976 / s1464 (01M5HE5Q24QPHDSFAZ0NTBJFM1 / 01M5HE81E9HE1PS3JC412JG3R0);
-  * random control: rnd30 s976 / s1464 (01M5HE9PPY8TACWWW3HYHTFF45 / 01M5HEAN3B6KCJS211DHP3CX2B).
+  * input drop: f8k-mt4-otr30L4-s976 / -s1464-tdb-lr2e-06 (01M5HK8GC7NBXWZ3A1RT8DX85P / 01M5HK9TCMGBCF9824ND0CJYF0);
+  * mid-stack: otr30M8 s976 / s1464 (01M5HKC241SVX9V8J3FVCK57M1 / 01M5HKD7HD0RHZBG6AC6RB5V9Z);
+  * random control: rnd30 s976 / s1464 (01M5HKE537S3Y0Y27XHK1ZKV7M / 01M5HKF5CM1ZFBJ2SA9WC5869M).
 
   The s488 rnd30 / otr30M8 runs were cancelled while pending, to put the GPUs here. The comparison is against the
   tdb dense curve (s488 st31 / st61 / 122, s976, s1464) and the tdb rule arms on the same fresh shards.
