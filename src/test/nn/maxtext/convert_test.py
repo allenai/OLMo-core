@@ -479,6 +479,90 @@ def test_missing_lm_head_norm_fails(name):
         get_maxtext_config(config)
 
 
+def attention_blocks(config: dict) -> list:
+    """Every block config in ``config`` whose sequence mixer is full attention."""
+    blocks = [config["block"], *(config.get("block_overrides") or {}).values()]
+    return [b for b in blocks if b["sequence_mixer"].get("type", "attention") == "attention"]
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+@pytest.mark.parametrize("module", ["sequence_mixer", "feed_forward", "lm_head"])
+def test_omitted_bias_defaults_to_true_fails(name, module):
+    # ``as_config_dict()`` drops None fields, and the modules then build with bias=True.
+    config = load_fixture(FIXTURE_FILES[name])
+    if module == "lm_head":
+        targets = [config["lm_head"]]
+    elif module == "feed_forward":
+        if name != "dense":
+            pytest.skip("no dense feed-forward")
+        targets = [config["block"]["feed_forward"]]
+    else:
+        targets = [b["sequence_mixer"] for b in attention_blocks(config)]
+    for target in targets:
+        del target["bias"]
+    with pytest.raises(ValueError, match="bias"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_clip_qkv_fails(name):
+    config = load_fixture(FIXTURE_FILES[name])
+    for block in attention_blocks(config):
+        block["sequence_mixer"]["clip_qkv"] = 8.0
+    with pytest.raises(ValueError, match="clip_qkv"):
+        get_maxtext_config(config)
+
+
+def test_dense_zero_embed_scale_fails():
+    config = load_fixture("dense_small_config.json")
+    config["embed_scale"] = 0.0
+    with pytest.raises(ValueError, match="embedding"):
+        get_maxtext_config(config)
+
+
+def test_hybrid_qk_norm_epsilon_fails():
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in attention_blocks(config):
+        block["sequence_mixer"]["qk_norm"]["eps"] = 1e-5
+    with pytest.raises(ValueError, match="epsilon"):
+        get_maxtext_config(config)
+
+
+def test_hybrid_missing_qk_norm_fails():
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in attention_blocks(config):
+        block["sequence_mixer"]["qk_norm"] = None
+    with pytest.raises(ValueError, match="QK norm"):
+        get_maxtext_config(config)
+
+
+def test_hybrid_kda_norm_epsilon_fails():
+    # MaxText's olmoe3 decoder hardcodes the KDA output norm's epsilon.
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in [config["block"], *config["block_overrides"].values()]:
+        if block["sequence_mixer"]["type"] == "kimi_delta_attention":
+            block["sequence_mixer"]["norm_eps"] = 1e-6
+    with pytest.raises(ValueError, match="norm_eps"):
+        get_maxtext_config(config)
+
+
+def test_hybrid_kda_allow_neg_eigval_is_translated():
+    config = load_fixture("hybrid_moe_small_config.json")
+    assert "kda_allow_neg_eigval=True" in get_maxtext_config(config).overrides()
+    for block in [config["block"], *config["block_overrides"].values()]:
+        if block["sequence_mixer"]["type"] == "kimi_delta_attention":
+            block["sequence_mixer"]["allow_neg_eigval"] = False
+    assert "kda_allow_neg_eigval=False" in get_maxtext_config(config).overrides()
+
+
+def test_hybrid_latent_up_proj_input_norm_fails():
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in moe_blocks(config):
+        block["latent_moe"]["up_proj_input_norm_enabled"] = True
+    with pytest.raises(ValueError, match="up_proj_input_norm"):
+        get_maxtext_config(config)
+
+
 @pytest.mark.parametrize("name", FIXTURE_FILES)
 def test_extra_vocab_fails(name):
     config = load_fixture(FIXTURE_FILES[name])

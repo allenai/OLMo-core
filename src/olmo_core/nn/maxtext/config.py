@@ -75,6 +75,10 @@ _BASE_MODEL_NAMES = {
 #: MaxText's olmo3 decoder: three sliding-window layers, then one global layer.
 _OLMO3_CYCLE = 4
 
+#: MaxText's olmoe3 decoder hardcodes this epsilon for the KDA output norm (``_KDA_NORM_EPS``),
+#: separately from ``normalization_layer_epsilon``.
+_OLMOE3_KDA_NORM_EPS = 1e-5
+
 
 @dataclass(frozen=True)
 class AttentionSpec:
@@ -95,6 +99,8 @@ class KDASpec:
     head_dim: int
     head_v_dim: int
     conv_size: int
+    allow_neg_eigval: bool = False
+    """Scale the delta gate so the state transition's eigenvalues can be negative."""
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,7 @@ class MaxTextModelConfig:
             f"gdn_key_head_dim={k.head_dim}",
             f"gdn_value_head_dim={k.head_v_dim}",
             f"gdn_conv_kernel_dim={k.conv_size}",
+            f"kda_allow_neg_eigval={k.allow_neg_eigval}",
         ]
         if m.emo_pools is None:
             overrides.append("emo_enabled=False")
@@ -296,7 +303,8 @@ def _lm_head_norm(model_config: Mapping[str, Any], decoder: MaxTextDecoderBlock)
     RMS norm (``decoder_norm``) and have no LM head bias.
     """
     lm_head = model_config.get("lm_head") or {}
-    if lm_head.get("name", "default") != "default" or lm_head.get("bias"):
+    # ``as_config_dict()`` drops None fields, and the default LM head then builds with a bias.
+    if lm_head.get("name", "default") != "default" or lm_head.get("bias", True):
         raise ValueError(f"MaxText's {decoder} decoder has a default LM head without bias")
     if lm_head.get("layer_norm") is None:
         raise ValueError(f"MaxText's {decoder} decoder normalizes the LM head input (layer_norm)")
@@ -368,13 +376,19 @@ def _dense_config(model_config: Mapping[str, Any], blocks: list) -> MaxTextModel
             )
     if mixer.get("type", "attention") != "attention" or mixer.get("name", "default") != "default":
         raise ValueError(f"unsupported sequence mixer {mixer.get('type')!r}/{mixer.get('name')!r}")
-    if mixer.get("bias") or ff.get("bias"):
+    # ``as_config_dict()`` drops None fields, and both modules then build with bias=True.
+    if mixer.get("bias", True) or ff.get("bias", True):
         raise ValueError("MaxText's olmo3 decoder has no projection biases")
+    if mixer.get("clip_qkv") is not None:
+        raise ValueError("MaxText's olmo3 decoder doesn't clip Q/K/V (clip_qkv)")
     if mixer.get("use_head_qk_norm") or mixer.get("gate") or mixer.get("scalable_softmax"):
         raise ValueError("MaxText's olmo3 decoder has global QK norm, no output gate, and no SSMax")
     if ff.get("activation", "silu") != "silu" or ff.get("name", "default") != "default":
         raise ValueError("MaxText's olmo3 decoder uses a SwiGLU feed-forward")
-    if model_config.get("embedding_norm") is not None or model_config.get("embed_scale"):
+    if (
+        model_config.get("embedding_norm") is not None
+        or model_config.get("embed_scale") is not None
+    ):
         raise ValueError("MaxText's olmo3 decoder has no embedding norm or scale")
     lm_head_norm = _lm_head_norm(model_config, MaxTextDecoderBlock.olmo3)
 
@@ -444,10 +458,20 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
         mixer = block["sequence_mixer"]
         if mixer.get("type") == "attention":
             attn = _same(attn, mixer, ("n_heads", "n_kv_heads", "head_dim"), "attention")
+            # ``as_config_dict()`` drops None fields, and attention then builds with bias=True.
+            if mixer.get("bias", True):
+                raise ValueError(f"block {i}: MaxText's olmoe3 attention has no projection bias")
+            if mixer.get("clip_qkv") is not None:
+                raise ValueError(
+                    f"block {i}: MaxText's olmoe3 attention doesn't clip Q/K/V (clip_qkv)"
+                )
+            if mixer.get("qk_norm") is None:
+                raise ValueError(f"block {i}: MaxText's olmoe3 decoder needs a QK norm")
             if not mixer.get("use_head_qk_norm") or not mixer.get("qk_norm_per_head_gains"):
                 raise ValueError(
                     f"block {i}: MaxText's olmoe3 decoder needs per-head QK norm with gains"
                 )
+            norms.append(mixer["qk_norm"])
             if not mixer.get("scalable_softmax") or mixer.get("rope") is not None:
                 raise ValueError(
                     f"block {i}: MaxText's olmoe3 decoder needs NoPE + scalable softmax"
@@ -458,10 +482,19 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
                 )
         elif mixer.get("type") == "kimi_delta_attention":
             kda = _same(
-                kda, mixer, ("n_heads", "n_v_heads", "head_dim", "expand_v", "conv_size"), "KDA"
+                kda,
+                mixer,
+                ("n_heads", "n_v_heads", "head_dim", "expand_v", "conv_size", "allow_neg_eigval"),
+                "KDA",
             )
             if mixer.get("conv_bias"):
                 raise ValueError(f"block {i}: MaxText's olmoe3 KDA has no conv bias")
+            # OLMo Core's default; the config dict always carries it since it isn't None.
+            if mixer.get("norm_eps", 1e-5) != _OLMOE3_KDA_NORM_EPS:
+                raise ValueError(
+                    f"block {i}: MaxText's olmoe3 KDA output norm has a fixed epsilon of "
+                    f"{_OLMOE3_KDA_NORM_EPS}, not norm_eps={mixer.get('norm_eps')}"
+                )
         else:
             raise ValueError(f"block {i}: unsupported sequence mixer {mixer.get('type')!r}")
 
@@ -476,6 +509,11 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
             _check_router(i, block["routed_experts_router"])
             if block["routed_experts"].get("bias") or block["latent_moe"].get("bias"):
                 raise ValueError(f"block {i}: MaxText's olmoe3 experts have no bias")
+            if block["latent_moe"].get("up_proj_input_norm_enabled"):
+                raise ValueError(
+                    f"block {i}: MaxText's olmoe3 decoder doesn't normalize the latent up "
+                    "projection's input (up_proj_input_norm_enabled)"
+                )
             if block["routed_experts"].get("activation", "swiglu") != "swiglu":
                 raise ValueError(f"block {i}: MaxText's olmoe3 experts use swiglu")
         if not block.get("use_peri_norm"):
@@ -523,6 +561,7 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
             head_dim=kda_head_dim,
             head_v_dim=int(kda_head_dim * kda["expand_v"]),
             conv_size=kda["conv_size"],
+            allow_neg_eigval=bool(kda.get("allow_neg_eigval")),
         ),
         moe=MoESpec(
             num_experts=routed["num_experts"],
