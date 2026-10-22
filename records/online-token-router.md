@@ -387,6 +387,33 @@ tdb Beaker runs; they finished training before their shutdown crash.
 * **What can close it.** The keep-0.1 / block-4 / dense-every-16 arms (queued) cut the full-row share; a CUDA-graph
   / fixed-capacity gather (as in `layerskip/fastskip.py`) would cut the rest.
 
+## Long-context screen (ds64 setting, queued 2026-10-22)
+
+`research/token_routing/online_router/launch_ds64_otr.py`, state `state_ds64.json`. The parent session's reason:
+* At 8k, otr10M8-s1464 recovers about half of ds64's per-task wins. ds64 wins grow with length (contradiction +0.11
+  / +0.18 / +0.19 at 16k / 32k / 64k), and the mid-stack cost falls slowly with length, so the long-context
+  comparison is the one that matters.
+
+Setup:
+* **Geometry.** ds64's soft-arm geometry: per-task short-heavy 2k-56k pools, UNPACKED rows at seq 65,536, 128
+  rows/step, flash_2, LR 5e-6, repaired 4B base. ds64 only packs the dense arm; its soft arms train unpacked, so
+  segment mode is not needed.
+* **Micro-batch 1.** Mid-stack runs blocks 0-7 on the full row and every 8th step is fully dense.
+* **4 GPUs instead of 8.** Rows per step are unchanged.
+* **512 target samples per row.**
+* **Evals.** The ds64 orchestrator's 5-rung files (2k / 8k / 16k / 32k / 64k, 500 rows, query after).
+* **Reference.** The ds64 dense curves in ops results (experiment `ds64`): contradiction 16M / 32M / 64M, nq 16M /
+  32M / 64M / 128M.
+
+Runs:
+
+| run | Beaker |
+|---|---|
+| ds64-contradiction-otr10M8-b128f-u64M | 01M5JE9KQT011X00V0E02HXTZB |
+| ds64-contradiction-otr30M8-b128f-u64M | 01M5JEADTFJDBSE4G7ZBYHRSQZ |
+| ds64-nq-otr10M8-b128f-u64M | 01M5JEB7G4V6K52S049RHNEW8Z |
+| ds64-nq-otr30M8-b128f-u64M | 01M5JEC3F4S6ZP9GN1JAN3XBCZ |
+
 ## Proposed run matrix
 
 All on mt4s488 (122 steps) unless noted, LR 2e-6, eval 8k + 2k × 500 per task, compared against the dense curve
