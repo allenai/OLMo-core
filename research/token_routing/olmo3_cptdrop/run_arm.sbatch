@@ -30,6 +30,9 @@
 #SBATCH --output=/data/prasann/olmo3_cptdrop/logs/%x-%j.out
 set -uo pipefail
 # ROOT / PY / CODE are overridable so beaker_job.sh can run the same recipe off-cluster.
+# Training shards are the EOS-LAST *_ee copies (eos_to_end.py): EOS-first rows create a degenerate 1-token document
+# that hangs the soft-token variant (2026-10-22). The first dense runs (D-120/240/480) used the EOS-first shards:
+# the same [body, EOS] instances in a different shuffle order, plus that one near-empty instance.
 ROOT="${ROOT:-/data/prasann/olmo3_cptdrop}"
 REPO=/accounts/projects/berkeleynlp/prasann/projects/OLMo-core
 ENV=/data/prasann/conda/envs/corpus-reasoning-olmo
@@ -44,19 +47,19 @@ STEPS="${MAX_STEPS_TOTAL:?MAX_STEPS_TOTAL=<budget in steps>}"
 [ -x "$PY" ] || { echo "FATAL: no interpreter $PY"; exit 2; }
 
 case "$ARM" in
-  D)     DATA=train32k SEQ=32768 GB=16 VAR="--variant full" ;;
-  C1)    DATA=c8k      SEQ=8192  GB=64 MB=4 VAR="--variant full" ;;  # 4 x 8k = 32k tokens per micro-batch, as the 32k arms
-  C2)    DATA=train32k_head SEQ=32768 GB=16 VAR="--variant full" ;;  # rows 0..39,159: never the tail rows c8k was cut from
-  IRAND) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1" ;;
-  IFL)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
+  D)     DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant full" ;;
+  C1)    DATA=c8k_ee   SEQ=8192  GB=64 MB=4 VAR="--variant full" ;;  # 4 x 8k = 32k tokens per micro-batch, as the 32k arms
+  C2)    DATA=train32k_head_ee SEQ=32768 GB=16 VAR="--variant full" ;;  # rows 0..39,159: never the tail rows c8k was cut from
+  IRAND) DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1" ;;
+  IFL)   DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1" ;;
   # follow-up arms (2026-10-22, not in the round-1 plan): position-aware keep rules and token exit.
   # L=4 / L=8 = dropped tokens leave after the first / second full-attention layer (3, 7).
-  IFL_R4K)  DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-recent 4096" ;;
-  IFL_RAMP) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-ramp 0.1,0.5" ;;
-  IFL_X4)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 4" ;;
-  IFL_X8)   DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 8" ;;
-  IRAND_X4) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 4" ;;
-  IRAND_X8) DATA=train32k SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 8" ;;
+  IFL_R4K)  DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-recent 4096" ;;
+  IFL_RAMP) DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --st-keep-ramp 0.1,0.5" ;;
+  IFL_X4)   DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 4" ;;
+  IFL_X8)   DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.0 --st-keep-token-rule first_last --st-keep-token-k 0.25 --st-pad-multiple 1 --tokexit-layer 8" ;;
+  IRAND_X4) DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 4" ;;
+  IRAND_X8) DATA=train32k_ee SEQ=32768 GB=16 VAR="--variant softtoken --st-block-size 512 --st-gold-blind --st-drop-slots --st-keep-prob 0.2 --st-pad-multiple 1 --tokexit-layer 8" ;;
   *) echo "FATAL: unknown ARM=$ARM"; exit 2 ;;
 esac
 # KEEP overrides the drop arms' aggressiveness (I-rand: block keep-prob; I-fl: first_last fraction per block)
@@ -70,7 +73,7 @@ fi
 # CTX=64k: one 64k window per row, 8 rows/step (same 524,288 tokens/step), YaRN x8 (8192 -> 65536, as OLMo stage 3)
 YARN=4
 if [ "${CTX:-32k}" = "64k" ]; then
-  case "$ARM" in D|IRAND|IFL) DATA=train64k; SEQ=65536; GB=8; YARN=8 ;; *) echo "FATAL: CTX=64k not wired for ARM=$ARM"; exit 2 ;; esac
+  case "$ARM" in D|IRAND|IFL) DATA=train64k_ee; SEQ=65536; GB=8; YARN=8 ;; *) echo "FATAL: CTX=64k not wired for ARM=$ARM"; exit 2 ;; esac
 fi
 VAR="$VAR ${ST_EXTRA:-}"
 SAVE="$ROOT/runs/$RUN"

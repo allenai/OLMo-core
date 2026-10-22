@@ -31,27 +31,30 @@ nvidia-smi -L
 
 CTX="${CTX:-32k}"; export CTX
 case "$FAMILY" in
-  C1*|C2*|C4*) NEED="c8k train32k_head" ;;
-  IFL|IRAND) NEED="train32k" ;;
-  GEN) NEED=$([ "$CTX" = 64k ] && echo train64k || echo train32k) ;;
+  C1*|C2*|C4*) NEED="c8k_ee train32k_head_ee" ;;
+  IFL|IRAND) NEED="train32k_ee" ;;
+  GEN) NEED=$([ "$CTX" = 64k ] && echo train64k_ee || echo train32k_ee) ;;
   *) echo "unknown FAMILY $FAMILY"; exit 2 ;;
 esac
 if [ "$CTX" = 64k ]; then DEV=dev64k_512; YF=8; else DEV=dev32k_1024; YF=4; fi
 for d in $NEED $DEV short4k_v2; do "$PY" -u "$S3SYNC" down "$ROOT/data/$d" "data/$d" | tail -1; done
 "$PY" -u "$S3SYNC" down "$ROOT/base/stage2-step47684" base/stage2-step47684 | tail -1
-# Every row of every shard must start with EOS: the trainer splits at EOS and silently drops documents longer
-# than --seq-len, so a stale/broken shard livelocks on empty epochs (stale c8k on S3, 2026-10-22).
+# Training shards (*_ee) must END every row with EOS and have no other EOS: the trainer splits at EOS, and both a
+# stale shard (livelock on empty epochs) and EOS-first rows (degenerate 1-token document -> soft-token hang) broke
+# jobs on 2026-10-22. Eval shards (dev*, short*) are read row by row and START with EOS.
 "$PY" - "$ROOT/data" $NEED $DEV short4k_v2 <<'PYEOF'
 import json, sys
 import numpy as np
 root = sys.argv[1]
 for d in sys.argv[2:]:
-    m = json.load(open(f"{root}/{d}/metadata.json")); L = m["max_example_len"]
+    m = json.load(open(f"{root}/{d}/metadata.json")); L = m["max_example_len"]; eos = m["eos_token_id"]
     a = np.memmap(f"{root}/{d}/token_ids_part_0000.npy", dtype=np.uint32, mode="r").reshape(-1, L)
-    f = float((a[:, 0] == m["eos_token_id"]).mean())
-    print(f"data check {d}: {a.shape[0]} rows x {L}, rows starting with EOS {f:.4f}", flush=True)
-    if f < 1.0:
-        sys.exit(f"{d}: only {f:.4f} of rows start with EOS -- stale or broken shard, refusing to train")
+    col = -1 if d.endswith("_ee") else 0
+    f = float((a[:, col] == eos).mean())
+    n_eos = int((a == eos).sum())
+    print(f"data check {d}: {a.shape[0]} rows x {L}, EOS at {'end' if col else 'start'} {f:.4f}, total EOS {n_eos}", flush=True)
+    if f < 1.0 or n_eos != a.shape[0]:
+        sys.exit(f"{d}: rows do not have exactly one EOS at the {'end' if col else 'start'} -- refusing to train")
 PYEOF
 
 FINALS=()
