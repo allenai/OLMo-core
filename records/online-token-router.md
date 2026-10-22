@@ -429,7 +429,14 @@ vs the full pass, medians over ⚠ 48 held-out rows only; unrelated rows 0.40):
 | 0.1 | 0.739 / 0.775 | 0.751 / 0.754 | 0.669 / 0.587 | 0.584 / 0.574 | 0.597 |
 | 0.3 | 0.879 / 0.914 | 0.907 / 0.870 | 0.791 / 0.662 | 0.605 / 0.609 | 0.661 |
 
-Spearman of the targets with gnorm over body tokens: gxh +0.64, mix +0.64, dh −0.165. Fidelity and training agree:
+The same on the TRAINED otr30L4-s976 export (unseen mt4s1464 rows, ⚠ 48 rows; unrelated rows 0.02): keep 0.3 gnorm
+0.776 / 0.823, gxh 0.799 / 0.740, mix 0.659 / 0.271, dh 0.176 / 0.143, random 0.099; keep 0.1 gnorm 0.224 / 0.423, gxh
+0.182 / 0.286, mix 0.394 / 0.100, dh 0.098 / 0.126, random 0.057. At 0.3 the ordering holds; at 0.1 every rule loses
+most of the direction on this (input-drop-trained) checkpoint and the mix router reads highest, mostly outlier (0.53
+vs 0.22, 12 rows) -- against the mix training run's outlier 0.413, so treated as noise until a mid-stack-trained probe
+repeats it. JSON `results/gradfid_tgtabl_{base,otr30L4s976}/`, ops `otr-gradfid-tgtabl-*`.
+
+Spearman of the targets with gnorm over body tokens (base): gxh +0.64, mix +0.64, dh −0.165 (trained: +0.66 / +0.66 / −0.10). Fidelity and training agree:
 gnorm ≈ gxh > mix > dh ≈ random. The tokens with the largest early residual change are not the ones the gradient
 needs (dh is slightly anti-correlated with it), and on outlier, where the needed token is the one that does not fit,
 dh throws away nearly all of the router's gain. A fit-free "top-k by dh" rule was queued (dh10M8 / dh10M8de0,
