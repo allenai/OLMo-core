@@ -52,6 +52,10 @@ ARMS = {
     "otr30L4-de4": otr(0.3, dense_every=4),                    # every 4th step full context
     "otr30L4-de0": otr(0.3, dense_every=1000),                 # no full-context steps after warmup
     "rnd30": otr(0.3, explore=1.0),                            # control: same budget, uniformly random tokens
+    # "where vs which" (parent session, 2026-10-22): the mid-stack drop point with a router-free selection
+    "rnd30M8": otr(0.3, drop=8, extra="--st-otr-score random"),
+    "fl30M8": otr(0.3, drop=8, extra="--st-otr-score first_last"),
+    "otr10M8": otr(0.1, drop=8),
 }
 
 

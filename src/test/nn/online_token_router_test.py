@@ -386,3 +386,15 @@ def test_random_control_keeps_doc_share_without_router():
     keep = r.select(m, ids, cid, labels)
     got = {d: int((keep[0] & (cid[0] == d)).sum()) for d in range(3)}
     assert got == {0: 2, 1: 8, 2: 1}, got
+
+
+def test_first_last_control_keeps_document_edges():
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, doc_share=1.0, keep_frac=0.2, score="first_last")
+    r.w = torch.zeros(r.n_features)
+    r.step = 2
+    keep = r.select(m, ids, cid, labels)
+    # doc 1 (40 body tokens, ids 2000..2039) keeps 8: its first 4 and last 4
+    kept = sorted(int(t) for t in ids[0][keep[0] & (cid[0] == 1)])
+    assert kept == [2000, 2001, 2002, 2003, 2036, 2037, 2038, 2039], kept

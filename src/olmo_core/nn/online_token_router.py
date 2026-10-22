@@ -86,6 +86,10 @@ class OnlineRouterConfig:
     blocks [0, L) on the full row (trained, full context), then the router scores the forward's own
     h at layer L (no prefix pass) and the dropped tokens skip blocks [L, n_layers): a two-depth
     per-(token, layer) skip. Targets are then read at layer L."""
+    score: str = "router"
+    """Who picks the tokens: ``router`` (the learned scorer), or a CONTROL with the same budget, allocation and
+    drop point: ``random`` (uniform; also ``explore_frac >= 1``) or ``first_last`` (each document's first and
+    last tokens). Controls still fit and log the router, so the fidelity metrics stay comparable."""
     use_hidden: bool = True
     use_query: bool = True
     use_gold: bool = False
@@ -111,6 +115,8 @@ class OnlineRouterConfig:
             raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
+        if self.score not in ("router", "random", "first_last"):
+            raise ValueError(f"online router score must be router / random / first_last, got {self.score!r}")
         if self.target not in TARGETS:
             raise ValueError(f"online router target must be one of {TARGETS}, got {self.target!r}")
         if self.feature_layer < 0 or self.drop_layer < 0:
@@ -134,10 +140,12 @@ def structural_features(
     *,
     doc_start_id: int,
     doc_end_id: int,
+    offsets: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Per-token document-structure features.
 
+    :param offsets: if given, filled with ``j`` / ``r`` (B, T): body offset from the document's start / end.
     :returns: ``(feats (B, T, N_STRUCT) float32, body (B, T) bool)``; rows of non-body tokens are 0.
     """
     B, T = input_ids.shape
@@ -174,6 +182,8 @@ def structural_features(
     f[..., o + 1] = cid.clamp(min=0).to(torch.float32) / (n_row - 1).clamp(min=1)[:, None]
     f[..., o + 2] = torch.log(blen.to(torch.float32)) / 10.0
     f = f * body.unsqueeze(-1)
+    if offsets is not None:
+        offsets["j"], offsets["r"] = j, r
     return f, body
 
 
@@ -360,8 +370,9 @@ class OnlineTokenRouter:
         ``q`` (B,hdim), both RMS-normalised) plus the ``body`` mask. ``hidden=False`` defers the
         hidden parts to :meth:`add_hidden` (mid-stack drop)."""
         c = self.cfg
+        offs: Dict[str, torch.Tensor] = {}
         struct, body = structural_features(
-            input_ids, chunk_ids, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id
+            input_ids, chunk_ids, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id, offsets=offs
         )
         B, T = input_ids.shape
         qm = query_mask(chunk_ids, labels, ignore_index)
@@ -376,7 +387,7 @@ class OnlineTokenRouter:
             0, key[body], torch.ones(int(body.sum()), device=input_ids.device)
         )
         rep = torch.log1p(cnt[key]) / 5.0
-        out: Dict[str, torch.Tensor] = {"body": body, "query": qm}
+        out: Dict[str, torch.Tensor] = {"body": body, "query": qm, "_edge": torch.minimum(offs["j"], offs["r"])}
         out["_s0"] = torch.cat([struct, (in_q * body).unsqueeze(-1), (rep * body).unsqueeze(-1)], dim=-1)
         if c.use_gold:
             out["_gold"] = (self._row_gold(input_ids, chunk_ids) * body).unsqueeze(-1)
@@ -485,10 +496,13 @@ class OnlineTokenRouter:
             keep = body.clone()
         else:
             assert score is not None
-            if c.explore_frac >= 1.0:
+            if c.score == "random" or c.explore_frac >= 1.0:
                 # random CONTROL: the same budget and allocation, uniform scores (the router is fit and
                 # logged but never chooses a token)
                 score, c_explore = u.clone(), 0.0
+            elif c.score == "first_last":
+                # fixed gold-blind rule (control): each document's first and last tokens, same allocation
+                score, c_explore = -fp["_edge"].to(torch.float32) + 1e-3 * u, 0.0
             else:
                 c_explore = c.explore_frac
             k = torch.ceil(n_body.to(torch.float32) * c.keep_frac).to(torch.long)
