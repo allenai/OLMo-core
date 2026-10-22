@@ -963,9 +963,11 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         seed=ctx.seed,
         log_every=o.st_otr_log_every,
     )
+    # the gold table is always loaded when the shard has one: it feeds the online leak diagnostic
+    # (online_router/leak_auc); it is a FEATURE only with --st-otr-use-gold
     gold_table = None
-    if o.st_otr_use_gold:
-        sidecar = o.st_gold_sidecar or os.path.join(ctx.data_dir or "", "gold_fingerprints.json")
+    sidecar = o.st_gold_sidecar or os.path.join(ctx.data_dir or "", "gold_fingerprints.json")
+    if o.st_otr_use_gold or os.path.exists(sidecar):
         with open(sidecar) as f:
             gold_table = json.load(f)
     ids = ctx.ids
