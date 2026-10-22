@@ -1229,6 +1229,11 @@
    "ex": "01M5JPTTTA4PX9K3JX7TH2DPHK",
    "train_run": "f8k-oolong-otr10M8-16M_eg-tdp-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-outlier-otr10M8-16M-tdp-lr2e-06-evoutlier": {
+   "ex": "01M5JPVT1DR0XG2YVJTNVF2XZ9",
+   "train_run": "f8k-outlier-otr10M8-16M-tdp-lr2e-06",
+   "task": "outlier"
   }
  },
  "failed_evals": {
