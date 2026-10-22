@@ -59,8 +59,15 @@ ARMS = {
 }
 
 
-def run_name(arm, budget, lr):
-    return f"f8k-mt4-{arm}-{budget}{SUFFIX}-lr{lr:g}"
+#: per-mix training window: >= the shard's max_example_len (the trainer refuses a shorter one). mt11 rows reach
+#: 10,231 tokens at s240 and the larger first-N shards can be longer.
+SEQ_LEN = {"mt4": 10240, "mt11": 12288}
+
+
+def run_name(arm, budget, lr, mix="mt4", seed=0):
+    """``f8k-<mix>-<arm>[sd<seed>]-<budget><suffix>-lr<lr>``; the seed rides on the arm so the Pareto collector's
+    ``f8k-<mix>-<arm>-s<rows>-tdb-lr<lr>`` pattern still parses (the arm is ``otr30M8sd1``)."""
+    return f"f8k-{mix}-{arm}{f'sd{seed}' if seed else ''}-{budget}{SUFFIX}-lr{lr:g}"
 
 
 def load():
@@ -76,17 +83,18 @@ def do_launch(a, mode):
     st = load()
     for arm in a.arms.split(","):
         for budget in a.budgets.split(","):
-            name = run_name(arm, budget, a.lr)
+            name = run_name(arm, budget, a.lr, a.mix, a.seed)
             if name in st["runs"] and mode == "launch" and not a.force:
                 print(f"[skip] {name} ({st['runs'][name]['ex']})")
                 continue
             rows, _, steps = budget[1:].partition("@")
-            cmd = [sys.executable, "-u", LAUNCHER, "--task", "mt4", "--variant", "softtoken",
-                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", f"{SHARDS}/mt4s{rows}",
+            cmd = [sys.executable, "-u", LAUNCHER, "--task", a.mix, "--variant", "softtoken",
+                   "--model-family", "qwen3_5", "--model-scale", "4b", "--data-root", f"{SHARDS}/{a.mix}s{rows}",
                    "--run-name", name, "--exact-run-name", "--num-nodes", "1", "--num-gpus", "2",
                    "--epochs", str(a.epochs), "--lr", str(a.lr), "--cluster", "ai2/jupiter-cirrascale-2",
                    "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--no-follow", "--no-compile",
-                   "--seq-len", "10240", "--global-batch", "16", "--micro-batch-instances", "2",
+                   "--seq-len", str(SEQ_LEN[a.mix]), "--global-batch", "16", "--micro-batch-instances", "2",
+                   "--seed", str(a.seed),
                    "--base-checkpoint", BASE, "--experiment", "learned_router", "--extra-args", ARMS[arm]]
             if steps:
                 cmd[cmd.index("--extra-args"):cmd.index("--extra-args")] = ["--max-steps", steps]
@@ -94,7 +102,7 @@ def do_launch(a, mode):
             ex = parse_id(out)
             print(f"{name} -> rc={rc} {ex or out[-400:]}")
             if mode == "launch" and ex:
-                st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": a.lr}
+                st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": a.lr, "mix": a.mix, "seed": a.seed}
                 save(st)
 
 
@@ -126,6 +134,8 @@ def main():
     ap.add_argument("--budgets", default="s488", help="s<rows/task>[@<max steps>] (mt4s488 / mt4s976 / mt4s1464)")
     ap.add_argument("--lr", type=float, default=2e-6, help="the rule arms' LR in the tokdrop_lr screen")
     ap.add_argument("--epochs", type=int, default=1)
+    ap.add_argument("--mix", default="mt4", choices=sorted(SEQ_LEN), help="task mix: shard <mix>s<rows>")
+    ap.add_argument("--seed", type=int, default=0, help="run seed (data order, router exploration); tags the arm")
     ap.add_argument("--runs", default="")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("mode", choices=["launch", "dry_run", "eval"])
