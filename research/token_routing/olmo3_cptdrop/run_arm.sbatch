@@ -60,7 +60,7 @@ fi
 
 ARGS=(--task cpt --model-family olmo3 --model-scale 7b $VAR
   --data "$ROOT/data/$DATA" --seq-len "$SEQ" --global-batch "$GB" --micro-batch-instances "${MB:-1}" --epochs 1
-  --base-checkpoint "$ROOT/base/stage2-step47684" --skip-marker-audit --rope-yarn-factor 4
+  --base-checkpoint "$ROOT/base/stage2-step47684/model_and_optim" --skip-marker-audit --rope-yarn-factor 4
   --lr 2.0712352850360292e-4 --weight-decay 0.1 --z-loss 1e-5
   --scheduler wsd --warmup-fraction "${WARMUP:-0.017}" --wsd-decay-fraction "${DECAY_FRAC:-0.1}"
   --max-tokens $(( STEPS * TOK_PER_STEP ))

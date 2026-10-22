@@ -41,7 +41,8 @@ run() {  # ARM-specific env passed by caller; $1 = log name
   return $rc
 }
 
-# 1. unit tests
+# 1. unit tests (SKIP_TESTS=1 when a previous driver already passed them on this code)
+if [ -z "${SKIP_TESTS:-}" ]; then
 log "pytest"
 ( cd "$CODE" && export PYTHONPATH="$CODE/src:$CODE/recipes/train/research_trainer:$CODE/recipes/train:$CODE" \
     TMPDIR="$ROOT/tmp" TRITON_CACHE_DIR="$ROOT/tmp/triton" CUDA_VISIBLE_DEVICES=0 && \
@@ -52,6 +53,7 @@ log "pytest"
     src/test/nn/block_skip_test.py research/token_routing/olmo3_cptdrop/test_eval_devce_cpu.py \
     > "$ROOT/logs/pytest-$J.log" 2>&1 )
 rc=$?; tail -5 "$ROOT/logs/pytest-$J.log"; [ $rc -eq 0 ] || { log "pytest FAILED rc=$rc"; exit 10; }
+fi
 
 # 2. smoke
 S=o3cd-smoke-$J
