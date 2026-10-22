@@ -989,6 +989,66 @@
    "train_run": "f8k-mt11-otr30M8-s480-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5JNPPG157Y2TT9V61TVMA7N",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5JNQHQ1F4HHYDVD9BF6M97N",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5JNRF34ME2WV3DQQTN1Y431",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5JNS9FWGVW7FDKJDXW0AJAA",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5JNT51E7C0MAP1HTT6E89RB",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5JNV0RQYXW4N8G6Y5B81DNS",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5JNVV55QBZA7ZSVS6SNM0HD",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5JNWP4TQ69A0BPM0YSBT9QX",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5JNXG9R6PQPM7NJCAEMREC8",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M8-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5JNYABK3MTA2JHER99G7KAE",
+   "train_run": "f8k-mt11-otr10M8-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
