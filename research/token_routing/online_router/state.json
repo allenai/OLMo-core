@@ -1234,6 +1234,11 @@
    "ex": "01M5JPVT1DR0XG2YVJTNVF2XZ9",
    "train_run": "f8k-outlier-otr10M8-16M-tdp-lr2e-06",
    "task": "outlier"
+  },
+  "f8k-outlier-otr30M8-16M-tdp-lr2e-06-evoutlier": {
+   "ex": "01M5JPWQX2XZW9APVZAB23MA8A",
+   "train_run": "f8k-outlier-otr30M8-16M-tdp-lr2e-06",
+   "task": "outlier"
   }
  },
  "failed_evals": {
