@@ -565,6 +565,50 @@ def test_hybrid_kda_allow_neg_eigval_is_translated():
     assert "kda_allow_neg_eigval=False" in get_maxtext_config(config).overrides()
 
 
+def test_hybrid_emo_is_translated():
+    c = get_maxtext_config(load_fixture("hybrid_moe_small_config.json"))
+    assert c.moe is not None and c.moe.emo is not None
+    assert (c.moe.emo.min_pool, c.moe.emo.max_pool, c.moe.emo.eval_pool) == (2, 8, 8)
+    assert c.moe.emo.eos_token_id == 100257
+    overrides = c.overrides()
+    for key in (
+        "emo_enabled=True",
+        "emo_min_document_expert_pool=2",
+        "emo_max_document_expert_pool=8",
+        "emo_eval_document_expert_pool=8",
+        # The EMO router pools experts per EOS-delimited document, so MaxText's data pipeline
+        # has to split documents on the same token, and only the router may see the split.
+        "olmo_segment_eos_token_id=100257",
+        "olmoe3_segments_for_emo_only=True",
+    ):
+        assert key in overrides
+
+
+def test_hybrid_emo_default_eval_pool_is_resolved():
+    # ``eval_document_expert_pool`` is optional; OLMo Core evaluates with the midpoint pool.
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in moe_blocks(config):
+        block["routed_experts_router"]["emo"].update(
+            min_document_expert_pool=3, max_document_expert_pool=8
+        )
+        del block["routed_experts_router"]["emo"]["eval_document_expert_pool"]
+    c = get_maxtext_config(config)
+    assert c.moe is not None and c.moe.emo is not None
+    assert c.moe.emo.eval_pool == 5
+    assert "emo_eval_document_expert_pool=5" in c.overrides()
+
+
+def test_hybrid_without_emo():
+    config = load_fixture("hybrid_moe_small_config.json")
+    for block in moe_blocks(config):
+        block["routed_experts_router"]["emo"] = None
+    c = get_maxtext_config(config)
+    assert c.moe is not None and c.moe.emo is None
+    overrides = c.overrides()
+    assert "emo_enabled=False" in overrides
+    assert not any(k.startswith("olmo_segment_eos_token_id") for k in overrides)
+
+
 def test_hybrid_latent_up_proj_input_norm_fails():
     config = load_fixture("hybrid_moe_small_config.json")
     for block in moe_blocks(config):

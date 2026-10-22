@@ -21,6 +21,7 @@ __all__ = [
     "ScanLayout",
     "AttentionSpec",
     "KDASpec",
+    "EMOSpec",
     "MoESpec",
     "LayerSpec",
     "MaxTextModelConfig",
@@ -104,13 +105,27 @@ class KDASpec:
 
 
 @dataclass(frozen=True)
+class EMOSpec:
+    """
+    EMO routing: every EOS-delimited document routes within its own pool of experts.
+    """
+
+    eos_token_id: int
+    """The token that ends a document."""
+    min_pool: int
+    max_pool: int
+    """Training samples each document's pool size uniformly from ``[min_pool, max_pool]``."""
+    eval_pool: int
+    """The pool size outside training."""
+
+
+@dataclass(frozen=True)
 class MoESpec:
     num_experts: int
     hidden_size: int
     latent_dim: int
     top_k: int
-    emo_pools: Optional[Tuple[int, int, int]] = None
-    """EMO document expert pool sizes (min, max, eval), if EMO routing is on."""
+    emo: Optional[EMOSpec] = None
 
 
 @dataclass(frozen=True)
@@ -221,15 +236,21 @@ class MaxTextModelConfig:
             f"gdn_conv_kernel_dim={k.conv_size}",
             f"kda_allow_neg_eigval={k.allow_neg_eigval}",
         ]
-        if m.emo_pools is None:
+        if m.emo is None:
             overrides.append("emo_enabled=False")
         else:
-            lo, hi, ev = m.emo_pools
             overrides += [
                 "emo_enabled=True",
-                f"emo_min_document_expert_pool={lo}",
-                f"emo_max_document_expert_pool={hi}",
-                f"emo_eval_document_expert_pool={ev}",
+                f"emo_min_document_expert_pool={m.emo.min_pool}",
+                f"emo_max_document_expert_pool={m.emo.max_pool}",
+                f"emo_eval_document_expert_pool={m.emo.eval_pool}",
+                # OLMo Core's EMO router splits documents on the EOS token itself. MaxText's
+                # router takes document boundaries from the segment ids, so its OLMo data
+                # pipeline (``dataset_type=olmo_grain``) has to number documents by the same
+                # token, and only the router may see that split: attention and KDA still see
+                # the whole instance, as in OLMo Core.
+                f"olmo_segment_eos_token_id={m.emo.eos_token_id}",
+                "olmoe3_segments_for_emo_only=True",
             ]
         return overrides
 
@@ -575,19 +596,23 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
             hidden_size=routed["hidden_size"],
             latent_dim=latent["latent_dim"],
             top_k=router["top_k"],
-            emo_pools=(
-                None
-                if emo is None
-                else (
-                    emo["min_document_expert_pool"],
-                    emo["max_document_expert_pool"],
-                    emo["eval_document_expert_pool"],
-                )
-            ),
+            emo=None if emo is None else _emo_spec(emo),
         ),
     )
     _validate_hybrid_layout(config)
     return config
+
+
+def _emo_spec(emo: Mapping[str, Any]) -> EMOSpec:
+    lo, hi = emo["min_document_expert_pool"], emo["max_document_expert_pool"]
+    # The eval pool is optional; ``EmoRouterConfig.eval_pool_size()`` falls back to the midpoint.
+    eval_pool = emo.get("eval_document_expert_pool")
+    return EMOSpec(
+        eos_token_id=emo["eos_token_id"],
+        min_pool=lo,
+        max_pool=hi,
+        eval_pool=(lo + hi) // 2 if eval_pool is None else eval_pool,
+    )
 
 
 def _validate_hybrid_layout(config: MaxTextModelConfig) -> None:

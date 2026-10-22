@@ -47,6 +47,11 @@ python src/examples/maxtext/convert_checkpoint_to_maxtext.py -i <olmo-core-step-
 python src/examples/maxtext/convert_checkpoint_from_maxtext.py -i <maxtext-run>/checkpoints/<step>/items -o <olmo-core-out>
 ```
 
+For a model with EMO routing, the overrides include `olmo_segment_eos_token_id` and `olmoe3_segments_for_emo_only=True`.
+OLMo Core's EMO router splits documents on the EOS token, while MaxText's takes document boundaries from the data
+pipeline's segment ids, so these only take effect with MaxText's OLMo pipeline (`dataset_type=olmo_grain`). With another
+pipeline, make sure it numbers EOS-delimited documents the same way, or the router will form different expert pools.
+
 Converted OLMo Core checkpoints contain `model_and_optim/` (DCP, with `model.<name>` keys at full shape) and
 `config.json`. This is the same layout the Hugging Face importer writes.
 
