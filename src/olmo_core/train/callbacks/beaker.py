@@ -3,6 +3,7 @@ import json
 import logging
 import platform
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,13 @@ log = logging.getLogger(__name__)
 
 BEAKER_EXPERIMENT_ID_ENV_VAR = "BEAKER_EXPERIMENT_ID"
 BEAKER_RESULT_DIR = "/results"
+
+# Run by BeakerCallback._set_description in a child process.
+_SET_DESCRIPTION = """
+import sys
+from gantry.api import update_workload_description
+update_workload_description(sys.argv[1])
+"""
 
 
 @dataclass
@@ -144,11 +152,6 @@ class BeakerCallback(Callback):
         self._last_update = time.monotonic()
 
     def _set_description(self):
-        from beaker.exceptions import BeakerError, HTTPError, RequestException, RpcError
-        from gantry.api import update_workload_description
-
-        from olmo_core.launch.beaker import get_beaker_client
-
         description = f"[{self.trainer.training_progress}] "
 
         if self.description is not None:
@@ -157,8 +160,19 @@ class BeakerCallback(Callback):
         if self._url is not None:
             description = f"{description}{self._url} "
 
+        # This runs in a bookkeeping thread. If the data loader forks its workers while a gRPC call
+        # (beaker-py) is in flight here, a worker can crash and leave the job hung, so the call is
+        # made from a child process.
         try:
-            with get_beaker_client() as beaker:
-                update_workload_description(description.strip(), client=beaker)
-        except (RequestException, BeakerError, HTTPError, RpcError) as e:
-            log.warning(f"Failed to update Beaker experiment description: {e}")
+            subprocess.run(
+                [sys.executable, "-c", _SET_DESCRIPTION, description.strip()],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            stderr = getattr(e, "stderr", None)
+            lines = stderr.strip().splitlines() if isinstance(stderr, str) else []
+            reason = lines[-1] if lines else e
+            log.warning(f"Failed to update Beaker experiment description: {reason}")
