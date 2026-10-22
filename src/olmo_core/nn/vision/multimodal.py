@@ -477,6 +477,12 @@ class MultimodalLM(nn.Module):
 
         backends = [m.backend for m in self.lm.modules() if getattr(m, "backend", None) is not None]
         use_flex_attn = any(isinstance(b, FlexAttentionBackend) for b in backends)
+        if any(isinstance(b, FlexAttentionBackend) and b.window_size != (-1, -1) for b in backends):
+            raise OLMoConfigurationError(
+                "MultimodalLM builds one shared FlexAttention block mask without a sliding "
+                "window, so LMs with sliding-window flex layers are not supported yet (those "
+                "layers would silently attend over the full context)."
+            )
         if use_flex_attn and not all(isinstance(b, FlexAttentionBackend) for b in backends):
             raise OLMoConfigurationError(
                 "MultimodalLM does not support mixing FlexAttention with other attention "
