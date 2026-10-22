@@ -41,10 +41,11 @@ def parse_name(run):
         tag = lambda pre: next((int(t[len(pre):]) for t in after if re.fullmatch(pre + r"\d+", t)), 0)
         return dict(mix=mix, rows=int(rows or 488), arm="-".join(before), lr=float(lr.group(1)), campaign=camp,
                     seed=seed, epochs=tag("ep") or 1, max_steps=tag("s"))
-    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:st(\d+))?-tdb-lr(\d[\d.]*(?:e-\d+)?)$", run)
+    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:st(\d+))?-(tdb|tdc|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
     if m:
-        mix, arm, rows, steps, lr = m.groups()
-        return dict(mix=mix, rows=int(rows), arm=arm, lr=float(lr), campaign="tdb", seed=0, epochs=1,
+        mix, arm, rows, steps, camp, lr = m.groups()
+        seed = int(re.search(r"sd(\d+)$", arm).group(1)) if re.search(r"sd\d+$", arm) else 0
+        return dict(mix=mix, rows=int(rows), arm=arm, lr=float(lr), campaign=camp, seed=seed, epochs=1,
                     max_steps=int(steps or 0))
     return None
 
@@ -66,22 +67,57 @@ def lambda_wall(run):
         return None, None
 
 
-def beaker_points():
+ROUTER_STATE = ("origin/claude/online-router-1bc01a", "research/token_routing/online_router/state.json")
+TS_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?)Z.*\[step=(\d+)/", re.M)
+
+
+def _ops_scores(run):
+    out = subprocess.run([OPS, "result", "show", "--train-run", run, "--json"], capture_output=True, text=True,
+                         timeout=60).stdout
+    rows = json.loads(out) if out.strip().startswith("[") else []
+    return {(r["task"], r["rung"]): (r["value"], r["eval_size"]) for r in rows}
+
+
+def _beaker_train(ex):
+    """(actual PF, last step, train seconds first->last step line) from a Beaker training log."""
+    import datetime as dt
+    log = subprocess.run([BEAKER, "experiment", "logs", ex], capture_output=True, text=True, timeout=300).stdout
+    pf = re.findall(r"flop_meter/actual_pflops[ =]+([0-9.]+)", log)
+    steps = TS_RE.findall(log)
+    wall = None
+    if len(steps) > 1:
+        t = [dt.datetime.fromisoformat(a[:26]) for a, _ in (steps[0], steps[-1])]
+        wall = (t[1] - t[0]).total_seconds()
+    return (float(pf[-1]) if pf else None), (max(int(b) for _, b in steps) if steps else None), wall
+
+
+def beaker_runs():
+    """Beaker training runs scored in ops results: this launcher's -tdc runs (state.json) and the online-router
+    session's runs (its state.json on its branch). Scores come from ops results (any experiment), PF / steps /
+    wall-clock from the training log."""
+    srcs = []
     st_path = os.path.join(HERE, "state.json")
-    if not os.path.exists(st_path):
-        return []
-    st = json.load(open(st_path))
-    pts = []
-    for ename, e in st.get("evals", {}).items():
-        run = e.get("train_run")
-        if not run or "-tdb" not in run or not e.get("ex"):
+    if os.path.exists(st_path):
+        srcs += [(k, v) for k, v in json.load(open(st_path))["runs"].items() if "-tdc" in k]
+    try:
+        rs = subprocess.run(["git", "-C", HERE, "show", ":".join(ROUTER_STATE)], capture_output=True, text=True,
+                            timeout=60).stdout
+        srcs += list(json.loads(rs)["runs"].items())
+    except Exception as e:  # noqa: BLE001
+        print("router state unavailable:", e)
+    runs, rows = {}, []
+    for run, v in srcs:
+        meta, ex = parse_name(run), v.get("ex")
+        if meta is None or not ex:
             continue
-        log = subprocess.run([BEAKER, "experiment", "logs", e["ex"]], capture_output=True, text=True,
-                             timeout=120).stdout
-        for m in SCORE_RE.finditer(log):
-            pts.append(dict(run=run, task=m.group(1), rung=m.group(2), score=float(m.group(3)),
-                            eval_size=int(m.group(4))))
-    return pts
+        sc = _ops_scores(run)
+        if not sc:
+            continue
+        pf, steps, wall = _beaker_train(ex)
+        runs[run] = dict(meta, run=run, cluster="beaker-h100", pf=pf, steps=steps, per_example=True,
+                         train_seconds=wall, gpus=2, dense=meta["arm"] == "dense", beaker_ex=ex)
+        rows += [dict(run=run, task=t, rung=r, score=x, eval_size=n) for (t, r), (x, n) in sc.items()]
+    return runs, rows
 
 
 def main():
@@ -109,14 +145,20 @@ def main():
         for (task, rung), (v, n) in sc.items():
             rows.append(dict(run=run, task=task, rung=rung, score=v, eval_size=n))
     # old dense runs without the per-example meter: scale per-step PF from the longest per-example dense run
-    ref = max((r for r in runs.values() if r["dense"] and r["per_example"] and r["pf"]),
-              key=lambda r: r["steps"] or 0, default=None)
     for r in runs.values():
-        if r["dense"] and not r["per_example"] and ref and r["steps"]:
-            r["pf"] = ref["pf"] / ref["steps"] * r["steps"]
-            r["pf_scaled"] = True
+        if r["dense"] and not r["per_example"] and r["steps"]:
+            # per-step PF depends on row lengths: borrow it only from a per-example dense run on the SAME shard
+            # (an mt11 run's shorter rows once halved the mt4 122-step dense run's PF)
+            same = [q for q in runs.values() if q["dense"] and q["per_example"] and q["pf"] and q["steps"]
+                    and q.get("mix") == r.get("mix") and q.get("rows") == r.get("rows")]
+            if same:
+                ref = max(same, key=lambda q: q["steps"])
+                r["pf"] = ref["pf"] / ref["steps"] * r["steps"]
+                r["pf_scaled"] = True
     if not a.no_beaker:
-        rows += beaker_points()
+        b_runs, b_rows = beaker_runs()
+        runs.update(b_runs)
+        rows += b_rows
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     json.dump(dict(runs=runs, points=rows), open(a.out, "w"), indent=1)
     print(f"{len(runs)} runs, {len(rows)} points -> {a.out}")

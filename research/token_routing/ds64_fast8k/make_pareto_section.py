@@ -25,6 +25,14 @@ DENSE_LR = 5e-6  # the plotted dense line
 def family(arm):
     if arm == "dense":
         return "dense"
+    if arm == "densepf":
+        return "dense (pad-free path)"
+    if re.match(r"otr\d+M\d+", arm):
+        return "online router, mid-stack drop"
+    if re.match(r"otr\d+L\d+", arm):
+        return "online router, input drop"
+    if re.match(r"(rnd|fl)\d+", arm):
+        return "random / first-last (router's budget)"
     if re.search(r"-(sk\d+|ldl?\d+)$", arm):
         return "+ train-time layer skip"
     if arm.startswith("tier"):
@@ -57,12 +65,12 @@ def build(d):
         score.setdefault(p["run"], {})[(p["task"], p["rung"])] = (p["score"], p["eval_size"])
     out = []
     for xkey in ("pf", "train_seconds"):
-        dense = [r for r in runs.values() if r["arm"] == "dense" and r.get(xkey)
+        dense = [r for r in runs.values() if r["arm"] == "dense" and r.get(xkey) and r.get("mix", "mt4") == "mt4"
                  and any(abs(r["lr"] - l) < 1e-12 for l in DENSE_LRS)]
         for r in runs.values():
             if r["dense"] and abs(r["lr"] - DENSE_LR) > 1e-12:
                 continue
-            if "~lrbbug" in r["arm"] or not r.get(xkey) or r["run"] not in score:
+            if "~lrbbug" in r["arm"] or not r.get(xkey) or r["run"] not in score or r.get("mix", "mt4") != "mt4":
                 continue
             same = [q for q in dense if xkey == "pf" or q["cluster"] == r["cluster"]]
             row = dict(run=r["run"], arm=r["arm"], family=family(r["arm"]), x=r[xkey], xkey=xkey,
@@ -113,7 +121,9 @@ FRAGMENT = r"""<!--PARETO-BEGIN-->
 const PR = __DATA__;
 const PCELLS = __CELLS__;
 const FAMC = {"dense": "var(--dense)", "two-tier (gold + decoys at a larger budget)": "var(--teal)", "gold + decoys whole": "var(--warn)",
-              "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "+ train-time layer skip": "var(--bar)", "other": "var(--muted)"};
+              "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "+ train-time layer skip": "var(--bar)", "online router, mid-stack drop": "#7b4fd6",
+              "online router, input drop": "#b48ce8", "random / first-last (router's budget)": "#8a8f8c",
+              "dense (pad-free path)": "var(--dense)", "other": "var(--muted)"};
 document.getElementById("pareto-legend").innerHTML = Object.entries(FAMC).filter(([f]) => PR.some(r => r.family === f))
   .map(([f, c]) => `<span><span class="sw" style="background:${c}"></span>${f}</span>`).join("");
 function pmark(r, x, y, sz) {
