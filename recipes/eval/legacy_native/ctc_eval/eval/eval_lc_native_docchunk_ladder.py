@@ -624,7 +624,7 @@ def main():
 
         print(f"[docchunk-ladder] FLA length autotune frozen on {freeze_fla_length_autotune()} kernel(s)", flush=True)
 
-    @torch.no_grad()
+    @torch.inference_mode()  # (not no_grad: generate_batch builds its caches as inference tensors)
     def generate_one(prefill, max_new_tokens, answer_complete):
         # Size the KV cache to THIS example's actual need (prefill + decode budget), not the raised
         # --max-length. At the xlong 64k/128k rungs the runner raises --max-length to cover the longest
