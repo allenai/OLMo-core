@@ -491,8 +491,13 @@ def build_cfg(vocab: int, attn_backend: str = "flash_2"):
     from olmo_core.nn.lm_head import LMLossImplementation
     from olmo_core.nn.transformer import TransformerConfig
 
-    fac = TransformerConfig.qwen3_5_4B if FAMILY == "qwen3_5" else TransformerConfig.qwen3_4B
-    cfg = fac(vocab_size=vocab, attn_backend=AttentionBackendName(attn_backend))
+    # Never fall back silently: an unknown PROBE_FAMILY used to build qwen3_4B, which loads a
+    # wrong-family checkpoint into the wrong architecture (or dies far from the cause).
+    factories = {"qwen3_5": TransformerConfig.qwen3_5_4B, "qwen3": TransformerConfig.qwen3_4B}
+    if FAMILY not in factories:
+        raise SystemExit(f"PROBE_FAMILY={FAMILY!r} has no model config here (known: {sorted(factories)}); "
+                         "for OLMo 3 use research/token_routing/olmo3_cptdrop/eval_devce.py")
+    cfg = factories[FAMILY](vocab_size=vocab, attn_backend=AttentionBackendName(attn_backend))
     cfg.lm_head.loss_implementation = LMLossImplementation.default
     return cfg
 
