@@ -90,7 +90,8 @@ def expected_minutes(arm, steps):
 def min_runtime(arm, steps):
     """Beaker minRuntime covering the whole run (x1.3, at least 1h): urgent jobs are preemptible once minRuntime
     has passed, and the 2-3 h runs were preempted at ~1 h and restarted from scratch twice (2026-10-23)."""
-    return f"{max(1, math.ceil(expected_minutes(arm, steps) * 1.3 / 60))}h"
+    # Beaker refuses minRuntime > 8h; longer runs rely on the resume point every SAVE_INTERVAL steps past that
+    return f"{min(8, max(1, math.ceil(expected_minutes(arm, steps) * 1.3 / 60)))}h"
 
 
 def run_name(arm, budget, lr, seed=0):
