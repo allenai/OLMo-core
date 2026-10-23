@@ -571,6 +571,18 @@ dense-eq; 47.7 GiB after the freeze) 0.898 / 0.884 / 0.647 / 0.556, vs otr10M7 (
 0.643 / 0.581: -38% PF and -12 GiB for the second half at -0.03 contra. Against the best-LR dense curve interpolated
 at 275 PF (≈ 0.885 / 0.897 / 0.569 / 0.28, between dense-s488 61 and 122 steps) it is level on contra / nq and ahead on
 oolong / outlier.
+**Freeze-point sweep + LR at mt4s1464 (Lambda, de0, no full steps), 8k contra / nq / oolong / outlier:**
+
+| run | PF (x 1154 dense-eq) | contra | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| fa92M7 (freeze at 25%) | 240 (0.21) | 0.878 | 0.882 | 0.618 | 0.488 |
+| fa183M7 (50%), seeds 0 / 1 | 275 (0.24) | 0.898 / 0.881 | 0.884 / 0.890 | 0.647 / 0.666 | 0.556 / 0.491 |
+| fa275M7 (75%) | 311 (0.27) | 0.919 | 0.888 | 0.637 | 0.553 |
+| **fa183M7, LR 5e-6** | 275 (0.24) | **0.920** | 0.884 | 0.624 | **0.622** |
+| otr10M7 de8, LR 2e-6 (2 seeds) | 445 (0.39) | 0.927 | 0.907 | 0.643 | 0.581 |
+
+A later freeze buys contradiction smoothly; LR 5e-6 (the 64k study's router LR) gets otr10M7's contradiction at 0.24x
+(single seed; outlier@2k 0.691 is the known LR confound on that cell).
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
 
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
