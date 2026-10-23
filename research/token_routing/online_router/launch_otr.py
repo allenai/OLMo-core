@@ -65,6 +65,12 @@ ARMS = {
     "rnd10M7": otr(0.1, drop=7, extra="--st-otr-score random"),   # strmatch test (parent, 2026-10-23): does random fail mt11 strmatch too?
     # allocation ablation (Prasann, 2026-10-23: "do you ever ablate the budget not being kept per document? Also not
     # having headers?"): global budget (doc share 0 / 0.5), and each document's first 8 body tokens always kept
+    # aggressive cuts (Prasann, 2026-10-23: "much more aggressive cuts to computation"): the floors dominate
+    # (blocks [0, 7) on every token ~22% of dense, the full-context step every 8 ~12%)
+    "otr10M7ng": otr(0.1, drop=7, extra="--st-otr-early-nograd"),          # early blocks forward-only on routed steps
+    "otr10M7tail": otr(0.1, drop=7, dense_every=0, extra="--st-otr-dense-tail-frac 0.1"),  # routed, then a dense tail
+    "otr10M7de0": otr(0.1, drop=7, dense_every=0),                         # no full-context steps
+    "otr10M7ngtail": otr(0.1, drop=7, dense_every=0, extra="--st-otr-dense-tail-frac 0.1 --st-otr-early-nograd"),
     "otr10M7ds0": otr(0.1, drop=7, share=0.0),
     "otr10M7ds50": otr(0.1, drop=7, share=0.5),
     "otr10M7hdr8": otr(0.1, drop=7, extra="--st-otr-keep-first 8"),
