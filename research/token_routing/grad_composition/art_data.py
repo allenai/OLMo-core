@@ -16,33 +16,34 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RES = os.path.join(HERE, "results")
 #: label -> (display name, row set, steps, kind)
 LABELS = {
-    "mt4rows-base": ("base", "mt4", 0, "base"),
-    "mt4rows-mt4-st31": ("dense 31", "mt4", 31, "dense"),
-    "mt4rows-mt4-st61": ("dense 61", "mt4", 61, "dense"),
-    "mt4rows-mt4-st122": ("dense 122", "mt4", 122, "dense"),
-    "mt4rows-mt4-st366": ("dense 366", "mt4", 366, "dense"),
-    "mt4rows-mt4-st366-lr2e-6": ("dense 366, LR 2e-6", "mt4", 366, "dense-lr2e-6"),
-    "mt4rows-mt4-otr10M8-st366": ("router otr10M8, 366", "mt4", 366, "router"),
-    "base": ("base", "mt11", 0, "base"),
-    "mt11-st165": ("dense 165", "mt11", 165, "dense"),
-    "mt11-st330": ("dense 330", "mt11", 330, "dense"),
-    "mt11-otr20M8-st330": ("router otr20M8, 330", "mt11", 330, "router"),
-    # mt4-trained checkpoints on the mt11 rows (setA prompt format: out of format for mt4 training)
-    "mt4-st122": ("mt4 dense 122 (OOD rows)", "mt11", 122, "ood"),
-    "mt4-st366": ("mt4 dense 366 (OOD rows)", "mt11", 366, "ood"),
-    "mt4-otr10M8-st366": ("mt4 router 366 (OOD rows)", "mt11", 366, "ood"),
+    # Beaker wave (primary): one source for each series. Lambda copies of base / dense 366 / router 366 agree
+    # (base exactly; dense 366 is a separate training run: blocks 0-6 share 0.20 vs 0.23, ablation +0.31 vs +0.23).
+    "bk-mt4rows-base": ("base", "mt4", 0, "base"),
+    "bk-mt4rows-mt4-st31": ("dense 31", "mt4", 31, "dense"),
+    "bk-mt4rows-mt4-st61": ("dense 61", "mt4", 61, "dense"),
+    "bk-mt4rows-mt4-st122": ("dense 122", "mt4", 122, "dense"),
+    "bk-mt4rows-mt4-st366": ("dense 366", "mt4", 366, "dense"),
+    "bk-mt4rows-mt4-st366-lr2e-6": ("dense 366, LR 2e-6", "mt4", 366, "dense-lr2e-6"),
+    "bk-mt4rows-mt4-otr10M8-st366": ("router otr10M8, 366", "mt4", 366, "router"),
+    "bk-mt11rows-base": ("base", "mt11", 0, "base"),
+    "bk-mt11rows-mt11-st165": ("dense 165", "mt11", 165, "dense"),
+    "bk-mt11rows-mt11-st330": ("dense 330", "mt11", 330, "dense"),
+    "bk-mt11rows-mt11-st495": ("dense 495", "mt11", 495, "dense"),
+    "bk-mt11rows-mt11-otr10M8-st330": ("router otr10M8, 330", "mt11", 330, "router"),
+    "bk-mt11rows-mt11-otr10M8-st495": ("router otr10M8, 495", "mt11", 495, "router2"),
 }
-HEAT_LABELS = ["mt4rows-base", "mt4rows-mt4-st366", "base", "mt11-st330", "mt11-otr20M8-st330"]
+HEAT_LABELS = ["bk-mt4rows-base", "bk-mt4rows-mt4-st366", "bk-mt4rows-mt4-otr10M8-st366", "bk-mt11rows-base",
+               "bk-mt11rows-mt11-st495", "bk-mt11rows-mt11-otr10M8-st495"]
 BINS = 256
 
 
 def clean_rows(rows, rowset):
-    """mt11 rows: keep only rows seen by neither mt11s240 nor mt11s480 (the mt11 shards are shuffled supersets, so 42
-    of rows 480-543 per task are mt11s480 training rows); the same subset for every checkpoint. mt4 rows: all clean."""
+    """mt11 rows: keep only rows that no mt11 training shard contains (the mt11 shards are shuffled supersets, so most
+    rows of mt11s960 past 720 are still training rows of some mt11 run); the same subset for every checkpoint. mt4
+    rows (mt4s1952 rows 1464+, prefix shards): all clean."""
     if rowset != "mt11":
         return [True] * len(rows)
-    seen = json.load(open(os.path.join(RES, "mt11_seen.json")))
-    return [not (seen[x["task"]][str(x["k"])][0] or seen[x["task"]][str(x["k"])][1]) for x in rows]
+    return [not any(s_.startswith("mt11") for s_ in x["seen_in"]) for x in rows]
 
 
 def r(x, d=3):

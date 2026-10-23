@@ -190,14 +190,15 @@ const FULL = D.full_blocks;
 const CATS = D.cats;
 const GROUPS = [["gold docs",["hdr_g","first_g","mid_g","last_g"],"--s3"],["other docs",["hdr_n","first_n","mid_n","last_n"],"--s1"],
   ["markers",["marker"],"--s4"],["query",["query"],"--s2"],["answer",["answer"],"--s5"],["prompt / other",["prompt","other"],"--s6"]];
-const SERIES = {mt4: ["mt4rows-base","mt4rows-mt4-st31","mt4rows-mt4-st61","mt4rows-mt4-st122","mt4rows-mt4-st366","mt4rows-mt4-st366-lr2e-6","mt4rows-mt4-otr10M8-st366"],
-  mt11: ["base","mt11-st165","mt11-st330","mt11-otr20M8-st330","mt4-st122","mt4-st366","mt4-otr10M8-st366"]};
+const SERIES = {mt4: ["bk-mt4rows-base","bk-mt4rows-mt4-st31","bk-mt4rows-mt4-st61","bk-mt4rows-mt4-st122","bk-mt4rows-mt4-st366","bk-mt4rows-mt4-st366-lr2e-6","bk-mt4rows-mt4-otr10M8-st366"],
+  mt11: ["bk-mt11rows-base","bk-mt11rows-mt11-st165","bk-mt11rows-mt11-st330","bk-mt11rows-mt11-st495","bk-mt11rows-mt11-otr10M8-st330","bk-mt11rows-mt11-otr10M8-st495"]};
 const st = {rowset: "mt4", task: null, ckpt: null, block: 7};
 try { const s = JSON.parse(localStorage.getItem('gc-filters')||'null'); if (s) Object.assign(st, s); } catch(e) {}
 const labs = () => SERIES[st.rowset].filter(l => D.data[l]);
 function color(l){
   const L = D.labels[l]; if (!L) return css('--muted');
   if (L.kind === 'router') return css('--router');
+  if (L.kind === 'router2') return css('--s5');
   if (L.kind === 'ood') return css('--muted');
   if (L.kind === 'dense-lr2e-6') return css('--s3');
   const steps = labs().filter(x => ['base','dense'].includes(D.labels[x].kind)).map(x => D.labels[x].steps);
@@ -205,7 +206,7 @@ function color(l){
   const i = steps.sort((a,b)=>a-b).indexOf(L.steps);
   return css(ramp[Math.round(i * (ramp.length-1) / Math.max(1, steps.length-1))]);
 }
-const dash = l => D.labels[l] && D.labels[l].kind === 'ood' ? '4 3' : '';
+const dash = l => D.labels[l] && ['ood', 'dense-lr2e-6'].includes(D.labels[l].kind) ? '4 3' : '';
 const fmt = (v, d=2) => (v == null || isNaN(v)) ? '–' : (+v).toFixed(d);
 const tip = document.getElementById('tip');
 function showTip(ev, html){ tip.innerHTML = html; tip.hidden = false;
