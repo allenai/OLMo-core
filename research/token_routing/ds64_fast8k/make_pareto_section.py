@@ -49,7 +49,14 @@ def family(arm):
 
 
 def interp(curve, x):
-    lx, pts = math.log(x), [(math.log(a), b) for a, b in curve]
+    # runs at the same PF (e.g. the Lambda and Beaker copies of one dense point) are averaged into one point
+    agg = {}
+    for a, b in curve:
+        agg.setdefault(round(math.log(a), 6), []).append(b)
+    pts = sorted((k, sum(v) / len(v)) for k, v in agg.items())
+    lx = math.log(x)
+    if len(pts) == 1:
+        return pts[0][1], True
     if lx <= pts[0][0]:
         (a, fa), (b, fb), ext = pts[0], pts[1], lx < pts[0][0]
     elif lx >= pts[-1][0]:
