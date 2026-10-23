@@ -413,6 +413,20 @@ it) equals M8 on every task within seed noise. Contradiction climbs 0.77 → 0.7
 is flat after; outlier stays ≈ 0.32-0.39 through M6 and jumps to ≈ 0.58 at M7. The jump M6 → M7 is the GDN block 6.
 M7 is the cheapest split on the plateau (≈ 445 PF vs M8 471 and M12 565). Outlier seed noise here: up to 0.13.
 
+**1b. Frontier: keep 5% and router + layer skip** (Lambda, mt4s1464, seed 0; reference M8 3-seed mean 0.931 / 0.899 /
+0.633 / 0.592 at 471 PF):
+
+| run | PF | contradiction | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| otr05M8 (keep 5%) | 435 | 0.917 | 0.914 | 0.619 | 0.553 |
+| otr10M8sk3 (+ every token skips GDN blocks 20 / 24 / 28) | 449 | 0.897 | 0.906 | 0.610 | 0.603 |
+| otr10M7 (2 seeds) | 445 | 0.927 | 0.907 | 0.643 | 0.581 |
+
+Keep 5% matches keep 10% within seed noise (contradiction −0.014) but saves only 8% of PF: the fixed cost (blocks
+0..L−1 for every token, plus the full-context step every 8) dominates. Router + layer skip (`--train-skip-layers`,
+composed in cdab8480a: the skip runs after the mid-stack compaction, and the FLOP adjustment leaves skipped blocks out
+of both sides; run_frac 0.906) costs ≈ 0.03 on contradiction for 5% PF. M7 dominates it at the same cost.
+
 **2. Router target (Prasann: "keep important tokens that are already good").** Targets: `gnorm` log ||dL/dh8||;
 `gxh` log |<dL/dh8, h8>|; `dh` log ||h8 − h0||, the residual change through blocks 0-7 (activation strength, no backward,
 does not vanish when a token is learned); `mix` the within-row mean of the gnorm and dh ranks. Attention mass was not
