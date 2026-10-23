@@ -2181,6 +2181,13 @@
    "seed": 0,
    "commit": "9ccee22f5",
    "dir": "OLMo-core-otr7"
+  },
+  "f8k-mt4s1464-otr10M7f8-lro-lr2e-06-lam": {
+   "slurm": 114022,
+   "arm": "otr10M7f8",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7"
   }
  }
 }
