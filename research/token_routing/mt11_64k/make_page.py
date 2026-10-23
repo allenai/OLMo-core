@@ -140,6 +140,37 @@ def main():
                        + "".join(f"<th>{g}</th>" for g in RUNGS) + "<th>mean</th></tr></thead><tbody>"
                        + "".join(rows) + "</tbody></table></div>")
 
+    # same-LR vs best-LR summary: mean over each task's rungs of (router - dense interpolated at the router's PF)
+    import sys as _sys
+    _sys.path.insert(0, HERE)
+    from collect_m64 import interp_log
+    lr_rows = []
+    for r in routers:
+        pf = train[r]["pf"]
+        for label, pick in (("dense at the same LR", lambda tr, r=r: tr["lr"] == train[r]["lr"]),
+                            ("dense, better LR per cell", None)):
+            cells = []
+            for t in TASKS:
+                ds = []
+                for g in RUNGS:
+                    if (r, t, g) not in scores or (t, g) in UNINFORMATIVE:
+                        continue
+                    if pick is None:
+                        p = next((p for p in per if p["run"] == r and p["task"] == t and p["rung"] == g), None)
+                        if p and p["delta"] is not None:
+                            ds.append(p["delta"])
+                        continue
+                    curve = [(train[d]["pf"], scores[(d, t, g)]["value"]) for d in train
+                             if train[d]["arm"] == "dense" and pick(train[d]) and (d, t, g) in scores]
+                    ref, _ = interp_log(curve, pf)
+                    if ref is not None:
+                        ds.append(scores[(r, t, g)]["value"] - ref)
+                cells.append(delta_cell(sum(ds) / len(ds) if ds else None, False))
+            lr_rows.append(f'<tr><th>{esc(r.replace("m64-", ""))} vs {label}</th>{"".join(cells)}</tr>')
+    lr_table = ('<div class="tw"><table class="delta"><thead><tr><th>mean Δ over rungs</th>'
+                + "".join(f"<th>{esc(t)}</th>" for t in TASKS) + "</tr></thead><tbody>" + "".join(lr_rows)
+                + "</tbody></table></div>") if lr_rows else ""
+
     rung_sections = []
     for g in RUNGS:
         rung_sections.append(f'<section class="rung"><h3>{g} rung</h3><div class="grid">'
@@ -154,6 +185,7 @@ def main():
     page = TEMPLATE.format(
         verdict=a.verdict or "Results are still coming in; see the tables for what has landed.",
         status=esc(a.status), score_rows="".join(srows), task_heads="".join(f"<th>{esc(t)}</th>" for t in TASKS),
+        lr_table=lr_table,
         delta_tables="".join(dtables) or '<p class="muted">No router run has finished its evals yet.</p>',
         rungs="".join(rung_sections), cost_rows=cost)
     open(a.out, "w").write(page)
@@ -240,7 +272,13 @@ svg .router-pt {{ fill: var(--router); stroke: var(--panel); stroke-width: 1; }}
 </section>
 
 <section>
-<h2>Matched-FLOP Δ vs dense</h2>
+<h2>Same LR vs better LR</h2>
+<p class="prose muted">The learning rate decides the sign. Each cell is the router's score minus dense interpolated to the router's FLOPs, averaged over the task's rungs.</p>
+{lr_table}
+</section>
+
+<section>
+<h2>Matched-FLOP Δ vs dense, per rung</h2>
 <p class="prose muted">Green ≥ +0.02, red ≤ −0.02. Single seed: on the 8k screens run-to-run noise was ±0.02–0.03, and up to ±0.13 on outlier. "n/s" = no signal (reorder 8k/16k: every arm fails the exact-permutation parser).</p>
 {delta_tables}
 </section>
