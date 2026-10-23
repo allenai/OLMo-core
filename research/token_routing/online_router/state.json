@@ -343,6 +343,70 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt4-otr10M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5KPTE7HGFM3DB4PBM36DTPY",
+   "arm": "otr10M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M7ds0-s1464-tdb-lr2e-06": {
+   "ex": "01M5KPVCVYR2YJEJWKNWP1G75Q",
+   "arm": "otr10M7ds0",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06": {
+   "ex": "01M5KPWPTRXSEKYGK2BNB1MMJ8",
+   "arm": "otr10M7ds50",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-otr10M7hdr8-s1464-tdb-lr2e-06": {
+   "ex": "01M5KPXTM1FT36572TNWRZ6RZ9",
+   "arm": "otr10M7hdr8",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06": {
+   "ex": "01M5KPZ6QWKPCMFW9928P7NW03",
+   "arm": "otr10M7",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06": {
+   "ex": "01M5KQ0785HCWYE5V1RV80FNJ0",
+   "arm": "otr10M7ds0",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06": {
+   "ex": "01M5KQ1CC3SMG19QKR6NMGYTB1",
+   "arm": "otr10M7ds50",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M7hdr8-s720-tdb-lr2e-06": {
+   "ex": "01M5KQ292VC0F9ENC02RQ9KEC5",
+   "arm": "otr10M7hdr8",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
