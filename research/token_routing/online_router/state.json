@@ -1586,6 +1586,66 @@
    "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5M1MWXDA9YSPBKK6T4RGTQT",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5M1NR886J7ZM1STSEZ22MGJ",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M1PJESJ9KW9KB2JSPH6QPX",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M1QDGHTQDQZVFNQBKWPD8B",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5M1RFZCFXF4JMX7787ECZ0M",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5M1SAY5H9H6R9H3AGCKCRBX",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5M1T5K3SQBZY9D25QBR6WPJ",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5M1V1JW7YNKYGTFXPY6H4MZ",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5M1W4NVRQ4BN4J4MR4SB4S1",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5M1WYYCVHP1RBG9S3F3GFWD",
+   "train_run": "f8k-mt11-otr10M7-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
