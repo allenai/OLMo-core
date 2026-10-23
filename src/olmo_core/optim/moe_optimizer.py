@@ -2151,7 +2151,9 @@ class OLMoDDPOptimizer:
             exp_avgs: list[torch.Tensor] = []  # always fp32
             exp_avg_sqs: list[torch.Tensor] = []  # always fp32
 
-            exp_avgs_original: list[torch.Tensor] = (
+            exp_avgs_original: list[
+                torch.Tensor
+            ] = (
                 []
             )  # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
             exp_avg_sqs_original: list[torch.Tensor] = []
