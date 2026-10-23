@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: ROUTER CPT TRACK (2026-10-23, Prasann via LR-sweep session: 'include continued-pretraining on long documents ... I want to get something that works on that as well'): cubbins 4019297 = OTR10M7 (mid-stack online router, keep 0.1 at block 7, dense every 8, no loss on dropped tokens) 31/62/124/310 + no-dense-step 40/80/160 -> EV -> CTX; then 4019313 = aggressive cuts (early-nograd, pyramid 3:0.5,7:0.1,16:0.03, both). Report matched-FLOP dev-CE deltas + peak memory to session 'LR Sweep, Main Runs'.
+next_step: [queue: cubbins 4019319 aggressive cuts -> 4019607 exit-loss screen (router fcda77090: W 1.0/0.3 x de8/de0, + dense-keep 0.5)] ROUTER CPT TRACK (2026-10-23, Prasann via LR-sweep session: 'include continued-pretraining on long documents ... I want to get something that works on that as well'): cubbins 4019297 = OTR10M7 (mid-stack online router, keep 0.1 at block 7, dense every 8, no loss on dropped tokens) 31/62/124/310 + no-dense-step 40/80/160 -> EV -> CTX; then 4019313 = aggressive cuts (early-nograd, pyramid 3:0.5,7:0.1,16:0.03, both). Report matched-FLOP dev-CE deltas + peak memory to session 'LR Sweep, Main Runs'.
 ---
 
 # olmo3_cptdrop
