@@ -108,6 +108,14 @@ class OnlineRouterConfig:
     """Leading optimizer steps (1-based) that train uncompressed (keep-all) and collect targets."""
     dense_every: int = 0
     """If > 0, every ``dense_every``-th step is also uncompressed (fresh unbiased targets)."""
+    early_nograd: bool = False
+    """Mid-stack only: on ROUTED steps run blocks [0, drop_layer) forward-only (no_grad; the hidden state is a fresh leaf
+    at the split, so the router's target hook still reads dL/dh there). Those blocks then learn only on the dense
+    (full-context) steps, and the FLOP meter charges them forward-only (1/3) on routed steps."""
+    dense_tail_frac: float = 0.0
+    """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
+    e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
+    :class:`~olmo_core.train.callbacks.OnlineRouterCallback`)."""
     keep_first: int = 0
     """Always keep each document's first ``keep_first`` body tokens (its header / id span); they count against the
     budget (and their document's share), and the router picks the rest. 0 = everything is routable."""
@@ -124,6 +132,10 @@ class OnlineRouterConfig:
             raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
+        if self.early_nograd and self.drop_layer <= 0:
+            raise ValueError("online router early_nograd needs the mid-stack drop (drop_layer > 0)")
+        if not 0.0 <= self.dense_tail_frac < 1.0:
+            raise ValueError(f"online router dense_tail_frac must be in [0, 1), got {self.dense_tail_frac}")
         if self.keep_first < 0:
             raise ValueError(f"online router keep_first must be >= 0, got {self.keep_first}")
         if self.score not in ("router", "random", "first_last", "dh"):
@@ -289,6 +301,8 @@ class OnlineTokenRouter:
         self.n_scalar = N_STRUCT + N_LEX + (1 if cfg.use_query and cfg.use_hidden else 0) + (1 if cfg.use_gold else 0)
         self.n_features = self.n_scalar + self.hdim * (1 + int(cfg.use_query))
         self.step = 0
+        self.total_steps: Optional[int] = None  # set by the callback (dense_tail_frac)
+        self._nograd_fwd = False  # this forward runs blocks [0, drop_layer) forward-only (early_nograd)
         self._calls = 0
         self.w: Optional[torch.Tensor] = None
         self.XtX: Optional[torch.Tensor] = None
@@ -322,6 +336,11 @@ class OnlineTokenRouter:
         c = self.cfg
         if self.w is None or self.step <= c.warmup_steps:
             return True
+        if c.dense_tail_frac > 0:
+            if not self.total_steps:
+                raise RuntimeError("online router dense_tail_frac needs total_steps (OnlineRouterCallback sets it)")
+            if self.step > int(round(self.total_steps * (1.0 - c.dense_tail_frac))):
+                return True
         return c.dense_every > 0 and self.step % c.dense_every == 0
 
     # ------------------------------------------------------------------ features
@@ -495,6 +514,7 @@ class OnlineTokenRouter:
         full = torch.zeros_like(input_ids, dtype=torch.bool)
         if mid:
             self._mid = {"fp": fp, "ids": ids, "cid": cid, "Tr": Tr}
+            self._nograd_fwd = bool(self.cfg.early_nograd and model.training and not self.dense_now())
             full[:, :Tr] = fp["body"]
             return full
         keep, entry = self._choose(model, fp, ids, cid)
@@ -650,10 +670,13 @@ class OnlineTokenRouter:
         L0 = self.cfg.drop_layer
         head = int(model.lm_head.num_flops_per_token(0)) if model.lm_head is not None else 0
         adj = 0.0
+        # early_nograd: blocks [0, L0) ran forward-only on this routed forward (1/3 of forward + backward)
+        early = 1.0 / 3.0 if self._nograd_fwd else 1.0
+        self._stat("early_nograd", float(self._nograd_fwd))
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
             fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
-            actual = L * sum(fb[:L0]) + Lk * (sum(fk) + head)
+            actual = early * L * sum(fb[:L0]) + Lk * (sum(fk) + head)
             adj += actual - L * (sum(fb) + head)
         self._flop(model, adj)
         self._stat("mid_row_frac", float(counts.sum()) / max(1.0, float(real.sum())))

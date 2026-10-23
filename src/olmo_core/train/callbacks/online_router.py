@@ -27,8 +27,10 @@ class OnlineRouterCallback(Callback):
         return getattr(self.trainer.train_module.model, "_online_token_router", None)  # type: ignore[union-attr]
 
     def pre_train(self):
-        if self._router() is None:
+        router = self._router()
+        if router is None:
             raise RuntimeError("OnlineRouterCallback attached but the model has no online token router")
+        router.total_steps = int(self.trainer.max_steps) if self.trainer.max_steps else None
 
     def pre_step(self, batch: Dict[str, Any]):
         router = self._router()

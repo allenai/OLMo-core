@@ -1752,9 +1752,18 @@ class Transformer(nn.Module):
         otr_layer = otr.cfg.drop_layer if otr is not None else 0
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
+        # online router early_nograd: on routed forwards blocks [0, otr_layer) run forward-only
+        otr_nograd = otr_layer > 0 and bool(getattr(otr, "_nograd_fwd", False))
+        grad_was = torch.is_grad_enabled()
+        if otr_nograd:
+            torch.set_grad_enabled(False)
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
             if otr_layer > 0 and block_idx == otr_layer:
+                if otr_nograd:
+                    torch.set_grad_enabled(grad_was)
+                    # a fresh leaf: the router's target hook at the split reads dL/dh here
+                    h = h.detach().requires_grad_(grad_was)
                 # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
                 h, all_block_kwargs = otr.mid_compact(self, h, all_block_kwargs)
             if block_idx in ld_skip:
@@ -1812,6 +1821,7 @@ class Transformer(nn.Module):
                 h = self._attach_block_budget(h, block_idx)
             if capture_layers is not None and block_idx in capture_layers:
                 captured[block_idx] = h
+        torch.set_grad_enabled(grad_was)  # (no-op unless early_nograd never reached its split layer)
         return h, captured
 
     def enable_summary_token_attention(

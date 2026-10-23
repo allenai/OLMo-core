@@ -532,3 +532,77 @@ def test_keep_first_always_keeps_document_headers(doc_share):
         # doc 1's share is ceil(0.2 * 40) = 8, of which 3 are its forced header tokens
         assert int((keep[0] & (cid[0] == 1)).sum()) == 8
     assert "online_router/forced_frac" in r.metrics()
+
+
+
+def _mid_model(n_layers, **cfg):
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
+    model = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=n_layers, fused_ops=False, dtype=DType.float32).build(
+        init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(OnlineRouterConfig(**{"keep_frac": 0.25, "explore_frac": 0.2, "samples_per_row": 64,
+                                                     **cfg}), doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D)
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.25, online_router=router,
+    )
+    model.train()
+    return model, router
+
+
+def test_early_nograd_blocks_learn_only_on_dense_steps_cpu():
+    """early_nograd: on a routed step blocks [0, L) get no gradient, blocks >= L do, the target hook at the split still
+    fires, and the FLOP adjustment charges [0, L) forward-only; on a dense step every block gets a gradient."""
+    model, router = _mid_model(4, drop_layer=2, early_nograd=True, dense_every=0)
+    blocks = list(model.blocks.values())
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    ids, cid, labels = _row(B=1)
+
+    def step(n):
+        model.zero_grad(set_to_none=True)
+        router.begin_step(n, model=model)
+        flops.clear()
+        router.metrics()
+        model(ids, labels=labels).loss.backward()
+
+    step(1)  # warmup: dense
+    assert all(p.grad is not None for p in blocks[0].parameters())
+    step(2)  # routed
+    assert torch.is_grad_enabled()
+    assert all(p.grad is None for b in blocks[:2] for p in b.parameters())
+    assert all(p.grad is not None for b in blocks[2:] for p in b.parameters())
+    e = router._pending[-1]
+    assert e["target"] is not None and torch.isfinite(e["target"]).all()
+    real = int((ids != PH).sum())
+    m = router.metrics()
+    kept = int(round(m["online_router/mid_row_frac"] * real))
+    assert m["online_router/early_nograd"] == 1.0
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    expect = (real * (f(blocks[0], real) + f(blocks[1], real)) / 3.0 + kept * (f(blocks[2], kept) + f(blocks[3], kept) + head)
+              - real * (sum(f(b, real) for b in blocks) + head))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)
+
+
+def test_dense_tail_frac():
+    r = _router(dense_tail_frac=0.2, dense_every=0)
+    r.w = torch.zeros(r.n_features)
+    with pytest.raises(RuntimeError):
+        r.step = 5
+        r.dense_now()
+    r.total_steps = 10
+    dense = []
+    for s_ in range(2, 11):
+        r.step = s_
+        dense.append(r.dense_now())
+    assert dense == [False] * 7 + [True, True], dense
+
+
+def test_early_nograd_needs_mid_stack():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(early_nograd=True).validate()
