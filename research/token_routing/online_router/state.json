@@ -1440,6 +1440,16 @@
    "ex": "01M5M0X96TB8SV6K3ACG3RDQBX",
    "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
    "task": "contradiction"
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M0YTVSJP288SQJKGHCV1VW",
+   "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M0ZM1N98RMP24S4SX38T5Z",
+   "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
