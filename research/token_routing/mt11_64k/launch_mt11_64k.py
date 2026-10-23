@@ -63,7 +63,7 @@ WANDB_GROUP = os.environ.get("M64_WANDB_GROUP", "m64-q35-4b")
 EXPERIMENT = "mt11_64k"
 #: resume points: urgent jobs are preemptible after minRuntime 1h, and the first router f4 attempt lost ~1h to a
 #: preemption with no checkpoint yet (2026-10-23); keep 1 (~55 GB at 4B)
-SAVE_INTERVAL = 100
+SAVE_INTERVAL = 50
 ARMS = {
     "dense": ARM_EXTRA["densepf"],
     **{a: ARM_EXTRA[a] + " --st-otr-samples-per-row 512" for a in ("otr10M7", "otr10M8", "otr30M7", "otr30M8")},
@@ -83,6 +83,16 @@ def steps_for(budget):
     return SMOKE_STEPS if budget == "smk" else math.ceil(STEPS_FULL / FRACTIONS[budget])
 
 
+def expected_minutes(arm, steps):
+    return int(30 + 0.5 * steps * (1.0 if arm == "dense" else 0.6))
+
+
+def min_runtime(arm, steps):
+    """Beaker minRuntime covering the whole run (x1.3, at least 1h): urgent jobs are preemptible once minRuntime
+    has passed, and the 2-3 h runs were preempted at ~1 h and restarted from scratch twice (2026-10-23)."""
+    return f"{max(1, math.ceil(expected_minutes(arm, steps) * 1.3 / 60))}h"
+
+
 def run_name(arm, budget, lr):
     return f"m64-{arm}-{budget}-lr{lr:g}"
 
@@ -99,10 +109,11 @@ def train_cmd(arm, budget, lr, mode):
     cmd = [sys.executable, "-u", LAUNCHER, "--task", "mt11", "--variant", "softtoken", "--model-family", "qwen3_5",
            "--model-scale", "4b", "--data-root", SHARD, "--run-name", run_name(arm, budget, lr), "--exact-run-name",
            "--num-nodes", "1", "--num-gpus", str(GPUS), "--epochs", "1", "--lr", str(lr), "--cluster", CLUSTER,
-           "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--min-runtime", "1h", "--no-follow", "--no-compile",
+           "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--min-runtime", min_runtime(arm, steps),
+           "--no-follow", "--no-compile",
            "--experiment", EXPERIMENT, "--arm", arm, "--seq-len", str(SEQ_LEN), "--global-batch", str(GB),
            "--micro-batch-instances", str(MICRO), "--base-checkpoint", BASE,
-           "--expected-minutes", str(int(30 + 0.5 * steps * (1.0 if arm == "dense" else 0.6)))]
+           "--expected-minutes", str(expected_minutes(arm, steps))]
     return cmd + ["--extra-args", extra, mode]
 
 
