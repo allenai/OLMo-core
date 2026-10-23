@@ -373,6 +373,7 @@ class Transformer(nn.Module):
         positional_block_size: int = 0,
         keep_recent: int = 0,
         keep_ramp: Optional[Tuple[float, float]] = None,
+        online_router: Optional[Any] = None,
     ) -> None:
         """
         Enable train-time soft-token document pooling ("B1"; see :mod:`olmo_core.nn.pooled_soft_token`).
@@ -542,6 +543,16 @@ class Transformer(nn.Module):
                     "keep_token_rule='first' IS header_extra_tokens; set only one (first_last / "
                     "rule may be combined with a header_extra_tokens prefix)."
                 )
+        if (keep_token_rule == "online") != (online_router is not None):
+            raise OLMoConfigurationError(
+                "keep_token_rule='online' and online_router (an "
+                "olmo_core.nn.online_token_router.OnlineTokenRouter) go together"
+            )
+        # learned online keep scorer (keep_token_rule="online"); see olmo_core.nn.online_token_router
+        self._online_token_router = online_router
+        if online_router is not None:
+            # router overhead FLOPs (per rank, this step), read and reset by FlopMeterCallback
+            self._flop_extra_actual = 0.0
         if keep_token_rule == "rule" and keep_token_tables is None:
             raise OLMoConfigurationError(
                 "keep_token_rule='rule' needs keep_token_tables (build them with "
@@ -1393,6 +1404,20 @@ class Transformer(nn.Module):
                 chunk_ids = torch.where(
                     floor_ids == FREE_CHUNK_ID, torch.full_like(chunk_ids, FREE_CHUNK_ID), chunk_ids
                 )
+        elif keep_rule == "online":
+            # learned per-token keep mask, refit every step (olmo_core.nn.online_token_router);
+            # markers always stay real, so a document dropped whole leaves an empty marker pair
+            from ..attention.chunked_mask import mark_positions_free
+
+            chunk_ids = mark_positions_free(
+                chunk_ids,
+                input_ids,
+                self._online_token_router.select(self, input_ids, chunk_ids, labels, ignore_index),
+                doc_start_id=doc_start_id,
+                doc_end_id=doc_end_id,
+                n_docs=n_docs,
+                free_markers=True,
+            )
         elif keep_rule == "custom":
             # caller-supplied per-token keep mask (saliency / attention-budget selectors that the
             # model cannot score from token features alone); see chunked_mask.mark_positions_free
@@ -1569,6 +1594,8 @@ class Transformer(nn.Module):
                     flush=True,
                 )
 
+        if keep_rule == "online":
+            keep = torch.zeros_like(keep)  # no document is kept whole: the router chose the tokens
         if cfg.get("kept_doc_k") is not None and tier_scores is not None:
             # Two-tier keep: the keep set (gold + decoys) is not kept whole but gets the same rule at
             # the larger kept_doc_k; every other document keeps keep_token_k (already marked above).
@@ -1721,10 +1748,15 @@ class Transformer(nn.Module):
         input of block ``L``, and the remaining blocks use the (compacted) kwargs passed in.
         """
         captured: Dict[int, torch.Tensor] = {}
+        otr = getattr(self, "_online_token_router", None) if self.training else None
+        otr_layer = otr.cfg.drop_layer if otr is not None else 0
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
+            if otr_layer > 0 and block_idx == otr_layer:
+                # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
+                h, all_block_kwargs = otr.mid_compact(self, h, all_block_kwargs)
             if block_idx in ld_skip:
                 # whole-block skip (olmo_core.nn.layer_drop): identity, forward never called
                 if capture_layers is not None and block_idx in capture_layers:
@@ -2919,6 +2951,11 @@ class Transformer(nn.Module):
             h = move_to_device(input_embeddings, self.device)
         else:
             h = self.embeddings(input_ids) if self.embeddings is not None else input_ids
+            if getattr(self, "_online_token_router", None) is not None and self.training:
+                # online router targets: per-token gradient at the (compacted) embedding output
+                h = self._online_token_router.attach_target_hook(
+                    self, h, all_block_kwargs.get("position_ids")
+                )
             if soft_inject is not None:
                 # Overwrite the placeholder embeddings with the projector's soft doc tokens. Under
                 # detach_soft_kv the POOLED slots are injected detached (static-KV semantics; the
@@ -2950,6 +2987,8 @@ class Transformer(nn.Module):
         h, s_caps = self._run_blocks(
             h, all_block_kwargs, per_block_kwargs, capture_layers=cap_set, token_exit=tx_plan
         )
+        if getattr(self, "_online_token_router", None) is not None and self.training:
+            labels = self._online_token_router.mid_labels(labels)  # no-op unless a mid-stack drop ran
 
         # Aux attention-contribution matching loss (soft-token pooling; see aux_matching_loss).
         aux_loss: Optional[torch.Tensor] = None

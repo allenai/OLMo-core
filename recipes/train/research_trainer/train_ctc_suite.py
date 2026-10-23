@@ -1684,7 +1684,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "--st-keep-token-rule",
-        choices=["none", "first", "first_last", "rule", "spans"],
+        choices=["none", "first", "first_last", "rule", "spans", "online"],
         default="none",
         help="softtoken: WHICH body tokens of a pooled document stay real. 'none' (default) = off, "
         "bit-identical to every run before 2026-09-15. 'first' = the first --st-keep-token-k body "
@@ -1792,6 +1792,46 @@ def parse_args() -> argparse.Namespace:
         "gold-blind random set) get the keep-token rule at THIS k instead of staying whole; every "
         "other document gets --st-keep-token-k. Unset = kept documents stay whole (historical).",
     )
+    # ---- online learned keep scorer (--st-keep-token-rule online; olmo_core.nn.online_token_router)
+    ap.add_argument("--st-otr-keep-frac", type=float, default=0.3,
+                    help="online router: body tokens kept per row (fraction of the row's body tokens)")
+    ap.add_argument("--st-otr-explore-frac", type=float, default=0.1,
+                    help="online router: share of the kept budget drawn uniformly at random (exploration)")
+    ap.add_argument("--st-otr-doc-share", type=float, default=1.0,
+                    help="online router: share of the budget spread over documents in proportion to length "
+                    "(each keeps its own top tokens by score); the rest goes to the row-level top scores. "
+                    "1.0 = within-document choice only (per-document density cannot name gold)")
+    ap.add_argument("--st-otr-score", choices=["router", "random", "first_last", "dh"], default="router",
+                    help="online router: who picks the kept tokens -- the learned scorer, or a control with the same "
+                    "budget, allocation and drop point (random; each document's first and last tokens; dh = fit-free "
+                    "rule, top tokens by residual change ||h^L - h^0||, mid-stack only)")
+    ap.add_argument("--st-otr-feature-layer", type=int, default=0,
+                    help="online router: hidden features at this layer (0 = input embedding, free; L > 0 = a "
+                    "no-grad prefix pass through blocks [0, L) on the full row, charged to the FLOP meter)")
+    ap.add_argument("--st-otr-drop-layer", type=int, default=0,
+                    help="online router: 0 = drop at the input; L > 0 = every token runs blocks [0, L) on the "
+                    "full row, then dropped tokens skip blocks [L, n) (features = the forward's own h at L, no "
+                    "prefix pass; targets read at L). Charged per block by the FLOP meter")
+    ap.add_argument("--st-otr-no-hidden", action="store_true",
+                    help="online router: structure + lexical features only")
+    ap.add_argument("--st-otr-no-query", action="store_true",
+                    help="online router: drop the h*q query-interaction features")
+    ap.add_argument("--st-otr-use-gold", action="store_true",
+                    help="online router: per-document 0/1 gold flag (gold sidecar) as a feature")
+    ap.add_argument("--st-otr-target", choices=["gnorm", "gxh", "dh", "mix"], default="gnorm",
+                    help="online router target: gnorm log ||dL/dh_t||; gxh log |<dL/dh_t, h_t>|; dh log ||h_t^L - h_t^0|| "
+                    "(residual change through the first L blocks, mid-stack only); mix = average of the gnorm and dh ranks")
+    ap.add_argument("--st-otr-ridge", type=float, default=0.1,
+                    help="online router: ridge strength relative to the mean Gram diagonal (offline probe: 0.01 > 0.1 > 1.0 at 1M samples)")
+    ap.add_argument("--st-otr-decay", type=float, default=0.9, help="online router: per-step forgetting")
+    ap.add_argument("--st-otr-warmup-steps", type=int, default=1,
+                    help="online router: leading keep-all steps (targets over every token, no heuristic init)")
+    ap.add_argument("--st-otr-dense-every", type=int, default=0,
+                    help="online router: every N-th step trains uncompressed (0 = never after warmup)")
+    ap.add_argument("--st-otr-samples-per-row", type=int, default=2048)
+    ap.add_argument("--st-otr-proj-dim", type=int, default=0,
+                    help="online router: random projection of hidden features (0 = all d_model dims)")
+    ap.add_argument("--st-otr-log-every", type=int, default=10)
     ap.add_argument(
         "--st-pad-multiple",
         type=int,
@@ -2222,7 +2262,11 @@ def parse_args() -> argparse.Namespace:
                 "--st-keep-token-rule is only honoured by --variant softtoken "
                 f"(got --variant {opts.variant!r}); it would be ignored."
             )
-        if opts.st_keep_token_k <= 0:
+        if opts.st_keep_token_rule == "online":
+            # the online router's budget is --st-otr-keep-frac, not --st-keep-token-k
+            if not 0.0 < opts.st_otr_keep_frac <= 1.0:
+                ap.error("--st-keep-token-rule online needs 0 < --st-otr-keep-frac <= 1.")
+        elif opts.st_keep_token_k <= 0:
             ap.error(f"--st-keep-token-rule {opts.st_keep_token_rule} needs --st-keep-token-k > 0.")
         # first_last / rule ON TOP of a fixed real prefix is the devloss grid's gold_fl20p8
         # construction (the prefix keeps the `Document [N]:` id; the K budget then applies to the

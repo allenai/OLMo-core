@@ -30,6 +30,9 @@ class FlopMeterCallback(Callback):
     - **pooled soft tokens**: the model runs on the COMPACTED sequence, so the dense formula is
       applied to the compacted token count (attention on the compacted row length); read from
       the counters the model accumulates in ``_soft_token_compaction``.
+    - **method overhead**: FLOPs a method spends outside the trained forward/backward (the online
+      token router's no-grad prefix pass, scoring and per-step ridge fit) are accumulated per rank
+      in the model's ``_flop_extra_actual`` and added to the actual cost.
     - **layer drop** (whole-block skipping, :mod:`olmo_core.nn.layer_drop`): the blocks skipped
       this step ran neither forward nor backward, so the ACTUAL cost charges only the blocks that
       ran (composes with every mode above); the dense-equivalent still charges every block.
@@ -134,6 +137,7 @@ class FlopMeterCallback(Callback):
     _ffn_cost_weighted: float = 0.0
     _block_flops: Optional[list] = None
     _skip_keep_weighted: float = 0.0
+    _overhead: float = 0.0
     _ld_run_frac_sum: float = 0.0
     _ld_steps: int = 0
 
@@ -273,6 +277,21 @@ class FlopMeterCallback(Callback):
             if dense_flops > 0:
                 self.trainer.record_metric("flop_meter/step_actual_over_dense", actual / dense_flops)
 
+        if hasattr(m, "_flop_extra_actual"):
+            # a method's own overhead outside the model forward/backward (the online token router's
+            # prefix pass, scoring and ridge fit), accumulated per rank by the model this step
+            import torch
+            import torch.distributed as dist
+
+            ov = torch.tensor([float(m._flop_extra_actual)], dtype=torch.float64,
+                              device=next(m.parameters()).device)
+            if dist.is_available() and dist.is_initialized():
+                dist.all_reduce(ov, op=dist.ReduceOp.SUM)
+            m._flop_extra_actual = 0.0
+            actual += float(ov.item())
+            self._overhead += float(ov.item())
+            self.trainer.record_metric("flop_meter/overhead_pflops", self._overhead / 1e15)
+
         self._actual += actual
         self._dense += dense_flops
         self._tokens += tokens
@@ -307,6 +326,7 @@ class FlopMeterCallback(Callback):
             "kv_route_keep_frac": (
                 self._kv_keep_weighted / self._tokens if self._kv_keep_weighted > 0 and self._tokens else None
             ),
+            "overhead_pflops": self._overhead / 1e15,
             "layer_drop_run_frac": (self._ld_run_frac_sum / self._ld_steps if self._ld_steps else None),
             "steps": self.step,
             "seq_len": self.seq_len,

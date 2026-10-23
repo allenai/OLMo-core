@@ -50,7 +50,7 @@ fi
 set -o pipefail
 
 LROOT=/accounts/projects/sewonm/prasann/ctc_suite
-REPO=$LROOT/OLMo-core
+REPO="${REPO:-$LROOT/OLMo-core}"   # override to run a separately staged checkout (default: the shared one)
 NGPU="${NGPU:-8}"
 TASK="${TASK:?set TASK=<suite task name> (e.g. contradiction)}"
 # DATA_DIR (absolute, e.g. node-local /tmp/prasann/...) overrides DATA_SRC -- Lambda /accounts is often at quota.

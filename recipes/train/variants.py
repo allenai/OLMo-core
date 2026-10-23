@@ -255,6 +255,24 @@ class SoftTokenOptions(VariantOptions):
     st_span_len: int = 12
     st_kept_doc_k: Optional[float] = None
     st_keep_token_min: int = 0
+    # online learned keep scorer (st_keep_token_rule="online"; olmo_core.nn.online_token_router)
+    st_otr_keep_frac: float = 0.3
+    st_otr_explore_frac: float = 0.1
+    st_otr_doc_share: float = 1.0
+    st_otr_score: str = "router"
+    st_otr_feature_layer: int = 0
+    st_otr_drop_layer: int = 0
+    st_otr_no_hidden: bool = False
+    st_otr_no_query: bool = False
+    st_otr_use_gold: bool = False
+    st_otr_target: str = "gnorm"
+    st_otr_ridge: float = 0.1
+    st_otr_decay: float = 0.9
+    st_otr_warmup_steps: int = 1
+    st_otr_dense_every: int = 0
+    st_otr_samples_per_row: int = 2048
+    st_otr_proj_dim: int = 0
+    st_otr_log_every: int = 10
 
 
 # ----------------------------------------------------------------------------------------------
@@ -984,6 +1002,57 @@ def build_keep_token_tables(o: SoftTokenOptions, ctx: VariantContext) -> Any:
     )
 
 
+def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) -> Any:
+    """The ``st_keep_token_rule=online`` router (:mod:`olmo_core.nn.online_token_router`). With
+    ``st_otr_use_gold`` it reads the shard's gold-fingerprint sidecar as a per-document 0/1 feature
+    (no document is ever kept whole because of it)."""
+    from olmo_core.nn.online_token_router import OnlineRouterConfig, OnlineTokenRouter
+
+    cfg = OnlineRouterConfig(
+        keep_frac=o.st_otr_keep_frac,
+        explore_frac=o.st_otr_explore_frac,
+        doc_share=o.st_otr_doc_share,
+        score=o.st_otr_score,
+        feature_layer=o.st_otr_feature_layer,
+        drop_layer=o.st_otr_drop_layer,
+        use_hidden=not o.st_otr_no_hidden,
+        use_query=not o.st_otr_no_query,
+        use_gold=o.st_otr_use_gold,
+        target=o.st_otr_target,
+        ridge=o.st_otr_ridge,
+        decay=o.st_otr_decay,
+        warmup_steps=o.st_otr_warmup_steps,
+        dense_every=o.st_otr_dense_every,
+        samples_per_row=o.st_otr_samples_per_row,
+        proj_dim=o.st_otr_proj_dim,
+        seed=ctx.seed,
+        log_every=o.st_otr_log_every,
+    )
+    # the gold table is always loaded when the shard has one: it feeds the online leak diagnostic
+    # (online_router/leak_auc); it is a FEATURE only with --st-otr-use-gold
+    gold_table = None
+    sidecar = o.st_gold_sidecar or os.path.join(ctx.data_dir or "", "gold_fingerprints.json")
+    if o.st_otr_use_gold or os.path.exists(sidecar):
+        with open(sidecar) as f:
+            gold_table = json.load(f)
+    ids = ctx.ids
+    router = OnlineTokenRouter(
+        cfg,
+        doc_start_id=ids.doc_start,
+        doc_end_id=ids.doc_end,
+        eos_id=ids.eos,
+        d_model=d_model,
+        gold_table=gold_table,
+        rank=ctx.rank,
+    )
+    print(
+        f"[variants] softtoken online router: {cfg} -> {router.n_features} features"
+        f"{f', gold sidecar {len(gold_table)} fingerprints' if gold_table is not None else ''}",
+        flush=True,
+    )
+    return router
+
+
 def build_slot_stop_set(o: SoftTokenOptions, ctx: VariantContext) -> List[int]:
     """The ``st_slot_mode`` stop set: the ``st_slot_stop_topk`` most frequent ids over the shard
     head + marker/pad/landmark/eos ids + (if a tokenizer loads) non-alphanumeric pieces."""
@@ -1060,6 +1129,12 @@ class SoftToken(Variant):
 
         ids = ctx.ids
         tc = ctx.total_calls
+        online = o.st_keep_token_rule == "online"
+        if online and (o.st_header_extra_tokens or o.st_header_stop_id is not None or not o.st_drop_slots):
+            raise SystemExit(
+                "[variants] --st-keep-token-rule online is slot-less and learns its own headers: "
+                "pass --st-drop-slots and no --st-header-extra-tokens / --st-header-stop-id"
+            )
         _w, _sd = (
             parse_keep_token_weights(o.st_keep_token_weights)
             if o.st_keep_token_rule == "rule"
@@ -1081,7 +1156,10 @@ class SoftToken(Variant):
             header_stop_count=o.st_header_stop_count,
             header_extra_tokens=o.st_header_extra_tokens,
             keep_token_rule=o.st_keep_token_rule,
-            keep_token_k=o.st_keep_token_k,
+            keep_token_k=(o.st_otr_keep_frac if online else o.st_keep_token_k),
+            online_router=(
+                build_online_router(o, ctx, int(model.embeddings.weight.shape[1])) if online else None
+            ),
             keep_token_weights=_w,
             keep_token_sd=_sd,
             keep_token_tables=(
@@ -1139,8 +1217,9 @@ class SoftToken(Variant):
     def post_build_train_module(self, train_module, o, ctx):
         assert isinstance(o, SoftTokenOptions)
         # smallcat_keep is gold-blind by construction; gold_plus_wholecats installs the hook with
-        # n_random=0 so the holder's mask is exactly the gold set for the model to grow.
-        if o.st_gold_blind or o.st_keep_mode == "smallcat_keep":
+        # n_random=0 so the holder's mask is exactly the gold set for the model to grow. The online
+        # router never keeps a document whole; it reads gold (if asked) from the sidecar itself.
+        if o.st_gold_blind or o.st_keep_mode == "smallcat_keep" or o.st_keep_token_rule == "online":
             return
         whole = o.st_keep_mode == "gold_plus_wholecats"
         sidecar = o.st_gold_sidecar or os.path.join(ctx.data_dir or "", "gold_fingerprints.json")
@@ -1176,6 +1255,14 @@ class SoftToken(Variant):
             f"{len(gold_table)} fingerprints from {sidecar}",
             flush=True,
         )
+
+    def extra_callbacks(self, o, ctx):
+        assert isinstance(o, SoftTokenOptions)
+        if o.st_keep_token_rule != "online":
+            return {}
+        from olmo_core.train.callbacks.online_router import OnlineRouterCallback
+
+        return {"online_router": OnlineRouterCallback()}
 
     def export_config(self, o):
         return {
