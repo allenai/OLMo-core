@@ -175,7 +175,7 @@ def do_status(a):
     st = load()
     for kind in ("runs", "evals"):
         for name, r in st[kind].items():
-            if not r.get("ex") or r.get("state") in ("DONE", "FAILED"):
+            if not r.get("ex") or r.get("state") in ("DONE", "FAILED", "CANCELLED"):
                 continue
             s, rc = beaker_status(r["ex"])
             if s == "F":
