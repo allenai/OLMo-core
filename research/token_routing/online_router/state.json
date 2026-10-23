@@ -407,6 +407,30 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt4-pyr3-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV5WYQG9B494V3DPEN30NQ",
+   "arm": "pyr3",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-pyr3ng-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV6XCXH63CJHCWP8D8YH4E",
+   "arm": "pyr3ng",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-pyr2-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV7VWQSTS21NG4094EPGAV",
+   "arm": "pyr2",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
@@ -1511,28 +1535,28 @@
    "dir": "OLMo-core-otr3"
   },
   "f8k-mt4s1464-otr10M7ng-lro-lr2e-06-lam": {
-   "slurm": 113922,
+   "slurm": 113936,
    "arm": "otr10M7ng",
    "seed": 0,
    "commit": "1206df105",
    "dir": "OLMo-core-otr4"
   },
   "f8k-mt4s1464-otr10M7tail-lro-lr2e-06-lam": {
-   "slurm": 113916,
+   "slurm": 113937,
    "arm": "otr10M7tail",
    "seed": 0,
    "commit": "1206df105",
    "dir": "OLMo-core-otr4"
   },
   "f8k-mt4s1464-otr10M7de0-lro-lr2e-06-lam": {
-   "slurm": 113917,
+   "slurm": 113938,
    "arm": "otr10M7de0",
    "seed": 0,
    "commit": "1206df105",
    "dir": "OLMo-core-otr4"
   },
   "f8k-mt4s1464-otr10M7ngtail-lro-lr2e-06-lam": {
-   "slurm": 113918,
+   "slurm": 113939,
    "arm": "otr10M7ngtail",
    "seed": 0,
    "commit": "1206df105",
