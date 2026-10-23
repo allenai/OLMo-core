@@ -513,3 +513,72 @@ def test_mid_stack_drop_layer_cannot_be_skipped():
     router.begin_step(1, model=model)
     with pytest.raises(RuntimeError):
         model(ids, labels=labels)
+
+
+def test_marker_free_offsets_on_positional_blocks():
+    """CPT rows (positional blocks, no markers): offsets count from each block's own first / last token."""
+    from olmo_core.nn.attention.chunked_mask import build_positional_block_chunk_ids
+
+    ids = torch.arange(100, 100 + 20)[None]  # 20 tokens, no leading EOS -> blocks of 8, 8, 4
+    cid = build_positional_block_chunk_ids(ids, block_size=8, eos_id=EOS)
+    offs = {}
+    f, body = structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs, marker_free=True)
+    assert int(body.sum()) == 20
+    assert offs["j"][0].tolist() == [0, 1, 2, 3, 4, 5, 6, 7] * 2 + [0, 1, 2, 3]
+    assert offs["r"][0].tolist() == [7, 6, 5, 4, 3, 2, 1, 0] * 2 + [3, 2, 1, 0]
+    # the marker-assuming default would merge the first two tokens at offset 0
+    offs2 = {}
+    structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs2)
+    assert offs2["j"][0, :2].tolist() == [0, 0]
+
+
+def test_mid_stack_drop_on_positional_blocks_cpu():
+    """olmo3_cptdrop CPT geometry: marker-free rows in positional-block mode (block 8), every token has an
+    LM label, no query. The mid-stack router keeps 25% of each block for block 1; dropped tokens get no
+    loss (labels follow the gather); a dense step reproduces the full-row loss."""
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
+    cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=2, fused_ops=False, dtype=DType.float32)
+    model = cfg.build(init_device="cpu")
+    D = int(model.embeddings.weight.shape[1])
+    router = OnlineTokenRouter(
+        OnlineRouterConfig(keep_frac=0.25, explore_frac=0.2, samples_per_row=64, drop_layer=1, use_query=False),
+        doc_start_id=DS, doc_end_id=DE, eos_id=EOS, d_model=D,
+    )
+    model.enable_pooled_soft_tokens(
+        DS, DE, EOS, placeholder_id=PH, keep_prob=0.0, keep_seed=0, detach_soft_kv=True,
+        drop_slots=True, keep_token_rule="online", keep_token_k=0.25, online_router=router,
+        positional_block_size=8,
+    )
+    model.train()
+    T = 64
+    ids = torch.randint(10, 9000, (2, T))
+    ids[:, -1] = EOS  # EOS-last row, as the *_ee shards
+    labels = torch.full_like(ids, -100)
+    labels[:, :-1] = ids[:, 1:]
+    seen = {}
+    h1 = model.blocks["1"].register_forward_pre_hook(lambda m, a: seen.__setitem__("w", a[0].shape[1]))
+    for step in (1, 2, 3):
+        router.begin_step(step, model=model)
+        model._flop_extra_actual = 0.0
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+        assert router._marker_free
+        model._soft_token_compaction = None
+        if step == 1:
+            assert seen["w"] == T
+        else:
+            # 8 blocks x ceil(0.25 * 8) = 16 kept tokens per row reach block 1
+            assert seen["w"] == 16, seen["w"]
+            assert model._flop_extra_actual < 0
+    h1.remove()
+    router.cfg.dense_every = 1
+    router.begin_step(4, model=model)
+    model.eval()
+    ref = model(ids, labels=labels).loss
+    model.train()
+    out = model(ids, labels=labels)
+    assert torch.allclose(out.loss, ref, atol=1e-5), (out.loss, ref)

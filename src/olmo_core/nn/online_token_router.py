@@ -151,10 +151,14 @@ def structural_features(
     doc_start_id: int,
     doc_end_id: int,
     offsets: Optional[Dict[str, torch.Tensor]] = None,
+    marker_free: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Per-token document-structure features.
 
+    :param marker_free: positional-block rows (CPT, ``positional_block_size > 0``): a "document" is a
+        block with no ``<|doc_start|>`` / ``<|doc_end|>``, so offsets count from the block's own first /
+        last token instead of from the markers.
     :param offsets: if given, filled with ``j`` / ``r`` (B, T): body offset from the document's start / end.
     :returns: ``(feats (B, T, N_STRUCT) float32, body (B, T) bool)``; rows of non-body tokens are 0.
     """
@@ -175,9 +179,10 @@ def structural_features(
     gid2 = gid.reshape(B, T)
     s_t = start[gid2]
     e_t = end[gid2]
-    j = (pos - s_t - 1).clamp(min=0)  # 0 = first body token (s_t is the doc_start marker)
-    r = (e_t - pos - 1).clamp(min=0)  # 0 = last body token (e_t is the doc_end marker)
-    blen = (e_t - s_t - 1).clamp(min=1)
+    m = 0 if marker_free else 1
+    j = (pos - s_t - m).clamp(min=0)  # 0 = first body token (s_t is the doc_start marker, or the token itself)
+    r = (e_t - pos - m).clamp(min=0)  # 0 = last body token (e_t is the doc_end marker, or the token itself)
+    blen = (e_t - s_t + 1 - 2 * m).clamp(min=1)
     # number of documents present per row, for the relative document index
     n_row = (cid.max(dim=1).values + 1).clamp(min=1).to(torch.float32)
     f = torch.zeros(B, T, N_STRUCT, dtype=torch.float32, device=dev)
@@ -296,6 +301,12 @@ class OnlineTokenRouter:
         self.last_metrics: Dict[str, float] = {}
 
     # ------------------------------------------------------------------ naming
+    _marker_free: bool = False
+
+    def _doc_ids(self) -> Tuple[int, int]:
+        """Marker ids as the model's chunk ids see them: none (-1) on positional-block rows."""
+        return (-1, -1) if self._marker_free else (self.doc_start_id, self.doc_end_id)
+
     def feature_names(self) -> List[str]:
         names = ["bias"]
         for side in ("start", "end"):
@@ -391,8 +402,9 @@ class OnlineTokenRouter:
         hidden parts to :meth:`add_hidden` (mid-stack drop)."""
         c = self.cfg
         offs: Dict[str, torch.Tensor] = {}
+        ds, de = self._doc_ids()
         struct, body = structural_features(
-            input_ids, chunk_ids, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id, offsets=offs
+            input_ids, chunk_ids, doc_start_id=ds, doc_end_id=de, offsets=offs, marker_free=self._marker_free
         )
         B, T = input_ids.shape
         qm = query_mask(chunk_ids, labels, ignore_index)
@@ -479,6 +491,8 @@ class OnlineTokenRouter:
         choice is made at that layer by :meth:`mid_compact`."""
         self._calls += 1
         self._ignore_index = ignore_index
+        # positional-block rows (CPT): documents are blocks with no markers (see structural_features)
+        self._marker_free = int((getattr(model, "_pooled_soft_tokens", None) or {}).get("positional_block_size", 0)) > 0
         # trim the right pad: features / prefix pass only over the longest real row
         real = (chunk_ids != -2).sum(dim=1)
         Tr = int(real.max().item())
@@ -545,9 +559,8 @@ class OnlineTokenRouter:
                     keep = body.clone()
                 else:
                     sc_d = torch.where(explore, torch.full_like(score, 1e30), score)
-                    out = mark_doc_topk_tokens_free(
-                        cid, ids, sc_d, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id, k=kd
-                    )
+                    ds, de = self._doc_ids()
+                    out = mark_doc_topk_tokens_free(cid, ids, sc_d, doc_start_id=ds, doc_end_id=de, k=kd)
                     keep = keep | (body & (out == FREE_CHUNK_ID))
             # the rest of the budget by score over the whole row
             left = (k - keep.sum(dim=1)).clamp(min=0)
