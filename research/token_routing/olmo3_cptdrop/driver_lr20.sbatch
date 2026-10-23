@@ -19,6 +19,9 @@
 #        est. 0.26x: 46 / 92 / 185), pyramid 3:0.5,7:0.1,16:0.03 (est. 0.30x: 40 / 80 / 160), pyramid + forward-only
 #        early stack (est. 0.20x: 60 / 120 / 240), merge-dropped (each block's dropped tokens -> one unlabelled mean
 #        token at the split; router branch >= 34aef2dd3; est. 0.41x: 31 / 62 / 124). m always from the measured flops.json
+#   OTRX router + early-exit LM loss on the dropped tokens at the split (--st-otr-exit-loss-weight W: final norm +
+#        lm_head on their block-7 h, same loss_div, head FLOPs charged): W 1.0 and 0.3 at the OTR10M7 step counts
+#        31 / 62 / 124 / 310 (measured PF decides the budget). Needs the router branch with that flag.
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
@@ -78,6 +81,13 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       for b in 40 80 160; do run "o3cd-OTRpyrlr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done
       for b in 31 62 124; do run "o3cd-OTR10M7mglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-merge-dropped" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done
       for b in 60 120 240; do run "o3cd-OTRpyrnglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done ;;
+    OTRX)
+      for w in 1.0 0.3; do
+        for b in 31 62 124 310; do
+          run "o3cd-OTR10M7x${w/./}lr20-$b" ARM=OTR OTR_EXTRA="--st-otr-exit-loss-weight $w" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) \
+            || { log "FAIL exit-loss W=$w at $b: continuing"; break; }
+        done
+      done ;;
     SEED)
       run o3cd-Dlr20-120-s1 ARM=D MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 14 ;;
     IRS)
@@ -102,7 +112,7 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       done ;;
     EV)
       SPECS=""
-      for r in OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
+      for r in OTR10M7x10lr20-31 OTR10M7x10lr20-62 OTR10M7x10lr20-124 OTR10M7x10lr20-310 OTR10M7x03lr20-31 OTR10M7x03lr20-62 OTR10M7x03lr20-124 OTR10M7x03lr20-310 OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
         [ -f "$ROOT/runs/o3cd-$r/model_and_optim/.metadata" ] && [ ! -f "$ROOT/devce/${r}_dev32k_1024.json" ] && SPECS="$SPECS $r:runs/o3cd-$r:4"
       done
       log "EV specs:$SPECS"
