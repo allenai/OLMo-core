@@ -150,7 +150,11 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
 def _can_use_packed_projections(expert):
     # Reading weights directly bypasses adapters and per-module forward hooks.
     return all(
-        type(proj) is nn.Linear and not proj._forward_hooks and not proj._forward_pre_hooks
+        type(proj) is nn.Linear
+        and not proj._forward_hooks
+        and not proj._forward_pre_hooks
+        and not hasattr(proj, "_hf_hook")
+        and "forward" not in proj.__dict__
         for proj in (expert.up_proj, expert.gate_proj, expert.down_proj)
     )
 
@@ -179,7 +183,7 @@ class Olmo3MoeDenseMLP(nn.Module):
         self.act_fn = ACT2FN[config.hidden_act]
 
     def forward(self, x):
-        if self.config.moe_use_core_numerics:
+        if self.config.moe_use_core_numerics and self.config.dense_layers_use_shared_expert:
             return _core_shared_expert_forward(self, x)
         down_proj = self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
         return down_proj

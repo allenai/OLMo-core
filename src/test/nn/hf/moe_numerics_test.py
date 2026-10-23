@@ -129,7 +129,12 @@ def test_hf_dense_and_shared_experts_match_core_packed_gemm(dtype, kind):
     )
     hf: Union[Olmo3MoeDenseMLP, Olmo3MoeCoreSharedExpert] = (
         Olmo3MoeDenseMLP(
-            Olmo3MoeConfig(hidden_size=D, dense_mlp_intermediate_size=H, moe_use_core_numerics=True)
+            Olmo3MoeConfig(
+                hidden_size=D,
+                dense_mlp_intermediate_size=H,
+                moe_use_core_numerics=True,
+                dense_layers_use_shared_expert=True,
+            )
         )
         if kind == "dense"
         else Olmo3MoeCoreSharedExpert(D, H, "silu")
@@ -234,7 +239,10 @@ def test_core_experts_preserve_projection_adapters_and_hooks(kind, projection, a
     if kind == "dense":
         expert = Olmo3MoeDenseMLP(
             Olmo3MoeConfig(
-                hidden_size=16, dense_mlp_intermediate_size=32, moe_use_core_numerics=True
+                hidden_size=16,
+                dense_mlp_intermediate_size=32,
+                moe_use_core_numerics=True,
+                dense_layers_use_shared_expert=True,
             )
         )
     elif kind == "shared":
@@ -332,3 +340,66 @@ def test_core_numerics_reuses_custom_ops_across_module_imports(dtype, monkeypatc
     actual_grads = torch.autograd.grad(actual, (values, probabilities), gradient)
     for actual_grad, expected_grad in zip(actual_grads, expected_grads):
         torch.testing.assert_close(actual_grad, expected_grad, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("cuda", marks=GPU_MARKS)])
+def test_core_numerics_preserves_standard_dense_projections(device, monkeypatch):
+    from olmo_core.nn.feed_forward import FeedForward
+    from olmo_core.nn.moe.v2.hf import modeling_olmo3moe
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+
+    def reject_packed(*args):
+        pytest.fail("Standard FeedForward layers must keep separate projections")
+
+    monkeypatch.setattr(modeling_olmo3moe, "_core_shared_expert_forward", reject_packed)
+    core = FeedForward(
+        d_model=32, hidden_size=64, bias=False, dtype=torch.bfloat16, init_device=device
+    )
+    hf = modeling_olmo3moe.Olmo3MoeDenseMLP(
+        Olmo3MoeConfig(hidden_size=32, dense_mlp_intermediate_size=64, moe_use_core_numerics=True)
+    ).to(device=device, dtype=torch.bfloat16)
+    with torch.no_grad():
+        hf.gate_proj.weight.copy_(core.w1.weight)
+        hf.up_proj.weight.copy_(core.w3.weight)
+        hf.down_proj.weight.copy_(core.w2.weight)
+        x = torch.randn(2, 7, 32, device=device, dtype=torch.bfloat16)
+        torch.testing.assert_close(hf(x), core(x), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("kind", ["dense", "shared", "routed"])
+@pytest.mark.parametrize("offload", ["cpu", "disk"])
+def test_core_experts_preserve_accelerate_offload(kind, offload, tmp_path):
+    accelerate = pytest.importorskip("accelerate")
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeCoreExperts,
+        Olmo3MoeCoreSharedExpert,
+        Olmo3MoeDenseMLP,
+        Olmo3MoeExpert,
+    )
+
+    if kind == "dense":
+        model = Olmo3MoeDenseMLP(
+            Olmo3MoeConfig(
+                hidden_size=16,
+                dense_mlp_intermediate_size=32,
+                moe_use_core_numerics=True,
+                dense_layers_use_shared_expert=True,
+            )
+        )
+    elif kind == "shared":
+        model = Olmo3MoeCoreSharedExpert(16, 32, "silu")
+    else:
+        model = Olmo3MoeCoreExperts([Olmo3MoeExpert(16, 32, "silu")])
+    x = torch.randn(5, 16)
+    args = (x, torch.zeros(5, 1, dtype=torch.long), torch.ones(5, 1)) if kind == "routed" else (x,)
+    with torch.no_grad():
+        expected = model(*args)
+        if offload == "cpu":
+            accelerate.cpu_offload(model, execution_device=torch.device("cpu"))
+        else:
+            accelerate.disk_offload(model, str(tmp_path), execution_device=torch.device("cpu"))
+        assert all(param.is_meta for param in model.parameters())
+        for _ in range(2):
+            torch.testing.assert_close(model(*args), expected)
+            assert all(param.is_meta for param in model.parameters())
