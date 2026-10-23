@@ -45,6 +45,7 @@ from ..exceptions import OLMoConfigurationError
 from .adamw import foreach_adamw_step
 from .config import INITIAL_LR_FIELD, LR_FIELD, OptimGroupOverride
 from .grad_debug import debug_nan_inf_grad_norm
+from .muon_math import MuonLayout, collect_muon_layouts
 
 log = logging.getLogger(__name__)
 
@@ -389,6 +390,9 @@ class OLMoDDPOptimizerConfig(Config):
             world_mesh=getattr(train_module, "world_mesh", None),
             device=getattr(train_module, "device", None),
             model_has_grad_accum_fp32_buffer=has_grad_accum_fp32_buffer,
+            muon_layouts=collect_muon_layouts(model_parts)
+            if self.algorithm == "muon_adamw"
+            else None,
             **kwargs,
         )
 
@@ -520,6 +524,7 @@ class OLMoDDPOptimizer:
         algorithm: str = "adamw",
         muon_momentum: float = 0.95,
         muon_rms: float = 0.2,
+        muon_layouts: Optional[Dict[str, MuonLayout]] = None,
     ) -> None:
         if algorithm not in {"adamw", "muon_adamw"}:
             raise ValueError(f"Unknown optimizer algorithm: {algorithm}")
@@ -528,6 +533,7 @@ class OLMoDDPOptimizer:
         self.algorithm = algorithm
         self.muon_momentum = muon_momentum
         self.muon_rms = muon_rms
+        self.muon_layouts = dict(muon_layouts or {})
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
@@ -2110,7 +2116,8 @@ class OLMoDDPOptimizer:
         old_momentum = moment.full_tensor()
         momentum = self.muon_momentum * old_momentum + full_grad
         direction = self.muon_momentum * momentum + full_grad
-        update = muon_direction(name, direction.reshape(shape), self.muon_rms).reshape(-1)
+        layout = getattr(self, "muon_layouts", {}).get(name)
+        update = muon_direction(name, direction.reshape(shape), self.muon_rms, layout).reshape(-1)
 
         def local_slice(full, state):
             local_shape, offset = compute_local_shape_and_global_offset(
@@ -2213,6 +2220,13 @@ class OLMoDDPOptimizer:
                 shape = tuple(
                     model_p.logical_shape if _is_fp8_weight_store(model_p) else model_p.shape
                 )
+                layout = self.muon_layouts.get(name)
+                if layout is not None:
+                    if math.prod(layout.shape) != math.prod(shape):
+                        raise ValueError(
+                            f"Muon layout does not match parameter {name}: {layout.shape} vs {shape}"
+                        )
+                    shape = layout.shape
                 if getattr(self, "algorithm", "adamw") == "muon_adamw" and uses_muon(name, shape):
                     self._step_muon(name, shape, group, step_factor)
                     continue

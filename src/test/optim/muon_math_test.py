@@ -1,16 +1,30 @@
+import math
+from types import SimpleNamespace
+
+import pytest
 import torch
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.tensor import Replicate, Shard, distribute_tensor
 
-from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer
-from olmo_core.optim.muon_math import muon_direction, newton_schulz, uses_muon
+from olmo_core.config import DType
+from olmo_core.nn.moe.v2.routed_experts import ExpertActivation
+from olmo_core.nn.moe.v2.router import MoERouterV2
+from olmo_core.nn.moe.v2.shared_experts import SharedExperts
+from olmo_core.optim.moe_optimizer import OLMoDDPOptimizer, OLMoDDPOptimizerConfig
+from olmo_core.optim.muon_math import (
+    collect_muon_layouts,
+    muon_direction,
+    newton_schulz,
+    uses_muon,
+)
 from olmo_core.testing.distributed import run_distributed_test
 
 
 def test_parameter_routing():
+    with pytest.raises(ValueError, match="requires a MuonLayout"):
+        uses_muon("module.routed_experts_router.weight", (15,))
     for name, shape in [
         ("blocks.0.attention.w_q.weight", (8, 16)),
-        ("blocks.0.feed_forward.router.weight", (16, 8)),
         ("blocks.0.feed_forward.routed_experts.w_down", (4, 8, 16)),
     ]:
         assert uses_muon(name, shape)
@@ -22,6 +36,112 @@ def test_parameter_routing():
         ("blocks.0.attention.dt_bias", (8,)),
     ]:
         assert not uses_muon(name, shape)
+
+
+def _real_v2_modules(
+    num_shared=1, activation=ExpertActivation.swiglu, d_model=5, hidden_size=7, num_experts=3
+):
+    model = torch.nn.Module()
+    model.routed_experts_router = MoERouterV2(
+        d_model=d_model, num_experts=num_experts, top_k=1, bias=True
+    )
+    model.shared_experts = SharedExperts(
+        d_model=d_model,
+        hidden_size=hidden_size,
+        num_experts=num_shared,
+        bias=False,
+        dtype=DType.float32,
+        activation=activation,
+    )
+    # Exercise names from the actual optimizer's DDP-wrapped build path.
+    wrapped = torch.nn.Module()
+    wrapped.module = model
+    wrapped.has_grad_accum_fp32_buffer = False
+    return wrapped
+
+
+@pytest.mark.parametrize("num_shared", [1, 3])
+@pytest.mark.parametrize("activation", [ExpertActivation.swiglu, ExpertActivation.relu2])
+def test_real_shared_expert_layout(num_shared, activation):
+    model = _real_v2_modules(num_shared, activation)
+    name = "module.shared_experts.w_up_gate"
+    layout = collect_muon_layouts([model])[name]
+    torch.manual_seed(23)
+    direction = torch.randn_like(model.module.shared_experts.w_up_gate)
+    projections = 2 if activation == ExpertActivation.swiglu else 1
+    expected = torch.cat(
+        [
+            newton_schulz(direction[:, i * 7 : (i + 1) * 7]) * math.sqrt(7) * 0.2
+            for i in range(num_shared * projections)
+        ],
+        dim=1,
+    )
+    torch.testing.assert_close(muon_direction(name, direction, layout=layout), expected)
+    router = model.module.routed_experts_router
+    router_layout = collect_muon_layouts([model])["module.routed_experts_router.weight"]
+    assert router.weight.shape == (15,)
+    assert router_layout.shape == (3, 5)
+    assert uses_muon("module.routed_experts_router.weight", router_layout.shape)
+
+
+def _run_real_v2_dispatch():
+    mesh = init_device_mesh("cpu", (2,), mesh_dim_names=("dp",))
+    torch.manual_seed(31)
+    model = _real_v2_modules(num_shared=3, d_model=64, hidden_size=67, num_experts=66)
+    optim = OLMoDDPOptimizerConfig(
+        algorithm="muon_adamw",
+        lr=0.003,
+        weight_decay=0.1,
+        compile=False,
+        use_distributed=True,
+    ).build(
+        [model],
+        train_module=SimpleNamespace(  # type: ignore[arg-type]
+            world_mesh={"dense": mesh, "moe": None}, device=torch.device("cpu")
+        ),
+    )
+    expected = {}
+    for name, param in model.named_parameters():
+        if not name.endswith("bias"):
+            assert any(p.is_shard() for p in optim.states[f"{name}.exp_avg"].placements)
+        initial = optim.states[f"{name}.main"].full_tensor().reshape(param.shape).clone()
+        grad = torch.randn_like(initial)
+        state = optim.states[f"{name}.main"]
+        optim.main_grad[name] = distribute_tensor(grad.flatten(), mesh, state.placements).to_local()
+        if name.endswith("routed_experts_router.weight"):
+            direction = newton_schulz((1.95 * grad).reshape(66, 64)) * math.sqrt(66) * 0.2
+        elif name.endswith("w_up_gate"):
+            direction = torch.cat(
+                [
+                    newton_schulz(1.95 * grad[:, i * 67 : (i + 1) * 67]) * math.sqrt(67) * 0.2
+                    for i in range(6)
+                ],
+                dim=1,
+            )
+        elif name.endswith("w_down"):
+            direction = torch.stack([newton_schulz(1.95 * g) * math.sqrt(67) * 0.2 for g in grad])
+        else:
+            adam_param = torch.nn.Parameter(initial.clone())
+            adam = torch.optim.AdamW(
+                [adam_param],
+                lr=0.003,
+                weight_decay=0.1,
+                betas=optim.param_groups[0]["betas"],
+                eps=optim.param_groups[0]["eps"],
+            )
+            adam_param.grad = grad
+            adam.step()
+            expected[name] = adam_param.flatten()
+            continue
+        expected[name] = initial.flatten() * (1 - 0.003 * 0.1) - 0.003 * direction.flatten()
+    with torch.no_grad():
+        optim._step_foreach()
+    for name, value in expected.items():
+        torch.testing.assert_close(optim.states[f"{name}.main"].full_tensor(), value)
+
+
+def test_real_v2_optimizer_dispatch():
+    run_distributed_test(_run_real_v2_dispatch, world_size=2, backend="gloo", start_method="spawn")
 
 
 def test_five_steps_match_singular_value_polynomial():
