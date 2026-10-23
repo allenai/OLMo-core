@@ -1803,6 +1803,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-dense-tail-frac", type=float, default=0.0,
                     help="online router: train the last FRAC of the steps uncompressed (e.g. 0.1, with "
                     "--st-otr-dense-every 0 for routed-then-dense-tail)")
+    ap.add_argument("--st-otr-freeze-after", type=int, default=0,
+                    help="online router: train normally for N steps, then freeze the embeddings + blocks [0, drop_layer) "
+                    "and free their optimizer state (warmup-then-freeze)")
     ap.add_argument("--st-otr-min-per-doc", type=int, default=0,
                     help="online router: per-document token floor -- every document keeps max(its share, K) body tokens "
                     "(its top ones by score), counted against the budget")

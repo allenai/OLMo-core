@@ -78,6 +78,7 @@ ARMS = {
     # per-document token floor (grad-composition: strmatch's ~25-token documents keep ~3 tokens at 10%, mostly header)
     "otr10M7f8": otr(0.1, drop=7, extra="--st-otr-min-per-doc 8"),
     "otr10M7f16": otr(0.1, drop=7, extra="--st-otr-min-per-doc 16"),
+    "fa30M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-freeze-after 30"),   # warmup-then-freeze (s488: 30 of 122)
     "ng0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-early-nograd"),       # early blocks forward-only always
     "frz0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-freeze-early"),      # + frozen (no grads, no Adam state)
     "pyr3de0": otr(0.1, drop=7, dense_every=0, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),

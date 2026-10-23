@@ -116,6 +116,10 @@ class OnlineRouterConfig:
     """Mid-stack only: FREEZE the embeddings and blocks [0, L) (L = the first drop layer): ``requires_grad=False`` before
     the train module is built (:func:`freeze_early_blocks`), so they never get gradients or optimizer state, and every
     forward (dense steps included) runs them forward-only -- no stored activations. Charged forward-only."""
+    freeze_after: int = 0
+    """Warmup-then-freeze: train every block normally for the first ``freeze_after`` optimizer steps, then (from step
+    ``freeze_after + 1``) freeze the embeddings and blocks [0, L) and free their gradients and optimizer state
+    (:func:`freeze_and_release`, run by the callback); afterwards it behaves as ``freeze_early``. 0 = off."""
     dense_tail_frac: float = 0.0
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
@@ -157,6 +161,8 @@ class OnlineRouterConfig:
                 raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
         if self.merge_dropped and (self.drop_layer <= 0 or self.stages):
             raise ValueError("online router merge_dropped needs a single-stage mid-stack drop (drop_layer > 0, no stages)")
+        if self.freeze_after < 0 or (self.freeze_after and self.freeze_early):
+            raise ValueError("online router freeze_after must be >= 0 and is exclusive with freeze_early")
         if self.freeze_early and self.drop_layer <= 0 and not self.stages:
             raise ValueError("online router freeze_early needs the mid-stack drop (drop_layer > 0 or stages)")
         if self.early_nograd and self.drop_layer <= 0 and not self.stages:
@@ -286,6 +292,21 @@ def freeze_early_blocks(model, n_blocks: int) -> int:
     for m in mods:
         for p in m.parameters():
             p.requires_grad_(False)
+            n += p.numel()
+    return n
+
+
+def freeze_and_release(model, n_blocks: int, optimizer=None) -> int:
+    """Freeze the embeddings and blocks [0, n_blocks) mid-training: ``requires_grad_(False)``, drop their gradients and
+    (if given) their optimizer state, so the memory is returned. Returns the number of parameters frozen."""
+    mods = [model.embeddings] + [b for i, b in enumerate(model.blocks.values()) if i < n_blocks]
+    n = 0
+    for m in mods:
+        for p in m.parameters():
+            p.requires_grad_(False)
+            p.grad = None
+            if optimizer is not None:
+                optimizer.state.pop(p, None)
             n += p.numel()
     return n
 

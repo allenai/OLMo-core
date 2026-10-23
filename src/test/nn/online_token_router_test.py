@@ -807,3 +807,27 @@ def test_min_per_doc_floor():
     per_doc = [int((keep[0] & (cid[0] == d)).sum()) for d in range(3)]
     assert per_doc[0] == 5 and per_doc[1] >= 5 and per_doc[2] == 3, per_doc  # doc 2 has only 3 body tokens
     assert "online_router/floor_extra_frac" in r.metrics()
+
+
+
+def test_freeze_and_release_frees_optimizer_state_cpu():
+    """freeze_after: the early stack trains, then freeze_and_release drops its grads and AdamW state, and later steps
+    give it no gradient."""
+    from olmo_core.nn.online_token_router import freeze_and_release
+
+    model, router = _mid_model(3, drop_layer=1, dense_every=0, freeze_after=1)
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    ids, cid, labels = _row(B=1)
+    router.begin_step(1, model=model)
+    model(ids, labels=labels).loss.backward()
+    opt.step()
+    early = list(model.embeddings.parameters()) + list(list(model.blocks.values())[0].parameters())
+    assert all(p in opt.state for p in early)
+    assert freeze_and_release(model, 1, opt) > 0
+    router.cfg.freeze_early = True
+    assert not any(p in opt.state for p in early) and all(p.grad is None for p in early)
+    opt.zero_grad(set_to_none=True)
+    router.begin_step(2, model=model)
+    model(ids, labels=labels).loss.backward()
+    assert all(p.grad is None for p in early)
+    assert all(p.grad is not None for p in list(model.blocks.values())[1].parameters())

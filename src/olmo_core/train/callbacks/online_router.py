@@ -36,6 +36,21 @@ class OnlineRouterCallback(Callback):
     def pre_step(self, batch: Dict[str, Any]):
         import torch
 
+        router0 = self._router()
+        fa = int(getattr(router0.cfg, "freeze_after", 0) or 0)
+        if fa and self.trainer.global_step > fa and not router0.cfg.freeze_early:
+            # warmup-then-freeze: from now on the early stack is frozen, and its grads / optimizer state are released
+            from olmo_core.nn.online_token_router import freeze_and_release
+
+            n = freeze_and_release(self.trainer.train_module.model, router0.cfg.drop_layer,
+                                   getattr(self.trainer.train_module, "optim", None))
+            router0.cfg.freeze_early = True
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            if get_rank() == 0:
+                log.info("[online-router] step %d: froze embeddings + blocks [0, %d) (%.0fM params) and released "
+                         "their optimizer state", self.trainer.global_step, router0.cfg.drop_layer, n / 1e6)
+
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         router = self._router()
