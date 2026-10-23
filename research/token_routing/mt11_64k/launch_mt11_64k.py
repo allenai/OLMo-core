@@ -72,6 +72,7 @@ ARMS = {
 #: ctc-spec grading (run_q4b_beaker_multirung_eval.py --suite-rows --suite-rungs); rerank has no ladder grader
 EVAL_RUNGS = os.environ.get("M64_EVAL_RUNGS", "2k,8k,16k,32k,64k")
 EVAL_MAX_LENGTH = os.environ.get("M64_EVAL_MAX_LENGTH", "73728")
+EVAL_MIN_RUNTIME = {"grouping": "4h"}
 
 
 #: ``smk``: the launch smoke -- the f1 schedule hard-stopped after 10 steps (step 1 keep-all, steps 2-7 routed, step 8
@@ -177,6 +178,9 @@ def do_eval(a):
             if st["evals"].get(ename, {}).get("ex") and not a.force and not a.dry:
                 print(f"[skip] {ename} ({st['evals'][ename]['ex']})")
                 continue
+            # minRuntime per task (run_q4b_beaker_multirung_eval.py reads BEAKER_MIN_RUNTIME): a full 2k..64k pass takes
+            # 40-80 min, grouping 2.5-3 h (its 32k rung decodes up to 4,096 tokens/row); a 1h eval was preempted at 2.5h
+            os.environ["BEAKER_MIN_RUNTIME"] = EVAL_MIN_RUNTIME.get(task, "2h")
             rc, out = sh(eval_cmd(ename, task, f"{CKPTS}/{name}", a.dry))
             ex = None if a.dry else parse_id(out)
             if a.dry:
