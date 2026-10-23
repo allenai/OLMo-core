@@ -56,7 +56,7 @@ GB = 128
 GPUS = int(os.environ.get("M64_NGPU", "8"))
 MICRO = 1
 STEPS_FULL = ROWS // GB
-FRACTIONS = {"f1": 1, "f2": 2, "f4": 4, "f8": 8}
+FRACTIONS = {"f1": 1, "f2": 2, "f4": 4, "f8": 8, "f16": 16}
 #: any-of placement (comma list): whole 8-GPU nodes queue for days on jupiter alone (2026-10-23: 67 urgent ahead)
 CLUSTER = os.environ.get("M64_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale")
 WANDB_GROUP = os.environ.get("M64_WANDB_GROUP", "m64-q35-4b")
