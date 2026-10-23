@@ -487,6 +487,14 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 1
+  },
+  "f8k-mt11-fa247f16M7-s720-tdb-lr2e-06": {
+   "ex": "01M5MJ3Y93N8EZ0DKKFGES8E0A",
+   "arm": "fa247f16M7",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
@@ -2401,6 +2409,13 @@
   "f8k-mt4s1464-otr10M7f16-lro-lr2e-06-lam": {
    "slurm": 114046,
    "arm": "otr10M7f16",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7"
+  },
+  "f8k-mt4s1464-fa183M7-lro-lr2e-06-lam": {
+   "slurm": 114053,
+   "arm": "fa183M7",
    "seed": 0,
    "commit": "9ccee22f5",
    "dir": "OLMo-core-otr7"
