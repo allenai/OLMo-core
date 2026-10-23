@@ -52,6 +52,10 @@ mid-stack online router matched dense at equal FLOPs on 4 tasks but failed strma
 - 2026-10-23 (agent): dense uses the pad-free soft path; the padded `full` variant would run 128 x 65,536 tokens
   per step for ~540k real ones.
 - 2026-10-23 (Prasann, via parent session): "Feel free to validate ideas at smaller scale first, I want results and iteration to come in quickly and bigger runs should be saved for the most promising stuff". -> cancelled dense f4/f2/f1 and router f1/f2 (all still pending); first comparison = otr10M7 at f4 vs dense f16/f8 at both LRs.
+- 2026-10-23 (agent): seed replicates and f2 runs moved to 4 GPUs after 4.5 h in the whole-node queue (99 urgent
+  whole-node jobs ahead; 1-4 GPU slots schedule in ~2 min). Same rows/step and micro-batch -> same scores and FLOPs;
+  wall-clock compared only within a GPU count. Eval minRuntime now 2h (grouping 4h) after a 1h grouping eval was
+  preempted at 2.5h.
 - 2026-10-23 (agent): scale-up at LR 5e-6 only for f2/f1 dense (5e-6 beat 2e-6 at every measured budget f16/f8/f4 on
   most cells, so 2e-6 at the big budgets would not set the reference); both LRs exist at f16/f8/f4 as required.
 - 2026-10-23 (agent): minRuntime now covers each whole run (x1.3 the expected time) + a resume point every 50 steps:
@@ -73,10 +77,14 @@ mid-stack online router matched dense at equal FLOPs on 4 tasks but failed strma
 | m64-dense-f8-lr{2e-06,5e-06} | 01M5KQZ52Z5MQ3W6N86NKYVW4M, 01M5KR0BQXMHGHHKXQ6QWZGJJR | DONE: 2,287.3 PF, 153 steps, ~4,100 s wall (~20 s/step training); 10 evals each launched |
 | m64-dense-f4-lr{2e-06,5e-06} (bracket the router f4 run above dense f8) | 01M5M319PV5CWBK53PMMT1ABBV, 01M5M322Z5QDRF76GSBEQ2WCRH: preempted at ~1h, cancelled; RELAUNCHED 01M5M8P5K3TW03SW2ENAEJX27Z, 01M5M8PY3ZYDNHS7V27WWB2QWQ (minRuntime 4h, resume every 50 steps) | pending |
 | m64-otr10M7-f4-lr5e-06 (LR-matched router) | 01M5MMX3TY9H4786BRZ2BNY83P | DONE 1,872.4 PF; 10 evals launched (9 done by 19:40) |
-| seed replicates -sd1, LR 5e-6: otr10M7-f4, dense-f8, dense-f4 | 01M5MZK4XJ4JC4Z695P6Q53MJB, 01M5MZN84KF4DX04FTHKJ50HS8, 01M5MZPX8VF998YXPCHVW32N1K | pending |
-| scale-up LR 5e-6: otr10M7-f2, dense-f2, dense-f1, otr10M7-f1 | 01M5MZRMK0FZ9HN2HZ6MXKXBM1, 01M5MZTJG3PM04CVP0421C4D0N, 01M5MZYWVPS7TXCFSGKNEQH0V6, 01M5N00AE88VBBGQRQ28F87N6S | pending (minRuntime capped at Beaker's 8h; resume every 50 steps) |
+| seed replicates -sd1, LR 5e-6: otr10M7-f4, dense-f8, dense-f4 | 8-GPU 01M5MZK4XJ4JC4Z695P6Q53MJB, 01M5MZN84KF4DX04FTHKJ50HS8, 01M5MZPX8VF998YXPCHVW32N1K queued 4.5 h, cancelled; 4-GPU 01M5NFRD7VMK8B9N7X743DV9Y3 (RUNNING), 01M5NFS7P24KP3KDCY93SJ8779, 01M5NFSZV56883960609SSJVM6 | 4 GPUs: same rows/step, scores and FLOPs unaffected, wall-clock not comparable to 8-GPU runs |
+| scale-up LR 5e-6: otr10M7-f2, dense-f2 (4 GPUs: 01M5NFTSY0MJBQNXPNB9HDBERV, 01M5NFVJS7Y4D046KXFE9AFE81); dense-f1, otr10M7-f1 (8 GPUs: 01M5MZYWVPS7TXCFSGKNEQH0V6, 01M5N00AE88VBBGQRQ28F87N6S) | pending (minRuntime capped at Beaker's 8h; resume every 50 steps) |
 | m64-otr10M7-f4-lr2e-06 | 01M5KV36S0MTH0VRZT2WK32QKB: preempted twice at ~1h (step ~100 / ~200), restarted from scratch (no resume point before step 300), cancelled; RELAUNCHED 01M5M8NDSDPCS9YNWBQED7NNJE (minRuntime 3h, resume every 50 steps): FAILED at step 2, NaN grad norm already at step 1 on node 01JRYCX2HZQ2QE60PMHBB7ZM8J (same batch gives CE 0.9751 / grad norm 26.82 on other nodes = bad node); RELAUNCHED 01M5MEB6K9S3H6MQCS9FPPQ4G4: DONE 14:50, 1,872.4 PF (0.405x dense-equivalent); 10 evals launched |
 | m64-dense-f{8,4,2,1}-lr{2e-06,5e-06} (f4/f2/f1 CANCELLED pending, small-first) | 01M5KQZ52Z5MQ3W6N86NKYVW4M, 01M5KR0BQXMHGHHKXQ6QWZGJJR, 01M5KR1S0JRQ8MJ8C2SV7P3H4P, 01M5KR3V9W8Y669X20SJT0RT1P, 01M5KR60YGENAF5XM27F0FV9PM, 01M5KR6VCQNA4ZRWYNPHQAEQF5, 01M5KR7W5JAD0GYBXK9J1FKKBD, 01M5KR95YM906V56JZK1HVNK4Q | pending |
+
+## LR-matched read FINAL for the single seed (2026-10-23 ~23:30): all 10 evals in. Task-average +0.034, ahead on 9/10:
+nq +0.005, hotpotqa +0.017, qdmatch_nq +0.022, outlier +0.051, oolong +0.023, contradiction +0.056 (64k +0.105),
+xabsence +0.125, reorder (2k) +0.031, strmatch -0.018, grouping +0.027. Recorded in ops results.
 
 ## LR-matched read (2026-10-23 ~19:30; router otr10M7-f4 at LR 5e-6, 1,872 PF = 0.40x; single seed; eval_size 500/cell; no-cot)
 vs the better dense LR per cell, interpolated in log PF between f16 and f8; mean over each task's rungs (no-signal cells

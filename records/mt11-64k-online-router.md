@@ -8,7 +8,7 @@ kind: result
 status: interim (single seed at the 1/4-epoch point; seed replicates and 1/2 + full-epoch runs training)
 superseded_by: 
 artifact: https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
-summary: On an 11-task 64k mix (662M tokens), the otr10M7 online router at 0.40x dense FLOPs beats the better-LR dense curve on 9/10 tasks at matched LR 5e-6 (xabsence +0.125, outlier +0.051, contradiction +0.043; strmatch -0.018), gains growing with length; at LR 2e-6 it trails dense-5e-6 everywhere. Single seed, eval_size 500/cell.
+summary: On an 11-task 64k mix (662M tokens), the otr10M7 online router at 0.40x dense FLOPs beats the better-LR dense curve on 9/10 tasks at matched LR 5e-6 (task-average +0.034; xabsence +0.125, contradiction +0.056 rising to +0.105 at 64k, outlier +0.051; strmatch -0.018), gains growing with length; at LR 2e-6 it trails dense-5e-6 everywhere. Single seed, eval_size 500/cell.
 ---
 
 # The mid-stack online token router at 64k, 11 tasks, ~64M tokens per task
@@ -59,17 +59,19 @@ Mean over each task's rungs of (router - dense at the router's PF):
 |---|---|---|---|
 | xabsence | **+0.125** (8k/16k/32k +0.14/+0.20/+0.15) | -0.015 | +0.082 |
 | outlier | +0.051 (8k +0.11) | -0.051 | +0.056 |
-| contradiction | +0.043 (16k/32k +0.07/+0.08) | -0.034 | +0.085 |
+| contradiction | +0.056 (16k/32k/64k +0.07/+0.08/+0.105) | -0.034 | +0.085 |
 | oolong | +0.023 | -0.006 | +0.021 |
 | qdmatch_nq | +0.022 | -0.014 | +0.060 |
 | hotpotqa | +0.017 (32k/64k +0.04) | -0.009 | +0.032 |
-| grouping | +0.016 (partial) | -0.027 | +0.020 |
+| grouping | +0.027 (8k/16k +0.04/+0.05) | -0.027 | +0.020 |
 | nq | +0.005 | -0.008 | +0.013 |
 | strmatch | -0.018 | -0.090 | -0.041 |
 | reorder (2k only) | +0.031 | -0.082 | +0.004 |
 
+Task-average of the LR 5e-6 column: **+0.034**, ahead on 9/10 tasks.
+
 Binomial SE per cell is about ±0.01-0.02; run-to-run noise on the 8k screens was ±0.02-0.03 (up to ±0.13 on
-outlier). Only the large long-rung wins (xabsence, contradiction 16k/32k, outlier 8k) clear a single seed; the rest
+outlier). Only the large long-rung wins (xabsence, contradiction 16k-64k, outlier 8k) clear a single seed; the rest
 need the replicates.
 
 - **The learning rate decides the sign.** At matched LR the router is ahead on 9/10 tasks; at 2e-6 it is ahead of
@@ -94,5 +96,5 @@ need the replicates.
 
 ## Open
 
-Seed replicates (router f4, dense f8/f4, LR 5e-6) and the larger budgets (router + dense at f2 and f1, LR 5e-6) are
-training; otr10M8 not yet run. This record is updated when they land.
+Seed replicates (router f4, dense f8/f4, LR 5e-6; on 4 GPUs because whole 8-GPU nodes queued for 4.5 h) and the
+larger budgets (router + dense at f2 on 4 GPUs, f1 on 8) are training; otr10M8 not yet run. This record is updated when they land.
