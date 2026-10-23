@@ -116,6 +116,11 @@ class OnlineRouterConfig:
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
     :class:`~olmo_core.train.callbacks.OnlineRouterCallback`)."""
+    stages: str = ""
+    """Pyramid (multi-stage) mid-stack drop, e.g. ``"3:0.5,7:0.1,16:0.03"``: at each ``layer:keep`` the kept tokens are cut
+    to ``keep`` of the row's body tokens (absolute, decreasing), each stage scored from ITS layer's hidden state by its
+    own router (own ridge fit, own gradient targets at that layer). Overrides ``drop_layer`` / ``keep_frac`` with the
+    first stage's. Empty = one stage."""
     keep_first: int = 0
     """Always keep each document's first ``keep_first`` body tokens (its header / id span); they count against the
     budget (and their document's share), and the router picks the rest. 0 = everything is routable."""
@@ -132,7 +137,13 @@ class OnlineRouterConfig:
             raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
-        if self.early_nograd and self.drop_layer <= 0:
+        if self.stages:
+            st = parse_stages(self.stages)
+            if [l for l, _ in st] != sorted({l for l, _ in st}) or st[0][0] <= 0:
+                raise ValueError(f"online router stages must have strictly increasing layers > 0, got {self.stages!r}")
+            if any(not 0.0 < k <= 1.0 for _, k in st) or [k for _, k in st] != sorted((k for _, k in st), reverse=True):
+                raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
+        if self.early_nograd and self.drop_layer <= 0 and not self.stages:
             raise ValueError("online router early_nograd needs the mid-stack drop (drop_layer > 0)")
         if not 0.0 <= self.dense_tail_frac < 1.0:
             raise ValueError(f"online router dense_tail_frac must be in [0, 1), got {self.dense_tail_frac}")
@@ -245,6 +256,17 @@ def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
     return float((ra @ rb).item() / den) if den > 0 else float("nan")
 
 
+def parse_stages(spec: str) -> List[Tuple[int, float]]:
+    """``"3:0.5,7:0.1"`` -> ``[(3, 0.5), (7, 0.1)]``."""
+    out = []
+    for part in [p for p in spec.split(",") if p.strip()]:
+        layer, keep = part.split(":")
+        out.append((int(layer), float(keep)))
+    if not out:
+        raise ValueError(f"empty stages spec {spec!r}")
+    return out
+
+
 def _row_ranks(x: torch.Tensor, rows: torch.Tensor) -> torch.Tensor:
     """Ranks of ``x`` within each row of ``rows``, scaled to [0, 1]."""
     out = torch.zeros_like(x, dtype=torch.float32)
@@ -283,6 +305,23 @@ class OnlineTokenRouter:
         rank: int = 0,
     ):
         cfg.validate()
+        self.stage_idx = 0
+        self._next: Optional["OnlineTokenRouter"] = None
+        if cfg.stages:
+            import dataclasses
+
+            st = parse_stages(cfg.stages)
+            (l0, k0), rest = st[0], st[1:]
+            cfg = dataclasses.replace(cfg, stages="", drop_layer=l0, keep_frac=k0)
+            prev_k, prev = k0, self
+            for i, (l, k) in enumerate(rest, start=1):
+                # later stages: keep ``k`` of the ORIGINAL body = k / prev_k of the tokens entering; their own fit
+                c = dataclasses.replace(cfg, drop_layer=l, keep_frac=min(1.0, k / prev_k), early_nograd=False,
+                                        seed=cfg.seed + 1009 * i, keep_first=0)
+                nxt = OnlineTokenRouter(c, doc_start_id=doc_start_id, doc_end_id=doc_end_id, eos_id=eos_id,
+                                        d_model=d_model, gold_table=None, rank=rank)
+                nxt.stage_idx = i
+                prev._next, prev, prev_k = nxt, nxt, k
         if cfg.use_gold and gold_table is None:
             raise ValueError("online router use_gold needs the gold-fingerprint table")
         self.cfg = cfg
@@ -676,14 +715,54 @@ class OnlineTokenRouter:
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
             fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
-            actual = early * L * sum(fb[:L0]) + Lk * (sum(fk) + head)
-            adj += actual - L * (sum(fb) + head)
+            if self.stage_idx == 0:
+                actual = early * L * sum(fb[:L0]) + Lk * (sum(fk) + head)
+                adj += actual - L * (sum(fb) + head)
+            else:
+                # a later pyramid stage: the earlier stages already charged blocks >= L0 at THIS stage's entry length L
+                adj += Lk * (sum(fk) + head) - L * (sum(fb[L0:]) + head)
         self._flop(model, adj)
         self._stat("mid_row_frac", float(counts.sum()) / max(1.0, float(real.sum())))
+        if self._next is not None:
+            self._next._mid = self._stash_for_next(fp, ids, cid, Tr, Tw, order, valid)
+            self._next._nograd_fwd = False
+            self._next._ignore_index = getattr(self, "_ignore_index", -100)
         return h_new, kw
 
+    def chain(self) -> List["OnlineTokenRouter"]:
+        """This router and its later pyramid stages, in order."""
+        out, r = [], self
+        while r is not None:
+            out.append(r)
+            r = r._next
+        return out
+
+    @staticmethod
+    def _stash_for_next(fp, ids, cid, Tr, Tw, order, valid) -> Dict[str, Any]:
+        """The next pyramid stage's feature stash: every per-token part gathered to this stage's kept row."""
+        B, W = order.shape
+
+        def g(x, fill):
+            pad = torch.full((B, Tw) + tuple(x.shape[2:]), fill, dtype=x.dtype, device=x.device)
+            pad[:, :Tr] = x
+            idx = order.to(x.device).view(B, W, *([1] * (x.dim() - 2))).expand(B, W, *x.shape[2:])
+            out = torch.gather(pad, 1, idx)
+            v = valid.to(x.device).view(B, W, *([1] * (x.dim() - 2)))
+            return torch.where(v, out, torch.full_like(out, fill))
+
+        fp2 = {}
+        for k, v in fp.items():
+            if torch.is_tensor(v) and v.dim() >= 2 and v.shape[0] == B and v.shape[1] == Tr:
+                fp2[k] = g(v, False if v.dtype == torch.bool else 0)
+        return {"fp": fp2, "ids": g(ids, 0), "cid": g(cid, -2), "Tr": W}
+
     def mid_labels(self, labels: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-        """Apply this forward's mid-stack gather to the (input-compacted) labels."""
+        """Apply this forward's mid-stack gather(s) -- every pyramid stage in order -- to the (input-compacted) labels."""
+        for r in self.chain():
+            labels = r._own_mid_labels(labels)
+        return labels
+
+    def _own_mid_labels(self, labels: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
         g, self._mid_gather = getattr(self, "_mid_gather", None), None
         if g is None or labels is None:
             return labels
@@ -878,7 +957,8 @@ class OnlineTokenRouter:
 
     def metrics(self) -> Dict[str, float]:
         """Means of the per-forward diagnostics since the last call (then reset)."""
-        out = {f"online_router/{k}": sum(v) / len(v) for k, v in self._stats.items() if v}
+        pre = "online_router/" if self.stage_idx == 0 else f"online_router/s{self.stage_idx}_"
+        out = {f"{pre}{k}": sum(v) / len(v) for k, v in self._stats.items() if v}
         self._stats = {}
         if self.w is not None:
             w = self.w

@@ -262,6 +262,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_keep_first: int = 0
     st_otr_early_nograd: bool = False
     st_otr_dense_tail_frac: float = 0.0
+    st_otr_stages: str = ""
     st_otr_score: str = "router"
     st_otr_feature_layer: int = 0
     st_otr_drop_layer: int = 0
@@ -1018,6 +1019,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         keep_first=o.st_otr_keep_first,
         early_nograd=o.st_otr_early_nograd,
         dense_tail_frac=o.st_otr_dense_tail_frac,
+        stages=o.st_otr_stages,
         score=o.st_otr_score,
         feature_layer=o.st_otr_feature_layer,
         drop_layer=o.st_otr_drop_layer,

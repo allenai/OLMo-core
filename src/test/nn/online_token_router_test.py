@@ -606,3 +606,52 @@ def test_dense_tail_frac():
 def test_early_nograd_needs_mid_stack():
     with pytest.raises(ValueError):
         OnlineRouterConfig(early_nograd=True).validate()
+
+
+
+def test_pyramid_stages_cpu():
+    """stages "1:0.5,2:0.25": two routers in a chain, each fit from its own layer's targets; each stage's FLOP adjustment
+    is exact, the labels are gathered through both stages, and eval runs every token."""
+    model, router = _mid_model(4, stages="1:0.5,2:0.25", dense_every=0)
+    chain = router.chain()
+    assert [r.cfg.drop_layer for r in chain] == [1, 2] and chain[1].cfg.keep_frac == pytest.approx(0.5)
+    blocks = list(model.blocks.values())
+    flops = []
+    for r in chain:
+        orig = r._flop
+        r._flop = (lambda o: (lambda m, v: (flops.append(float(v)), o(m, v))))(orig)
+    ids, cid, labels = _row(B=1)
+    for n in (1, 2, 3):
+        model.zero_grad(set_to_none=True)
+        for r in chain:
+            r.begin_step(n, model=model)
+            r.metrics()
+        flops.clear()
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+    assert all(r.w is not None for r in chain)
+    for r in chain:
+        e = r._pending[-1]
+        assert e["target"] is not None and torch.isfinite(e["target"]).all()
+    real = int((ids != PH).sum())
+    m0, m1 = chain[0].metrics(), chain[1].metrics()
+    k1 = int(round(m0["online_router/mid_row_frac"] * real))
+    k2 = int(round(m1["online_router/s1_mid_row_frac"] * k1))
+    assert k2 < k1 < real
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    e1 = (real * f(blocks[0], real) + k1 * (sum(f(b, k1) for b in blocks[1:]) + head)
+          - real * (sum(f(b, real) for b in blocks) + head))
+    e2 = k2 * (f(blocks[2], k2) + f(blocks[3], k2) + head) - k1 * (f(blocks[2], k1) + f(blocks[3], k1) + head)
+    for e in (e1, e2):
+        assert any(abs(v - e) < 1e-6 * max(1.0, abs(e)) for v in flops), (e, flops)
+    model.eval()
+    with torch.no_grad():
+        assert torch.isfinite(model(ids, labels=labels).loss)
+
+
+def test_pyramid_stages_validate():
+    for bad in ("7:0.1,3:0.5", "3:0.1,7:0.5", "0:0.5"):
+        with pytest.raises(ValueError):
+            OnlineRouterConfig(stages=bad).validate()

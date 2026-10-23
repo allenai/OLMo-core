@@ -1750,6 +1750,8 @@ class Transformer(nn.Module):
         captured: Dict[int, torch.Tensor] = {}
         otr = getattr(self, "_online_token_router", None) if self.training else None
         otr_layer = otr.cfg.drop_layer if otr is not None else 0
+        # pyramid: every stage's drop layer -> its router (one entry without stages)
+        otr_stages = {r.cfg.drop_layer: r for r in otr.chain()} if otr_layer > 0 else {}
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
         # online router early_nograd: on routed forwards blocks [0, otr_layer) run forward-only
@@ -1759,13 +1761,13 @@ class Transformer(nn.Module):
             torch.set_grad_enabled(False)
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
-            if otr_layer > 0 and block_idx == otr_layer:
-                if otr_nograd:
+            if block_idx in otr_stages:
+                if otr_nograd and block_idx == otr_layer:
                     torch.set_grad_enabled(grad_was)
                     # a fresh leaf: the router's target hook at the split reads dL/dh here
                     h = h.detach().requires_grad_(grad_was)
                 # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
-                h, all_block_kwargs = otr.mid_compact(self, h, all_block_kwargs)
+                h, all_block_kwargs = otr_stages[block_idx].mid_compact(self, h, all_block_kwargs)
             if block_idx in ld_skip:
                 # whole-block skip (olmo_core.nn.layer_drop): identity, forward never called
                 if capture_layers is not None and block_idx in capture_layers:

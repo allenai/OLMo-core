@@ -30,15 +30,19 @@ class OnlineRouterCallback(Callback):
         router = self._router()
         if router is None:
             raise RuntimeError("OnlineRouterCallback attached but the model has no online token router")
-        router.total_steps = int(self.trainer.max_steps) if self.trainer.max_steps else None
+        for r in router.chain():
+            r.total_steps = int(self.trainer.max_steps) if self.trainer.max_steps else None
 
     def pre_step(self, batch: Dict[str, Any]):
         router = self._router()
-        router.begin_step(self.trainer.global_step, model=self.trainer.train_module.model)  # type: ignore[union-attr]
+        for r in router.chain():  # every pyramid stage refits from its own targets
+            r.begin_step(self.trainer.global_step, model=self.trainer.train_module.model)  # type: ignore[union-attr]
 
     def post_step(self):
         router = self._router()
-        m = router.metrics()
+        m = {}
+        for r in router.chain():
+            m.update(r.metrics())
         if self.log_every and self.step % self.log_every == 0:
             for k, v in m.items():
                 self.trainer.record_metric(k, v)

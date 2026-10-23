@@ -1803,6 +1803,10 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-dense-tail-frac", type=float, default=0.0,
                     help="online router: train the last FRAC of the steps uncompressed (e.g. 0.1, with "
                     "--st-otr-dense-every 0 for routed-then-dense-tail)")
+    ap.add_argument("--st-otr-stages", default="",
+                    help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
+                    "non-increasing; each stage scored from its own layer by its own router); overrides "
+                    "--st-otr-drop-layer / --st-otr-keep-frac")
     ap.add_argument("--st-otr-keep-first", type=int, default=0,
                     help="online router: always keep each document's first K body tokens (its header / id span); "
                     "they count against the budget and the router picks the rest")
