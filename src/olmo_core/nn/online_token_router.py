@@ -130,6 +130,9 @@ class OnlineRouterConfig:
     to ``keep`` of the row's body tokens (absolute, decreasing), each stage scored from ITS layer's hidden state by its
     own router (own ridge fit, own gradient targets at that layer). Overrides ``drop_layer`` / ``keep_frac`` with the
     first stage's. Empty = one stage."""
+    min_per_doc: int = 0
+    """Per-document token FLOOR: every document keeps max(its share, ``min_per_doc``) body tokens (its top ones by score;
+    all of a shorter document), counted against the budget. 0 = no floor."""
     keep_first: int = 0
     """Always keep each document's first ``keep_first`` body tokens (its header / id span); they count against the
     budget (and their document's share), and the router picks the rest. 0 = everything is routable."""
@@ -160,6 +163,8 @@ class OnlineRouterConfig:
             raise ValueError("online router early_nograd needs the mid-stack drop (drop_layer > 0)")
         if not 0.0 <= self.dense_tail_frac < 1.0:
             raise ValueError(f"online router dense_tail_frac must be in [0, 1), got {self.dense_tail_frac}")
+        if self.min_per_doc < 0:
+            raise ValueError(f"online router min_per_doc must be >= 0, got {self.min_per_doc}")
         if self.keep_first < 0:
             raise ValueError(f"online router keep_first must be >= 0, got {self.keep_first}")
         if self.score not in ("router", "random", "first_last", "dh"):
@@ -656,6 +661,19 @@ class OnlineTokenRouter:
                     ds, de = self._doc_ids()
                     out = mark_doc_topk_tokens_free(cid, ids, sc_d, doc_start_id=ds, doc_end_id=de, k=kd)
                     keep = keep | (body & (out == FREE_CHUNK_ID))
+            if c.min_per_doc > 0:
+                # per-document FLOOR: every document keeps at least its top min_per_doc body tokens by score (all of
+                # a shorter one), counted against the budget -- tiny documents (strmatch: ~25 tokens) are otherwise
+                # cut to their header
+                from .attention.chunked_mask import FREE_CHUNK_ID, mark_doc_topk_tokens_free
+
+                sc_f = torch.where(explore | forced, torch.full_like(score, 1e30), score)
+                ds, de = self._doc_ids()
+                out_f = mark_doc_topk_tokens_free(cid, ids, sc_f, doc_start_id=ds, doc_end_id=de,
+                                                  k=float(c.min_per_doc))
+                floor = body & (out_f == FREE_CHUNK_ID)
+                self._stat("floor_extra_frac", float((floor & ~keep).sum()) / max(1.0, float(body.sum())))
+                keep = keep | floor
             # the rest of the budget by score over the whole row
             left = (k - keep.sum(dim=1)).clamp(min=0)
             sc = torch.where(body & ~keep, score, torch.full_like(score, -float("inf")))

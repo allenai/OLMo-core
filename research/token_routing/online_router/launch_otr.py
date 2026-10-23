@@ -75,6 +75,9 @@ ARMS = {
     "mrg05M7": otr(0.05, drop=7, extra="--st-otr-merge-dropped"),   # merge instead of drop, keep 5%
     "mrg10M7": otr(0.1, drop=7, extra="--st-otr-merge-dropped"),
     # memory + FLOPs (Prasann, 2026-10-23: "ideas which can save both on FLOPs and memory"): NO full-context steps
+    # per-document token floor (grad-composition: strmatch's ~25-token documents keep ~3 tokens at 10%, mostly header)
+    "otr10M7f8": otr(0.1, drop=7, extra="--st-otr-min-per-doc 8"),
+    "otr10M7f16": otr(0.1, drop=7, extra="--st-otr-min-per-doc 16"),
     "ng0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-early-nograd"),       # early blocks forward-only always
     "frz0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-freeze-early"),      # + frozen (no grads, no Adam state)
     "pyr3de0": otr(0.1, drop=7, dense_every=0, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),

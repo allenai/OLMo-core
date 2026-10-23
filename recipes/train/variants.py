@@ -265,6 +265,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_stages: str = ""
     st_otr_merge_dropped: bool = False
     st_otr_freeze_early: bool = False
+    st_otr_min_per_doc: int = 0
     st_otr_score: str = "router"
     st_otr_feature_layer: int = 0
     st_otr_drop_layer: int = 0
@@ -1024,6 +1025,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         stages=o.st_otr_stages,
         merge_dropped=o.st_otr_merge_dropped,
         freeze_early=o.st_otr_freeze_early,
+        min_per_doc=o.st_otr_min_per_doc,
         score=o.st_otr_score,
         feature_layer=o.st_otr_feature_layer,
         drop_layer=o.st_otr_drop_layer,

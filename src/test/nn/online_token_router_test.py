@@ -793,3 +793,17 @@ def test_freeze_early_cpu():
         if n == 1:  # dense warmup: every token kept, blocks [0, 1) still forward-only
             e = real * f(blocks[0], real) / 3.0 - real * f(blocks[0], real)
             assert any(abs(v - e) < 1e-6 * max(1.0, abs(e)) for v in flops), (e, flops)
+
+
+
+def test_min_per_doc_floor():
+    """min_per_doc: every document keeps at least K body tokens (all of a shorter one), by score, on top of its share."""
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, doc_share=1.0, keep_frac=0.1, score="random", min_per_doc=5)
+    r.w = torch.zeros(r.n_features)
+    r.step = 2
+    keep = r.select(m, ids, cid, labels)
+    per_doc = [int((keep[0] & (cid[0] == d)).sum()) for d in range(3)]
+    assert per_doc[0] == 5 and per_doc[1] >= 5 and per_doc[2] == 3, per_doc  # doc 2 has only 3 body tokens
+    assert "online_router/floor_extra_frac" in r.metrics()
