@@ -536,29 +536,6 @@ def test_keep_first_always_keeps_document_headers(doc_share):
 
 
 def _mid_model(n_layers, **cfg):
-
-
-def test_marker_free_offsets_on_positional_blocks():
-    """CPT rows (positional blocks, no markers): offsets count from each block's own first / last token."""
-    from olmo_core.nn.attention.chunked_mask import build_positional_block_chunk_ids
-
-    ids = torch.arange(100, 100 + 20)[None]  # 20 tokens, no leading EOS -> blocks of 8, 8, 4
-    cid = build_positional_block_chunk_ids(ids, block_size=8, eos_id=EOS)
-    offs = {}
-    f, body = structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs, marker_free=True)
-    assert int(body.sum()) == 20
-    assert offs["j"][0].tolist() == [0, 1, 2, 3, 4, 5, 6, 7] * 2 + [0, 1, 2, 3]
-    assert offs["r"][0].tolist() == [7, 6, 5, 4, 3, 2, 1, 0] * 2 + [3, 2, 1, 0]
-    # the marker-assuming default would merge the first two tokens at offset 0
-    offs2 = {}
-    structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs2)
-    assert offs2["j"][0, :2].tolist() == [0, 0]
-
-
-def test_mid_stack_drop_on_positional_blocks_cpu():
-    """olmo3_cptdrop CPT geometry: marker-free rows in positional-block mode (block 8), every token has an
-    LM label, no query. The mid-stack router keeps 25% of each block for block 1; dropped tokens get no
-    loss (labels follow the gather); a dense step reproduces the full-row loss."""
     from olmo_core.config import DType
     from olmo_core.nn.transformer import TransformerConfig
 
@@ -680,6 +657,31 @@ def test_pyramid_stages_validate():
             OnlineRouterConfig(stages=bad).validate()
 
 
+def test_marker_free_offsets_on_positional_blocks():
+    """CPT rows (positional blocks, no markers): offsets count from each block's own first / last token."""
+    from olmo_core.nn.attention.chunked_mask import build_positional_block_chunk_ids
+
+    ids = torch.arange(100, 100 + 20)[None]  # 20 tokens, no leading EOS -> blocks of 8, 8, 4
+    cid = build_positional_block_chunk_ids(ids, block_size=8, eos_id=EOS)
+    offs = {}
+    f, body = structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs, marker_free=True)
+    assert int(body.sum()) == 20
+    assert offs["j"][0].tolist() == [0, 1, 2, 3, 4, 5, 6, 7] * 2 + [0, 1, 2, 3]
+    assert offs["r"][0].tolist() == [7, 6, 5, 4, 3, 2, 1, 0] * 2 + [3, 2, 1, 0]
+    # the marker-assuming default would merge the first two tokens at offset 0
+    offs2 = {}
+    structural_features(ids, cid, doc_start_id=-1, doc_end_id=-1, offsets=offs2)
+    assert offs2["j"][0, :2].tolist() == [0, 0]
+
+
+def test_mid_stack_drop_on_positional_blocks_cpu():
+    """olmo3_cptdrop CPT geometry: marker-free rows in positional-block mode (block 8), every token has an
+    LM label, no query. The mid-stack router keeps 25% of each block for block 1; dropped tokens get no
+    loss (labels follow the gather); a dense step reproduces the full-row loss."""
+    from olmo_core.config import DType
+    from olmo_core.nn.transformer import TransformerConfig
+
+    torch.manual_seed(0)
     cfg = TransformerConfig.olmo2_190M(vocab_size=9100, n_layers=2, fused_ops=False, dtype=DType.float32)
     model = cfg.build(init_device="cpu")
     D = int(model.embeddings.weight.shape[1])
