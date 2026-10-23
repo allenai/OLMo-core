@@ -78,6 +78,7 @@ from .vision_alignment_data import (
     STAGE1_V3_MEAN_LOSS_WEIGHTS,
     STAGE1_V4_LOSS_TARGETS,
     STAGE1_V5_LOSS_TARGETS,
+    STAGE1_V6_LOSS_TARGETS,
     build_stage1_v3_sources,
 )
 from .vision_midtraining_data import (
@@ -226,7 +227,9 @@ class MixedMidtrainingRecipeConfig(Config):
     source's passes for the merged mid-training + long-context stage) or ``stage1_v5`` (v3's
     sources with every annotation of a drawn image as its own document, see
     :attr:`annotation_documents`, and the loss shares of
-    :data:`~olmo_core.internal.vision_alignment_data.STAGE1_V5_LOSS_TARGETS`)."""
+    :data:`~olmo_core.internal.vision_alignment_data.STAGE1_V5_LOSS_TARGETS`) or ``stage1_v6`` (v5
+    with the most repeated sources capped at 10 epochs, their loss moved to the large OCR sources;
+    :data:`~olmo_core.internal.vision_alignment_data.STAGE1_V6_LOSS_TARGETS`)."""
     compile_loss: bool = True
     """Run the chunked weighted loss's per-chunk math as static-shape ``torch.compile`` graphs
     (see :attr:`~olmo_core.nn.vision.MultimodalLMConfig.compile_loss`) instead of eagerly."""
@@ -324,14 +327,20 @@ def _build_recipe(
             continue
         if type(value) is not int or value < minimum:
             raise OLMoConfigurationError(f"recipe.{name} must be an integer of at least {minimum}")
-    if recipe.visual_data not in ("midtraining", "stage1_v3", "stage1_v4", "stage1_v5"):
+    if recipe.visual_data not in (
+        "midtraining",
+        "stage1_v3",
+        "stage1_v4",
+        "stage1_v5",
+        "stage1_v6",
+    ):
         raise OLMoConfigurationError(
-            "recipe.visual_data must be midtraining, stage1_v3, stage1_v4 or stage1_v5"
+            "recipe.visual_data must be midtraining, stage1_v3, stage1_v4, stage1_v5 or stage1_v6"
         )
     if recipe.annotation_documents and recipe.visual_data not in ("stage1_v3", "stage1_v4"):
         raise OLMoConfigurationError(
             "recipe.annotation_documents needs stage1_v3 or stage1_v4 visual data (stage1_v5 "
-            "always trains annotations as documents)"
+            "and stage1_v6 always train annotations as documents)"
         )
     if (
         isinstance(recipe.text_loss_share, bool)
@@ -1138,10 +1147,10 @@ def build_config(
     model.compile_loss = recipe.compile_loss
     # v4 is v3's sources and calibration with its own loss split.
     stage1_v3 = (
-        recipe.visual_data in ("stage1_v3", "stage1_v4", "stage1_v5")
+        recipe.visual_data in ("stage1_v3", "stage1_v4", "stage1_v5", "stage1_v6")
         and recipe.text_loss_share < 1.0
     )
-    documents = recipe.annotation_documents or recipe.visual_data == "stage1_v5"
+    documents = recipe.annotation_documents or recipe.visual_data in ("stage1_v5", "stage1_v6")
     if stage1_v3:
         if documents and recipe.sequence_length != 65536:
             raise OLMoConfigurationError(
@@ -1158,6 +1167,7 @@ def build_config(
             {
                 "stage1_v4": STAGE1_V4_LOSS_TARGETS,
                 "stage1_v5": STAGE1_V5_LOSS_TARGETS,
+                "stage1_v6": STAGE1_V6_LOSS_TARGETS,
             }.get(recipe.visual_data, STAGE1_V3_LOSS_TARGETS)
         )
     else:

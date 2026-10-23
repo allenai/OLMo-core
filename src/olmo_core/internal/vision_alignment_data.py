@@ -616,6 +616,46 @@ STAGE1_V5_LOSS_TARGETS: dict[str, float] = {
 own document (``annotation_sampling="documents"``) with
 :data:`STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS`; chosen 2026-10-20."""
 
+STAGE1_V6_LOSS_TARGETS: dict[str, float] = {
+    "pixmo_caption": 0.09168047944625687,
+    "pixmo_transcript": 0.09926026569499166,
+    "pixmo_points_v2": 0.09706423230611089,
+    "pixmo_count_v2": 0.0007793197483872145,
+    "cosyn_point_v2": 0.009104939182771337,
+    "olmocr_documents": 0.05966574922157764,
+    "olmocr_books": 0.012759101298233131,
+    "olmocr_loc_transcripts": 0.005997456729084796,
+    "olmocr_national_archives": 0.006797825866820085,
+    "text_rich_chart": 0.11486514715240281,
+    "text_rich_diagram": 0.0380182187458612,
+    "text_rich_doc": 0.1684955245061594,
+    "text_rich_graphic": 0.022751318945827253,
+    "text_rich_table": 0.13622745918986678,
+    "textocr": 0.0019007510168207087,
+    "nvidia_synth_en": 0.03762859250617401,
+    "synth_receipts_en": 0.006359550974269873,
+    "cosyn_chart_exp": 0.027380603499477497,
+    "cosyn_chemical_exp": 0.004495485480977172,
+    "cosyn_diagram_exp": 0.010597928615332885,
+    "cosyn_document": 0.00232688263352371,
+    "cosyn_math_exp": 0.017595904258143346,
+    "cosyn_music_exp": 0.004670482673349251,
+    "cosyn_table_exp": 0.017940240118627205,
+    "dv_qa": 0.0004317455382692933,
+    "figure_qa": 0.00044912952328374206,
+    "plot_qa": 0.0039311617004130816,
+    "pixmo_clocks": 0.0008245034269871309,
+}
+"""Target loss mass of each stage-1 v6 source: the v5 split with PixMo-Cap's caption and transcript
+and PixMo-Count capped at 10 epochs over a 20,000-step run (v5 drew them 21.3, 20.5 and 23.7 times),
+their loss moved to the large OCR sources (text-rich doc, table and chart and NVIDIA synthetic up
+1.99x, olmOCR documents down 0.78x) in the ratio that keeps the vision share's loss and positions
+per step those of v5, so the text and the step time are unchanged. Solved 2026-10-23 from v5's
+logged per-source loss, positions and draws (4,181 logged steps; ``v6_mixture.json``). The v5 hero
+showed training loss on the capped sources collapsing while their held-out loss rose (memorization);
+the OCR sources had headroom (1.2-7.5 epochs) and kept improving. v6 trains every annotation as a
+document, as v5 does."""
+
 STAGE1_V4_EPOCHS: dict[str, float] = {
     "pixmo_caption": 3.7,
     "pixmo_transcript": 3.6,
