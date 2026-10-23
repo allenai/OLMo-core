@@ -158,6 +158,10 @@ class OLMoDDPOptimizerConfig(Config):
     eps: float = 1e-8
     weight_decay: float = 1e-2
     dtype: Optional[DType] = None
+    algorithm: str = "adamw"
+    """``muon_adamw`` uses standard Muon for hidden matrices and AdamW elsewhere."""
+    muon_momentum: float = 0.95
+    muon_rms: float = 0.2
 
     rolling_interval_length: int = 128
     """
@@ -513,7 +517,17 @@ class OLMoDDPOptimizer:
         use_distributed: bool = True,
         check_nan_inf_grad: bool = True,
         reset_optimizer_moments_on_load: bool = False,
+        algorithm: str = "adamw",
+        muon_momentum: float = 0.95,
+        muon_rms: float = 0.2,
     ) -> None:
+        if algorithm not in {"adamw", "muon_adamw"}:
+            raise ValueError(f"Unknown optimizer algorithm: {algorithm}")
+        if not 0 <= muon_momentum < 1 or not math.isfinite(muon_rms) or muon_rms <= 0:
+            raise ValueError("Invalid Muon momentum or RMS scale")
+        self.algorithm = algorithm
+        self.muon_momentum = muon_momentum
+        self.muon_rms = muon_rms
         assert lr > 0.0
         assert all([0.0 <= beta <= 1.0 for beta in betas])
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
@@ -2065,6 +2079,55 @@ class OLMoDDPOptimizer:
 
         return step_factor.float()
 
+    @torch.compiler.disable
+    def _step_muon(
+        self, name: str, shape: Tuple[int, ...], group: Dict[str, Any], step_factor: torch.Tensor
+    ) -> None:
+        """Gather one weight's direction across DP shards before orthogonalization.
+
+        Expert-parallel ranks retain their own experts: these collectives use the
+        state's DP/EP-DP mesh, never the expert-model-parallel group. This initial
+        implementation trades extra communication for unchanged checkpoint layouts.
+        ``exp_avg`` stores Muon momentum; ``exp_avg_sq`` is reserved and stays zero.
+        """
+        from .muon_math import muon_direction
+
+        moment = self.states[f"{name}.exp_avg"]
+        main = self.states[f"{name}.main"]
+        grad = self.main_grad[name]
+        if not isinstance(grad, DTensor):
+            # The active DDP intake supplies an ordinary tensor containing only
+            # this rank's main-parameter shard, including on reduce-scatter paths.
+            grad = DTensor.from_local(
+                grad.float(),
+                device_mesh=main.device_mesh,
+                placements=main.placements,
+                shape=main.shape,
+                stride=main.stride(),
+                run_check=False,
+            )
+        full_grad = grad.full_tensor()
+        old_momentum = moment.full_tensor()
+        momentum = self.muon_momentum * old_momentum + full_grad
+        direction = self.muon_momentum * momentum + full_grad
+        update = muon_direction(name, direction.reshape(shape), self.muon_rms).reshape(-1)
+
+        def local_slice(full, state):
+            local_shape, offset = compute_local_shape_and_global_offset(
+                state.shape, state.device_mesh, state.placements
+            )
+            return full.narrow(0, offset[0], local_shape[0])
+
+        # A skipped step changes neither parameters nor momentum, including decay.
+        moment.to_local().copy_(
+            torch.where(step_factor.bool(), local_slice(momentum, moment), moment.to_local())
+        )
+        param = main.to_local()
+        candidate = param * (1 - group["lr"] * group["weight_decay"])
+        candidate = candidate - group["lr"] * local_slice(update, main)
+        param.copy_(torch.where(step_factor.bool(), candidate, param))
+        self.states[f"{name}.step"].to_local().add_(step_factor)
+
     @maybe_nvtx_annotate("OLMoDDPOptimizer._step_foreach")
     def _step_foreach(self, closure=None) -> None:
         """Performs adamw step using foreach impl, limiting chunk size to reduce memory usage."""
@@ -2088,9 +2151,7 @@ class OLMoDDPOptimizer:
             exp_avgs: list[torch.Tensor] = []  # always fp32
             exp_avg_sqs: list[torch.Tensor] = []  # always fp32
 
-            exp_avgs_original: list[
-                torch.Tensor
-            ] = (
+            exp_avgs_original: list[torch.Tensor] = (
                 []
             )  # if states_dtype is bf16, we need to keep a reference to the original bf16 tensors
             exp_avg_sqs_original: list[torch.Tensor] = []
@@ -2143,6 +2204,15 @@ class OLMoDDPOptimizer:
 
             for name, model_p in group["named_params"].items():
                 if not model_p.requires_grad:
+                    continue
+
+                from .muon_math import uses_muon
+
+                shape = tuple(
+                    model_p.logical_shape if _is_fp8_weight_store(model_p) else model_p.shape
+                )
+                if getattr(self, "algorithm", "adamw") == "muon_adamw" and uses_muon(name, shape):
+                    self._step_muon(name, shape, group, step_factor)
                     continue
 
                 # in adam step(), make everything local and fp32
