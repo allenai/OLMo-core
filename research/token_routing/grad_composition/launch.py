@@ -20,7 +20,7 @@ CK = f"{W}/ctc_suite/ckpts"
 PY = "/scratch/users/prasann/conda/envs/corpus-reasoning-olmo/bin/python"
 OPS = "/accounts/projects/berkeleynlp/prasann/bin/ops"
 BEAKER = os.path.expanduser("~/.local/bin/beaker")
-STATE = os.path.join(HERE, "state.json")
+STATE = os.path.join(HERE, os.environ.get("GC_STATE", "state.json"))
 RESULTS = os.path.join(HERE, "results")
 
 #: label -> (checkpoint, optimizer steps). mt4 dense = the tokdrop_lr matched-FLOP dense curve (LR 5e-6, 16 rows/step);
@@ -38,6 +38,7 @@ CKPTS = {
     "mt4-otr10M8-st366": (f"{CK}/f8k-mt4-otr10M8-s1464-tdb-lr2e-06", 366),
     "mt11-otr10M8-st495": (f"{CK}/f8k-mt11-otr10M8-s720-tdb-lr2e-06", 495),
     "mt4-st366-lr2e-6": (f"{CK}/f8k-mt4-dense-s1464-tdc-lr2e-06", 366),
+    "mt11-otr10M8-st330": (f"{CK}/f8k-mt11-otr10M8-s480-tdb-lr2e-06", 330),
 }
 
 
@@ -53,11 +54,12 @@ def launch(a):
     st = load()
     commit = subprocess.check_output(["git", "-C", REPO, "rev-parse", "HEAD"], text=True).strip()
     for lab in a.labels.split(","):
-        if lab in st and not a.force:
-            print(f"[skip] {lab} {st[lab]['ex']}")
+        key = a.prefix + lab
+        if key in st and not a.force:
+            print(f"[skip] {key} {st[key]['ex']}")
             continue
         ck, steps = CKPTS[lab]
-        extra = f"--ckpt {ck} --label {lab} {a.extra}".strip()
+        extra = f"--ckpt {ck} --label {key} {a.extra}".strip()
         cmd = [PY, "-u", f"{REPO}/research/ffn_compute/flop_scaling/beaker_bench_launch.py", "--cluster",
                "ai2/jupiter-cirrascale-2", "--gpus", "1", "--script", "research/token_routing/grad_composition/probe.py",
                "--extra", extra]
@@ -68,12 +70,12 @@ def launch(a):
             print(f"{lab}: launch FAILED\n{out[-1500:]}")
             continue
         ex = m.group(1)
-        st[lab] = {"ex": ex, "ckpt": ck, "steps": steps, "commit": commit, "extra": a.extra}
+        st[key] = {"ex": ex, "ckpt": ck, "steps": steps, "commit": commit, "extra": a.extra}
         save(st)
-        subprocess.run([OPS, "register", "--run-id", f"gradcomp-{lab}", "--experiment", "grad_composition",
+        subprocess.run([OPS, "register", "--run-id", f"gradcomp-{key}", "--experiment", "grad_composition",
                         "--cluster", "beaker", "--kind", "train", "--job-id", ex, "--expected-minutes",
                         str(a.minutes), "--git", REPO], capture_output=True, text=True)
-        print(f"{lab} -> {ex}")
+        print(f"{key} -> {ex}")
 
 
 def fetch(a):
@@ -98,6 +100,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--labels", default=",".join(CKPTS))
     ap.add_argument("--extra", default="")
+    ap.add_argument("--prefix", default="", help="label prefix (e.g. bk-mt4rows-)")
     ap.add_argument("--minutes", type=int, default=60)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--fetch", action="store_true")

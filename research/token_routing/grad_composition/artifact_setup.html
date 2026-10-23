@@ -1,0 +1,28 @@
+<div class="grid2">
+<div class="card"><h3>Setup</h3>
+<p><b>Model.</b> Qwen3.5-4B (32 blocks: Gated DeltaNet linear attention, full attention at blocks 3, 7, …, 31), olmo-core, bf16, parameters frozen;
+one teacher-forced forward + backward of the answer cross-entropy (no-cot) per row on one A100 (Lambda node02).</p>
+<p><b>Rows.</b> mt4 rows: <code>mt4s1952</code> rows 1464–1527 of contradiction, nq, outlier, oolong (held out from every mt4 run up to s1464;
+<span class="tag warn">eval_size = 64 rows per task</span>). mt11 rows: <code>mt11s720</code> rows 480–543 of all 11 tasks (held out from the base, mt11 runs up to s480 and every mt4
+run; mt11 rows use the setA prompt format, so they are out of format for mt4-trained checkpoints, drawn dashed).</p>
+<p><b>Checkpoints.</b> Repaired base <code>q35-4b-base-markerfix</code>; mt4 dense LR 5e-6 after 31 / 61 / ~122 / 366 steps and LR 2e-6 after 366;
+mt11 dense LR 5e-6 after 165 / 330; online routers <code>otr10M8</code> (mt4, 366 steps, keep 10%, drop before block 8) and <code>otr20M8</code> (mt11, 330 steps).</p>
+<p><b>Per token t, block b.</b> G = ‖dL/dh<sub>b,t</sub>‖ at each block input; residual updates of the mixer and the FFN; first-order skip attribution
+⟨dL/dh, Δh⟩; the token's share of the parameter gradient at each output projection (‖δ<sub>t</sub>‖·‖x<sub>t</sub>‖, the exact norm of its rank-1 term);
+attention mass from the answer-predicting positions at the 8 full-attention blocks. Plus exact per-block parameter-gradient norms.</p>
+</div>
+<div class="card"><h3>Limits</h3>
+<p>All rankings are full-context oracles: a router scores tokens from early hidden states and, in a pyramid, on an already-dropped context.
+The split-fidelity curve counts gradient energy, not direction; dropping also changes the kept tokens' gradients (the grad-sim work found
+that is the larger effect). The ablation is forward-only (ΔCE at a fixed checkpoint), not a training run. 64 rows per task is well below
+the 500-example default; differences under about ±0.03 in shares are noise. Gold flags come from <code>gold_fingerprints.json</code>; oolong
+and reorder have none.</p>
+<p><b>Status.</b> __STATUS__</p>
+</div>
+</div>
+<div class="card"><h3>Where things live</h3>
+<p>Code: branch <code>claude/grad-composition-6f09c7</code>, <code>research/token_routing/grad_composition/</code> (<code>probe.py</code>, <code>run_probe_lambda.sbatch</code>, <code>quick.py</code>, <code>art_data.py</code>).
+Per-row statistics and example rows: <code>research/token_routing/grad_composition/results/&lt;label&gt;/</code> (gitignored; also on Lambda
+<code>/accounts/projects/sewonm/prasann/ctc_suite/gradcomp_out/</code>). Full per-token arrays (float16, ~5 MB per row): Lambda node02
+<code>/tmp/prasann/gradcomp/dumps/&lt;label&gt;/</code>. Record: <code>records/grad-composition.md</code>. Experiment page: <code>ops exp show grad_composition</code>.</p>
+</div>

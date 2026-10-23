@@ -1,0 +1,40 @@
+<ul>
+<li><b>Split before block 7–8; documents can leave by about block 24.</b> Document tokens' share of the hidden-state gradient is flat through
+block ~8 and then falls: mt4 dense after 366 steps 0.56 at block 7 → 0.41 at 12 → 0.25 at 16 → 0.11 at 24 (base 0.15 → 0.06). Keeping 10% of
+each document from block L on, ranked by the true gradient, retains a smoothly rising share of parameter-gradient energy: 0.91 / 0.93 / 0.96 / 0.99
+at L = 1 / 4 / 7 / 12 (trained; random keep at 7: 0.85). There is no step at block 7 in where the gradient lives, so the training-time threshold
+at 7 is more likely about how well h<sub>L</sub> predicts importance than about the gradient itself.</li>
+<li><b>One keep decision is not enough after training; rescore once at ~16.</b> Body-token rankings decorrelate with depth and with training:
+Spearman(G<sub>7</sub>, G<sub>16</sub>) 0.78 → 0.60 and (G<sub>7</sub>, G<sub>24</sub>) 0.57 → 0.35, base → dense 366 (mt4 rows). The 10% kept at block 7 hold
+0.83 → 0.74 of block 16's gradient energy. A pyramid of 50% at 3, 10% at 7 and 3% at 16 holds 0.69 of block 24's energy, against 0.61 for a single
+3% cut at block 7. The 50% stage at block 3 is nearly free: it holds 0.92–0.96 of every later block's energy.</li>
+<li><b>Gradient and activation targets disagree everywhere, and activation loses.</b> Spearman(G<sub>b</sub>, ‖h<sub>b+1</sub>−h<sub>b</sub>‖) is 0.0–0.2 at every block;
+(G<sub>7</sub>, ‖h<sub>7</sub>−h<sub>0</sub>‖) is mostly slightly negative (−0.37 to +0.15 by task, most negative on strmatch, reorder and xabsence). Forward ablation, 10% per document
+before block 7: the gradient keep costs ΔCE +0.13 (base) / +0.30 (dense 366), the activation keep +0.47 / +0.36, random +0.35 / +0.52. Answer-attention mass
+at the late full-attention blocks agrees moderately (ρ 0.45–0.65). It matches the gradient keep on the base but loses after training (+0.49 vs
++0.30; strmatch on mt11: +0.91 vs +0.53).</li>
+<li><b>Prasann's question, important-but-learned tokens.</b> Training does pull the gradient keep away from the attention keep: the share of the
+late-attention top 10% that a G<sub>7</sub> keep misses rises from 0.37 to 0.56. But the missed tokens sit at the 64th–82nd percentile of G<sub>7</sub>, not
+near zero, and keeping by attention instead is worse in the ablation. Tokens are not being dropped for being learned. The real risk is the depth
+instability above.</li>
+<li><b>Early blocks hold a large, shrinking share of the parameter gradient.</b> Blocks 0–6 hold 0.45 of the ‖g‖² at the base (block 0 alone 0.17),
+0.20 per row and 0.29–0.34 for the summed minibatch gradient after 366 mt4 steps, and 0.33 on mt11 after 330. Training blocks 0–6 only on full-context steps
+gives up a fifth to a third of the gradient energy, and nearly half early in training.</li>
+<li><b>strmatch is incompressible at 10% per document.</b> Its rows have 82 documents of ~25 body tokens, so a 10% per-document keep leaves ~3
+tokens each, mostly header. The gradient is spread over all documents rather than gold (gold enrichment 2.2× at base, 0.9× trained). A per-document
+top 10% captures 0.68 of block 7's energy, vs 0.92 for a row-level top 10%. Its rankings are the least stable with depth (G<sub>7</sub>~G<sub>24</sub> 0.26–0.38).
+After 330 mt11 steps, even the oracle gradient keep costs ΔCE +0.53 at a full CE of 0.009 (random +0.95). Short documents need a token floor or
+row-level allocation.</li>
+<li><b>grouping is not explained by gradient composition.</b> At the oracle level it compresses easily: ablation ΔCE −0.00 for the gradient keep
+(random +0.15), split fidelity 0.98. It does differ in two ways: every document is gold, and document tokens keep receiving gradient deep in the
+stack (0.27 at block 16, 0.14 at 24). The training-time loss more likely comes from the learned scorer on all-gold rows, or from the kept tokens'
+gradients being redistributed. Test with <code>grad_fidelity.py</code> on grouping rows.</li>
+<li><b>Merge rather than drop, at the span level.</b> What a 10% keep drops is spread out: the top 10% of dropped tokens hold only 0.26–0.42 of the
+dropped mass, so there is no small set to rescue. But importance is smooth along the document (lag-1 correlation of log G<sub>7</sub> 0.5–0.85), so
+pooling runs of neighbouring dropped tokens should lose little.</li>
+<li><b>The router-trained checkpoint has adapted to its own drop.</b> At the same CE as dense (0.118 vs 0.112), its forward barely notices a 10%
+keep at block 7 (+0.02 vs +0.30). Its gradient also stays earlier-heavy and more stable: blocks 0–6 hold 0.32 vs 0.20, and the block-7 keep holds
+0.84 vs 0.74 of block 16. The router ran at LR 2e-6 and dense at 5e-6; <span class="tag run">the LR 2e-6 dense control is running</span>.</li>
+</ul>
+<p class="note" style="color:var(--ink-2)"><span class="tag warn">eval_size = 64 rows per task</span> on mt4 rows and 19–23 per task on mt11 rows, below
+the 500 default. These are per-row gradient statistics, not graded evals. Differences in shares under about ±0.03 are noise.</p>

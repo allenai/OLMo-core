@@ -17,10 +17,10 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 RES = os.path.join(HERE, "results")
 SERIES = {
-    "mt4 dense (LR 5e-6)": ["base", "mt4-st31", "mt4-st61", "mt4-st122", "mt4-st244", "mt4-st366"],
-    "mt11 dense (LR 2e-6)": ["base", "mt11-st165", "mt11-st330", "mt11-st495"],
+    "mt4 dense (LR 5e-6)": ["base", "mt4-st31", "mt4-st61", "mt4-st122", "mt4-st366"],
+    "mt11 dense (LR 5e-6)": ["base", "mt11-st165", "mt11-st330"],
 }
-ROUTERS = ["mt4-otr10M8-st366", "mt11-otr10M8-st495", "mt4-st366-lr2e-6"]
+ROUTERS = ["mt4-otr10M8-st366", "mt4-st366-lr2e-6", "mt11-otr20M8-st330"]
 MASSES = ["g2", "pw", "attr", "dh", "am", "amall"]
 XC = ["g", "pw", "attr", "dh", "am"]
 AGREE = ["g_dh", "g_attr", "g_pw", "g_h", "g_dh0", "g_am", "dh_am", "pw_am"]
@@ -85,6 +85,21 @@ def summarize(meta, st):
         s["abl_dce_se"] = (st["abl_dce"][idx].std(0) / np.sqrt(len(idx))).tolist()
         s["abl_overlap_g7"] = st["abl_overlap_g7"][idx].mean(0).tolist()
         s["am_missed_by_g7"] = st["am_missed_by_g7"][idx].mean(0).tolist()
+        if "pgrad" in st:
+            pgr = st["pgrad"][idx]  # (R, 33, 3) parameter-gradient energy per block (mixer, ffn, norms) + head
+            blk = pgr[:, :32].sum(-1)
+            tot = pgr.sum((1, 2))
+            s["pgrad_block_share"] = (blk / tot[:, None]).mean(0).tolist()  # per-row energy share per block
+            s["pgrad_part_share"] = (pgr.sum(1) / tot[:, None]).mean(0).tolist()  # mixer / ffn / norms (+head in col 0)
+            s["pgrad_head_share"] = float((pgr[:, 32].sum(-1) / tot).mean())
+            # norm (not energy) share of blocks 0-6 vs 7-31: sqrt of the energy in each part over the total norm
+            s["pgrad_energy_share_0_6"] = float((blk[:, :7].sum(1) / tot).mean())
+            s["pgrad_energy_share_7_31"] = float((blk[:, 7:].sum(1) / tot).mean())
+            s["pgrad_norm_ratio_0_6"] = float(np.sqrt(blk[:, :7].sum(1) / tot).mean())
+            s["pgrad_norm_ratio_7_31"] = float(np.sqrt(blk[:, 7:].sum(1) / tot).mean())
+        for k in ("pyr_contain_cnt", "pyr_contain_mass", "pyr_nested", "drop_conc"):
+            if k in st:
+                s[k] = st[k][idx].mean(0).tolist()
         out[task] = s
     return out
 
@@ -179,7 +194,7 @@ def main():
     a = ap.parse_args()
     labels = a.labels.split(",") if a.labels else sorted(os.path.basename(os.path.dirname(p)) for p in
                                                          glob.glob(os.path.join(RES, "*", "probe.json")))
-    summ, metas, heat = {}, {}, {}
+    summ, metas, heat, taskpg = {}, {}, {}, {}
     for lab in labels:
         L = load(lab)
         if L is None:
@@ -189,6 +204,16 @@ def main():
         global CATS_ORDER
         CATS_ORDER = meta["cats"]
         summ[lab] = summarize(meta, st)
+        if meta.get("task_summed_pgrad"):
+            # the per-task SUMMED gradient (minibatch direction): energy share per block, 0-6 vs 7-31
+            taskpg[lab] = {}
+            for t, e in meta["task_summed_pgrad"].items():
+                e = np.array(e)
+                tot = e.sum()
+                blk = e[:32].sum(-1)
+                taskpg[lab][t] = {"block_share": (blk / tot).tolist(), "share_0_6": float(blk[:7].sum() / tot),
+                                  "share_7_31": float(blk[7:].sum() / tot), "head_share": float(e[32].sum() / tot),
+                                  "part_share": (e.sum(0) / tot).tolist()}
         metas[lab] = {k: meta[k] for k in ("ckpt_resolved", "seen_in_training", "tasks", "rows_per_task", "row_offset")}
         heat[lab] = {}
         for f in sorted(glob.glob(os.path.join(d, "probe_ex_*.npz"))):
@@ -198,7 +223,8 @@ def main():
     meta0 = json.load(open(os.path.join(RES, labels[0], "probe.json")))
     json.dump({"labels": labels, "series": SERIES, "routers": ROUTERS, "cats": meta0["cats"], "ks": meta0["ks"],
                "splits": meta0["splits"], "split_cols": meta0["split_cols"], "abl_rules": meta0["abl_rules"],
-               "full_blocks": meta0["full_blocks"], "meta": metas, "summary": summ},
+               "full_blocks": meta0["full_blocks"], "meta": metas, "summary": summ, "task_summed_pgrad": taskpg,
+               **{k: meta0.get(k) for k in ("pyr", "pyr_ka", "pyr_kb", "pyr_sets", "pyr_tgts", "drop_conc_cols")}},
               open(os.path.join(RES, "summary.json"), "w"))
     json.dump(heat, open(os.path.join(RES, "heatmaps.json"), "w"))
     figures(summ, labels, os.path.join(RES, "fig"))

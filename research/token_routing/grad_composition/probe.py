@@ -64,6 +64,13 @@ SPLITS = tuple(range(0, 17)) + (20, 24)
 ABL_L = 7
 ABL_RHO = 0.1
 ABL_RULES = ("g7", "dh7", "amlate", "pwdown", "attrdown", "random", "first_last")
+PYR = (0, 3, 7, 8, 12, 16, 20, 24, 28, 32)
+PYR_KA = (0.5, 0.3, 0.1)
+PYR_KB = (0.1, 0.03)
+PYR_SETS = ("nest_3_7_16", "one_7_3pct", "one_16_3pct", "one_7_10pct", "random_3pct")
+PYR_TGTS = ("g16", "g24", "g32", "pw16")
+DROP_CONC_COLS = [f"{q}_{c}" for q in ("g7", "pwdown7") for c in ("dropped_share", "top10_of_dropped", "top1_of_dropped",
+                                                                  "eff_n_frac")] + ["lag1_corr_logG7"]
 W = "/weka/oe-training-default/ai2-llm/checkpoints/prasanns"
 
 
@@ -139,6 +146,48 @@ def build_model(ckpt):
         p.requires_grad_(False)
     log(f"froze FLA length autotune on {freeze_fla_length_autotune()} kernels")
     return model
+
+
+class ParamGrads:
+    """Parameter-gradient energy per block (mixer / FFN / norms) and the LM head, per row, plus the per-task SUM of
+    row gradients (the minibatch gradient the optimizer sees, up to scale). The embedding is excluded: the probe
+    detaches the embedding output to read dL/de (its per-token gradient is G[0])."""
+
+    def __init__(self, model):
+        self.groups = []  # (param, block index or -1 for the head, part 0 mixer / 1 ffn / 2 norms)
+        for n, p in model.named_parameters():
+            if n.startswith("blocks."):
+                i = int(n.split(".")[1])
+                part = 0 if ".attention." in n else 1 if ".feed_forward." in n else 2
+            elif n.startswith("lm_head"):
+                i, part = -1, 0
+            else:
+                continue
+            p.requires_grad_(True)
+            self.groups.append((p, i, part))
+        self.acc = None
+
+    @torch.no_grad()
+    def take(self):
+        e = torch.zeros(NB + 1, 3, dtype=torch.float64)
+        if self.acc is None:
+            self.acc = [torch.zeros_like(p, dtype=torch.float32) for p, _, _ in self.groups]
+        for (p, i, part), a in zip(self.groups, self.acc):
+            if p.grad is None:
+                continue
+            e[i if i >= 0 else NB, part] += float(p.grad.float().pow(2).sum())
+            a.add_(p.grad.float())
+            p.grad = None
+        return e.numpy()
+
+    @torch.no_grad()
+    def flush(self):
+        """Energy of the accumulated (summed over rows) gradient per group; resets the accumulator."""
+        e = torch.zeros(NB + 1, 3, dtype=torch.float64)
+        for (p, i, part), a in zip(self.groups, self.acc or []):
+            e[i if i >= 0 else NB, part] += float(a.pow(2).sum())
+            a.zero_()
+        return e.numpy()
 
 
 class Capture:
@@ -360,9 +409,9 @@ def row_stats(o, cats, ce, model, row):
     S["agree/g_dh0"] = (Rg * ranks(o["DH0"][:NB, b])).sum(-1)
     full = torch.tensor([3 + 4 * i for i in range(8)], device=b.device)
     Ram = ranks(o["AMans"][:, b])
-    S["agree/g_am"] = (ranks(o["G"][full, b]) * Ram).sum(-1)
-    S["agree/dh_am"] = (ranks(upd[full, b]) * Ram).sum(-1)
-    S["agree/pw_am"] = (ranks(pw[full, b]) * Ram).sum(-1)
+    S["agree/g_am"] = (ranks(o["G"][full][:, b]) * Ram).sum(-1)
+    S["agree/dh_am"] = (ranks(upd[full][:, b]) * Ram).sum(-1)
+    S["agree/pw_am"] = (ranks(pw[full][:, b]) * Ram).sum(-1)
     # split analysis: per-document top-10% of body tokens by the layer-L score; non-body tokens always kept
     E = pw.sum()
     rnd = torch.rand(nb, device=b.device)
@@ -404,6 +453,67 @@ def row_stats(o, cats, ce, model, row):
     # the share NOT in the g7 keep, and their mean g7 percentile
     S["am_missed_by_g7"] = torch.tensor([float((keeps["amlate"] & ~keeps["g7"]).sum() / keeps["amlate"].sum().clamp(min=1)),
                                          float((o["G"][ABL_L, b].argsort().argsort().float()[keeps["amlate"]] / nb).mean())])
+    # pyramid: per-document keep at layer a (top ka by G_a) vs layer b's per-document top kb (by G_b)
+    G = o["G"]
+    PY = torch.tensor(PYR, device=b.device)
+    Gb = G[PY][:, b]
+    cnt_c = torch.zeros(len(PYR), len(PYR), len(PYR_KA), len(PYR_KB))
+    mass_c = torch.zeros(len(PYR), len(PYR), len(PYR_KA))
+    keep_a = {(ai, ki): doc_topk(Gb[ai], doc, ka) for ai in range(len(PYR)) for ki, ka in enumerate(PYR_KA)}
+    keep_b = {(bi, ki): doc_topk(Gb[bi], doc, kb) for bi in range(len(PYR)) for ki, kb in enumerate(PYR_KB)}
+    for ai in range(len(PYR)):
+        for ki in range(len(PYR_KA)):
+            ka_set = keep_a[(ai, ki)]
+            for bi in range(len(PYR)):
+                m2 = Gb[bi] ** 2
+                mass_c[ai, bi, ki] = float(m2[ka_set].sum() / m2.sum().clamp(min=1e-30))
+                for kj in range(len(PYR_KB)):
+                    kb_set = keep_b[(bi, kj)]
+                    cnt_c[ai, bi, ki, kj] = float((ka_set & kb_set).sum() / kb_set.sum().clamp(min=1))
+    S["pyr_contain_cnt"] = cnt_c  # share of b's top-kb tokens inside a's top-ka keep
+    S["pyr_contain_mass"] = mass_c  # share of G_b^2 body mass inside a's top-ka keep
+    # nested 50% @3 -> 10% @7 -> 3% @16 (each stage ranks only the survivors, by its own full-context G), vs one-shot
+    def nested(stages):
+        alive = torch.ones(nb, dtype=torch.bool, device=b.device)
+        for L, rho in stages:
+            sc = torch.where(alive, G[L, b].float(), torch.full_like(G[L, b].float(), -1.0))
+            alive = doc_topk(sc, doc, rho) & alive
+        return alive
+    pyr_sets = {"nest_3_7_16": nested([(3, 0.5), (7, 0.1), (16, 0.03)]), "one_7_3pct": doc_topk(G[7, b], doc, 0.03),
+                "one_16_3pct": doc_topk(G[16, b], doc, 0.03), "one_7_10pct": keeps["g7"],
+                "random_3pct": doc_topk(rnd, doc, 0.03)}
+    tgt_mass = {f"g{L}": G[L, b] ** 2 for L in (16, 24, 32)}
+    tgt_mass["pw16"] = pw[16:, b].sum(0)
+    S["pyr_nested"] = torch.tensor([[float(m[ks].sum() / m.sum().clamp(min=1e-30)) for m in tgt_mass.values()]
+                                    for ks in pyr_sets.values()])  # rows PYR_SETS, cols PYR_TGTS
+    # within-document concentration of what a 10% keep at block 7 DROPS (merge vs drop)
+    dc = []
+    for nm, m in (("g7", G[7, b] ** 2), ("pwdown7", pw[7:, b].sum(0))):
+        dropped = ~doc_topk(G[7, b], doc, 0.1)
+        tot_m = m.sum().clamp(min=1e-30)
+        dshare = float(m[dropped].sum() / tot_m)
+        # per document: share of the dropped mass held by the top 10% / top 1 of the dropped tokens; effective
+        # number of dropped tokens (exp entropy) as a fraction of the dropped count; mass-weighted over documents
+        t10 = t1 = eff = wsum = 0.0
+        for d in range(int(doc.max()) + 1):
+            md = m[(doc == d) & dropped]
+            if md.numel() < 10 or float(md.sum()) <= 0:
+                continue
+            w = float(md.sum())
+            srt = md.sort(descending=True).values
+            p_ = srt / srt.sum()
+            t10 += w * float(srt[:max(1, md.numel() // 10)].sum() / srt.sum())
+            t1 += w * float(srt[0] / srt.sum())
+            eff += w * float(torch.exp(-(p_ * torch.log(p_ + 1e-30)).sum()) / md.numel())
+            wsum += w
+        dc += [dshare, t10 / max(wsum, 1e-30), t1 / max(wsum, 1e-30), eff / max(wsum, 1e-30)]
+    # adjacency: lag-1 correlation of log G7 between neighbouring body tokens of the same document
+    lg = torch.log(G[7, b].float() + 1e-12)
+    same = doc[1:] == doc[:-1]
+    a1, a2 = lg[:-1][same], lg[1:][same]
+    a1, a2 = a1 - a1.mean(), a2 - a2.mean()
+    dc.append(float((a1 * a2).sum() / (a1.norm() * a2.norm() + 1e-12)))
+    S["drop_conc"] = torch.tensor(dc)  # DROP_CONC_COLS
     return {k: v.detach().float().cpu().numpy() for k, v in S.items()}
 
 
@@ -430,15 +540,20 @@ def main():
     # which training shards contain the probe rows (should be none)
     seen = {}
     shards_dir = os.path.dirname(a.shard.rstrip("/"))
-    for sh in ("mt11s240", "mt11s480", "mt11s720", "mt4s1952"):
+    for r in rows:
+        r["seen_in"] = []
+    for sh in ("mt11s240", "mt11s480", "mt11s720", "mt11s960", "mt4s488", "mt4s976", "mt4s1464", "mt4s1952"):
         p = os.path.join(shards_dir, sh)
-        if not os.path.isdir(p):
+        if not os.path.isdir(p) or os.path.abspath(p) == os.path.abspath(a.shard):
             continue
         names = shard_tasks(p)
         for t in tasks:
             if t in names:
                 hs = row_hashes(p, t)
                 seen[f"{sh}/{t}"] = sum(r["md5"] in hs for r in rows if r["task"] == t)
+                for r in rows:
+                    if r["task"] == t and r["md5"] in hs:
+                        r["seen_in"].append(sh)
     log(f"probe rows found in training shards: {seen}")
     tok = None
     try:
@@ -450,6 +565,8 @@ def main():
 
     model = build_model(find_ckpt(a.ckpt))
     cap = Capture(model)
+    pg = ParamGrads(model)
+    task_pg = {}
     log(f"full-attention blocks: {cap.full}")
     out_base = os.path.splitext(a.out)[0]
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
@@ -463,11 +580,14 @@ def main():
         cats = categories(row, x)
         ce, o = full_pass(model, cap, row, cats)
         st = row_stats(o, cats, ce, model, row)
+        st["pgrad"] = pg.take()
+        if i + 1 == len(rows) or rows[i + 1]["task"] != row["task"]:
+            task_pg[row["task"]] = pg.flush().tolist()
         for k, v in st.items():
             stats.setdefault(k, []).append(v)
         meta.append(dict(task=row["task"], k=row["k"], T=len(row["ids"]), ce=ce, n_body=int(cats["body"].sum()),
                          n_docs=int(cats["cid"].max()) + 1, n_gold_docs=len(row["gold"]),
-                         n_answer=int(cats["pred"].sum())))
+                         n_answer=int(cats["pred"].sum()), seen_in=row["seen_in"]))
         arrs = {k: v.half().cpu().numpy() for k, v in o.items()}
         arrs.update(cat=cats["cat"].cpu().numpy().astype(np.int8), cid=cats["cid"].cpu().numpy().astype(np.int16),
                     ids=row["ids"].astype(np.int32))
@@ -487,7 +607,9 @@ def main():
     json.dump(dict(ckpt=a.ckpt, ckpt_resolved=find_ckpt(a.ckpt), label=a.label, shard=a.shard, row_offset=a.row_offset,
                    rows_per_task=a.rows, tasks=tasks, cats=CATS, ks=KS, splits=SPLITS, split_cols=
                    ["gL", "dh0L", "oracle", "random", "am_ge_L", "upstream_share"], abl_rules=ABL_RULES, abl_L=ABL_L,
-                   abl_rho=ABL_RHO, full_blocks=cap.full, seen_in_training=seen, rows=meta, dump=dump),
+                   abl_rho=ABL_RHO, full_blocks=cap.full, pyr=PYR, pyr_ka=PYR_KA,
+                   pyr_kb=PYR_KB, pyr_sets=PYR_SETS, pyr_tgts=PYR_TGTS, drop_conc_cols=DROP_CONC_COLS,
+                   task_summed_pgrad=task_pg, pgrad_layout="(33, 3): rows 0-31 blocks, 32 lm_head; cols mixer, ffn, norms", seen_in_training=seen, rows=meta, dump=dump),
               open(a.out, "w"), indent=1)
     log(f"wrote {a.out} and {out_base}_stats.npz ({time.time() - t0:.0f}s)")
 
