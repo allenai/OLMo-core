@@ -203,6 +203,17 @@ ARM_EXTRA.update({
     "ck64ds": ("--st-gold-blind --st-keep-prob 0.0 --st-header-stop-id 5491 --st-header-stop-count 1 --st-header-extra-tokens 64 "
                f"--st-slot-mode cent_cmean --st-slot-tokenizer {W}/hf_tokenizers/Qwen3.5-0.8B-Base"),
     "ohdr33": "--st-gold-blind --st-keep-prob 0.3333 --st-header-stop-id 25 --st-header-stop-count 3",
+    # online train-time router (olmo_core.nn.online_token_router, merged 2026-10-22): keep<%> M<split block>;
+    # gradient-norm target, 10% exploration, per-document allocation, a charged full-context step every 8
+    **{f"otr{k:02d}M{L}": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 "
+                          f"--st-otr-keep-frac {k / 100} --st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 "
+                          f"--st-otr-dense-every 8 --st-otr-drop-layer {L}")
+       for k in (10, 30) for L in (7, 8)},
+    "otr10M7gold": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 0.5 --st-otr-dense-every 8 --st-otr-drop-layer 7 "
+                    "--st-otr-use-gold"),
+    "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                   "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     "tier67a60m48": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.6 --st-keep-token-min 48 {_P8}",
     "tier67flm32": f"{_gr(0.6667)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.3 --st-keep-token-min 32 {_P8}",
     "tier50flm32": f"{_gr(0.5)} {_FL} --st-keep-token-k 0.05 --st-kept-doc-k 0.4 --st-keep-token-min 32 {_P8}",
