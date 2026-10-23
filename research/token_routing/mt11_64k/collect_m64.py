@@ -144,6 +144,9 @@ def record(scores, train):
                               text=True, timeout=120).stdout
     have = {(r.get("train_run"), r["task"], r["rung"]) for r in
             (json.loads(have_txt) if have_txt.strip().startswith("[") else [])}
+    reg_txt = subprocess.run([OPS, "runs", "--experiment", "mt11_64k", "--json"], capture_output=True, text=True,
+                             timeout=120).stdout
+    commit = {r["run_id"]: r.get("git_commit") for r in (json.loads(reg_txt) if reg_txt.strip().startswith("[") else [])}
     rows = []
     for s in scores:
         if not s["final"] or (s["train_run"], s["task"], s["rung"]) in have:
@@ -153,7 +156,8 @@ def record(scores, train):
         rows.append(dict(run_id=s["eval_run"], train_run=s["train_run"], experiment="mt11_64k", task=s["task"],
                          rung=s["rung"], metric=s["metric"], value=v, eval_size=n, se=se and round(se, 6),
                          cot_label="no-cot", eval_backend="olmo-core-native-docchunk-ladder suite-rows (beaker)",
-                         ckpt_path=f"{CKPTS}/{s['train_run']}", eval_job_id=s["eval_job"]))
+                         ckpt_path=f"{CKPTS}/{s['train_run']}", eval_job_id=s["eval_job"],
+                         git_commit=commit.get(s["train_run"])))
     if not rows:
         print("nothing new to record")
         return
