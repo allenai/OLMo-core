@@ -548,7 +548,8 @@ not better than drop at 10%. (6) the per-document floor gains ≈ +0.035-0.04 co
 |---|---|---|---|---|---|---|
 | otr10M7 | 295 (0.41) | 0.789 | 0.287 | 0.523 | 0.835 | 0.699 |
 | otr10M7f8 | 313 (0.44) | 0.800 | 0.277 | 0.561 | 0.833 | 0.699 |
-| **otr10M7f16** | 352 (0.49) | **0.922** | 0.270 | 0.595 | 0.864 | **0.724** |
+| **otr10M7f16** (seed 0) | 352 (0.49) | **0.922** | 0.270 | 0.595 | 0.864 | **0.724** |
+| **otr10M7f16** (seed 1) | 353 (0.49) | **0.907** | 0.277 | 0.631 | 0.874 | **0.735** |
 | otr10M7hdr8 (first 8 tokens kept) | 314 (0.44) | 0.744 | 0.306 | 0.648 | 0.835 | 0.711 |
 | otr10M7ds0 / ds50 (global budget) | 293 | 0.770 / 0.769 | | | | 0.696 / 0.697 |
 | rnd10M7 (random) | 295 | 0.793 | 0.353 | 0.466 | 0.803 | 0.691 |
@@ -558,7 +559,7 @@ not better than drop at 10%. (6) the per-document floor gains ≈ +0.035-0.04 co
 Strmatch: random = router (0.793 / 0.789) -- the loss is the cut, not the choice, as the fidelity probe showed (block 7,
 keep 0.3, trained otr10M8-s480: router 0.08 / oracle 0.55 / random 0.09 on strmatch vs 0.89 / 0.90 / 0.15 on grouping;
 ⚠ 12 rows / task). A per-document floor of 16 tokens fixes it (0.922; `--check` flags the new high) and brings the mean
-to otr30M8's at 12% less compute. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
+to otr30M8's at 12% less compute; seed 1 replicates it (strmatch 0.907, mean 0.735; 2-seed mean 0.730 vs dense 0.741 at 0.49x). Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
 Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
 0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
