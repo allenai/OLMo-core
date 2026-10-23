@@ -144,7 +144,7 @@ a { color: inherit; }
     <li><b>Cheaper still: freeze the early blocks halfway.</b> Train every block for the first half, then freeze blocks 0–6 and drop their optimizer state, with no full-context steps. That costs 0.24× dense's FLOPs and 12 GiB less memory per GPU after the freeze, and is level with dense on contradiction/nq and ahead on oolong/outlier (one seed). Freezing from step 0, pyramids and merging lose.</li>
     <li><b>The 11-task mix works once each document keeps at least 16 tokens.</b> strmatch's ~25-token documents were starved by a 10% cut. The floor fixes it (strmatch 0.79 → 0.91–0.92, 2 seeds). Mean over 9 tasks: 0.730 vs dense 0.741 at 0.49×; with the freeze, 0.712 at 0.36×. Grouping@8k is still behind.</li>
     <li><b>It scales to 64k:</b> on the 11-task mix with rows up to 64k and 10× the data, the router at LR 5e-6 (¼ epoch, 0.40× dense's FLOPs for those rows) beats dense at its better LR on 9 of 10 tasks at matched FLOPs (one seed; replicates and larger budgets training).</li>
-    <li><b>Not yet:</b> on long-document CPT (OLMo 3 7B) every router variant loses to dense on dev CE. The early-exit loss on dropped tokens is the fix being screened there and here.</li>
+    <li><b>Not yet:</b> on long-document CPT (OLMo 3 7B) every router variant loses to dense on dev CE. The early-exit loss on dropped tokens (it only matters where every token is a label) is the fix being screened there.</li>
   </ul>
 </section>
 
@@ -169,7 +169,7 @@ a { color: inherit; }
     <tr><td>freeze blocks 0–6 from step 0 / no-grad</td><td class="n">0.19</td><td class="n">47.7 / 53</td><td class="neg">loses: contra −0.24 vs router</td></tr>
     <tr><td>pyramid (50% at 3, 10% at 7, 3% at 16)</td><td class="n">0.17</td><td class="n">53</td><td class="neg">loses contradiction</td></tr>
     <tr><td>merge dropped tokens into a summary</td><td class="n">0.28</td><td class="n">60</td><td>no better than dropping</td></tr>
-    <tr><td>early-exit LM loss on dropped tokens</td><td class="n">≈0.31</td><td class="n">≤60</td><td>training (CTC on Beaker, CPT on cubbins)</td></tr>
+    <tr><td>early-exit LM loss on dropped tokens</td><td class="n">≈0.31</td><td class="n">≤60</td><td>CPT only (in SFT the dropped tokens carry no labels, so it is a no-op); screening on cubbins</td></tr>
   </table></div>
   <p class="note">488 rows/task unless noted; one seed; from the router session's record (records/online-token-router.md, "Screen results"). Peak memory on H100.</p>
 </section>
@@ -189,9 +189,9 @@ a { color: inherit; }
 <section>
   <h2>Training now</h2>
   <ul>
-    <li>Beaker: no-full-step router and + early-exit loss (W 0.3 / 1.0) on the 4-task mix at 488 and 1,464 rows/task; 11-task 960-row dense ×2 / router ×3 evals.</li>
-    <li>Router session: seed repeats of freeze-halfway and freeze + floor; freeze-point sweep at 1,464 rows.</li>
-    <li>CPT: early-exit loss (W 1.0 / 0.3, with and without full steps), then early-blocks-forward-only with 50%-keep periodic steps.</li>
+    <li>Beaker: no-full-step router on the 4-task mix at 1,464 rows/task; 11-task 960-row dense ×2 / router ×3 evals.</li>
+    <li>Router session: freeze-halfway seed 1 and at LR 5e-6, freeze at 25% / 75% (4-task, 1,464 rows); freeze + floor seed 1 (11-task).</li>
+        <li>CPT: early-exit loss (W 1.0 / 0.3, with and without full steps), then early-blocks-forward-only with 50%-keep periodic steps.</li>
     <li>64k: seed replicates (router, dense) and ½- and 1-epoch router and dense runs, all LR 5e-6.</li>
   </ul>
   <p class="note">Code: branch prasann/flopdrop_clean (research/token_routing/ds64_fast8k/), router claude/online-router-1bc01a. Status: ops/experiments/tokdrop_lr, learned_router, mt11_64k, olmo3_cptdrop. This page is private.</p>
