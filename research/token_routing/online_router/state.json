@@ -1516,6 +1516,16 @@
    "train_run": "f8k-mt11-rnd10M7-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M0YTVSJP288SQJKGHCV1VW",
+   "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M0ZM1N98RMP24S4SX38T5Z",
+   "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
@@ -1786,25 +1796,39 @@
    "dir": "OLMo-core-otr5"
   },
   "f8k-mt4s488-mrg05M7de0-lro-lr2e-06-lam": {
-   "slurm": 113949,
    "arm": "mrg05M7de0",
    "seed": 0,
    "commit": "12f1083e8",
-   "dir": "OLMo-core-otr5"
+   "dir": "OLMo-core-otr5",
+   "slurm": 113998
   },
   "f8k-mt4s488-otr10M7-lro-lr2e-06-lam": {
-   "slurm": 113969,
    "arm": "otr10M7",
    "seed": 0,
    "commit": "12f1083e8",
-   "dir": "OLMo-core-otr5"
+   "dir": "OLMo-core-otr5",
+   "slurm": 113996
   },
   "f8k-mt4s488-otr10M7de0-lro-lr2e-06-lam": {
-   "slurm": 113970,
    "arm": "otr10M7de0",
    "seed": 0,
    "commit": "12f1083e8",
-   "dir": "OLMo-core-otr5"
+   "dir": "OLMo-core-otr5",
+   "slurm": 113997
+  },
+  "f8k-mt4s488-otr10M7f8-lro-lr2e-06-lam": {
+   "slurm": 113999,
+   "arm": "otr10M7f8",
+   "seed": 0,
+   "commit": "6984d41ec",
+   "dir": "OLMo-core-otr6"
+  },
+  "f8k-mt4s488-otr10M7f16-lro-lr2e-06-lam": {
+   "slurm": 114000,
+   "arm": "otr10M7f16",
+   "seed": 0,
+   "commit": "6984d41ec",
+   "dir": "OLMo-core-otr6"
   }
  }
 }
