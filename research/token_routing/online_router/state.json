@@ -1786,6 +1786,26 @@
    "train_run": "f8k-mt11-otr10M7hdr8-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06-evcontradiction": {
+   "ex": "01M5M2MVVNBVKANAZ43E7TVVAX",
+   "train_run": "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06",
+   "task": "contradiction"
+  },
+  "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06-evnq": {
+   "ex": "01M5M2NM3S1R657Z9C61SST17C",
+   "train_run": "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06",
+   "task": "nq"
+  },
+  "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M2PDVTS83V3AHMCP1HT432",
+   "train_run": "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06",
+   "task": "outlier"
+  },
+  "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M2Q8RKC6Z4BDC2RNF27C5D",
+   "train_run": "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06",
+   "task": "oolong"
   }
  },
  "failed_evals": {
