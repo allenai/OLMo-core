@@ -1,7 +1,7 @@
 ---
 experiment: grad_composition
 title: Per-token x per-block gradient / activation composition of the answer loss over CTC fine-tuning (Qwen3.5-4B), to guide train-time token / layer router design
-status: active
+status: active (v2 done)
 updated: 2026-10-23
 branch: claude/grad-composition-6f09c7
 launcher: research/token_routing/grad_composition/run_probe_lambda.sbatch (Lambda node02, 1 A100) and launch.py (Beaker jupiter, 1 H100)
@@ -12,7 +12,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BVaPjZdAKjETHdQDdGqqtQ
 wandb_group:
-next_step: Beaker wave (bk-mt4rows-*: dense 31/61/122/366 + LR 2e-6 control + otr10M8; bk-mt11rows-*: mt11 dense 165/330/495 LR 2e-6 + otr10M8 s480/s720, rows filtered by per-row seen flags) -> launch.py --fetch -> art_data.py + build_artifact.py -> republish artifact, update record findings 5/9 (LR confound) and the mt11 router comparison. Proposed follow-up: grad_fidelity.py on grouping rows with the trained router (finding 7).
+next_step: v2 COMPLETE (2026-10-23; record + artifact current). Proposed follow-ups: grad_fidelity.py on strmatch / grouping rows with the trained router; a short-document token floor in the online router tested on mt11 strmatch; generation-level look at grouping (router vs dense have equal TF CE there).
 ---
 
 # grad_composition
@@ -43,20 +43,29 @@ later layers, gradient vs activation targets, and why strmatch / grouping resist
 - 2026-10-23 (agent): node02 then saturated by the online-router session's 2-GPU preemptive runs (11 queued); my
   normal-QOS probes were preempted twice. Did not take preemptive_high (would preempt that session's training);
   relaunched the remaining checkpoints on Beaker from the weka copies.
+- 2026-10-23 (agent): Beaker wave (13 jobs, 10-40 min each) = PRIMARY series for v2: mt4 rows (dense LR 5e-6 31/61/122/366,
+  dense LR 2e-6 366, router otr10M8 366) and mt11s960 rows 832-959 filtered to rows no mt11 shard contains (32-42/task;
+  dense LR 2e-6 165/330/495, router otr10M8 330/495). Lambda pass = replication (base identical; dense-366 is a separate
+  training run, within 0.03 / 0.08). LR 2e-6 control: the router's cross-layer stability is mostly the LR; its forward
+  adaptation (+0.02 vs +0.20 dCE) and early-heavy gradient (0.31 vs 0.22) are router effects.
+- 2026-10-23 (agent): key numbers recorded with `ops result add --check` (913 rows, metrics gradcomp_*; a duplicate add
+  was removed under the results lock).
 
 ## Current best numbers
 <!-- One line per number: task, rung, metric=value, eval_size, ±SE, cot label, source path.
      Flag eval_size<500 inline. Prefer `ops result show --experiment grad_composition --best`. -->
 | arm | task / rung | metric | eval_size | ±SE | cot | source |
 |---|---|---|---|---|---|---|
-| base -> mt4 dense 366 | 4 mt4 tasks, 8k | blocks 0-6 share of param-grad energy 0.45 -> 0.20 (summed minibatch grad 0.29-0.34 trained) | 64/task ⚠ | ~±0.02 | no-cot (TF grad) | results/mt4rows-*/; record finding 5 |
-| base -> mt4 dense 366 | 4 mt4 tasks, 8k | Spearman G7~G16 0.78 -> 0.60, G7~G24 0.57 -> 0.35; top-10%@7 holds G16^2 0.83 -> 0.74 | 64/task ⚠ | ~±0.03 | no-cot (TF grad) | record finding 2 |
-| base / dense 366 / router 366 | 4 mt4 tasks, 8k | fwd ablation keep 10%/doc before block 7: dCE gradient +0.13/+0.30/+0.02, activation +0.47/+0.36/+0.42, random +0.35/+0.52/+0.39 | 64/task ⚠ | ±0.03-0.06 | no-cot (TF CE) | record findings 3, 9 |
-| mt11 dense 330 | strmatch 8k | oracle gradient keep 10%/doc before block 7 dCE +0.53 (random +0.95) at full CE 0.009 | 23 ⚠ eval_size=23 | ~±0.1 | no-cot (TF CE) | record finding 6 |
+| base -> mt4 dense 31 / 122 / 366 | mt4 pooled, 8k | param-grad energy share blocks 0-6: 0.45 -> 0.31 / 0.25 / 0.23 (mt11: 0.45 -> 0.34 at 495) | 64/task ⚠ | ±0.01 | no-cot (TF grad) | ops results gradcomp_pgrad_share_blocks0_6 |
+| base -> mt4 dense 31 / 122 / 366 | mt4 pooled, 8k | Spearman G7~G24 0.57 -> 0.47 / 0.41 / 0.34; doc share of G^2 at block 7 0.15 -> 0.54 / 0.55 / 0.57 | 64/task ⚠ | ±0.01-0.02 | no-cot (TF grad) | gradcomp_rho_G7_G24, gradcomp_docshare_G2_b7 |
+| base / dense 366 / dense LR2e-6 / router | mt4 pooled, 8k | fwd ablation keep 10%/doc before block 7, dCE: gradient +0.13 / +0.23 / +0.20 / +0.02; activation +0.47 / +0.50 / +0.64 / +0.52; random +0.35 / +0.66 / +0.73 / +0.46 | 64/task ⚠ | ±0.02-0.05 | no-cot (TF CE) | gradcomp_abl_dce_keep10pct_b7_* |
+| mt11 dense 495 vs router 495 | strmatch 8k | oracle gradient keep dCE +0.67 vs +0.08; TF CE 0.034 vs 0.111; doc share of G^2 at block 24 0.24 vs 0.39 | 37 ⚠ eval_size=37 | ±0.05-0.1 | no-cot | record findings 6 |
+| mt11 dense 495 vs router 495 | grouping 8k | TF CE 0.325 vs 0.329 (no loss gap; router's eval deficit is generation-only) | 34 ⚠ eval_size=34 | ±0.03 | no-cot | record finding 7 |
 
 ## Next step
-Beaker wave for the missing checkpoints (see next_step above), then republish the artifact and close the LR confound in
-finding 9. Then grad_fidelity.py on grouping rows with the trained router.
+v2 is complete. Follow-ups (each its own run, not started): grad_fidelity.py on strmatch / grouping rows with the
+trained router; a short-document token floor for the online router on mt11 strmatch; inspect grouping generations,
+router vs dense.
 
 ## Open issues / traps
 - mt11 shards (s240/s480/s720/s960) are SHUFFLED supersets, not prefixes: "rows past N" of a bigger shard are NOT held
