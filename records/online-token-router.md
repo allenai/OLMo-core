@@ -565,6 +565,11 @@ Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
 otr10M7f16 at mt4s1464 (527 PF): 0.950 / 0.894 / 0.636 / 0.580 -- +0.023 contra for +18% PF, on the compute curve
 (otr30M8, 619 PF: 0.951 / 0.918 / 0.633 / 0.615), not above it.
+**Warmup-then-freeze at mt4s1464:** fa183M7 (no full steps, early stack frozen after 183 of 366 steps; 275 PF = 0.24x
+dense-eq; 47.7 GiB after the freeze) 0.898 / 0.884 / 0.647 / 0.556, vs otr10M7 (2 seeds, 445 PF = 0.39x) 0.927 / 0.907 /
+0.643 / 0.581: -38% PF and -12 GiB for the second half at -0.03 contra. Against the best-LR dense curve interpolated
+at 275 PF (≈ 0.885 / 0.897 / 0.569 / 0.28, between dense-s488 61 and 122 steps) it is level on contra / nq and ahead on
+oolong / outlier.
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
 
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
