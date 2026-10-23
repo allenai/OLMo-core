@@ -3033,6 +3033,14 @@ class Transformer(nn.Module):
             out = self.lm_head(h, **lm_head_kwargs)
             if isinstance(out, LMOutputWithLoss) and out.loss is not None:
                 loss = out.loss
+                otr_x = getattr(self, "_online_token_router", None) if self.training else None
+                x_pack = otr_x.pop_exit() if otr_x is not None else None
+                if x_pack is not None and bool((x_pack[1] != lm_head_kwargs.get("ignore_index", -100)).any()):
+                    # online router early-exit loss: the dropped tokens' split-layer states through the LM head
+                    x_kw = {k: v for k, v in lm_head_kwargs.items() if k not in ("labels", "logits_to_keep")}
+                    x_kw["return_logits"] = False
+                    x_out = self.lm_head(x_pack[0][None], labels=x_pack[1][None], **x_kw)
+                    loss = loss + otr_x.cfg.exit_loss_weight * x_out.loss.to(loss.dtype)
                 if aux_loss is not None:
                     w = self._pooled_soft_tokens["aux_match_weight"]  # type: ignore[index]
                     loss = loss + w * aux_loss.to(loss.dtype)

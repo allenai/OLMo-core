@@ -1803,6 +1803,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-dense-tail-frac", type=float, default=0.0,
                     help="online router: train the last FRAC of the steps uncompressed (e.g. 0.1, with "
                     "--st-otr-dense-every 0 for routed-then-dense-tail)")
+    ap.add_argument("--st-otr-exit-loss-weight", type=float, default=0.0,
+                    help="online router, mid-stack: add W x the LM loss of the DROPPED tokens read out at the split layer "
+                    "(early exit; 1.0 = every label counts once; CPT rows -- answer-only SFT has no dropped labels)")
     ap.add_argument("--st-otr-freeze-after", type=int, default=0,
                     help="online router: train normally for N steps, then freeze the embeddings + blocks [0, drop_layer) "
                     "and free their optimizer state (warmup-then-freeze)")

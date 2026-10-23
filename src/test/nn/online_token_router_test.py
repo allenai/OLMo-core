@@ -831,3 +831,48 @@ def test_freeze_and_release_frees_optimizer_state_cpu():
     model(ids, labels=labels).loss.backward()
     assert all(p.grad is None for p in early)
     assert all(p.grad is not None for p in list(model.blocks.values())[1].parameters())
+
+
+def test_exit_loss_scores_every_label_once_cpu():
+    """exit_loss_weight: on a fully-labelled row, the main LM head call plus the early-exit call together score every
+    label exactly once (W = 1 = the full LM loss); the exit term is positive and its head FLOPs are charged."""
+    model, router = _mid_model(3, drop_layer=1, dense_every=0, exit_loss_weight=1.0, explore_frac=0.0)
+    ids, cid, _ = _row(B=1)
+    labels = torch.full_like(ids, -100)
+    labels[:, :-1] = ids[:, 1:]  # CPT-style: every position predicts the next token
+    total = int((labels != -100).sum())
+    seen, flops = [], []
+    orig_fwd = model.lm_head.forward
+
+    def spy(x, **kw):
+        if kw.get("labels") is not None:
+            seen.append(int((kw["labels"] != -100).sum()))
+        return orig_fwd(x, **kw)
+
+    model.lm_head.forward = spy
+    orig_flop = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig_flop(m, v))
+    for n in (1, 2):
+        seen.clear(); flops.clear()
+        router.begin_step(n, model=model)
+        router.metrics()
+        out = model(ids, labels=labels, loss_reduction="sum")
+        out.loss.backward()
+    assert len(seen) == 2 and sum(seen) == total, (seen, total)  # routed step: main call + exit call
+    m = router.metrics()
+    n_drop = int(round(m["online_router/exit_tokens_frac"] * int((ids != PH).sum())))
+    head = int(model.lm_head.num_flops_per_token(0))
+    assert any(abs(v - head * n_drop) < 1e-6 * max(1.0, head * n_drop) for v in flops), (head * n_drop, flops)
+    # W = 0: only the kept labels are scored
+    router.cfg.exit_loss_weight = 0.0
+    seen.clear()
+    router.begin_step(3, model=model)
+    model(ids, labels=labels, loss_reduction="sum").loss.backward()
+    assert len(seen) == 1 and seen[0] < total
+
+
+def test_exit_loss_validate():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(exit_loss_weight=1.0).validate()
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(exit_loss_weight=1.0, stages="3:0.5,7:0.1").validate()

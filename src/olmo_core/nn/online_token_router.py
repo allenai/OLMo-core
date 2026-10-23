@@ -124,6 +124,11 @@ class OnlineRouterConfig:
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
     :class:`~olmo_core.train.callbacks.OnlineRouterCallback`)."""
+    exit_loss_weight: float = 0.0
+    """Mid-stack, single stage: an EARLY-EXIT LM loss for the dropped tokens -- their hidden state at the split goes through
+    the model's LM head (final norm + unembedding) and ``exit_loss_weight`` x its CE (same reduction / ``loss_div_factor``
+    as the main loss, so 1.0 counts every label once) is added to the loss. Only labelled dropped tokens contribute (zero
+    in answer-only SFT, every token in CPT). Charged: the head on every dropped token, forward + backward. 0 = off."""
     merge_dropped: bool = False
     """Mid-stack only: instead of discarding each document's dropped tokens at the split, average their hidden states
     into ONE summary token per document, placed at the position of that document's last dropped token (causal: every
@@ -159,6 +164,8 @@ class OnlineRouterConfig:
                 raise ValueError(f"online router stages must have strictly increasing layers > 0, got {self.stages!r}")
             if any(not 0.0 < k <= 1.0 for _, k in st) or [k for _, k in st] != sorted((k for _, k in st), reverse=True):
                 raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
+        if self.exit_loss_weight < 0 or (self.exit_loss_weight > 0 and (self.drop_layer <= 0 or self.stages)):
+            raise ValueError("online router exit_loss_weight must be >= 0 and needs a single-stage mid-stack drop")
         if self.merge_dropped and (self.drop_layer <= 0 or self.stages):
             raise ValueError("online router merge_dropped needs a single-stage mid-stack drop (drop_layer > 0, no stages)")
         if self.freeze_after < 0 or (self.freeze_after and self.freeze_early):
@@ -397,6 +404,7 @@ class OnlineTokenRouter:
         self.step = 0
         self.total_steps: Optional[int] = None  # set by the callback (dense_tail_frac)
         self._nograd_fwd = False  # this forward runs blocks [0, drop_layer) forward-only (early_nograd)
+        self._exit: Optional[Dict[str, Any]] = None  # this forward's dropped-token hidden states for the exit loss
         self._calls = 0
         self.w: Optional[torch.Tensor] = None
         self.XtX: Optional[torch.Tensor] = None
@@ -805,6 +813,15 @@ class OnlineTokenRouter:
         if dh_all is not None:
             entry["dh"] = dh_all[rows, pos]
         self._register_target(model, entry, h_new)
+        self._exit = None
+        if self.cfg.exit_loss_weight > 0 and not entry["dense"]:
+            dropped = real & body & ~keep_body
+            if bool(dropped.any()):
+                # their hidden states at the split (with grad: the exit loss trains blocks [0, L)); labels come in mid_labels
+                self._exit = {"h": h[:, :Tr][dropped], "mask": dropped, "Tr": Tr}
+                head = int(model.lm_head.num_flops_per_token(0)) if model.lm_head is not None else 0
+                self._flop(model, float(head) * float(dropped.sum()))
+                self._stat("exit_tokens_frac", float(dropped.sum()) / max(1.0, float(real.sum())))
         # FLOP adjustment, per row: blocks before drop_layer at the full length, the rest + head at the
         # kept length, minus the dense charge the meter applies to the (uncompacted) row
         # (blocks skipped whole this step by layer drop ran for no token: the meter already leaves them out of
@@ -870,7 +887,17 @@ class OnlineTokenRouter:
             labels = r._own_mid_labels(labels)
         return labels
 
+    def pop_exit(self) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
+        """``(h (N, D), labels (N,))`` of this forward's dropped tokens for the early-exit loss, or None."""
+        e, self._exit = self._exit, None
+        if e is None or "labels" not in e:
+            return None
+        return e["h"], e["labels"]
+
     def _own_mid_labels(self, labels: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        if self._exit is not None and labels is not None:
+            # the dropped tokens' labels, read before the gather removes them
+            self._exit["labels"] = labels[:, : self._exit["Tr"]][self._exit["mask"].to(labels.device)]
         g, self._mid_gather = getattr(self, "_mid_gather", None), None
         if g is None or labels is None:
             return labels
