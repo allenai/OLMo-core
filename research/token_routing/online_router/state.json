@@ -2322,6 +2322,13 @@
    "seed": 0,
    "commit": "9ccee22f5",
    "dir": "OLMo-core-otr7"
+  },
+  "f8k-mt4s488-fa61M7-lro-lr2e-06-lam": {
+   "slurm": 114037,
+   "arm": "fa61M7",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7"
   }
  }
 }
