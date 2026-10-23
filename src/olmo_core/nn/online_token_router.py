@@ -124,6 +124,10 @@ class OnlineRouterConfig:
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
     :class:`~olmo_core.train.callbacks.OnlineRouterCallback`)."""
+    dense_keep_frac: float = 1.0
+    """Keep share on the periodic ``dense_every`` steps: 1.0 = full context (default); < 1 routes those steps at this share
+    instead (e.g. 0.5), bounding the peak memory. Such steps are ordinary routed steps (no full-pass fidelity stats).
+    Warmup steps stay full."""
     exit_loss_weight: float = 0.0
     """Mid-stack, single stage: an EARLY-EXIT LM loss for the dropped tokens -- their hidden state at the split goes through
     the model's LM head (final norm + unembedding) and ``exit_loss_weight`` x its CE (same reduction / ``loss_div_factor``
@@ -164,6 +168,8 @@ class OnlineRouterConfig:
                 raise ValueError(f"online router stages must have strictly increasing layers > 0, got {self.stages!r}")
             if any(not 0.0 < k <= 1.0 for _, k in st) or [k for _, k in st] != sorted((k for _, k in st), reverse=True):
                 raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
+        if not 0.0 < self.dense_keep_frac <= 1.0 or self.dense_keep_frac < self.keep_frac:
+            raise ValueError(f"online router dense_keep_frac must be in [keep_frac, 1], got {self.dense_keep_frac}")
         if self.exit_loss_weight < 0 or (self.exit_loss_weight > 0 and (self.drop_layer <= 0 or self.stages)):
             raise ValueError("online router exit_loss_weight must be >= 0 and needs a single-stage mid-stack drop")
         if self.merge_dropped and (self.drop_layer <= 0 or self.stages):
@@ -645,6 +651,11 @@ class OnlineTokenRouter:
         u = torch.rand(ids.shape, generator=gen, device=dev)
         n_body = body.sum(dim=1)
         dense = self.dense_now()
+        kf = c.keep_frac
+        if dense and c.dense_keep_frac < 1.0 and self.w is not None and self.step > c.warmup_steps:
+            # the periodic "dense" step routes at dense_keep_frac instead of the full context (bounded peak memory)
+            dense, kf = False, c.dense_keep_frac
+            self._stat("dense_routed", 1.0)
         explore = torch.zeros_like(body)
         score = None
         if self.w is not None:
@@ -666,7 +677,7 @@ class OnlineTokenRouter:
                 score, c_explore = fp["_dh"] + 1e-6 * u, 0.0
             else:
                 c_explore = c.explore_frac
-            k = torch.ceil(n_body.to(torch.float32) * c.keep_frac).to(torch.long)
+            k = torch.ceil(n_body.to(torch.float32) * kf).to(torch.long)
             k_e = torch.round(k.to(torch.float32) * c_explore).to(torch.long)
             # exploration: the k_e body tokens with the smallest uniform draw
             ru = torch.where(body, u, torch.full_like(u, 2.0))
@@ -677,7 +688,7 @@ class OnlineTokenRouter:
             if c.keep_first > 0:
                 self._stat("forced_frac", float(forced.sum()) / max(1.0, float(body.sum())))
             keep = explore | forced
-            kd = c.keep_frac * c.doc_share
+            kd = kf * c.doc_share
             if kd > 0:
                 # per-document share: each document's own top ceil(kd * |body_d|) by score
                 # (exploration tokens rank first, so they count against their document's share)

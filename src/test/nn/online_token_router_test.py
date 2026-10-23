@@ -876,3 +876,21 @@ def test_exit_loss_validate():
         OnlineRouterConfig(exit_loss_weight=1.0).validate()
     with pytest.raises(ValueError):
         OnlineRouterConfig(exit_loss_weight=1.0, stages="3:0.5,7:0.1").validate()
+
+
+
+def test_dense_keep_frac_routes_periodic_steps():
+    """dense_keep_frac: the periodic dense step keeps that share (not everything); warmup still keeps everything."""
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, doc_share=1.0, keep_frac=0.1, score="random", dense_every=4, dense_keep_frac=0.5)
+    r.step = 1
+    assert bool(r.select(m, ids, cid, labels).sum() == r.token_features(m, ids, cid, labels, -100, hidden=False)["body"].sum())
+    r.w = torch.zeros(r.n_features)
+    n_body = int(r.token_features(m, ids, cid, labels, -100, hidden=False)["body"].sum())
+    r.step = 4
+    k4 = int(r.select(m, ids, cid, labels).sum())
+    r.step = 5
+    k5 = int(r.select(m, ids, cid, labels).sum())
+    assert k5 < k4 < n_body, (k5, k4, n_body)
+    assert abs(k4 / n_body - 0.5) < 0.1
