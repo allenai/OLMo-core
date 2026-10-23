@@ -496,46 +496,6 @@
    "mix": "mt11",
    "seed": 0
   },
-  "f8k-mt4-fa92M7-s1464-tdb-lr2e-06": {
-   "ex": "01M5N9JENATEW0EXBQ5KZ09EH3",
-   "arm": "fa92M7",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
-   "seed": 0
-  },
-  "f8k-mt4-fa183M7-s1464-tdb-lr2e-06": {
-   "ex": "01M5N9PADEAYTQTF3FF9TSD4K0",
-   "arm": "fa183M7",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
-   "seed": 0
-  },
-  "f8k-mt4-fa275M7-s1464-tdb-lr2e-06": {
-   "ex": "01M5N9RYT3MYEE6W9YF0S3EHJS",
-   "arm": "fa275M7",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
-   "seed": 0
-  },
-  "f8k-mt4-fa183M7sd1-s1464-tdb-lr2e-06": {
-   "ex": "01M5N9VZW0SFJ4HM8R6G9ZDKNW",
-   "arm": "fa183M7",
-   "budget": "s1464",
-   "lr": 2e-06,
-   "mix": "mt4",
-   "seed": 1
-  },
-  "f8k-mt4-fa183M7-s1464-tdb-lr5e-06": {
-   "ex": "01M5N9WTZ5P46XV47X50QX6HAB",
-   "arm": "fa183M7",
-   "budget": "s1464",
-   "lr": 5e-06,
-   "mix": "mt4",
-   "seed": 0
-  },
   "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06": {
    "ex": "01M5N9XY9XXQR63PYYKTDACGBP",
    "arm": "fa247f16M7",
@@ -2300,6 +2260,51 @@
    "commit": "1206df105",
    "dir": "OLMo-core-otr4",
    "why": "superseded 2026-10-23 (no dense tail; screen at s488 first)"
+  },
+  "f8k-mt4-fa92M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5N9JENATEW0EXBQ5KZ09EH3",
+   "arm": "fa92M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "moved to Lambda node02 before start (2026-10-23)"
+  },
+  "f8k-mt4-fa183M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5N9PADEAYTQTF3FF9TSD4K0",
+   "arm": "fa183M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "moved to Lambda node02 before start (2026-10-23)"
+  },
+  "f8k-mt4-fa275M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5N9RYT3MYEE6W9YF0S3EHJS",
+   "arm": "fa275M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "moved to Lambda node02 before start (2026-10-23)"
+  },
+  "f8k-mt4-fa183M7sd1-s1464-tdb-lr2e-06": {
+   "ex": "01M5N9VZW0SFJ4HM8R6G9ZDKNW",
+   "arm": "fa183M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 1,
+   "why": "moved to Lambda node02 before start (2026-10-23)"
+  },
+  "f8k-mt4-fa183M7-s1464-tdb-lr5e-06": {
+   "ex": "01M5N9WTZ5P46XV47X50QX6HAB",
+   "arm": "fa183M7",
+   "budget": "s1464",
+   "lr": 5e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "moved to Lambda node02 before start (2026-10-23)"
   }
  },
  "lambda_runs": {
@@ -2527,6 +2532,38 @@
    "seed": 0,
    "commit": "9ccee22f5",
    "dir": "OLMo-core-otr7"
+  },
+  "f8k-mt4s1464-fa183M7-s1-lro-lr2e-06-lam": {
+   "slurm": 114173,
+   "arm": "fa183M7",
+   "seed": 1,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7",
+   "lr": "2e-06"
+  },
+  "f8k-mt4s1464-fa92M7-lro-lr2e-06-lam": {
+   "slurm": 114174,
+   "arm": "fa92M7",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7",
+   "lr": "2e-06"
+  },
+  "f8k-mt4s1464-fa275M7-lro-lr2e-06-lam": {
+   "slurm": 114175,
+   "arm": "fa275M7",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7",
+   "lr": "2e-06"
+  },
+  "f8k-mt4s1464-fa183M7-lro-lr5e-06-lam": {
+   "slurm": 114176,
+   "arm": "fa183M7",
+   "seed": 0,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7",
+   "lr": "5e-06"
   }
  }
 }
