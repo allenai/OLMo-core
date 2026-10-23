@@ -74,10 +74,10 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       for b in 31 62 124 310; do run "o3cd-OTR10M7lr20-$b" ARM=OTR MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) || exit 51; done
       for b in 40 80 160; do run "o3cd-OTR10M7ndlr20-$b" ARM=OTR OTR_DENSE=0 MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || exit 52; done ;;
     OTRA)
-      for b in 46 92 185; do run "o3cd-OTR10M7nglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || exit 53; done
-      for b in 40 80 160; do run "o3cd-OTRpyrlr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || exit 54; done
-      for b in 31 62 124; do run "o3cd-OTR10M7mglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-merge-dropped" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) || exit 56; done
-      for b in 60 120 240; do run "o3cd-OTRpyrnglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || exit 55; done ;;
+      for b in 46 92 185; do run "o3cd-OTR10M7nglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done
+      for b in 40 80 160; do run "o3cd-OTRpyrlr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done
+      for b in 31 62 124; do run "o3cd-OTR10M7mglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-merge-dropped" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done
+      for b in 60 120 240; do run "o3cd-OTRpyrnglr20-$b" ARM=OTR OTR_EXTRA="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) || { log "FAIL $b in OTRA variant: continuing"; break; }; done ;;
     SEED)
       run o3cd-Dlr20-120-s1 ARM=D MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 14 ;;
     IRS)
