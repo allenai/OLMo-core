@@ -562,6 +562,8 @@ to otr30M8's at 12% less compute. Global budget: no collapse (leak_auc 0.58 vs 0
 Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
 0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
+otr10M7f16 at mt4s1464 (527 PF): 0.950 / 0.894 / 0.636 / 0.580 -- +0.023 contra for +18% PF, on the compute curve
+(otr30M8, 619 PF: 0.951 / 0.918 / 0.633 / 0.615), not above it.
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
 
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
