@@ -140,7 +140,8 @@ def eval_cmd(ename, task, ckpt, dry):
     cmd = [sys.executable, "-u", EVAL_LAUNCHER, ename, CLUSTER, "--task", TASK_KEY.get(task, task),
            "--variant", "docchunk", "--ckpt", ckpt, "--query-position", "both", "--cot-mode", "none",
            "--tokenizer", TOKENIZER, "--ngpu", "2", "--max-test", "500", "--priority", "urgent",
-           "--max-length", EVAL_MAX_LENGTH, "--batch-size", "8", "--suite-rows", "--suite-rungs", EVAL_RUNGS]
+           "--max-length", EVAL_MAX_LENGTH, "--batch-size", "8", "--suite-rows", "--suite-rungs", EVAL_RUNGS,
+           "--experiment", EXPERIMENT]
     cmd += [x for kv in SUITE_EVAL_ENV for x in ("--env", kv)]
     return cmd + (["--dry-run"] if dry else [])
 
