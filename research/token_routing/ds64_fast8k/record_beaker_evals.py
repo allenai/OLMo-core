@@ -1,6 +1,6 @@
 """Record finished Beaker ladder evals of launch_fast8k runs into ops results (the Beaker eval launcher does not).
 
-For every eval in state.json whose name contains one of --suffix (default -tdc and -tdp) and whose (train run, task)
+For every eval in state.json whose name contains one of --suffix (default -tdc, -tdp and -tde) and whose (train run, task)
 has no ops result yet: fetch its Beaker log, parse every `[ladder:<task>@<rung>] <metric>=<v> (n=<N>` line, and
 append one row per rung. Writes a JSONL and runs `ops result add --json <file> --check`.
 
@@ -31,7 +31,7 @@ def recorded():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--suffix", nargs="+", default=["-tdc", "-tdp"])
+    ap.add_argument("--suffix", nargs="+", default=["-tdc", "-tdp", "-tde"])
     ap.add_argument("--experiment", default="tokdrop_lr")
     a = ap.parse_args()
     st = json.load(open(os.path.join(HERE, "state.json")))

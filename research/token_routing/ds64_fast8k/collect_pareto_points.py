@@ -41,7 +41,7 @@ def parse_name(run):
         tag = lambda pre: next((int(t[len(pre):]) for t in after if re.fullmatch(pre + r"\d+", t)), 0)
         return dict(mix=mix, rows=int(rows or 488), arm="-".join(before), lr=float(lr.group(1)), campaign=camp,
                     seed=seed, epochs=tag("ep") or 1, max_steps=tag("s"))
-    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:st(\d+))?-(tdb|tdc|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
+    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:st(\d+))?-(tdb|tdc|tde|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
     if m:
         mix, arm, rows, steps, camp, lr = m.groups()
         seed = int(re.search(r"sd(\d+)$", arm).group(1)) if re.search(r"sd\d+$", arm) else 0
@@ -116,7 +116,7 @@ def beaker_runs():
     srcs = []
     st_path = os.path.join(HERE, "state.json")
     if os.path.exists(st_path):
-        srcs += [(k, v) for k, v in json.load(open(st_path))["runs"].items() if "-tdc" in k]
+        srcs += [(k, v) for k, v in json.load(open(st_path))["runs"].items() if "-tdc" in k or "-tde" in k]
     try:
         rs = subprocess.run(["git", "-C", HERE, "show", ":".join(ROUTER_STATE)], capture_output=True, text=True,
                             timeout=60).stdout
