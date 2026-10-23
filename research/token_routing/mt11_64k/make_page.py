@@ -18,7 +18,7 @@ TASKS = ["nq", "hotpotqa", "qdmatch_nq", "outlier", "oolong", "contradiction", "
 RUNGS = ["2k", "8k", "16k", "32k", "64k"]
 METRIC = {"reorder": "kendall τ", "grouping": "pairwise F1"}
 #: cells whose numbers carry no signal (see STATUS: reorder parse failures at 8k/16k for every arm)
-UNINFORMATIVE = {("reorder", "8k"), ("reorder", "16k")}
+UNINFORMATIVE = {("reorder", "8k"), ("reorder", "16k"), ("grouping", "32k")}
 
 
 def esc(x):
@@ -279,7 +279,7 @@ svg .router-pt {{ fill: var(--router); stroke: var(--panel); stroke-width: 1; }}
 
 <section>
 <h2>Matched-FLOP Δ vs dense, per rung</h2>
-<p class="prose muted">Green ≥ +0.02, red ≤ −0.02. Single seed: on the 8k screens run-to-run noise was ±0.02–0.03, and up to ±0.13 on outlier. "n/s" = no signal (reorder 8k/16k: every arm fails the exact-permutation parser).</p>
+<p class="prose muted">Green ≥ +0.02, red ≤ −0.02. Single seed: on the 8k screens run-to-run noise was ±0.02–0.03, and up to ±0.13 on outlier. "n/s" = no signal: reorder 8k/16k (every arm fails the exact-permutation parser) and grouping 32k (every arm scores 0.001-0.005).</p>
 {delta_tables}
 </section>
 
