@@ -159,6 +159,15 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-23 03:40 router CPT (cubbins 4019297; MEASURED flop-meter PF on both sides -- dense is 27.5 PF/step +
+  ~27 PF constant, not the 36.6 table value analyze.py used, which flattered drop arms ~1.2x; verdicts unchanged):
+  OTR10M7lr20 31/62/124/310 steps = 335/643/1258/3083 PF: CE 1.7308/1.7138/1.7079/1.7055 (m <0.41/<0.21/0.12/0.06),
+  ctx_gain 0.0585/0.0672/0.0712/0.0737 (ctx-only m ~0.74-0.79, best of all arms). No-dense-step variant 40/80/160:
+  1.8087/1.8010/1.7961 (collapses: upper stack never sees full context). Worse than dense at every position bin
+  (0-4k 1.6769 vs Dlr20-48 1.6579): trains on 10% of labels. Memory: routed-step median 28.6 GiB vs dense 35.2
+  (-19%), peak 35.9 (set by the every-8 dense steps). Re-measured m (measured PF): IRAND 22/43/65/130/260 <1.25/0.79/
+  0.59/0.37/0.20; SD20 0.61/0.38/0.20; IFL25 <0.41/<0.21/<0.10; Dlr10-120 1.95, Dlr05-120 1.66. Next (LR-sweep
+  session, for Prasann): early-exit LM loss on dropped tokens at the split layer; smaller micro-batch on dense steps.
 - 2026-10-23 router CPT track: online_token_router made marker-free (e0f2ce9ce: block offsets from each 512-block's own
   first/last token; 2 CPU tests, 23/23 pass), merged by the router session into claude/online-router-1bc01a
   (717c4d0ff, +early-nograd / stages / dense-tail / keep-first flags). Smoke OTR 20 steps on 8xH200: actual/dense
