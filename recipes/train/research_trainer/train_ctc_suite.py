@@ -1797,6 +1797,9 @@ def parse_args() -> argparse.Namespace:
                     help="online router: body tokens kept per row (fraction of the row's body tokens)")
     ap.add_argument("--st-otr-explore-frac", type=float, default=0.1,
                     help="online router: share of the kept budget drawn uniformly at random (exploration)")
+    ap.add_argument("--st-otr-keep-first", type=int, default=0,
+                    help="online router: always keep each document's first K body tokens (its header / id span); "
+                    "they count against the budget and the router picks the rest")
     ap.add_argument("--st-otr-doc-share", type=float, default=1.0,
                     help="online router: share of the budget spread over documents in proportion to length "
                     "(each keeps its own top tokens by score); the rest goes to the row-level top scores. "

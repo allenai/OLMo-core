@@ -108,6 +108,9 @@ class OnlineRouterConfig:
     """Leading optimizer steps (1-based) that train uncompressed (keep-all) and collect targets."""
     dense_every: int = 0
     """If > 0, every ``dense_every``-th step is also uncompressed (fresh unbiased targets)."""
+    keep_first: int = 0
+    """Always keep each document's first ``keep_first`` body tokens (its header / id span); they count against the
+    budget (and their document's share), and the router picks the rest. 0 = everything is routable."""
     samples_per_row: int = 2048
     proj_dim: int = 0
     """Random-project the hidden features to this many dims (0: use all d_model dims)."""
@@ -121,6 +124,8 @@ class OnlineRouterConfig:
             raise ValueError(f"online router doc_share must be in [0, 1], got {self.doc_share}")
         if not 0.0 <= self.explore_frac <= 1.0:
             raise ValueError(f"online router explore_frac must be in [0, 1], got {self.explore_frac}")
+        if self.keep_first < 0:
+            raise ValueError(f"online router keep_first must be >= 0, got {self.keep_first}")
         if self.score not in ("router", "random", "first_last", "dh"):
             raise ValueError(f"online router score must be router / random / first_last / dh, got {self.score!r}")
         if self.score == "dh" and self.drop_layer <= 0:
@@ -407,7 +412,8 @@ class OnlineTokenRouter:
             0, key[body], torch.ones(int(body.sum()), device=input_ids.device)
         )
         rep = torch.log1p(cnt[key]) / 5.0
-        out: Dict[str, torch.Tensor] = {"body": body, "query": qm, "_edge": torch.minimum(offs["j"], offs["r"])}
+        out: Dict[str, torch.Tensor] = {"body": body, "query": qm, "_edge": torch.minimum(offs["j"], offs["r"]),
+                                        "_j": offs["j"]}
         out["_s0"] = torch.cat([struct, (in_q * body).unsqueeze(-1), (rep * body).unsqueeze(-1)], dim=-1)
         if c.use_gold:
             out["_gold"] = (self._row_gold(input_ids, chunk_ids) * body).unsqueeze(-1)
@@ -534,7 +540,11 @@ class OnlineTokenRouter:
             ru = torch.where(body, u, torch.full_like(u, 2.0))
             rank_u = ru.argsort(dim=1).argsort(dim=1)
             explore = body & (rank_u < k_e[:, None])
-            keep = explore.clone()
+            # each document's first keep_first body tokens (its header / id span) are always kept
+            forced = body & (fp["_j"] < c.keep_first) if c.keep_first > 0 else torch.zeros_like(body)
+            if c.keep_first > 0:
+                self._stat("forced_frac", float(forced.sum()) / max(1.0, float(body.sum())))
+            keep = explore | forced
             kd = c.keep_frac * c.doc_share
             if kd > 0:
                 # per-document share: each document's own top ceil(kd * |body_d|) by score
@@ -544,7 +554,7 @@ class OnlineTokenRouter:
                 if kd >= 1.0:
                     keep = body.clone()
                 else:
-                    sc_d = torch.where(explore, torch.full_like(score, 1e30), score)
+                    sc_d = torch.where(explore | forced, torch.full_like(score, 1e30), score)
                     out = mark_doc_topk_tokens_free(
                         cid, ids, sc_d, doc_start_id=self.doc_start_id, doc_end_id=self.doc_end_id, k=kd
                     )

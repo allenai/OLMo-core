@@ -259,6 +259,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_keep_frac: float = 0.3
     st_otr_explore_frac: float = 0.1
     st_otr_doc_share: float = 1.0
+    st_otr_keep_first: int = 0
     st_otr_score: str = "router"
     st_otr_feature_layer: int = 0
     st_otr_drop_layer: int = 0
@@ -1012,6 +1013,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         keep_frac=o.st_otr_keep_frac,
         explore_frac=o.st_otr_explore_frac,
         doc_share=o.st_otr_doc_share,
+        keep_first=o.st_otr_keep_first,
         score=o.st_otr_score,
         feature_layer=o.st_otr_feature_layer,
         drop_layer=o.st_otr_drop_layer,

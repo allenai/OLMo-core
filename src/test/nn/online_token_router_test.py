@@ -513,3 +513,22 @@ def test_mid_stack_drop_layer_cannot_be_skipped():
     router.begin_step(1, model=model)
     with pytest.raises(RuntimeError):
         model(ids, labels=labels)
+
+
+@pytest.mark.parametrize("doc_share", [1.0, 0.0])
+def test_keep_first_always_keeps_document_headers(doc_share):
+    """keep_first: every document's first K body tokens are kept whatever the scores, and (per-document share)
+    they count against their document's share; with doc_share 0 the rest of the budget goes anywhere by score."""
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, doc_share=doc_share, keep_frac=0.2, score="random", keep_first=3)
+    r.w = torch.zeros(r.n_features)
+    r.step = 2
+    keep = r.select(m, ids, cid, labels)
+    for d, base, n in ((0, 1000, 10), (1, 2000, 40), (2, 3000, 3)):
+        kept = {int(t) for t in ids[0][keep[0] & (cid[0] == d)]}
+        assert {base, base + 1, base + 2} <= kept, (d, sorted(kept))
+    if doc_share == 1.0:
+        # doc 1's share is ceil(0.2 * 40) = 8, of which 3 are its forced header tokens
+        assert int((keep[0] & (cid[0] == 1)).sum()) == 8
+    assert "online_router/forced_frac" in r.metrics()
