@@ -32,10 +32,11 @@ One STATUS.md per experiment is the canonical current state (memory files and re
 | 2026-09-14 | [ctc_modelscale](ctc_modelscale/STATUS.md) | Model scale x family x CTC class (Qwen3.5 0.8B/2B/4B, OLMo-3-7B, Llama) + dense length generalization past the 32k training ceiling | Re-grade the contradiction length-gen rungs (rung_65674/rung_131342) with gold pairs canonicalised. ~53% of their gold pairs are unsorted, so the paper's high-CTC retention numbers for contradiction are depressed by construction. |
 | 2026-09-09 | [outlier_lengthmix](outlier_lengthmix/STATUS.md) | Length-mix data-scaling laws, dense vs sparse-landmark Qwen3.5-4B — outlier first, then 10 CTC tasks (taskscale) | Decide whether to run the built-but-unscored 128k ρ-range transfer test (n=880 arms, debug/outlier_lengthmix_scaling/build_128k.sbatch) or close the campaign at its 2026-09-09 verdict |
 
-## Done (12)
+## Done (13)
 
 | updated | experiment | title | next step |
 |---|---|---|---|
+| 2026-10-23 | [grad_composition](grad_composition/STATUS.md) | Per-token x per-block gradient / activation composition of the answer loss over CTC fine-tuning (Qwen3.5-4B), to guide train-time token / layer router design | v2 COMPLETE (2026-10-23; record + artifact current). Proposed follow-ups: grad_fidelity.py on strmatch / grouping rows with the trained router; a short-document token floor in the online router tested on mt11 strmatch; generation-level look at grouping (router vs dense have equal TF CE there). |
 | 2026-10-19 | [pail_ccpeek](pail_ccpeek/STATUS.md) | A few Common Crawl WARC files through resiliparse, scored with the tinyclf classifiers | superseded by pail_ccdev (the full dev set) |
 | 2026-10-19 | [pail_ccdev](pail_ccdev/STATUS.md) | ccdev_v1, a Common Crawl dev set (resiliparse text) with DseWiki and WildAI labels and classifier scores, for cascades on real data | use ccdev_v1 to tune cascade thresholds on real crawl text (evaluate.py), retrain/recalibrate on 2026 + unfiltered-crawl data; DseWiki needs its own signal |
 | 2026-10-13 | [lengen_rope_hash](lengen_rope_hash/STATUS.md) | Length generalization from 32k setA SFT to 64k/128k — RoPE reset per document/query vs hashed doc IDs vs a full-attention base (Qwen3-4B-Base) | Done for the long-rung question (Prasann 2026-10-19: neither trick generalizes better; long evals cancelled). Optional: eval_size-500 rerun of contradiction r128k (base/rope/hash); short-rung (<=32k) bins + Qwen3 <=32k still queued on Beaker as sanity — cancel if not needed. |
@@ -49,15 +50,13 @@ One STATUS.md per experiment is the canonical current state (memory files and re
 | 2026-09-08 | [flop_scaling](flop_scaling/STATUS.md) | FLOP-scaling study — dense vs routed FFN (ffnmoe) vs KV soft tokens (kv17/kv33), Qwen3.5 0.8B–27B, short-heavy 2k–32k | None for this grid — KV follow-up lives in ds64, FFN follow-up in ffndrop; only open item is the unrun breadth-matched KV / 9B frozen-tail NaN, deprioritised. |
 | 2026-08-31 | [olmo3_vs_hybrid_wave2](olmo3_vs_hybrid_wave2/STATUS.md) | OLMo-3-7B (noswa-CPT, full attention) vs Olmo-Hybrid-7B (3:1 GDN:full) — dense CTC-suite backbone comparison | None required for the verdict. Optional — re-run the oolong full arm with a stop condition and natively re-grade the hotpotqa 32k full arm before quoting either cell as final |
 
-## Unknown status (2)
+## Unknown status (1)
 
 | updated | experiment | title | next step |
 |---|---|---|---|
-| 2026-10-23 | [grad_composition](grad_composition/STATUS.md) ⚠ | Per-token x per-block gradient / activation composition of the answer loss over CTC fine-tuning (Qwen3.5-4B), to guide train-time token / layer router design | v2 COMPLETE (2026-10-23; record + artifact current). Proposed follow-ups: grad_fidelity.py on strmatch / grouping rows with the trained router; a short-document token floor in the online router tested on mt11 strmatch; generation-level look at grouping (router vs dense have equal TF CE there). |
 |  | [pail_classify](pail_classify/STATUS.md) ⚠ |  |  |
 
 ## Front-matter problems
 
-- `grad_composition`: status 'active (v2 done)' not in active|paused|done|abandoned
 - `pail_classify`: missing experiment; missing title; missing status; missing updated; missing next_step
 

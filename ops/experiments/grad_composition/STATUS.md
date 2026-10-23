@@ -1,7 +1,7 @@
 ---
 experiment: grad_composition
 title: Per-token x per-block gradient / activation composition of the answer loss over CTC fine-tuning (Qwen3.5-4B), to guide train-time token / layer router design
-status: active (v2 done)
+status: done
 updated: 2026-10-23
 branch: claude/grad-composition-6f09c7
 launcher: research/token_routing/grad_composition/run_probe_lambda.sbatch (Lambda node02, 1 A100) and launch.py (Beaker jupiter, 1 H100)
