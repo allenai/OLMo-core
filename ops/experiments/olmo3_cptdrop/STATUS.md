@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: SCREEN ANSWERED: no token-drop arm beats dense at 32k or 64k (best m 0.6x at 32k; C ~0.8-1.05x). All training done; cubbins released 15:49. Open: weka cleanup DONE (01M5K5PYHZDQJ7PZRAG7M7RM2G: ~2.0 TB of files freed; empty skeletons with wandb symlinks left); Prasann to pick the next regime (a target where dense keeps improving: 128k eval / longer docs, or another base).
+next_step: ROUTER CPT TRACK (2026-10-23, Prasann via LR-sweep session: 'include continued-pretraining on long documents ... I want to get something that works on that as well'): cubbins 4019297 = OTR10M7 (mid-stack online router, keep 0.1 at block 7, dense every 8, no loss on dropped tokens) 31/62/124/310 + no-dense-step 40/80/160 -> EV -> CTX; then 4019313 = aggressive cuts (early-nograd, pyramid 3:0.5,7:0.1,16:0.03, both). Report matched-FLOP dev-CE deltas + peak memory to session 'LR Sweep, Main Runs'.
 ---
 
 # olmo3_cptdrop
@@ -159,6 +159,12 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- 2026-10-23 router CPT track: online_token_router made marker-free (e0f2ce9ce: block offsets from each 512-block's own
+  first/last token; 2 CPU tests, 23/23 pass), merged by the router session into claude/online-router-1bc01a
+  (717c4d0ff, +early-nograd / stages / dense-tail / keep-first flags). Smoke OTR 20 steps on 8xH200: actual/dense
+  0.407, peak active mem 28.5 GiB/GPU on routed steps vs 35.2 dense. Aggressive-cut job code = router branch
+  717c4d0ff + research/token_routing/olmo3_cptdrop from 961e7b7b5 (staged code_r717c4d0ff_o3cd961e7b7b5; branch not
+  merged into flopdrop_clean). balrog (A100) NOT used: ask Prasann first.
 - FINDING 2026-10-22 08:30 (LR 2e-5, dev32k_1024, 1,024 rows): dense SATURATES almost at once. stage2 1.8477 ->
   Dlr20-12 1.6972 -> 24 1.6912 -> 48 1.6880 -> 120 1.6853 -> 240 1.6827: 12 steps (6.3M tokens) already give
   -0.150 of -0.165, and a 20x compute range (12 -> 240) moves CE 0.015. The gain is uniform across position bins
