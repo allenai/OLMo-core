@@ -1526,6 +1526,66 @@
    "ex": "01M5M0ZM1N98RMP24S4SX38T5Z",
    "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5M1BFF5AS6H0Y67XJJQNS8G",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5M1C9DGF0KXHHJA6700W4R2",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M1D6CZQADWVRQS0ZFKKV5J",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M1E61740YBXBFKSJF3M9JS",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5M1F2Q8ZV6WNYDD3C88G8V5",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5M1G7MZPYWD95FRG85161QD",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5M1H2NG9TNNNCG5CFXRC2GP",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5M1HWYXDZHFJ7GAY2KS22FB",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5M1JQZ4H5DF4CTYDSCNB71A",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5M1KJH5DGQ703AKA7ZR3T49",
+   "train_run": "f8k-mt11-otr10M7ds0-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
