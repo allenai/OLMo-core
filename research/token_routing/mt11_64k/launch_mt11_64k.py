@@ -93,11 +93,11 @@ def min_runtime(arm, steps):
     return f"{max(1, math.ceil(expected_minutes(arm, steps) * 1.3 / 60))}h"
 
 
-def run_name(arm, budget, lr):
-    return f"m64-{arm}-{budget}-lr{lr:g}"
+def run_name(arm, budget, lr, seed=0):
+    return f"m64-{arm}-{budget}-lr{lr:g}" + (f"-sd{seed}" if seed else "")
 
 
-def train_cmd(arm, budget, lr, mode):
+def train_cmd(arm, budget, lr, mode, seed=0):
     steps = steps_for(budget)
     extra = f"{ARMS[arm]} --attn-backend flash_2"
     if steps > SAVE_INTERVAL and budget != "smk":
@@ -107,13 +107,15 @@ def train_cmd(arm, budget, lr, mode):
     elif budget != "f1":
         extra += f" --max-tokens {steps * GB * SEQ_LEN}"  # complete LR schedule over `steps` steps
     cmd = [sys.executable, "-u", LAUNCHER, "--task", "mt11", "--variant", "softtoken", "--model-family", "qwen3_5",
-           "--model-scale", "4b", "--data-root", SHARD, "--run-name", run_name(arm, budget, lr), "--exact-run-name",
+           "--model-scale", "4b", "--data-root", SHARD, "--run-name", run_name(arm, budget, lr, seed), "--exact-run-name",
            "--num-nodes", "1", "--num-gpus", str(GPUS), "--epochs", "1", "--lr", str(lr), "--cluster", CLUSTER,
            "--wandb-group", WANDB_GROUP, "--priority", "urgent", "--min-runtime", min_runtime(arm, steps),
            "--no-follow", "--no-compile",
            "--experiment", EXPERIMENT, "--arm", arm, "--seq-len", str(SEQ_LEN), "--global-batch", str(GB),
            "--micro-batch-instances", str(MICRO), "--base-checkpoint", BASE,
            "--expected-minutes", str(expected_minutes(arm, steps))]
+    if seed:  # a different data order AND init of the new params; same shard, same budget
+        cmd += ["--seed", str(seed)]
     return cmd + ["--extra-args", extra, mode]
 
 
@@ -131,11 +133,11 @@ def do_launch(a, mode):
     for arm in a.arms.split(","):
         for budget in a.budgets.split(","):
             for lr in (float(x) for x in a.lrs.split(",")):
-                name = run_name(arm, budget, lr)
+                name = run_name(arm, budget, lr, a.seed)
                 if name in st["runs"] and mode == "launch" and not a.force:
                     print(f"[skip] {name} ({st['runs'][name].get('ex')})")
                     continue
-                rc, out = sh(train_cmd(arm, budget, lr, mode))
+                rc, out = sh(train_cmd(arm, budget, lr, mode, a.seed))
                 os.makedirs(f"{HERE}/launch_logs", exist_ok=True)
                 open(f"{HERE}/launch_logs/{name}.{mode}.log", "w").write(out)
                 ex = parse_id(out)
@@ -144,7 +146,7 @@ def do_launch(a, mode):
                         print("  " + ln[:1200])
                 print(f"{name} [{steps_for(budget)} steps] -> rc={rc} {ex or out[-300:]}", flush=True)
                 if mode == "launch":
-                    st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": lr,
+                    st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": lr, "seed": a.seed,
                                         "steps_expected": steps_for(budget), "state": "S" if ex else "LAUNCH-FAILED"}
                     save(st)
 
@@ -209,6 +211,7 @@ def main():
     ap.add_argument("--arms", default="dense")
     ap.add_argument("--budgets", default="f1")
     ap.add_argument("--lrs", default="5e-6")
+    ap.add_argument("--seed", type=int, default=0, help="training seed (0 = default; else run name gets -sd<seed>)")
     ap.add_argument("--runs", default="")
     ap.add_argument("--tasks", default="", help="eval: comma subset of the 10 suite tasks")
     ap.add_argument("--dry", action="store_true", help="eval: launcher --dry-run, nothing submitted")
