@@ -493,6 +493,23 @@ exactly what runs and covered by a CPU test (`src/test/nn/online_token_router_te
 | `--st-otr-merge-dropped` | each document's dropped tokens averaged into one unlabelled summary token after its last dropped token (causal) | summaries count as kept tokens, plus 2·D per dropped token |
 | `--st-otr-keep-first K` | each document's first K body tokens always kept (header ablation) | none |
 
+**Gradient-composition prior** (the grad-composition session, ⚠ 64 held-out mt4s1952 rows / task, full-context answer
+CE): blocks 0-6 carry 0.42-0.51 of the per-row parameter-gradient energy at base and 0.13-0.25 after 366 dense steps
+(0.29-0.34 of the minibatch-summed gradient), so freezing / no-grad early blocks gives up a real share of learning,
+largest at the start. Per-token importance is stable early and drifts late (Spearman of ||dL/dh||, base -> trained:
+L3~L7 0.88 -> 0.88, L7~L16 0.78 -> 0.60, L7~L24 0.57 -> 0.35; the last block is anti-correlated with L7, -0.19).
+For the pyramid: 0.93-0.96 of the later layer's G^2 sits inside the top 50% at L3 (the 3 -> 7 stage is nearly free),
+and the nested 50%@3 -> 10%@7 -> 3%@16 captures 0.69-0.81 of G24^2 vs 0.61-0.75 for top-3% at L7 alone (rescoring at
+16 is worth ≈ +0.08 of mass); random 0.03.
+
+**Revision (Prasann, 2026-10-23: "ideas which can save both on FLOPs and memory"; "validate at smaller scale first").**
+The dense tail is dropped and every arm runs WITHOUT full-context steps (`--st-otr-dense-every 0`); new
+`--st-otr-freeze-early` (embeddings + blocks [0, L) frozen: no grads, no optimizer state, forward-only every step);
+`online_router/peak_mem_gib` logged per step. Screen at mt4s488 (122 steps) first, promote only arms that tie or beat
+otr10M7-s488: Beaker `f8k-mt4-{otr10M7,otr10M7de0,ng0M7,frz0M7,pyr3de0,pyr3frz0,mrg05M7de0}-s488-tdb-lr2e-06`, Lambda
+`f8k-mt4s488-{frz0M7,ng0M7,pyr3frz0,mrg05M7de0}-lro-lr2e-06-lam`. The s1464 tail / de8-pyramid / de8-merge runs below were
+cancelled before starting.
+
 Runs (mt4s1464, LR 2e-6, seed 0): Lambda `f8k-mt4s1464-otr10M7{ng,tail,de0,ngtail}-lro-lr2e-06-lam`; Beaker
 `f8k-mt4-{pyr3,pyr3ng,pyr2,mrg05M7,mrg10M7}-s1464-tdb-lr2e-06`; plus the allocation / header ablation
 `f8k-mt4-otr10M7{,ds0,ds50,hdr8}-s1464-tdb` and the same on mt11s720. Results pending.
