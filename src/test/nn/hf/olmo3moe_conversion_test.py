@@ -16,7 +16,7 @@ from olmo_core.nn.hf.convert import (
     convert_olmo3moe_state_to_hf,
     iter_olmo3moe_state_to_hf,
 )
-from olmo_core.nn.hf.convert_checkpoint import _normalize_legacy_latent_moe_config
+from olmo_core.nn.transformer.config import normalize_legacy_config_dict
 from olmo_core.testing.utils import requires_fla, requires_gpu, requires_triton
 
 
@@ -37,12 +37,10 @@ def _fake_config():
 
 def test_legacy_kda_kernel_flag_is_normalized():
     config = {"block": {"sequence_mixer": {"use_cute_kernel": True}}}
-    _normalize_legacy_latent_moe_config(config)
+    normalize_legacy_config_dict(config)
     assert config == {"block": {"sequence_mixer": {"use_experimental_kernels": True}}}
     with pytest.raises(ValueError, match="legacy and current"):
-        _normalize_legacy_latent_moe_config(
-            {"use_cute_kernel": True, "use_experimental_kernels": False}
-        )
+        normalize_legacy_config_dict({"use_cute_kernel": True, "use_experimental_kernels": False})
 
 
 def _synthetic_hf_state(config):
@@ -183,7 +181,7 @@ def test_legacy_latent_moe_dimension_is_normalized():
             }
         }
     }
-    _normalize_legacy_latent_moe_config(config)
+    normalize_legacy_config_dict(config)
     assert config["block"]["latent_moe"] == {"latent_dim": 320, "bias": False}
 
 
