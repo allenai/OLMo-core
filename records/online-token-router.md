@@ -5,7 +5,7 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (mt4 ablations evaluated: drop layer M1-M12, router target, exploration, de16; per-task runs in progress)
+status: active (mt4 ablations done: split M1-M12, target, exploration, de16, keep 5%, layer skip, s1952; per-task runs evaluating)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop at block 8 (1 and 4 fail), gradient-norm target (activation-strength dh = random), exploration share 0-50% irrelevant.
@@ -426,6 +426,13 @@ Keep 5% matches keep 10% within seed noise (contradiction −0.014) but saves on
 0..L−1 for every token, plus the full-context step every 8) dominates. Router + layer skip (`--train-skip-layers`,
 composed in cdab8480a: the skip runs after the mid-stack compaction, and the FLOP adjustment leaves skipped blocks out
 of both sides; run_frac 0.906) costs ≈ 0.03 on contradiction for 5% PF. M7 dominates it at the same cost.
+
+**1c. More data at the same keep: otr10M8 on mt4s1952** (1,952 rows / task, 488 steps, Beaker, seed 0): 633 PF
+(0.41 × dense-equivalent), contra / nq / oolong / outlier 0.946 / 0.922 / 0.685 / 0.744 at 8k (2k: 0.972 / 0.980 /
+0.857 / 0.820). Against dense-s1464 (≈ 1,160 PF: 0.956 / 0.936 / 0.630 / 0.719) it is within 0.01-0.014 on contradiction
+/ nq and ahead on oolong (+0.055) and outlier (+0.025) at 55% of the compute. `ops result add --check` flagged outlier
+0.744 as above the experiment's previous best: outlier climbs steeply with training (dense 0.30 / 0.43 / 0.72 at 122 /
+244 / 366 steps) and this run has 488, so it is a training effect. The matching dense-s1952 point is the parent session's.
 
 **2. Router target (Prasann: "keep important tokens that are already good").** Targets: `gnorm` log ||dL/dh8||;
 `gxh` log |<dL/dh8, h8>|; `dh` log ||h8 − h0||, the residual change through blocks 0-7 (activation strength, no backward,

@@ -25,7 +25,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-otr (online); https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e (frozen)
-next_step: ONLINE ROUTER (2026-10-22, evening). DONE (record section "Follow-up ablations"): drop at block 8 (M1/M4 fail, Lambda + Beaker); router target gnorm ~ gxh > mix > dh ~ random (training + fidelity probe; dh rule cancelled); exploration 0-50% irrelevant, random loses outlier; de16 no gain; outlier seed noise 0.13 at s976. IN PROGRESS: split bracket otr10M6/M12 on Lambda node02 (113719/113720, dir OLMo-core-otr2) -> eval with /tmp/claude-3018/otr_lambda_eval.sh + otr_lambda_record.sh; per-task -tdp evals (6 runs) and remaining Beaker evals -> collect_otr.py --rows, filter rows already in ~/ops_state/results.jsonl, ops result add --check; trained-ckpt target fidelity probe 01M5JFDWV6HPE8K3HBNGQTXFA1. ds64 runs cancelled (Prasann).
+next_step: ONLINE ROUTER (2026-10-23). DONE (record "Follow-up ablations"): split curve M1-M12 with 2-3 seeds = depth threshold at block 7 (full-attention hypothesis falsified; M7 cheapest on the plateau); target gnorm ~ gxh > mix > dh ~ random; exploration 0-50% irrelevant; keep 5% ~ 10% (-8% PF); router + layer skip (cdab8480a) -0.03 contra for -5% PF; otr10M8-s1952 (633 PF) ~ dense-s1464 (1,160 PF). OPEN: per-task -tdp evals + remaining mt11/de16/sd1 Beaker evals (pending in the jupiter backlog) -> collect_otr.py --rows, filter rows already in ~/ops_state/results.jsonl, ops result add --check; proposed next: otr05M7, otr10M7de16 on Lambda node02 (dirs OLMo-core-otr2/otr3).
 ---
 
 # learned_router
