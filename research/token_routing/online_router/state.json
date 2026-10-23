@@ -1666,6 +1666,66 @@
    "ex": "01M5M20M13K531GX3H2ACMK2M6",
    "train_run": "f8k-mt4-otr10M7hdr8-s1464-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5M221YGY2Z0R49HWHRSRHDG",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5M2350DSEHNXKADNJSRFM89",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M23YYTBZQW5DV9NH8S8W6Q",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M25S6YHJHXAVKKD6DAB6FS",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5M26JE9K1P36HB4C56PQ00P",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5M27G8XRXVD92AJT9N3EJ4M",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5M28BG8BH25RX4D5SE17A2C",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5M2967M4M79YSDT2YJFA0PK",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5M2A32J1K77P3C17B2F85BX",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5M2B62BM94TVPJ0G6VBSY6Z",
+   "train_run": "f8k-mt11-otr10M7ds50-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
