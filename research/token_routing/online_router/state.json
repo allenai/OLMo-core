@@ -455,6 +455,14 @@
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
+  },
+  "f8k-mt4-otr10M7-s488-tdb-lr2e-06": {
+   "ex": "01M5KWJBVPX5DDTHDM291FD8TG",
+   "arm": "otr10M7",
+   "budget": "s488",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
   }
  },
  "evals": {
