@@ -1931,6 +1931,66 @@
    "train_run": "f8k-mt11-otr10M7f8-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5M4TAG0JCG283SX9KH0PYB7",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5M4V544RSQBA6BYKBHV3EKK",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5M4VY88J6G2SSYM2FYKDRDA",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5M4WQDKB8QQNK4SEQWBE4R4",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5M4XHZMS9J7ZV06TJMKR2MA",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5M4YBKYG0J0V4G15CNFRST8",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5M4Z5JMMSKCQJ0SBNP7E0A5",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5M4ZY871Y1YJ7PQTWA41XYH",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5M50QBNSRJYJZTRAAFKKHK2",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5M51GH1SZ9VSTG47Y6AQZNS",
+   "train_run": "f8k-mt11-otr10M7f16-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
