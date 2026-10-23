@@ -53,6 +53,8 @@ SHARD = os.environ.get("M64_SHARD", f"{W}/mt11_64k/shards/mt11L64")
 ROWS = int(os.environ.get("M64_ROWS", "156587"))
 SEQ_LEN = 65536
 GB = 128
+#: 8 by default; M64_NGPU=4 when whole nodes queue for hours (2026-10-23: 99 urgent whole-node jobs ahead). Rows/step
+#: and micro-batch are unchanged, so scores and FLOPs are unaffected; only wall-clock changes (compare like with like).
 GPUS = int(os.environ.get("M64_NGPU", "8"))
 MICRO = 1
 STEPS_FULL = ROWS // GB
@@ -148,7 +150,7 @@ def do_launch(a, mode):
                         print("  " + ln[:1200])
                 print(f"{name} [{steps_for(budget)} steps] -> rc={rc} {ex or out[-300:]}", flush=True)
                 if mode == "launch":
-                    st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": lr, "seed": a.seed,
+                    st["runs"][name] = {"ex": ex, "arm": arm, "budget": budget, "lr": lr, "seed": a.seed, "gpus": GPUS,
                                         "steps_expected": steps_for(budget), "state": "S" if ex else "LAUNCH-FAILED"}
                     save(st)
 
