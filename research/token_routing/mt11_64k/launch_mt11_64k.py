@@ -61,7 +61,9 @@ FRACTIONS = {"f1": 1, "f2": 2, "f4": 4, "f8": 8, "f16": 16}
 CLUSTER = os.environ.get("M64_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale")
 WANDB_GROUP = os.environ.get("M64_WANDB_GROUP", "m64-q35-4b")
 EXPERIMENT = "mt11_64k"
-SAVE_INTERVAL = 300
+#: resume points: urgent jobs are preemptible after minRuntime 1h, and the first router f4 attempt lost ~1h to a
+#: preemption with no checkpoint yet (2026-10-23); keep 1 (~55 GB at 4B)
+SAVE_INTERVAL = 100
 ARMS = {
     "dense": ARM_EXTRA["densepf"],
     **{a: ARM_EXTRA[a] + " --st-otr-samples-per-row 512" for a in ("otr10M7", "otr10M8", "otr30M7", "otr30M8")},
