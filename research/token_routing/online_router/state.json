@@ -335,6 +335,14 @@
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
+  },
+  "f8k-mt11-rnd10M7-s720-tdb-lr2e-06": {
+   "ex": "01M5KP8ZE88SJNX70PA40PWP82",
+   "arm": "rnd10M7",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
