@@ -200,3 +200,93 @@ def test_core_experts_fullgraph_fallback(device):
         expected = experts(x, indices, weights)
         actual = torch.compile(experts, fullgraph=True)(x, indices, weights)
     torch.testing.assert_close(actual, expected, rtol=1e-4, atol=1e-4)
+
+
+@pytest.mark.parametrize("kind", ["dense", "shared", "routed"])
+@pytest.mark.parametrize("projection", ["up_proj", "gate_proj", "down_proj"])
+@pytest.mark.parametrize("adaptation", ["adapter", "hook"])
+def test_core_experts_preserve_projection_adapters_and_hooks(kind, projection, adaptation):
+    from olmo_core.nn.moe.v2.hf.configuration_olmo3moe import Olmo3MoeConfig
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeCoreExperts,
+        Olmo3MoeCoreSharedExpert,
+        Olmo3MoeDenseMLP,
+        Olmo3MoeExpert,
+        _can_use_packed_projections,
+    )
+    from olmo_core.nn.moe.v2.hf.moe_numerics import core_swiglu
+
+    class Adapter(torch.nn.Module):
+        # Like an unmerged LoRA module, .weight exposes only the base weight.
+        def __init__(self, base):
+            super().__init__()
+            self.base = base
+            self.delta = torch.nn.Parameter(torch.zeros_like(base.weight))
+
+        @property
+        def weight(self):
+            return self.base.weight
+
+        def forward(self, x):
+            return self.base(x) + torch.nn.functional.linear(x, self.delta)
+
+    torch.manual_seed(42)
+    if kind == "dense":
+        expert = Olmo3MoeDenseMLP(
+            Olmo3MoeConfig(
+                hidden_size=16, dense_mlp_intermediate_size=32, moe_use_core_numerics=True
+            )
+        )
+    elif kind == "shared":
+        expert = Olmo3MoeCoreSharedExpert(16, 32, "silu")
+    else:
+        expert = Olmo3MoeExpert(16, 32, "silu")
+    assert _can_use_packed_projections(expert)
+    if adaptation == "adapter":
+        adapter = Adapter(getattr(expert, projection))
+        setattr(expert, projection, adapter)
+        delta = adapter.delta
+    else:
+        layer = getattr(expert, projection)
+        delta = torch.nn.Parameter(torch.zeros(layer.out_features))
+        layer.register_forward_hook(lambda module, args, output: output + delta)
+    assert not _can_use_packed_projections(expert)
+
+    x = torch.randn(5, 16)
+    if kind == "routed":
+        experts = Olmo3MoeCoreExperts([expert])
+        assert not experts._can_use_grouped_mm(x)
+        indices = torch.zeros(5, 1, dtype=torch.long)
+        weights = torch.ones(5, 1)
+
+        def forward():
+            return experts(x, indices, weights)
+
+        def reference():
+            return expert.down_proj(
+                core_swiglu(torch.cat((expert.up_proj(x), expert.gate_proj(x)), -1))
+            )
+
+    else:
+
+        def forward():
+            return expert(x)
+
+        def reference():
+            return expert.down_proj(expert.act_fn(expert.gate_proj(x)) * expert.up_proj(x))
+
+    before = forward().detach()
+    with torch.no_grad():
+        delta.fill_(0.25)
+    actual = forward()
+    expected = reference()
+    assert not torch.equal(actual, before)
+    torch.testing.assert_close(actual, expected)
+    gradient = torch.randn_like(actual)
+    actual_grad = torch.autograd.grad(actual, delta, gradient)[0]
+    expected_grad = torch.autograd.grad(expected, delta, gradient)[0]
+    assert actual_grad.count_nonzero() > 0
+    torch.testing.assert_close(actual_grad, expected_grad)
+    if kind == "routed":
+        compiled = torch.compile(experts, fullgraph=True)
+        torch.testing.assert_close(compiled(x, indices, weights), expected)

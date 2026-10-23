@@ -147,7 +147,17 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             return cos, sin
 
 
+def _can_use_packed_projections(expert):
+    # Reading weights directly bypasses adapters and per-module forward hooks.
+    return all(
+        type(proj) is nn.Linear and not proj._forward_hooks and not proj._forward_pre_hooks
+        for proj in (expert.up_proj, expert.gate_proj, expert.down_proj)
+    )
+
+
 def _core_shared_expert_forward(expert, x):
+    if not _can_use_packed_projections(expert):
+        return expert.down_proj(expert.act_fn(expert.gate_proj(x)) * expert.up_proj(x))
     # Match SharedExperts' packed GEMM and operand layout. Separate up/gate
     # projections can select a different accumulation order on Ampere.
     weight = torch.cat((expert.up_proj.weight.t(), expert.gate_proj.weight.t()), dim=1)
@@ -361,11 +371,19 @@ class Olmo3MoeCoreExperts(Olmo3MoeExperts):
     qualification, just as they replace the original HF expert implementation.
     """
 
+    def _can_use_grouped_mm(self, hidden_states: torch.Tensor) -> bool:
+        return super()._can_use_grouped_mm(hidden_states) and all(
+            _can_use_packed_projections(expert) for expert in self
+        )
+
     @staticmethod
     def _expert_forward(expert, x):
-        weight = torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
-        hidden = core_swiglu(F.linear(x, weight))
-        return expert.down_proj(hidden)
+        if _can_use_packed_projections(expert):
+            weight = torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
+            up_gate = F.linear(x, weight)
+        else:
+            up_gate = torch.cat((expert.up_proj(x), expert.gate_proj(x)), dim=-1)
+        return expert.down_proj(core_swiglu(up_gate))
 
     def _forward_compile_fallback(self, hidden_states, topk_ids, topk_weights):
         N, H = hidden_states.shape
