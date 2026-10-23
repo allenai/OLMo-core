@@ -514,6 +514,52 @@ Runs (mt4s1464, LR 2e-6, seed 0): Lambda `f8k-mt4s1464-otr10M7{ng,tail,de0,ngtai
 `f8k-mt4-{pyr3,pyr3ng,pyr2,mrg05M7,mrg10M7}-s1464-tdb-lr2e-06`; plus the allocation / header ablation
 `f8k-mt4-otr10M7{,ds0,ds50,hdr8}-s1464-tdb` and the same on mt11s720. Results pending.
 
+### Screen results (2026-10-23; single seed; eval_size 500; all recorded with `ops result add --check`)
+
+**mt4s488 (122 steps), Lambda, 8k contra / nq / oolong / outlier.** Dense s488 at 31 steps (≈ 99 PF): 0.525-0.669 /
+0.82 / 0.50 / 0.23-0.28.
+
+| arm | PF (× 389 dense-eq) | peak GiB / GPU | contra | nq | oolong | outlier |
+|---|---|---|---|---|---|---|
+| otr10M7 (de8, reference) | 152 (0.39) | 60.1 | 0.705 | 0.860 | 0.564 | 0.335 |
+| otr10M7de0 (no full steps) | 120 (0.31) | 60.1 | 0.663 | 0.846 | 0.542 | 0.343 |
+| ng0M7 (early blocks no-grad) | 73 (0.19) | 53.0 | 0.426 | 0.764 | 0.542 | 0.275 |
+| frz0M7 (early stack frozen) | 72 (0.19) | 47.7 | 0.415 | 0.744 | 0.537 | 0.271 |
+| **fa30M7** (freeze after 30 steps) | 84 (0.22) | 47.7 after step 31 | 0.589 | 0.852 | 0.556 | 0.264 |
+| pyr3frz0 (pyramid + frozen 0-2) | 66 (0.17) | 53.4 | 0.336 | 0.842 | 0.511 | 0.265 |
+| mrg05M7de0 (merge, keep 5%) | 109 (0.28) | 60 | 0.551 | 0.810 | 0.517 | 0.314 |
+| otr10M7f8 (per-doc floor 8) | 160 (0.41) | | 0.783 | 0.858 | 0.580 | 0.348 |
+| otr15M7 (keep 0.15, control) | 165 (0.42) | | 0.744 | 0.864 | 0.580 | 0.377 |
+| otr10M7f16 (floor 16) | 180 (0.46) | | 0.815 | 0.866 | 0.605 | 0.333 |
+| otr20M7 (keep 0.20, control) | 177 (0.46) | | 0.780 | 0.888 | 0.575 | 0.292 |
+
+Beaker s488 copies agree (otr10M7 0.702 / 0.850 / 0.586 / 0.302; de0 0.679 / 0.848 / 0.561 / 0.317; pyr3de0 0.418 /
+0.858 / 0.506 / 0.333). Findings: (1) the early stack must keep learning -- cutting its gradient (no-grad or frozen from
+step 0) costs ≈ 0.24 contra and 0.08-0.1 nq for −40% PF and −7 to −12 GiB; consistent with the grad-composition prior
+(blocks 0-6 hold 0.42-0.51 of the gradient energy at base). (2) warmup-then-freeze recovers most of it: fa30M7 keeps
+nq at de0's level and contra at 0.59 for −30% PF and −12 GiB vs de0. (3) removing the full-context steps (de0) costs
+≈ 0.04 contra for −21% PF. (4) the pyramid loses contradiction (keeping 50% at block 3 starves it). (5) merge at 5% is
+not better than drop at 10%. (6) the per-document floor gains ≈ +0.035-0.04 contra over a keep-matched control.
+
+**mt11s720 (Beaker), 8k, mean over the 9 tasks (reorder@8k and rerank excluded):**
+
+| arm | PF (× dense) | strmatch | grouping | xabsence | contra | mean9 |
+|---|---|---|---|---|---|---|
+| otr10M7 | 295 (0.41) | 0.789 | 0.287 | 0.523 | 0.835 | 0.699 |
+| otr10M7f8 | 313 (0.44) | 0.800 | 0.277 | 0.561 | 0.833 | 0.699 |
+| **otr10M7f16** | 352 (0.49) | **0.922** | 0.270 | 0.595 | 0.864 | **0.724** |
+| otr10M7hdr8 (first 8 tokens kept) | 314 (0.44) | 0.744 | 0.306 | 0.648 | 0.835 | 0.711 |
+| otr10M7ds0 / ds50 (global budget) | 293 | 0.770 / 0.769 | | | | 0.696 / 0.697 |
+| rnd10M7 (random) | 295 | 0.793 | 0.353 | 0.466 | 0.803 | 0.691 |
+| otr30M8 | 400 (0.56) | 0.845 | 0.301 | 0.628 | 0.876 | 0.728 |
+| dense-s720 | 1.0 | 0.974 | 0.361 | 0.555 | 0.873 | 0.741 |
+
+Strmatch: random = router (0.793 / 0.789) -- the loss is the cut, not the choice, as the fidelity probe showed (block 7,
+keep 0.3, trained otr10M8-s480: router 0.08 / oracle 0.55 / random 0.09 on strmatch vs 0.89 / 0.90 / 0.15 on grouping;
+⚠ 12 rows / task). A per-document floor of 16 tokens fixes it (0.922; `--check` flags the new high) and brings the mean
+to otr30M8's at 12% less compute. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
+Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720.
+
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
 
 Cancelled before any started (Prasann: reproduce the per-task numbers instead, since the mixed runs give fewer
