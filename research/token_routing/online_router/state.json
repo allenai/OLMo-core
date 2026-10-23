@@ -408,42 +408,50 @@
    "mix": "mt11",
    "seed": 0
   },
-  "f8k-mt4-pyr3-s1464-tdb-lr2e-06": {
-   "ex": "01M5KV5WYQG9B494V3DPEN30NQ",
-   "arm": "pyr3",
-   "budget": "s1464",
+  "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06": {
+   "ex": "01M5KWASKMKER94GR2K9759QHV",
+   "arm": "otr10M7de0",
+   "budget": "s488",
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
   },
-  "f8k-mt4-pyr3ng-s1464-tdb-lr2e-06": {
-   "ex": "01M5KV6XCXH63CJHCWP8D8YH4E",
-   "arm": "pyr3ng",
-   "budget": "s1464",
+  "f8k-mt4-ng0M7-s488-tdb-lr2e-06": {
+   "ex": "01M5KWBNTSPNV64BAXG2K10ZD7",
+   "arm": "ng0M7",
+   "budget": "s488",
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
   },
-  "f8k-mt4-pyr2-s1464-tdb-lr2e-06": {
-   "ex": "01M5KV7VWQSTS21NG4094EPGAV",
-   "arm": "pyr2",
-   "budget": "s1464",
+  "f8k-mt4-frz0M7-s488-tdb-lr2e-06": {
+   "ex": "01M5KWCK88VHPASWDYDCFZ02MY",
+   "arm": "frz0M7",
+   "budget": "s488",
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
   },
-  "f8k-mt4-mrg05M7-s1464-tdb-lr2e-06": {
-   "ex": "01M5KVNRMJNJK99VYB8Z6BQKFZ",
-   "arm": "mrg05M7",
-   "budget": "s1464",
+  "f8k-mt4-pyr3de0-s488-tdb-lr2e-06": {
+   "ex": "01M5KWDDNNKTAWKNZ5HPHA8P85",
+   "arm": "pyr3de0",
+   "budget": "s488",
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
   },
-  "f8k-mt4-mrg10M7-s1464-tdb-lr2e-06": {
-   "ex": "01M5KVPKW9VK9914QQWTHNZQJX",
-   "arm": "mrg10M7",
-   "budget": "s1464",
+  "f8k-mt4-pyr3frz0-s488-tdb-lr2e-06": {
+   "ex": "01M5KWEAESWRZ26Z13RGDEGCEV",
+   "arm": "pyr3frz0",
+   "budget": "s488",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0
+  },
+  "f8k-mt4-mrg05M7de0-s488-tdb-lr2e-06": {
+   "ex": "01M5KWF9FY2T09G7VCH7XP780C",
+   "arm": "mrg05M7de0",
+   "budget": "s488",
    "lr": 2e-06,
    "mix": "mt4",
    "seed": 0
@@ -1427,6 +1435,83 @@
    "mix": "mt4",
    "seed": 0,
    "why": "moved to Lambda node02 (jupiter backlog), 2026-10-23"
+  },
+  "f8k-mt4-pyr3-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV5WYQG9B494V3DPEN30NQ",
+   "arm": "pyr3",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "superseded 2026-10-23: Prasann wants FLOP+memory cuts, no full-context steps; screen at s488 first"
+  },
+  "f8k-mt4-pyr3ng-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV6XCXH63CJHCWP8D8YH4E",
+   "arm": "pyr3ng",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "superseded 2026-10-23: Prasann wants FLOP+memory cuts, no full-context steps; screen at s488 first"
+  },
+  "f8k-mt4-pyr2-s1464-tdb-lr2e-06": {
+   "ex": "01M5KV7VWQSTS21NG4094EPGAV",
+   "arm": "pyr2",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "superseded 2026-10-23: Prasann wants FLOP+memory cuts, no full-context steps; screen at s488 first"
+  },
+  "f8k-mt4-mrg05M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5KVNRMJNJK99VYB8Z6BQKFZ",
+   "arm": "mrg05M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "superseded 2026-10-23: Prasann wants FLOP+memory cuts, no full-context steps; screen at s488 first"
+  },
+  "f8k-mt4-mrg10M7-s1464-tdb-lr2e-06": {
+   "ex": "01M5KVPKW9VK9914QQWTHNZQJX",
+   "arm": "mrg10M7",
+   "budget": "s1464",
+   "lr": 2e-06,
+   "mix": "mt4",
+   "seed": 0,
+   "why": "superseded 2026-10-23: Prasann wants FLOP+memory cuts, no full-context steps; screen at s488 first"
+  },
+  "f8k-mt4s1464-otr10M7ng-lro-lr2e-06-lam": {
+   "slurm": 113936,
+   "arm": "otr10M7ng",
+   "seed": 0,
+   "commit": "1206df105",
+   "dir": "OLMo-core-otr4",
+   "why": "superseded 2026-10-23 (no dense tail; screen at s488 first)"
+  },
+  "f8k-mt4s1464-otr10M7tail-lro-lr2e-06-lam": {
+   "slurm": 113937,
+   "arm": "otr10M7tail",
+   "seed": 0,
+   "commit": "1206df105",
+   "dir": "OLMo-core-otr4",
+   "why": "superseded 2026-10-23 (no dense tail; screen at s488 first)"
+  },
+  "f8k-mt4s1464-otr10M7de0-lro-lr2e-06-lam": {
+   "slurm": 113938,
+   "arm": "otr10M7de0",
+   "seed": 0,
+   "commit": "1206df105",
+   "dir": "OLMo-core-otr4",
+   "why": "superseded 2026-10-23 (no dense tail; screen at s488 first)"
+  },
+  "f8k-mt4s1464-otr10M7ngtail-lro-lr2e-06-lam": {
+   "slurm": 113939,
+   "arm": "otr10M7ngtail",
+   "seed": 0,
+   "commit": "1206df105",
+   "dir": "OLMo-core-otr4",
+   "why": "superseded 2026-10-23 (no dense tail; screen at s488 first)"
   }
  },
  "lambda_runs": {
@@ -1549,34 +1634,6 @@
    "seed": 0,
    "commit": "0d3e39a44",
    "dir": "OLMo-core-otr3"
-  },
-  "f8k-mt4s1464-otr10M7ng-lro-lr2e-06-lam": {
-   "slurm": 113936,
-   "arm": "otr10M7ng",
-   "seed": 0,
-   "commit": "1206df105",
-   "dir": "OLMo-core-otr4"
-  },
-  "f8k-mt4s1464-otr10M7tail-lro-lr2e-06-lam": {
-   "slurm": 113937,
-   "arm": "otr10M7tail",
-   "seed": 0,
-   "commit": "1206df105",
-   "dir": "OLMo-core-otr4"
-  },
-  "f8k-mt4s1464-otr10M7de0-lro-lr2e-06-lam": {
-   "slurm": 113938,
-   "arm": "otr10M7de0",
-   "seed": 0,
-   "commit": "1206df105",
-   "dir": "OLMo-core-otr4"
-  },
-  "f8k-mt4s1464-otr10M7ngtail-lro-lr2e-06-lam": {
-   "slurm": 113939,
-   "arm": "otr10M7ngtail",
-   "seed": 0,
-   "commit": "1206df105",
-   "dir": "OLMo-core-otr4"
   }
  }
 }
