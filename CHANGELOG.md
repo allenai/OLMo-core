@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Preserve the requested index dtype when expanding shuffled chunks, preventing `SamplingInstanceSource` from duplicating and dropping training samples when `sequence_length` is shorter than `max_sequence_length`.
+
 ### Added
 
 - Added Molmo2 support in `olmo_core.nn.vision`: a HuggingFace Molmo2 checkpoint loader (`molmo2_loader`) and special-token definitions, plus logit-parity and generation tests. `MultimodalLM` gains bidirectional image-token attention (`token_type_ids`), explicit RoPE `position_ids`, and sub-segment (branch-packing) attention isolation.
