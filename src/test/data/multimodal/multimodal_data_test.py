@@ -429,3 +429,47 @@ def test_pixmo_cap_rejects_remote_image_urls():
     ds = _pixmo_cap("caption")
     with pytest.raises(ValueError, match="Remote image URLs"):
         ds._load_image({"image": "https://example.com/cat.jpg"})
+
+
+def _two_branch_example(n_tail: int = 4):
+    """A built example: 2 image tokens, then two branches (subsegment 0 and 1) of loss tokens."""
+    from olmo_core.nn.vision.molmo2_tokens import IM_PATCH_ID
+
+    n = 2 + 2 * n_tail
+    return {
+        "input_ids": np.array([IM_PATCH_ID] * 2 + [5] * (2 * n_tail), dtype=np.int64),
+        "labels": np.full(n, 7, dtype=np.int64),
+        "loss_masks": np.array([0.0, 0.0] + [1.0] * (2 * n_tail), dtype=np.float32),
+        "position_ids": np.arange(n, dtype=np.int64),
+        "token_type_ids": np.array([1, 1] + [0] * (2 * n_tail), dtype=np.int64),
+        "subsegment_ids": np.array([10000, 10000] + [0] * n_tail + [1] * n_tail, dtype=np.int64),
+    }
+
+
+@pytest.mark.parametrize(
+    "weighting,expected", [("none", 1.0), ("root_subsegments", float(np.sqrt(2.0)))]
+)
+def test_truncation_rescales_surviving_branches_only_when_weighting_is_on(weighting, expected):
+    from olmo_core.data.multimodal.sft_common import truncate_example
+
+    seq = _two_branch_example()
+    out = truncate_example(seq, 2 + 4, loss_token_weighting=weighting)  # drops branch 1
+    assert len(out["input_ids"]) == 6
+    kept = out["loss_masks"][out["loss_masks"] > 0]
+    assert kept.shape == (4,)
+    np.testing.assert_allclose(kept, expected, rtol=1e-6)
+
+
+def test_collator_refuses_to_truncate_image_tokens():
+    from olmo_core.data.multimodal.collator import MultimodalCollator
+
+    ex = _two_branch_example()
+    ex.update(
+        images=np.zeros((1, 4, 8), dtype=np.float32),
+        pooled_patches_idx=np.zeros((1, 4), dtype=np.int64),
+    )
+    with pytest.raises(ValueError, match="<im_patch>"):
+        MultimodalCollator(pad_token_id=0, pad_sequence_length=1)([ex])
+    # Cutting only trailing text is fine.
+    out = MultimodalCollator(pad_token_id=0, pad_sequence_length=6)([ex])
+    assert out["input_ids"].shape == (1, 6)

@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 import numpy as np
 
-from .sequence_builder import example_rng
+from .sequence_builder import ATTEND_ALL_SUBSEGMENT_ID, example_rng
 
 __all__ = [
     "heldout_ids",
@@ -235,11 +235,17 @@ def decode_pil_image(obj: Any):
     raise TypeError(f"Unsupported image cell type: {type(obj)}")
 
 
-def truncate_example(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.ndarray]:
+def truncate_example(
+    seq: Dict[str, np.ndarray], max_len: int, *, loss_token_weighting: str = "none"
+) -> Dict[str, np.ndarray]:
     """Right-truncate every per-token field of ``seq`` to ``max_len``.
 
     :param seq: A built example (as returned by the sequence builders).
     :param max_len: Maximum token count.
+    :param loss_token_weighting: The weighting the example was built with. Only the
+        ``root_subsegments*`` modes scale each branch by ``1/sqrt(n_branches)``; when whole
+        branches are cut, the survivors' weights are rescaled to ``1/sqrt(n_surviving)``
+        (mm_olmo ``example_preprocessor.py:260-293``). With ``"none"`` nothing is rescaled.
 
     :returns: The example with per-token fields truncated (other fields untouched).
 
@@ -259,7 +265,15 @@ def truncate_example(seq: Dict[str, np.ndarray], max_len: int) -> Dict[str, np.n
     if not np.any(seq["loss_masks"][:max_len] > 0):
         raise ValueError(f"Truncation to {max_len} removed all loss tokens")
     n = len(seq["input_ids"])
-    return {k: (v[:max_len] if v.ndim == 1 and len(v) == n else v) for k, v in seq.items()}
+    out = {k: (v[:max_len] if v.ndim == 1 and len(v) == n else v) for k, v in seq.items()}
+    if loss_token_weighting != "none" and "subsegment_ids" in seq:
+        before = np.unique(seq["subsegment_ids"])
+        after = np.unique(out["subsegment_ids"])
+        n_before = len(before[before != ATTEND_ALL_SUBSEGMENT_ID])
+        n_after = len(after[after != ATTEND_ALL_SUBSEGMENT_ID])
+        if n_after and n_after != n_before:
+            out["loss_masks"] = out["loss_masks"] * np.sqrt(n_before / n_after)
+    return out
 
 
 def get_example_with_skip(dataset, index: int, size: int) -> Dict[str, np.ndarray]:
