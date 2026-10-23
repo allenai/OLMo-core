@@ -165,7 +165,7 @@ See `next_step` above.
   36.8/27.9; merge-dropped 31/62/124 -> 1.7315/1.7134/1.7083 (= plain OTR), 35.9/28.6; pyramid+nograd 60/120/240 =
   415/803/1555 PF -> 1.7115/1.7050/1.6989 (m <0.33/0.23/0.17), 36.8/23.7. Peak never drops (every-8 full steps).
   Queued: 4019607 exit-loss (W 1.0/0.3 x de8/de0, + dense-keep 0.5), then 4019842 early-nograd + dense-keep 0.5 and
-  early-nograd de0 (both = frozen early stack after step 1). early-nograd + exit loss dropped: exit grads reach only the head.
+  early-nograd de0. The F-steps are dense_now() steps, so the early stack DOES train on them (router 15bf04ff3 test); only the de0 arm has a frozen early stack. early-nograd + exit loss dropped: exit grads reach only the head.
 - RESULT 2026-10-23 03:40 router CPT (cubbins 4019297; MEASURED flop-meter PF on both sides -- dense is 27.5 PF/step +
   ~27 PF constant, not the 36.6 table value analyze.py used, which flattered drop arms ~1.2x; verdicts unchanged):
   OTR10M7lr20 31/62/124/310 steps = 335/643/1258/3083 PF: CE 1.7308/1.7138/1.7079/1.7055 (m <0.41/<0.21/0.12/0.06),

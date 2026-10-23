@@ -24,8 +24,9 @@
 #        31 / 62 / 124 / 310 (measured PF decides the budget); and with NO full-context steps (OTR_DENSE=0, the
 #        peak-memory bet: de0 collapsed at 1.80 with 10% labels) at 40 / 80 / 160. Needs the router branch with the flag.
 #   OTRY early-nograd (best router variant) with a bounded peak: periodic steps at 50% keep (--st-otr-dense-keep-frac
-#        0.5) at 46 / 92 / 185, and no periodic steps (de0) at 60 / 120 / 240. NB: with early-nograd, routed F-steps are
-#        no-grad for blocks [0, 7) too, so in both arms the early stack trains only on warmup step 1 (= frozen early stack)
+#        0.5) at 46 / 92 / 185 -- the periodic F-steps still count as dense steps, so blocks [0, 7) get full forward +
+#        backward there (router 15bf04ff3 test pins it) -- and no periodic steps (de0, early stack frozen after step 1)
+#        at 60 / 120 / 240
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
