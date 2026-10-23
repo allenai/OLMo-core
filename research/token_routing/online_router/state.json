@@ -1806,6 +1806,11 @@
    "ex": "01M5M2Q8RKC6Z4BDC2RNF27C5D",
    "train_run": "f8k-mt4-otr10M7de0-s488-tdb-lr2e-06",
    "task": "oolong"
+  },
+  "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06-evnq": {
+   "ex": "01M5M2R8CBT5X1QRT36B0MJ9Y3",
+   "train_run": "f8k-mt4-otr10M7ds50-s1464-tdb-lr2e-06",
+   "task": "nq"
   }
  },
  "failed_evals": {
