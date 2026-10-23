@@ -193,15 +193,15 @@ def main():
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     global MID_LAYER
-    MID_LAYER = L = a.mid_layer
+    MID_LAYER = ML = a.mid_layer
     # the probe module reads these globals at call time: capture h_L / dL/dh_L and add the L+q feature set
-    OP.HIDDEN_LAYERS = tuple(sorted(set(OP.HIDDEN_LAYERS) | {L}))
-    OP.TARGET_LAYERS = {**OP.TARGET_LAYERS, f"gnorm@L{L}": L}
-    OP.FEATURE_SETS = {**OP.FEATURE_SETS, f"L{L}+q": (L, True, False)}
+    OP.HIDDEN_LAYERS = tuple(sorted(set(OP.HIDDEN_LAYERS) | {ML}))
+    OP.TARGET_LAYERS = {**OP.TARGET_LAYERS, f"gnorm@L{ML}": ML}
+    OP.FEATURE_SETS = {**OP.FEATURE_SETS, f"L{ML}+q": (ML, True, False)}
     tasks = [t for t in a.tasks.split(",") if t] or None
     task_names = tasks or TASKS
     mid_rules = MID_RULES if not a.no_target_ablation else ("router_doc", "oracle_doc", "random_doc")
-    mid = f"mid{L}"
+    mid = f"mid{ML}"
     torch.manual_seed(0)
     model = build_model(find_ckpt(a.ckpt))
     fit = load_rows(a.shard, a.fit_rows, a.row_offset, tasks)
@@ -209,11 +209,11 @@ def main():
     test = load_rows(a.shard, a.test_rows, a.row_offset + 80, tasks)
 
     # ---- fit the router scorers (hidden-state gradients only; parameters frozen)
-    fits = {"mid8": (f"L{L}+q", f"gnorm@L{L}")}
+    fits = {"mid8": (f"L{ML}+q", f"gnorm@L{ML}")}
     if not a.no_input:
         fits["input"] = ("L4+q", "gnorm@emb")
     if not a.no_target_ablation:
-        fits.update({f"mid8_{t}": (f"L{L}+q", t) for t in MID_TARGETS})
+        fits.update({f"mid8_{t}": (f"L{ML}+q", t) for t in MID_TARGETS})
     stats = {k: [0, 0] for k in fits}
     t0 = time.time()
     for i, row in enumerate(fit):
@@ -262,12 +262,12 @@ def main():
         r = cnt[doc] - 1 - j
         fl_score = -torch.minimum(j, r).float() + 1e-6 * torch.rand(n, device=b.device)
         scores = {
-            "mid8": {"router": design(parts, f"L{L}+q") @ W["mid8"], "oracle": tg[f"gnorm@L{L}"][b].double()},
+            "mid8": {"router": design(parts, f"L{ML}+q") @ W["mid8"], "oracle": tg[f"gnorm@L{ML}"][b].double()},
         }
         if not a.no_input:
             scores["input"] = {"router": design(parts, "L4+q") @ W["input"], "oracle": tg["gnorm@emb"][b].double()}
         mt = mid_targets(o, tg, b) if not a.no_target_ablation else {}
-        X8 = design(parts, f"L{L}+q")
+        X8 = design(parts, f"L{ML}+q")
         for t in (MID_TARGETS if not a.no_target_ablation else ()):
             scores["mid8"][f"router_{t}"] = X8 @ W[f"mid8_{t}"]
             scores["mid8"][f"oracle_{t}"] = mt[t]
@@ -315,7 +315,7 @@ def main():
             summ.append(dict(task=task, mode=mode, rule=rule, rho=rho, eval_size=len(rr),
                              **{m: med([r[m] for r in rr if m in r]) for m in
                                 ("cos_all", "cos_blocks", "rel_err_all", "norm_ratio_all", "dce", "kept_frac")}))
-    json.dump(dict(mid_layer=L, tasks=list(task_names), ckpt=a.ckpt, shard=a.shard, row_offset=a.row_offset, test_rows_per_task=a.test_rows, fit_rows_per_task=a.fit_rows,
+    json.dump(dict(mid_layer=ML, tasks=list(task_names), ckpt=a.ckpt, shard=a.shard, row_offset=a.row_offset, test_rows_per_task=a.test_rows, fit_rows_per_task=a.fit_rows,
                    rows=res, summary=summ), open(a.out, "w"), indent=1)
     log("=== medians over held-out rows (cos_all / rel_err / norm_ratio / dCE) ===")
     for s in summ:
