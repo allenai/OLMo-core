@@ -310,11 +310,24 @@ def _head_dim(d_model: int, mixer: Mapping[str, Any]) -> int:
 
 
 def _norm_eps(norms: list) -> float:
-    eps = {n["eps"] for n in norms if n is not None}
+    """
+    The one epsilon MaxText applies to every norm, after checking that each of ``norms`` is a
+    plain RMS norm with a gain and no bias. ``as_config_dict()`` drops unset fields, so the
+    RMSNorm constructor's defaults fill them in here.
+    """
+    eps = set()
+    for n in norms:
+        if n is None:
+            continue
+        if n.get("name", "default") != "rms":
+            raise ValueError(f"MaxText's decoders use RMS norms, not {n.get('name', 'default')!r}")
+        if not n.get("elementwise_affine", True):
+            raise ValueError("MaxText's decoders' norms have a gain (elementwise_affine=True)")
+        if n.get("bias", True):
+            raise ValueError("MaxText's decoders' norms have no bias")
+        eps.add(n.get("eps", 1e-5))
     if len(eps) != 1:
         raise ValueError(f"MaxText uses one epsilon for every norm, but this model has {eps}")
-    if any(n is not None and (n.get("name", "rms") != "rms" or n.get("bias")) for n in norms):
-        raise ValueError("MaxText's decoders use bias-free RMS norms")
     return eps.pop()
 
 
@@ -485,6 +498,13 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
     for i, block in enumerate(blocks):
         mixer = block["sequence_mixer"]
         if mixer.get("type") == "attention":
+            # Resolve the optional head settings first, so blocks that spell the same model
+            # differently (unset vs. explicit) compare equal.
+            mixer = {
+                **mixer,
+                "n_kv_heads": mixer.get("n_kv_heads") or mixer["n_heads"],
+                "head_dim": _head_dim(d_model, mixer),
+            }
             attn = _same(attn, mixer, ("n_heads", "n_kv_heads", "head_dim"), "attention")
             # ``as_config_dict()`` drops None fields, and attention then builds with bias=True.
             if mixer.get("bias", True):
@@ -509,6 +529,11 @@ def _hybrid_moe_config(model_config: Mapping[str, Any], blocks: list) -> MaxText
                     f"block {i}: MaxText's olmoe3 decoder needs an elementwise output gate"
                 )
         elif mixer.get("type") == "kimi_delta_attention":
+            mixer = {
+                **mixer,
+                "n_v_heads": mixer.get("n_v_heads") or mixer["n_heads"],
+                "head_dim": _head_dim(d_model, mixer),
+            }
             kda = _same(
                 kda,
                 mixer,

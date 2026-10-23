@@ -609,6 +609,68 @@ def test_hybrid_without_emo():
     assert not any(k.startswith("olmo_segment_eos_token_id") for k in overrides)
 
 
+def kda_blocks(config: dict) -> list:
+    """Every block config in ``config`` whose sequence mixer is KDA."""
+    blocks = [config["block"], *(config.get("block_overrides") or {}).values()]
+    return [b for b in blocks if b["sequence_mixer"].get("type") == "kimi_delta_attention"]
+
+
+@pytest.mark.parametrize("how", ["omitted", "none", "mixed"])
+def test_hybrid_kda_default_n_v_heads_is_resolved(how):
+    # ``n_v_heads`` is optional and defaults to ``n_heads``; saved configs may omit it, and
+    # blocks may spell the same value differently.
+    config = load_fixture("hybrid_moe_small_config.json")
+    expected = get_maxtext_config(config)
+    for i, block in enumerate(kda_blocks(config)):
+        mixer = block["sequence_mixer"]
+        assert mixer["n_v_heads"] == mixer["n_heads"]
+        if how == "none":
+            mixer["n_v_heads"] = None
+        elif how == "omitted" or i == 0:
+            del mixer["n_v_heads"]
+    assert get_maxtext_config(config) == expected
+
+
+def norm_configs(obj):
+    """Every layer norm config dict nested anywhere in ``obj``."""
+    if isinstance(obj, dict):
+        if str(obj.get("_CLASS_", "")).endswith("LayerNormConfig"):
+            yield obj
+        for value in obj.values():
+            yield from norm_configs(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from norm_configs(value)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_omitted_norm_epsilon_is_resolved(name):
+    # ``eps`` is optional; RMSNorm builds with 1e-5 when it's unset.
+    config = load_fixture(FIXTURE_FILES[name])
+    for norm in norm_configs(config):
+        del norm["eps"]
+    assert get_maxtext_config(config).norm_eps == 1e-5
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_omitted_norm_bias_defaults_to_true_fails(name):
+    # ``bias`` is optional too, and RMSNorm builds with a bias when it's unset.
+    config = load_fixture(FIXTURE_FILES[name])
+    for norm in norm_configs(config):
+        del norm["bias"]
+    with pytest.raises(ValueError, match="bias"):
+        get_maxtext_config(config)
+
+
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+def test_non_affine_norm_fails(name):
+    config = load_fixture(FIXTURE_FILES[name])
+    for norm in norm_configs(config):
+        norm["elementwise_affine"] = False
+    with pytest.raises(ValueError, match="affine"):
+        get_maxtext_config(config)
+
+
 def test_hybrid_latent_up_proj_input_norm_fails():
     config = load_fixture("hybrid_moe_small_config.json")
     for block in moe_blocks(config):
