@@ -290,3 +290,45 @@ def test_core_experts_preserve_projection_adapters_and_hooks(kind, projection, a
     if kind == "routed":
         compiled = torch.compile(experts, fullgraph=True)
         torch.testing.assert_close(compiled(x, indices, weights), expected)
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float32])
+def test_core_numerics_reuses_custom_ops_across_module_imports(dtype, monkeypatch):
+    import importlib.util
+    import sys
+
+    from olmo_core.nn.moe.v2.hf import moe_numerics
+
+    def reject_registration(*args, **kwargs):
+        pytest.fail("Importing another checkpoint must not register custom ops again")
+
+    torch.manual_seed(91)
+    values = torch.randn(5, 3, 16, dtype=dtype, requires_grad=True)
+    probabilities = torch.rand(5, 3, requires_grad=True)
+    compiled = torch.compile(moe_numerics.core_combine, fullgraph=True)
+    expected = compiled(values, probabilities)
+    gradient = torch.randn_like(expected)
+    expected_grads = torch.autograd.grad(expected, (values, probabilities), gradient)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(torch.library, "custom_op", reject_registration)
+        for name in ("hf_checkpoint_a_numerics", "hf_checkpoint_b_numerics"):
+            spec = importlib.util.spec_from_file_location(name, moe_numerics.__file__)
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            patch.setitem(sys.modules, name, module)
+            spec.loader.exec_module(module)
+            assert module.core_combine is moe_numerics.core_combine
+            assert module._core_combine_backward_op is moe_numerics._core_combine_backward_op
+            actual = module.core_combine(values, probabilities)
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+            actual_grads = torch.autograd.grad(actual, (values, probabilities), gradient)
+            for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+                torch.testing.assert_close(actual_grad, expected_grad, rtol=0, atol=0)
+
+    # A graph compiled before the imports must retain working forward/backward kernels.
+    actual = compiled(values, probabilities)
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    actual_grads = torch.autograd.grad(actual, (values, probabilities), gradient)
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad, rtol=0, atol=0)
