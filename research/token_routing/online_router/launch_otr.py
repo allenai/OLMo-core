@@ -74,6 +74,12 @@ ARMS = {
     # pyramid drop: keep 0.5 from block 3, 0.1 from 7, 0.03 from 16 (each stage its own router at its own layer)
     "mrg05M7": otr(0.05, drop=7, extra="--st-otr-merge-dropped"),   # merge instead of drop, keep 5%
     "mrg10M7": otr(0.1, drop=7, extra="--st-otr-merge-dropped"),
+    # memory + FLOPs (Prasann, 2026-10-23: "ideas which can save both on FLOPs and memory"): NO full-context steps
+    "ng0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-early-nograd"),       # early blocks forward-only always
+    "frz0M7": otr(0.1, drop=7, dense_every=0, extra="--st-otr-freeze-early"),      # + frozen (no grads, no Adam state)
+    "pyr3de0": otr(0.1, drop=7, dense_every=0, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),
+    "pyr3frz0": otr(0.1, drop=7, dense_every=0, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-freeze-early"),
+    "mrg05M7de0": otr(0.05, drop=7, dense_every=0, extra="--st-otr-merge-dropped"),
     "pyr3": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),
     "pyr3ng": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd"),
     "pyr2": otr(0.1, drop=7, extra="--st-otr-stages 7:0.1,16:0.03"),

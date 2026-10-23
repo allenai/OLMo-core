@@ -264,6 +264,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_dense_tail_frac: float = 0.0
     st_otr_stages: str = ""
     st_otr_merge_dropped: bool = False
+    st_otr_freeze_early: bool = False
     st_otr_score: str = "router"
     st_otr_feature_layer: int = 0
     st_otr_drop_layer: int = 0
@@ -1022,6 +1023,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         dense_tail_frac=o.st_otr_dense_tail_frac,
         stages=o.st_otr_stages,
         merge_dropped=o.st_otr_merge_dropped,
+        freeze_early=o.st_otr_freeze_early,
         score=o.st_otr_score,
         feature_layer=o.st_otr_feature_layer,
         drop_layer=o.st_otr_drop_layer,
@@ -1194,6 +1196,13 @@ class SoftToken(Variant):
             slot_stop_ids=(None if o.st_slot_mode == "mean" else build_slot_stop_set(o, ctx)),
             cat_keep=resolve_cat_keep(o),
         )
+        if online and o.st_otr_freeze_early:
+            from olmo_core.nn.online_token_router import freeze_early_blocks
+
+            r = model._online_token_router
+            n = freeze_early_blocks(model, r.cfg.drop_layer)
+            print(f"[variants] online router freeze_early: embeddings + blocks [0, {r.cfg.drop_layer}) frozen "
+                  f"({n / 1e6:.0f}M params: no grads, no optimizer state)", flush=True)
         if o.st_tokexit_layer >= 0:
             # token exit: the same keep rule, dropped tokens leave at the input of this block
             model.enable_token_exit(o.st_tokexit_layer)

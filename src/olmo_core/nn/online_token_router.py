@@ -112,6 +112,10 @@ class OnlineRouterConfig:
     """Mid-stack only: on ROUTED steps run blocks [0, drop_layer) forward-only (no_grad; the hidden state is a fresh leaf
     at the split, so the router's target hook still reads dL/dh there). Those blocks then learn only on the dense
     (full-context) steps, and the FLOP meter charges them forward-only (1/3) on routed steps."""
+    freeze_early: bool = False
+    """Mid-stack only: FREEZE the embeddings and blocks [0, L) (L = the first drop layer): ``requires_grad=False`` before
+    the train module is built (:func:`freeze_early_blocks`), so they never get gradients or optimizer state, and every
+    forward (dense steps included) runs them forward-only -- no stored activations. Charged forward-only."""
     dense_tail_frac: float = 0.0
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
@@ -150,6 +154,8 @@ class OnlineRouterConfig:
                 raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
         if self.merge_dropped and (self.drop_layer <= 0 or self.stages):
             raise ValueError("online router merge_dropped needs a single-stage mid-stack drop (drop_layer > 0, no stages)")
+        if self.freeze_early and self.drop_layer <= 0 and not self.stages:
+            raise ValueError("online router freeze_early needs the mid-stack drop (drop_layer > 0 or stages)")
         if self.early_nograd and self.drop_layer <= 0 and not self.stages:
             raise ValueError("online router early_nograd needs the mid-stack drop (drop_layer > 0)")
         if not 0.0 <= self.dense_tail_frac < 1.0:
@@ -266,6 +272,17 @@ def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
     ra, rb = ra - ra.mean(), rb - rb.mean()
     den = (ra.norm() * rb.norm()).item()
     return float((ra @ rb).item() / den) if den > 0 else float("nan")
+
+
+def freeze_early_blocks(model, n_blocks: int) -> int:
+    """``requires_grad_(False)`` on the embeddings and blocks [0, n_blocks); returns the number of frozen parameters."""
+    n = 0
+    mods = [model.embeddings] + [b for i, b in enumerate(model.blocks.values()) if i < n_blocks]
+    for m in mods:
+        for p in m.parameters():
+            p.requires_grad_(False)
+            n += p.numel()
+    return n
 
 
 def parse_stages(spec: str) -> List[Tuple[int, float]]:
@@ -574,7 +591,8 @@ class OnlineTokenRouter:
         full = torch.zeros_like(input_ids, dtype=torch.bool)
         if mid:
             self._mid = {"fp": fp, "ids": ids, "cid": cid, "Tr": Tr}
-            self._nograd_fwd = bool(self.cfg.early_nograd and model.training and not self.dense_now())
+            self._nograd_fwd = bool(model.training and (self.cfg.freeze_early
+                                                        or (self.cfg.early_nograd and not self.dense_now())))
             full[:, :Tr] = fp["body"]
             return full
         keep, entry = self._choose(model, fp, ids, cid)

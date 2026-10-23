@@ -1803,6 +1803,9 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--st-otr-dense-tail-frac", type=float, default=0.0,
                     help="online router: train the last FRAC of the steps uncompressed (e.g. 0.1, with "
                     "--st-otr-dense-every 0 for routed-then-dense-tail)")
+    ap.add_argument("--st-otr-freeze-early", action="store_true",
+                    help="online router, mid-stack: freeze the embeddings and blocks [0, drop_layer) (no grads, no "
+                    "optimizer state; forward-only on every step)")
     ap.add_argument("--st-otr-merge-dropped", action="store_true",
                     help="online router, mid-stack: average each document's dropped tokens into one summary token "
                     "(no label) carried with the kept row past the split, instead of discarding them")

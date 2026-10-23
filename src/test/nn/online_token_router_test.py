@@ -761,3 +761,35 @@ def test_merge_dropped_validate():
         OnlineRouterConfig(merge_dropped=True).validate()
     with pytest.raises(ValueError):
         OnlineRouterConfig(merge_dropped=True, drop_layer=1, stages="1:0.5,2:0.25").validate()
+
+
+def test_freeze_early_cpu():
+    """freeze_early: embeddings + blocks [0, L) never get a gradient (warmup / dense steps included), later blocks do,
+    and even the dense warmup step charges blocks [0, L) forward-only."""
+    from olmo_core.nn.online_token_router import freeze_early_blocks
+
+    model, router = _mid_model(3, drop_layer=1, dense_every=0, freeze_early=True)
+    assert freeze_early_blocks(model, 1) > 0
+    blocks = list(model.blocks.values())
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    ids, cid, labels = _row(B=1)
+    real = int((ids != PH).sum())
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    for n in (1, 2):
+        model.zero_grad(set_to_none=True)
+        router.begin_step(n, model=model)
+        router.metrics()
+        flops.clear()
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+        assert all(p.grad is None for p in model.embeddings.parameters())
+        assert all(p.grad is None for p in blocks[0].parameters())
+        assert all(p.grad is not None for b in blocks[1:] for p in b.parameters())
+        assert router._pending[-1]["target"] is not None
+        if n == 1:  # dense warmup: every token kept, blocks [0, 1) still forward-only
+            e = real * f(blocks[0], real) / 3.0 - real * f(blocks[0], real)
+            assert any(abs(v - e) < 1e-6 * max(1.0, abs(e)) for v in flops), (e, flops)

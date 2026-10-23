@@ -34,15 +34,24 @@ class OnlineRouterCallback(Callback):
             r.total_steps = int(self.trainer.max_steps) if self.trainer.max_steps else None
 
     def pre_step(self, batch: Dict[str, Any]):
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
         router = self._router()
         for r in router.chain():  # every pyramid stage refits from its own targets
             r.begin_step(self.trainer.global_step, model=self.trainer.train_module.model)  # type: ignore[union-attr]
 
     def post_step(self):
         router = self._router()
+        import torch
+
         m = {}
         for r in router.chain():
             m.update(r.metrics())
+        if torch.cuda.is_available():
+            # this step's peak allocated memory on this rank (reset in pre_step)
+            m["online_router/peak_mem_gib"] = torch.cuda.max_memory_allocated() / 2**30
         if self.log_every and self.step % self.log_every == 0:
             for k, v in m.items():
                 self.trainer.record_metric(k, v)
