@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: SCREEN ANSWERED: no token-drop arm beats dense at 32k or 64k (best m 0.6x at 32k; C ~0.8-1.05x). All training done; cubbins released 15:49. Open: weka cleanup (approved) 01M5K5PYHZDQJ7PZRAG7M7RM2G; Prasann to pick the next regime (a target where dense keeps improving: 128k eval / longer docs, or another base).
+next_step: SCREEN ANSWERED: no token-drop arm beats dense at 32k or 64k (best m 0.6x at 32k; C ~0.8-1.05x). All training done; cubbins released 15:49. Open: weka cleanup DONE (01M5K5PYHZDQJ7PZRAG7M7RM2G: ~2.0 TB of files freed; empty skeletons with wandb symlinks left); Prasann to pick the next regime (a target where dense keeps improving: 128k eval / longer docs, or another base).
 ---
 
 # olmo3_cptdrop
