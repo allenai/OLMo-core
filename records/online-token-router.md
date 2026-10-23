@@ -5,7 +5,7 @@ updated: 2026-10-22
 experiment: learned_router
 area: token_routing
 kind: plan
-status: active (mt4 ablations done: split M1-M12, target, exploration, de16, keep 5%, layer skip, s1952; per-task runs evaluating)
+status: active (overnight screen done: memory/FLOP arms, per-doc floor fixes strmatch; f16 promotion runs in flight)
 superseded_by: 
 artifact: https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 summary: Online train-time keep router (ridge refit each step on gradient norms) + mid-stack drop; on fresh data the mid-stack router beats dense-s976 on all 4 tasks at 0.61-0.80x its FLOPs (single seed); drop at block 8 (1 and 4 fail), gradient-norm target (activation-strength dh = random), exploration share 0-50% irrelevant.
@@ -526,6 +526,7 @@ Runs (mt4s1464, LR 2e-6, seed 0): Lambda `f8k-mt4s1464-otr10M7{ng,tail,de0,ngtai
 | ng0M7 (early blocks no-grad) | 73 (0.19) | 53.0 | 0.426 | 0.764 | 0.542 | 0.275 |
 | frz0M7 (early stack frozen) | 72 (0.19) | 47.7 | 0.415 | 0.744 | 0.537 | 0.271 |
 | **fa30M7** (freeze after 30 steps) | 84 (0.22) | 47.7 after step 31 | 0.589 | 0.852 | 0.556 | 0.264 |
+| fa61M7 (freeze after 61 steps) | 96 (0.25) | 47.7 after step 62 | 0.616 | 0.862 | 0.513 | 0.342 |
 | pyr3frz0 (pyramid + frozen 0-2) | 66 (0.17) | 53.4 | 0.336 | 0.842 | 0.511 | 0.265 |
 | mrg05M7de0 (merge, keep 5%) | 109 (0.28) | 60 | 0.551 | 0.810 | 0.517 | 0.314 |
 | otr10M7f8 (per-doc floor 8) | 160 (0.41) | | 0.783 | 0.858 | 0.580 | 0.348 |
@@ -558,7 +559,10 @@ Strmatch: random = router (0.793 / 0.789) -- the loss is the cut, not the choice
 keep 0.3, trained otr10M8-s480: router 0.08 / oracle 0.55 / random 0.09 on strmatch vs 0.89 / 0.90 / 0.15 on grouping;
 ⚠ 12 rows / task). A per-document floor of 16 tokens fixes it (0.922; `--check` flags the new high) and brings the mean
 to otr30M8's at 12% less compute. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
-Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720.
+Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
+0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
+vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
+The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
 
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
 
