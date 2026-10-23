@@ -71,6 +71,10 @@ ARMS = {
     "otr10M7tail": otr(0.1, drop=7, dense_every=0, extra="--st-otr-dense-tail-frac 0.1"),  # routed, then a dense tail
     "otr10M7de0": otr(0.1, drop=7, dense_every=0),                         # no full-context steps
     "otr10M7ngtail": otr(0.1, drop=7, dense_every=0, extra="--st-otr-dense-tail-frac 0.1 --st-otr-early-nograd"),
+    # pyramid drop: keep 0.5 from block 3, 0.1 from 7, 0.03 from 16 (each stage its own router at its own layer)
+    "pyr3": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),
+    "pyr3ng": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd"),
+    "pyr2": otr(0.1, drop=7, extra="--st-otr-stages 7:0.1,16:0.03"),
     "otr10M7ds0": otr(0.1, drop=7, share=0.0),
     "otr10M7ds50": otr(0.1, drop=7, share=0.5),
     "otr10M7hdr8": otr(0.1, drop=7, extra="--st-otr-keep-first 8"),

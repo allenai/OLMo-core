@@ -1511,7 +1511,7 @@
    "dir": "OLMo-core-otr3"
   },
   "f8k-mt4s1464-otr10M7ng-lro-lr2e-06-lam": {
-   "slurm": 113915,
+   "slurm": 113922,
    "arm": "otr10M7ng",
    "seed": 0,
    "commit": "1206df105",
