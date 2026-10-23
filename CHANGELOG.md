@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added opt-in Muon + AdamW to `OLMoDDPOptimizer`, with per-expert matrix updates, sharded optimizer state, and AdamW updates for embeddings, output heads, vectors, and KDA convolution parameters.
 - Added Molmo2 support in `olmo_core.nn.vision`: a HuggingFace Molmo2 checkpoint loader (`molmo2_loader`) and special-token definitions, plus logit-parity and generation tests. `MultimodalLM` gains bidirectional image-token attention (`token_type_ids`), explicit RoPE `position_ids`, and sub-segment (branch-packing) attention isolation.
 - Added `MultimodalTransformerTrainModule` for training `MultimodalLM` (per-token weighted loss, optimizer param groups for the LM / vision tower / connector, FSDP/DDP over the composite model), `weighted_cross_entropy_loss`, the `PerGroupScheduler` (per-param-group LR schedules), and examples-per-second / extra-FLOPs reporting in `SpeedMonitorCallback`.
 - Added the `olmo_core.data.multimodal` data core for Molmo2: multi-annotation (branch-packing) `build_packed_sequence` with float loss weights, `pack_examples`, `MultimodalCollator`, a weighted resumable `MixtureDataLoader`, the `SftFormatter` prompt formatter, message/weight utilities, the Molmo2 image preprocessor (`preprocess_image_molmo2`), and the `PixMoCapDataset` caption dataset.
@@ -24,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recover v2 routers' logical matrices for Muon and split shared experts' column-packed SwiGLU projections independently per expert, with scaling based on each projection's dimensions.
 - Preserve OLMoDDP inference rounding in newly exported HF models, including packed dense/shared projections, packed SwiGLU, and architecture-specific BF16 TransformerEngine index-map combination; serialize the mode and retain legacy HF configs' existing numerics. CUDA inference without Triton uses the Torch activation fallback.
 - Allow experiment workloads to configure the distributed timeout for long rank-zero dataset preparation while preserving the 15-minute default.
 - Preserve 16-byte parameter alignment in OLMoDDP flat model buffers so compiled kernels remain valid after small BF16 parameters are packed.
