@@ -277,6 +277,22 @@ def get_maxtext_config(model_config: Mapping[str, Any]) -> MaxTextModelConfig:
             "embedding rows have no MaxText counterpart"
         )
     blocks = _blocks(model_config)
+    for i, block in enumerate(blocks):
+        # The overrides carry no dropout rate (MaxText defaults to none), so a model trained with
+        # dropout would silently continue training without it.
+        dropout = {
+            k: v
+            for k, v in (
+                ("dropout", block.get("dropout")),
+                ("masked_dropout", block.get("masked_dropout")),
+                ("sequence_mixer.dropout", block["sequence_mixer"].get("dropout")),
+            )
+            if v
+        }
+        if dropout:
+            raise ValueError(
+                f"block {i}: the MaxText decoders are built without dropout: {dropout}"
+            )
     first = blocks[0]
     if first.get("use_peri_norm") and first.get("shared_experts") is not None:
         return _hybrid_moe_config(model_config, blocks)

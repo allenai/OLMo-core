@@ -523,6 +523,23 @@ def test_dense_residual_alpha_fails(setting):
         get_maxtext_config(config)
 
 
+@pytest.mark.parametrize("name", FIXTURE_FILES)
+@pytest.mark.parametrize("where", ["block.dropout", "block.masked_dropout", "attention.dropout"])
+def test_dropout_fails(name, where):
+    # The overrides carry no dropout rate, so a model trained with dropout would continue
+    # training without it.
+    config = load_fixture(FIXTURE_FILES[name])
+    blocks = [config["block"], *(config.get("block_overrides") or {}).values()]
+    for block in blocks:
+        if where == "attention.dropout":
+            if block["sequence_mixer"].get("type", "attention") == "attention":
+                block["sequence_mixer"]["dropout"] = 0.1
+        else:
+            block[where.split(".")[1]] = 0.1
+    with pytest.raises(ValueError, match="dropout"):
+        get_maxtext_config(config)
+
+
 def test_dense_zero_embed_scale_fails():
     config = load_fixture("dense_small_config.json")
     config["embed_scale"] = 0.0
