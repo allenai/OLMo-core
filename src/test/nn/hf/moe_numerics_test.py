@@ -403,3 +403,55 @@ def test_core_experts_preserve_accelerate_offload(kind, offload, tmp_path):
         for _ in range(2):
             torch.testing.assert_close(model(*args), expected)
             assert all(param.is_meta for param in model.parameters())
+
+
+@pytest.mark.parametrize("customization", ["pre_hook", "hook", "wrapper", "subclass"])
+@pytest.mark.parametrize("compile", [False, True])
+def test_core_routed_experts_honor_module_calls(customization, compile, monkeypatch):
+    from olmo_core.nn.moe.v2.hf.modeling_olmo3moe import (
+        Olmo3MoeCoreExperts,
+        Olmo3MoeExpert,
+        Olmo3MoeExperts,
+    )
+
+    torch.manual_seed(92)
+    delta = torch.nn.Parameter(torch.full((16,), 0.25))
+
+    class AdaptedExpert(Olmo3MoeExpert):
+        def forward(self, x):
+            return super().forward(x) + delta
+
+    expert = (
+        AdaptedExpert(16, 32, "silu")
+        if customization == "subclass"
+        else Olmo3MoeExpert(16, 32, "silu")
+    )
+    if customization == "pre_hook":
+        expert.register_forward_pre_hook(lambda module, args: (args[0] + delta,))
+    elif customization == "hook":
+        expert.register_forward_hook(lambda module, args, output: output + delta)
+    elif customization == "wrapper":
+        original_forward = expert.forward
+        monkeypatch.setattr(expert, "forward", lambda x: original_forward(x) + delta)
+
+    experts = Olmo3MoeCoreExperts([expert])
+    x = torch.randn(5, 16, requires_grad=True)
+    indices = torch.zeros(5, 1, dtype=torch.long)
+    weights = torch.ones(5, 1)
+    # Exercise the eligibility guard even on hosts without grouped_mm support.
+    monkeypatch.setattr(Olmo3MoeExperts, "_can_use_grouped_mm", lambda *args: True)
+    assert not experts._can_use_grouped_mm(x)
+    if compile:
+        # Each case uses a different hook configuration on the same forward code.
+        torch.compiler.reset()
+    forward = torch.compile(experts, fullgraph=True) if compile else experts
+    actual = forward(x, indices, weights)
+    expected = expert(x)
+    torch.testing.assert_close(actual, expected)
+    gradient = torch.randn_like(actual)
+    inputs = (x, delta, *expert.parameters())
+    actual_grads = torch.autograd.grad(actual, inputs, gradient)
+    expected_grads = torch.autograd.grad(expected, inputs, gradient)
+    assert actual_grads[1].count_nonzero() > 0
+    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+        torch.testing.assert_close(actual_grad, expected_grad)

@@ -147,14 +147,19 @@ class Olmo3MoeRotaryEmbedding(nn.Module):
             return cos, sin
 
 
+def _has_forward_customizations(module):
+    return bool(
+        module._forward_hooks
+        or module._forward_pre_hooks
+        or hasattr(module, "_hf_hook")
+        or "forward" in module.__dict__
+    )
+
+
 def _can_use_packed_projections(expert):
     # Reading weights directly bypasses adapters and per-module forward hooks.
     return all(
-        type(proj) is nn.Linear
-        and not proj._forward_hooks
-        and not proj._forward_pre_hooks
-        and not hasattr(proj, "_hf_hook")
-        and "forward" not in proj.__dict__
+        type(proj) is nn.Linear and not _has_forward_customizations(proj)
         for proj in (expert.up_proj, expert.gate_proj, expert.down_proj)
     )
 
@@ -377,11 +382,17 @@ class Olmo3MoeCoreExperts(Olmo3MoeExperts):
 
     def _can_use_grouped_mm(self, hidden_states: torch.Tensor) -> bool:
         return super()._can_use_grouped_mm(hidden_states) and all(
-            _can_use_packed_projections(expert) for expert in self
+            type(expert) is Olmo3MoeExpert
+            and not _has_forward_customizations(expert)
+            and _can_use_packed_projections(expert)
+            for expert in self
         )
 
     @staticmethod
     def _expert_forward(expert, x):
+        # Module-level hooks/wrappers must run before accessing its projections.
+        if type(expert) is not Olmo3MoeExpert or _has_forward_customizations(expert):
+            return expert(x)
         if _can_use_packed_projections(expert):
             weight = torch.cat((expert.up_proj.weight, expert.gate_proj.weight), dim=0)
             up_gate = F.linear(x, weight)
