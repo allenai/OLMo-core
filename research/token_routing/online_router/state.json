@@ -479,6 +479,14 @@
    "lr": 2e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt11-otr10M7f16sd1-s720-tdb-lr2e-06": {
+   "ex": "01M5M7YSV8TDC2A4P31EBWF8Q0",
+   "arm": "otr10M7f16",
+   "budget": "s720",
+   "lr": 2e-06,
+   "mix": "mt11",
+   "seed": 1
   }
  },
  "evals": {
