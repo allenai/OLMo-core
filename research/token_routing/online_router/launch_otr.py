@@ -72,6 +72,8 @@ ARMS = {
     "otr10M7de0": otr(0.1, drop=7, dense_every=0),                         # no full-context steps
     "otr10M7ngtail": otr(0.1, drop=7, dense_every=0, extra="--st-otr-dense-tail-frac 0.1 --st-otr-early-nograd"),
     # pyramid drop: keep 0.5 from block 3, 0.1 from 7, 0.03 from 16 (each stage its own router at its own layer)
+    "mrg05M7": otr(0.05, drop=7, extra="--st-otr-merge-dropped"),   # merge instead of drop, keep 5%
+    "mrg10M7": otr(0.1, drop=7, extra="--st-otr-merge-dropped"),
     "pyr3": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03"),
     "pyr3ng": otr(0.1, drop=7, extra="--st-otr-stages 3:0.5,7:0.1,16:0.03 --st-otr-early-nograd"),
     "pyr2": otr(0.1, drop=7, extra="--st-otr-stages 7:0.1,16:0.03"),

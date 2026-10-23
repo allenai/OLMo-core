@@ -724,3 +724,40 @@ def test_mid_stack_drop_on_positional_blocks_cpu():
     model.train()
     out = model(ids, labels=labels)
     assert torch.allclose(out.loss, ref, atol=1e-5), (out.loss, ref)
+
+
+
+def test_merge_dropped_summary_tokens_cpu():
+    """merge_dropped: past the split each document gets one summary slot = the mean of its dropped tokens' hidden
+    states, placed after its last dropped token, with no label; the step trains and the kept width includes them."""
+    model, router = _mid_model(3, drop_layer=1, dense_every=0, merge_dropped=True, explore_frac=0.0)
+    seen = {}
+    model.blocks["0"].register_forward_hook(lambda m, a, out: seen.__setitem__("h0", out.detach()))
+    model.blocks["1"].register_forward_pre_hook(lambda m, a: seen.__setitem__("h1", a[0].detach()))
+    ids, cid, labels = _row(B=1)
+    for n in (1, 2):
+        model.zero_grad(set_to_none=True)
+        router.begin_step(n, model=model)
+        router.metrics()
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+    m = router.metrics()
+    assert m["online_router/merge_tokens"] == 3.0  # three documents, each with dropped tokens
+    order, valid, n_extra = router._mid_gather if router._mid_gather is not None else (None, None, 0)
+    h0, h1 = seen["h0"][0], seen["h1"][0]
+    # doc 1 (40 body tokens): its summary slot equals the mean of its dropped tokens at the split input
+    keep_cols = set()
+    for v in h1:
+        hit = (h0 - v[None]).abs().max(dim=-1).values < 1e-5
+        keep_cols.update(torch.nonzero(hit).flatten().tolist())
+    d1 = [c for c in range(ids.shape[1]) if int(cid[0, c]) == 1 and int(ids[0, c]) >= 2000 and c not in keep_cols]
+    target = h0[d1].mean(0)
+    assert ((h1 - target[None]).abs().max(dim=-1).values < 1e-4).any(), "no summary slot equals doc 1's dropped mean"
+
+
+def test_merge_dropped_validate():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(merge_dropped=True).validate()
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(merge_dropped=True, drop_layer=1, stages="1:0.5,2:0.25").validate()

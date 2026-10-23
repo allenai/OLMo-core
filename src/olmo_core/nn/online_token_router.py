@@ -116,6 +116,11 @@ class OnlineRouterConfig:
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
     :class:`~olmo_core.train.callbacks.OnlineRouterCallback`)."""
+    merge_dropped: bool = False
+    """Mid-stack only: instead of discarding each document's dropped tokens at the split, average their hidden states
+    into ONE summary token per document, placed at the position of that document's last dropped token (causal: every
+    token it averages precedes it), with no LM label. It joins the kept row (and is charged as a kept token); the
+    gradient flows back through the mean into the dropped tokens' early blocks."""
     stages: str = ""
     """Pyramid (multi-stage) mid-stack drop, e.g. ``"3:0.5,7:0.1,16:0.03"``: at each ``layer:keep`` the kept tokens are cut
     to ``keep`` of the row's body tokens (absolute, decreasing), each stage scored from ITS layer's hidden state by its
@@ -143,6 +148,8 @@ class OnlineRouterConfig:
                 raise ValueError(f"online router stages must have strictly increasing layers > 0, got {self.stages!r}")
             if any(not 0.0 < k <= 1.0 for _, k in st) or [k for _, k in st] != sorted((k for _, k in st), reverse=True):
                 raise ValueError(f"online router stage keeps must be in (0, 1] and non-increasing, got {self.stages!r}")
+        if self.merge_dropped and (self.drop_layer <= 0 or self.stages):
+            raise ValueError("online router merge_dropped needs a single-stage mid-stack drop (drop_layer > 0, no stages)")
         if self.early_nograd and self.drop_layer <= 0 and not self.stages:
             raise ValueError("online router early_nograd needs the mid-stack drop (drop_layer > 0)")
         if not 0.0 <= self.dense_tail_frac < 1.0:
@@ -690,23 +697,54 @@ class OnlineTokenRouter:
         keep_all[:, :Tr] = real & (~body | keep_body)
         counts = keep_all.sum(dim=1)
         pm = int((getattr(model, "_pooled_soft_tokens", None) or {}).get("pad_multiple", 1) or 1)
-        W = int(counts.max().item())
-        W = min(Tw, ((W + pm - 1) // pm) * pm)
-        order = torch.argsort((~keep_all).to(torch.int8), dim=1, stable=True)[:, :W]
-        valid = torch.arange(W, device=h.device)[None, :] < counts[:, None]
-        h_new = torch.gather(h, 1, order[..., None].expand(B, W, D)) * valid[..., None].to(h.dtype)
-        kw = dict(block_kwargs)
         pid = block_kwargs.get("position_ids")
         if pid is None:
             pid = torch.arange(Tw, device=h.device)[None, :].expand(B, Tw)
-        pnew = torch.gather(pid, 1, order)
-        kw["position_ids"] = torch.where(valid, pnew, pid.max(dim=1, keepdim=True).values.expand_as(pnew))
-        self._mid_gather = (order, valid)
-        # targets at this layer, on the kept (gathered) columns
-        newcol = keep_all.to(torch.long).cumsum(dim=1) - 1
+        kw = dict(block_kwargs)
         rows, pos = entry["rows"], entry["pos"]
+        n_extra = 0
+        if self.cfg.merge_dropped and not entry["dense"]:
+            # one summary token per document: the mean of its dropped tokens' hidden states, slotted right after the
+            # document's last dropped token (sort key column + 0.5); the source row is h extended by the summaries
+            dropped = real & body & ~keep_body
+            nd = int(cid.max().item()) + 1 if bool((cid >= 0).any()) else 1
+            dk = (torch.arange(B, device=h.device)[:, None] * nd + cid.clamp(min=0).long())[dropped]
+            hd = h[:, :Tr][dropped].float()
+            sums = torch.zeros(B * nd, D, device=h.device, dtype=torch.float32).index_add(0, dk, hd)
+            cnt = torch.zeros(B * nd, device=h.device).index_add(0, dk, torch.ones_like(dk, dtype=torch.float32))
+            col = torch.arange(Tr, device=h.device)[None, :].expand(B, Tr)
+            last = torch.full((B * nd,), -1, device=h.device, dtype=torch.long).scatter_reduce(
+                0, dk, col[dropped], reduce="amax")
+            has = cnt > 0
+            summ = (sums / cnt.clamp(min=1)[:, None]).to(h.dtype).view(B, nd, D)
+            key_tok = torch.where(keep_all, torch.arange(Tw, device=h.device, dtype=torch.float32)[None, :].expand(B, Tw),
+                                  torch.full((B, Tw), float("inf"), device=h.device))
+            key_sum = torch.where(has, last.to(torch.float32) + 0.5, torch.full_like(last, 0, dtype=torch.float32)
+                                  + float("inf")).view(B, nd)
+            n_sum = has.view(B, nd).sum(dim=1)
+            counts = counts + n_sum
+            src = torch.cat([h, summ], dim=1)
+            pid_src = torch.cat([pid, torch.gather(pid[:, :Tr], 1, last.view(B, nd).clamp(min=0))], dim=1)
+            keys = torch.cat([key_tok, key_sum], dim=1)
+            n_extra = nd
+            self._stat("merge_tokens", float(n_sum.sum()) / B)
+            self._flop(model, 2.0 * D * float(dropped.sum()))
+        else:
+            src, pid_src = h, pid
+            keys = torch.where(keep_all, torch.zeros(B, Tw, device=h.device), torch.ones(B, Tw, device=h.device))
+        W = int(counts.max().item())
+        W = min(src.shape[1], ((W + pm - 1) // pm) * pm)
+        order = torch.argsort(keys, dim=1, stable=True)[:, :W]
+        valid = torch.arange(W, device=h.device)[None, :] < counts[:, None]
+        h_new = torch.gather(src, 1, order[..., None].expand(B, W, D)) * valid[..., None].to(h.dtype)
+        pnew = torch.gather(pid_src, 1, order)
+        kw["position_ids"] = torch.where(valid, pnew, pid.max(dim=1, keepdim=True).values.expand_as(pnew))
+        self._mid_gather = (order, valid, n_extra)
+        # targets at this layer, on the kept (gathered) columns
+        newcol = torch.zeros(B, src.shape[1], dtype=torch.long, device=h.device)
+        newcol.scatter_(1, order, torch.arange(W, device=h.device)[None, :].expand(B, W))
         entry["ok"] = keep_all[rows, pos]
-        entry["cols"] = newcol[rows, pos].clamp(min=0)
+        entry["cols"] = newcol[rows, pos]
         if dh_all is not None:
             entry["dh"] = dh_all[rows, pos]
         self._register_target(model, entry, h_new)
@@ -779,7 +817,11 @@ class OnlineTokenRouter:
         g, self._mid_gather = getattr(self, "_mid_gather", None), None
         if g is None or labels is None:
             return labels
-        order, valid = g
+        order, valid, n_extra = g
+        ign = int(getattr(self, "_ignore_index", -100))
+        if n_extra:  # merge_dropped summary slots carry no label
+            labels = torch.cat([labels, torch.full((labels.shape[0], n_extra), ign, dtype=labels.dtype,
+                                                   device=labels.device)], dim=1)
         lab = torch.gather(labels, 1, order.to(labels.device))
         return torch.where(valid.to(labels.device), lab, torch.full_like(lab, int(getattr(self, "_ignore_index", -100))))
 
