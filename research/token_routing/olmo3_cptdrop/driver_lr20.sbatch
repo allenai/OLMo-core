@@ -23,6 +23,8 @@
 #        lm_head on their block-7 h, same loss_div, head FLOPs charged): W 1.0 and 0.3 at the OTR10M7 step counts
 #        31 / 62 / 124 / 310 (measured PF decides the budget); and with NO full-context steps (OTR_DENSE=0, the
 #        peak-memory bet: de0 collapsed at 1.80 with 10% labels) at 40 / 80 / 160. Needs the router branch with the flag.
+#   OTRY early-nograd (best router variant: more steps per FLOP) + exit loss W 1.0: de8 at 46 / 92 / 185, and de0 (no
+#        full-context steps: the early stack is then frozen) at 60 / 120 / 240 -- the FLOPs + peak-memory candidate
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
@@ -98,6 +100,15 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
         run "o3cd-OTR10M7f50x10lr20-$b" ARM=OTR OTR_EXTRA="--st-otr-exit-loss-weight 1.0 --st-otr-dense-keep-frac 0.5" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 6 + 10)) \
           || { log "FAIL f50 exit-loss at $b: continuing"; break; }
       done ;;
+    OTRY)
+      for b in 46 92 185; do
+        run "o3cd-OTR10M7ngx10lr20-$b" ARM=OTR OTR_EXTRA="--st-otr-early-nograd --st-otr-exit-loss-weight 1.0" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 8 + 10)) \
+          || { log "FAIL ngx10 at $b: continuing"; break; }
+      done
+      for b in 60 120 240; do
+        run "o3cd-OTR10M7ndngx10lr20-$b" ARM=OTR OTR_DENSE=0 OTR_EXTRA="--st-otr-early-nograd --st-otr-exit-loss-weight 1.0" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 10 + 10)) \
+          || { log "FAIL ndngx10 at $b: continuing"; break; }
+      done ;;
     SEED)
       run o3cd-Dlr20-120-s1 ARM=D MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 14 ;;
     IRS)
@@ -122,7 +133,7 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       done ;;
     EV)
       SPECS=""
-      for r in OTR10M7f50x10lr20-31 OTR10M7f50x10lr20-62 OTR10M7f50x10lr20-124 OTR10M7ndx10lr20-40 OTR10M7ndx10lr20-80 OTR10M7ndx10lr20-160 OTR10M7ndx03lr20-40 OTR10M7ndx03lr20-80 OTR10M7ndx03lr20-160 OTR10M7x10lr20-31 OTR10M7x10lr20-62 OTR10M7x10lr20-124 OTR10M7x10lr20-310 OTR10M7x03lr20-31 OTR10M7x03lr20-62 OTR10M7x03lr20-124 OTR10M7x03lr20-310 OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
+      for r in OTR10M7ngx10lr20-46 OTR10M7ngx10lr20-92 OTR10M7ngx10lr20-185 OTR10M7ndngx10lr20-60 OTR10M7ndngx10lr20-120 OTR10M7ndngx10lr20-240 OTR10M7f50x10lr20-31 OTR10M7f50x10lr20-62 OTR10M7f50x10lr20-124 OTR10M7ndx10lr20-40 OTR10M7ndx10lr20-80 OTR10M7ndx10lr20-160 OTR10M7ndx03lr20-40 OTR10M7ndx03lr20-80 OTR10M7ndx03lr20-160 OTR10M7x10lr20-31 OTR10M7x10lr20-62 OTR10M7x10lr20-124 OTR10M7x10lr20-310 OTR10M7x03lr20-31 OTR10M7x03lr20-62 OTR10M7x03lr20-124 OTR10M7x03lr20-310 OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
         [ -f "$ROOT/runs/o3cd-$r/model_and_optim/.metadata" ] && [ ! -f "$ROOT/devce/${r}_dev32k_1024.json" ] && SPECS="$SPECS $r:runs/o3cd-$r:4"
       done
       log "EV specs:$SPECS"
