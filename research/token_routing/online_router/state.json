@@ -1670,6 +1670,20 @@
    "seed": 0,
    "commit": "12f1083e8",
    "dir": "OLMo-core-otr5"
+  },
+  "f8k-mt4s488-otr10M7-lro-lr2e-06-lam": {
+   "slurm": 113969,
+   "arm": "otr10M7",
+   "seed": 0,
+   "commit": "12f1083e8",
+   "dir": "OLMo-core-otr5"
+  },
+  "f8k-mt4s488-otr10M7de0-lro-lr2e-06-lam": {
+   "slurm": 113970,
+   "arm": "otr10M7de0",
+   "seed": 0,
+   "commit": "12f1083e8",
+   "dir": "OLMo-core-otr5"
   }
  }
 }
