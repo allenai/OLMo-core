@@ -57,7 +57,8 @@ GPUS = int(os.environ.get("M64_NGPU", "8"))
 MICRO = 1
 STEPS_FULL = ROWS // GB
 FRACTIONS = {"f1": 1, "f2": 2, "f4": 4, "f8": 8}
-CLUSTER = os.environ.get("M64_CLUSTER", "ai2/jupiter-cirrascale-2")
+#: any-of placement (comma list): whole 8-GPU nodes queue for days on jupiter alone (2026-10-23: 67 urgent ahead)
+CLUSTER = os.environ.get("M64_CLUSTER", "ai2/jupiter-cirrascale-2,ai2/ceres-cirrascale")
 WANDB_GROUP = os.environ.get("M64_WANDB_GROUP", "m64-q35-4b")
 EXPERIMENT = "mt11_64k"
 SAVE_INTERVAL = 300
@@ -71,8 +72,13 @@ EVAL_RUNGS = os.environ.get("M64_EVAL_RUNGS", "2k,8k,16k,32k,64k")
 EVAL_MAX_LENGTH = os.environ.get("M64_EVAL_MAX_LENGTH", "73728")
 
 
+#: ``smk``: the launch smoke -- the f1 schedule hard-stopped after 10 steps (step 1 keep-all, steps 2-7 routed, step 8
+#: the router's full-context step; ~1 row > 49k tokens per step), exported and then evaluated on one task at 64k
+SMOKE_STEPS = 10
+
+
 def steps_for(budget):
-    return math.ceil(STEPS_FULL / FRACTIONS[budget])
+    return SMOKE_STEPS if budget == "smk" else math.ceil(STEPS_FULL / FRACTIONS[budget])
 
 
 def run_name(arm, budget, lr):
@@ -82,9 +88,11 @@ def run_name(arm, budget, lr):
 def train_cmd(arm, budget, lr, mode):
     steps = steps_for(budget)
     extra = f"{ARMS[arm]} --attn-backend flash_2"
-    if steps > SAVE_INTERVAL:
+    if steps > SAVE_INTERVAL and budget != "smk":
         extra += f" --save-interval {SAVE_INTERVAL} --max-checkpoints 1"
-    if budget != "f1":
+    if budget == "smk":
+        extra += f" --max-steps {SMOKE_STEPS}"
+    elif budget != "f1":
         extra += f" --max-tokens {steps * GB * SEQ_LEN}"  # complete LR schedule over `steps` steps
     cmd = [sys.executable, "-u", LAUNCHER, "--task", "mt11", "--variant", "softtoken", "--model-family", "qwen3_5",
            "--model-scale", "4b", "--data-root", SHARD, "--run-name", run_name(arm, budget, lr), "--exact-run-name",
