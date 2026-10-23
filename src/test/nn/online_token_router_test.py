@@ -894,3 +894,23 @@ def test_dense_keep_frac_routes_periodic_steps():
     k5 = int(r.select(m, ids, cid, labels).sum())
     assert k5 < k4 < n_body, (k5, k4, n_body)
     assert abs(k4 / n_body - 0.5) < 0.1
+
+
+def test_early_nograd_trains_early_blocks_on_dense_keep_frac_steps_cpu():
+    """early_nograd + dense_keep_frac < 1: the periodic steps route at F but stay GRAD steps for blocks [0, L) (charged
+    forward + backward); the other routed steps are forward-only there."""
+    model, router = _mid_model(3, drop_layer=1, dense_every=2, early_nograd=True, dense_keep_frac=0.5, keep_frac=0.25)
+    blocks = list(model.blocks.values())
+    ids, cid, labels = _row(B=1)
+    got = {}
+    for n in (1, 2, 3):
+        model.zero_grad(set_to_none=True)
+        router.begin_step(n, model=model)
+        router.metrics()
+        model(ids, labels=labels).loss.backward()
+        m = router.metrics()
+        got[n] = (all(p.grad is not None for p in blocks[0].parameters()), m.get("online_router/mid_row_frac"),
+                  m.get("online_router/early_nograd"))
+    assert got[2][0] and got[2][2] == 0.0 and got[2][1] < 1.0, got[2]   # periodic step: routed at F, early blocks train
+    assert not got[3][0] and got[3][2] == 1.0, got[3]                   # ordinary routed step: early blocks forward-only
+    assert got[2][1] > got[3][1]                                        # F = 0.5 keeps more than keep_frac = 0.25
