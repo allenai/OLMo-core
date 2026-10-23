@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: SCREEN ANSWERED (2026-10-22 13:00): no token-drop arm beats dense at any budget (best m 0.6x; SD20 slots = removal). Remaining: cubbins 4018016 Dlr20-480 + its ctx_gain (anchors C-480 1.6810); Beaker D64lr20 eval (reads IFL25x64 1.751). Then Prasann decides the next regime (64k/128k eval target where dense keeps improving, or another base); weka cleanup job 01M5JV4926Y7FDYMSE8ABZ1DZ8 (approved).
+next_step: SCREEN ANSWERED: no token-drop arm beats dense at 32k or 64k (best m 0.6x at 32k; C ~0.8-1.05x). All training done; cubbins released 15:49. Open: weka cleanup (approved) 01M5K5PYHZDQJ7PZRAG7M7RM2G; Prasann to pick the next regime (a target where dense keeps improving: 128k eval / longer docs, or another base).
 ---
 
 # olmo3_cptdrop
@@ -170,6 +170,10 @@ See `next_step` above.
   harder it drops. Overall dev CE cannot support a 10-20x reading here, so the eval gained ctx_gain
   (--ctx-window 8192, commit 5408335a6): last 4k targets with full context vs only the last 8k tokens = how much
   the model uses context beyond 8k. CTX stage of cubbins 4017768 scores every run + stage2/stage3 on it.
+- 2026-10-22 18:30 last points: Dlr20-480 1.6800 (16-32k 1.6770, ctx_gain 0.0774) -> C-480 1.6810 at 0.945x FLOPs =
+  m ~0.8 (C-120 / C-240 ~1.0). 64k (dev64k_512, 512 rows): D64lr20-120 / 240 / 480 = 1.7210 / 1.7170 / 1.7134;
+  IFL25x64-600 / -1200 (~114 / ~228 dense-eq, estimated ratio 0.19) = 1.7512 / 1.7507: far above D64-120, m < 1.
+  64k dense is a bit steeper than 32k (120 -> 480: -0.0076 vs -0.0053) but still flat.
 - VERDICT 2026-10-22 13:00 (analyze.py --ref 'Dlr20|DB8lr20', dev32k_1024, 1,024 rows): NO drop arm reaches
   m > 1 anywhere. Dense: 4 1.7096, 8 1.7008, 12 1.6972, 24 1.6912, 48 1.6880, 120 1.6853 (seed 1: 1.6853), 240
   1.6827. m: IRANDlr20-22 <1.0, -43 0.6, -65 0.5, -130 0.3, -260 0.2; SD20lr20 (sd20 geometry: one detached MEAN
