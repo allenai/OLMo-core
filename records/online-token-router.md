@@ -479,6 +479,24 @@ contradiction at both budgets.
 moves 0.13 between seeds at s976, contradiction / nq stay within 0.01. Single-seed outlier differences below ≈ 0.15
 at s976 do not count. (s1464 repeat evaluating.)
 
+## Aggressive cuts (2026-10-23, overnight; Prasann: "much more aggressive cuts to computation")
+
+otr10M7 costs ≈ 0.39 × dense, and the FLOORS dominate: blocks 0-6 on every token (≈ 22% of dense), the full-context
+step every 8 (≈ 12%), router overhead (a few %), the routed blocks 7-31 at 10% (≈ 8%). New opt-in levers, each charged
+exactly what runs and covered by a CPU test (`src/test/nn/online_token_router_test.py`):
+
+| flag | what it does | FLOP charge |
+|---|---|---|
+| `--st-otr-early-nograd` | routed steps run blocks [0, L) under no_grad (a fresh leaf at the split keeps the gnorm hook); those blocks learn only on dense steps | blocks [0, L) forward-only (1/3) on routed steps |
+| `--st-otr-dense-tail-frac F` | the last F of the steps run uncompressed; with `--st-otr-dense-every 0` = routed, then a dense tail | dense steps charged in full |
+| `--st-otr-stages "3:0.5,7:0.1,16:0.03"` | pyramid: a chain of routers, each with its own ridge fit and targets at its own layer; keeps are fractions of the original body | stage s: Lk·Σ(blocks ≥ L_s at Lk) − L_in·Σ(blocks ≥ L_s at L_in) |
+| `--st-otr-merge-dropped` | each document's dropped tokens averaged into one unlabelled summary token after its last dropped token (causal) | summaries count as kept tokens, plus 2·D per dropped token |
+| `--st-otr-keep-first K` | each document's first K body tokens always kept (header ablation) | none |
+
+Runs (mt4s1464, LR 2e-6, seed 0): Lambda `f8k-mt4s1464-otr10M7{ng,tail,de0,ngtail}-lro-lr2e-06-lam`; Beaker
+`f8k-mt4-{pyr3,pyr3ng,pyr2,mrg05M7,mrg10M7}-s1464-tdb-lr2e-06`; plus the allocation / header ablation
+`f8k-mt4-otr10M7{,ds0,ds50,hdr8}-s1464-tdb` and the same on mt11s720. Results pending.
+
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
 
 Cancelled before any started (Prasann: reproduce the per-task numbers instead, since the mixed runs give fewer
