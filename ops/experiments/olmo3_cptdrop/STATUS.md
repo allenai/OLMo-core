@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: [queue: cubbins 4019319 aggressive cuts -> 4019607 exit-loss screen (router fcda77090: W 1.0/0.3 x de8/de0, + dense-keep 0.5)] ROUTER CPT TRACK (2026-10-23, Prasann via LR-sweep session: 'include continued-pretraining on long documents ... I want to get something that works on that as well'): cubbins 4019297 = OTR10M7 (mid-stack online router, keep 0.1 at block 7, dense every 8, no loss on dropped tokens) 31/62/124/310 + no-dense-step 40/80/160 -> EV -> CTX; then 4019313 = aggressive cuts (early-nograd, pyramid 3:0.5,7:0.1,16:0.03, both). Report matched-FLOP dev-CE deltas + peak memory to session 'LR Sweep, Main Runs'.
+next_step: cubbins queue (all de0): 4020957 ctx eval (finishing) -> 4021638 grad_composition CPT analysis (other session) -> 4021612 freeze grid (keep 1.0; K 16/8 x 25/50%; 12-120 steps) -> 4021635 MoD c 0.5/0.25 (alternate blocks 8-30) -> 4021649 progressive freeze 4:0.25,7:0.5,12:0.75. Then extend the best cheap arm on fresh rows until it reaches dense's dev CE.
 ---
 
 # olmo3_cptdrop
@@ -22,6 +22,10 @@ dropping during long-context CPT beat dense at every matched FLOP budget — not
 softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it near 2k PF?
 
 ## Decisions
+- 2026-10-24 (Prasann, via the LR-sweep session): (1) keep 32k CPT, no 64k move; try cuts that keep every token's
+  label through the full depth (freeze bottom of stack after warmup, progressive freeze, mixture-of-depths).
+  (2) NO dense / full-context steps mixed in at all (--st-otr-dense-every 0; no dense-keep-frac arms). (3) Cheap arms
+  are compared at matched FLOPs and FLOPs-to-match-dense on MORE FRESH rows, never repeated epochs.
 - 2026-10-20 (Prasann): CPT from a raw OLMo 3 checkpoint, longmino pool as data.
 - 2026-10-21 (Prasann): no frozen dev-loss screen (may not correlate with training value); an empirical
   screen of strategies on short training runs instead.
