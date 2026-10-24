@@ -171,6 +171,33 @@ def main():
                 + "".join(f"<th>{esc(t)}</th>" for t in TASKS) + "</tr></thead><tbody>" + "".join(lr_rows)
                 + "</tbody></table></div>") if lr_rows else ""
 
+    # seed replicate table: each router seed vs the SEED-AVERAGED better-LR dense curve (f16/f8/f4)
+    def dense_ref(t, g, pf):
+        pts = {}
+        for d, x in train.items():
+            if x["arm"] != "dense" or x["budget"] not in ("f16", "f8", "f4") or (d, t, g) not in scores:
+                continue
+            pts.setdefault((x["budget"], x["lr"]), []).append((x["pf"], scores[(d, t, g)]["value"]))
+        best = {}
+        for (b, _lr), v in pts.items():
+            val = sum(z for _, z in v) / len(v)
+            if b not in best or val > best[b][1]:
+                best[b] = (v[0][0], val)
+        return interp_log(list(best.values()), pf)[0]
+    seed_runs = [r for r in ("m64-otr10M7-f4-lr5e-06", "m64-otr10M7-f4-lr5e-06-sd1") if r in train]
+    seed_rows = []
+    if len(seed_runs) == 2:
+        for r in seed_runs:
+            cells = []
+            for t in TASKS:
+                ds = [scores[(r, t, g)]["value"] - dense_ref(t, g, train[r]["pf"]) for g in RUNGS
+                      if (r, t, g) in scores and (t, g) not in UNINFORMATIVE and dense_ref(t, g, train[r]["pf"]) is not None]
+                cells.append(delta_cell(sum(ds) / len(ds) if ds else None, False))
+            seed_rows.append(f'<tr><th>{esc(r.replace("m64-", ""))}</th>{"".join(cells)}</tr>')
+    seed_table = ('<div class="tw"><table class="delta"><thead><tr><th>router seed vs seed-averaged dense</th>'
+                  + "".join(f"<th>{esc(t)}</th>" for t in TASKS) + "</tr></thead><tbody>" + "".join(seed_rows)
+                  + "</tbody></table></div>") if seed_rows else '<p class="muted">Seed replicate not in yet.</p>'
+
     rung_sections = []
     for g in RUNGS:
         rung_sections.append(f'<section class="rung"><h3>{g} rung</h3><div class="grid">'
@@ -185,7 +212,7 @@ def main():
     page = TEMPLATE.format(
         verdict=a.verdict or "Results are still coming in; see the tables for what has landed.",
         status=esc(a.status), score_rows="".join(srows), task_heads="".join(f"<th>{esc(t)}</th>" for t in TASKS),
-        lr_table=lr_table,
+        lr_table=lr_table, seed_table=seed_table,
         delta_tables="".join(dtables) or '<p class="muted">No router run has finished its evals yet.</p>',
         rungs="".join(rung_sections), cost_rows=cost)
     open(a.out, "w").write(page)
@@ -275,6 +302,12 @@ svg .router-pt {{ fill: var(--router); stroke: var(--panel); stroke-width: 1; }}
 <h2>Same LR vs better LR</h2>
 <p class="prose muted">The learning rate decides the sign. Each cell is the router's score minus dense interpolated to the router's FLOPs, averaged over the task's rungs.</p>
 {lr_table}
+</section>
+
+<section>
+<h2>Seed replicate</h2>
+<p class="prose muted">Router ¼ at LR 5e-6, seeds 0 and 1, each against the dense curve averaged over its own two seeds (dense ⅛ and ¼ were replicated; 1/16 has seed 0 only). Mean over each task's rungs.</p>
+{seed_table}
 </section>
 
 <section>
