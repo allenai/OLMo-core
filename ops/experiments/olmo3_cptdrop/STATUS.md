@@ -163,6 +163,11 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-24 12:00 dense near/far rescore (cubbins 4034568, devce_rep/): far-only CE (4-gram last seen > 4k
+  back; 1.25M targets) 12/24/48/120/240/480 = 0.503/0.489/0.481/0.474/0.469/0.467 (2x the overall slope); near
+  0.208->0.201; stage2 far 0.715, stage3 0.630. LoRA r16 K16 vs dense, paired: far +0.0066 +-0.0004 (12), +0.0067
+  +-0.0002 (48), +0.0040 +-0.0002 (120) = WORSE on long-range targets at every budget (far-only m ~0.6); near -0.0072
+  (12) / -0.0005 / -0.0003. The overall-CE win comes from local/novel tokens.
 - RESULT 2026-10-24 10:50 all-local training LOSES (cubbins 4021707; --olmo3-train-window 4096; eval full): dense
   12/24/48/120 = 323/621/1217/3005 PF -> 1.7055/1.7037/1.7027/1.7020 (m 0.56/0.33/0.18/0.08); ctx_gain
   0.049/0.047/0.047/0.044 (dense 0.067-0.075, FALLING with training); far CE 0.566-0.576; + freeze K8 f25 same damage
