@@ -184,3 +184,37 @@ def test_ctx_gain_matches_manual_and_merges(tmp_path):
         sys.argv = old
     m = json.load(open(tmp_path / "m.json"))
     assert abs(m["summary"]["ctx_gain"]["gain"] - whole["summary"]["ctx_gain"]["gain"]) < 1e-5
+
+
+def test_early_lora_reinstalled_before_load(tmp_path):
+    """A checkpoint with an early_lora block in config.json is scored WITH its adapters: the eval re-installs them
+    before the load (a nonzero lora_B changes the logits vs the base)."""
+    early_lora = pytest.importorskip("olmo_core.nn.early_lora")
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(2)
+    ev.FAMILIES["tiny"] = (lambda v, b: _tiny(v), 1024, "allenai/dolma2-tokenizer")
+    try:
+        cfg = ev.build_cfg("tiny", 4.0, "torch")
+        model = cfg.build(init_device="cpu")
+        model.init_weights(device=torch.device("cpu"))
+        early_lora.install_early_lora(model, 2, 4, 32.0, check_calls=False)
+        with torch.no_grad():
+            for m in model._early_lora["modules"]:
+                m.lora_B.normal_(0, 0.05)
+        model.eval()
+        ck = tmp_path / "ck"
+        save_model_and_optim_state(str(ck / "model_and_optim"), model)
+        json.dump({"model": {"d_model": cfg.d_model, "n_layers": cfg.n_layers, "vocab_size": cfg.vocab_size},
+                   "early_lora": {"n_blocks": 2, "rank": 4, "scale": 32.0}}, open(ck / "config.json", "w"))
+        x = torch.randint(0, 1000, (1, 64))
+        with torch.no_grad():
+            ref = model(x)
+        m2, _ = ev.load_model(str(ck), cfg, "cpu", 64)
+        with torch.no_grad():
+            out = m2(x)
+        torch.testing.assert_close(out, ref, rtol=1e-5, atol=1e-5)
+        base = cfg.build(init_device="cpu")
+        assert ev.reinstall_early_lora(str(tmp_path), base) is None  # no config.json -> no-op
+    finally:
+        del ev.FAMILIES["tiny"]

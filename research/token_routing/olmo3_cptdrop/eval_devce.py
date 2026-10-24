@@ -287,10 +287,25 @@ def summarize(sums: np.ndarray, cnts: np.ndarray, bins) -> dict:
     return out
 
 
+def reinstall_early_lora(ckpt: str, model) -> Optional[dict]:
+    """A low-rank-early-stack run (``--st-otr-early-lora``) records an ``early_lora`` block in its config.json; its
+    checkpoint holds ``lora_A`` / ``lora_B`` keys the base model lacks. Re-install the adapters before the load so the
+    trained model (not the base) is scored. No block -> no-op; the import is lazy (older trees lack the module)."""
+    path = os.path.join(ckpt, "config.json")
+    block = json.load(open(path)).get("early_lora") if os.path.isfile(path) else None
+    if not block:
+        return None
+    from olmo_core.nn.early_lora import enable_from_config_block
+
+    enable_from_config_block(model, block)
+    return block
+
+
 def load_model(ckpt: str, cfg, device: str, max_len: int):
     from olmo_core.distributed.checkpoint import load_model_and_optim_state
 
     model = cfg.build(init_device="cpu")
+    reinstall_early_lora(ckpt, model)
     t0 = time.time()
     load_model_and_optim_state(find_distcp(ckpt), model)
     load_s = time.time() - t0
