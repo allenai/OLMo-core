@@ -5,10 +5,10 @@ updated: 2026-10-23
 experiment: mt11_64k
 area: token_routing
 kind: result
-status: interim (single seed at the 1/4-epoch point; seed replicates and 1/2 + full-epoch runs training)
+status: interim (two seeds at the 1/4-epoch point; 1/2 + full-epoch runs training)
 superseded_by: 
 artifact: https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
-summary: On an 11-task 64k mix (662M tokens), the otr10M7 online router at 0.40x dense FLOPs beats the better-LR dense curve on 9/10 tasks at matched LR 5e-6 (task-average +0.034; xabsence +0.125, contradiction +0.056 rising to +0.105 at 64k, outlier +0.051; strmatch -0.018), gains growing with length; at LR 2e-6 it trails dense-5e-6 everywhere. Single seed, eval_size 500/cell.
+summary: On an 11-task 64k mix (662M tokens), the otr10M7 online router at 0.40x dense FLOPs beats the better-LR dense curve at matched LR 5e-6 on 9/10 tasks (seed 0, task-average +0.034) and 8/9 averaged over two seeds (+0.028; xabsence +0.125, contradiction +0.056 rising to +0.105 at 64k, outlier +0.051; strmatch -0.018), gains growing with length; at LR 2e-6 it trails dense-5e-6 everywhere. Single seed, eval_size 500/cell.
 ---
 
 # The mid-stack online token router at 64k, 11 tasks, ~64M tokens per task
@@ -85,6 +85,26 @@ need the replicates.
 - Router health at 64k: keep_frac 0.105-0.108, leak_auc 0.47-0.52 (does not pick gold by count), gradient-mass
   fidelity at the full-context steps 0.62-0.66 (oracle 0.86-0.88, random 0.10).
 
+## Seed replicate (router f4 LR 5e-6, seeds 0 and 1; dense f8/f4 LR 5e-6 also replicated)
+
+Each router seed vs the seed-averaged better-LR dense curve (f16 seed 0 only), mean over rungs (eval_size 500/cell):
+
+| task | seed 0 | seed 1 | mean |
+|---|---|---|---|
+| xabsence | +0.108 | +0.118 | +0.113 |
+| outlier | +0.071 | +0.035 | +0.053 |
+| contradiction | +0.050 | +0.033 | +0.042 |
+| hotpotqa | +0.018 | +0.024 | +0.021 |
+| oolong | +0.021 | +0.021 | +0.021 |
+| qdmatch_nq | +0.011 | +0.014 | +0.012 |
+| nq | +0.002 | +0.007 | +0.004 |
+| reorder (2k) | +0.010 | -0.009 | +0.001 |
+| strmatch | -0.017 | -0.016 | -0.016 |
+| grouping | +0.027 | pending | |
+
+Ahead on 8/9 tasks with both seeds, mean +0.028; the seeds agree in sign everywhere except reorder (a tie). strmatch is
+a small, consistent loss.
+
 ## Traps hit
 
 - Urgent Beaker jobs were preempted right after their 1 h minRuntime and restarted from scratch (no resume point
@@ -96,5 +116,5 @@ need the replicates.
 
 ## Open
 
-Seed replicates (router f4, dense f8/f4, LR 5e-6; on 4 GPUs because whole 8-GPU nodes queued for 4.5 h) and the
-larger budgets (router + dense at f2 on 4 GPUs, f1 on 8) are training; otr10M8 not yet run. This record is updated when they land.
+The larger budgets (router + dense at f2 and f1, LR 5e-6, on 4 GPUs because whole 8-GPU nodes queued for 4.5-7 h) are
+training; otr10M8 not yet run. This record is updated when they land.

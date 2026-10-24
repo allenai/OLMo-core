@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/m64-q35-4b
-next_step: SCALE-UP launched 19:40 after the LR-matched router won 9/10 tasks at 0.40x FLOPs. Seed replicates (router f4, dense f8, dense f4; all LR 5e-6, -sd1) and larger budgets (router + dense at f2 and f1, LR 5e-6) running; evaluate each as it finishes (`launch_mt11_64k.py status`, `--runs <run> eval`), then `collect_m64.py --record`, `make_page.py`, republish. Remaining: router-5e-6 grouping eval; write the record in records/.
+next_step: Seed replicate confirms the LR-matched router win (8/9 tasks, +0.028 over 2 seeds; grouping seed-1 eval pending). Running: router + dense at f2 (4 GPUs) and f1 (4 GPUs, ~10-14 h). When each finishes: `launch_mt11_64k.py status`, `--runs <run> eval`, `collect_m64.py --record`, `make_page.py`, republish; update records/mt11-64k-online-router.md with whether the advantage holds or grows with more data.
 ---
 
 # mt11_64k
@@ -81,6 +81,11 @@ mid-stack online router matched dense at equal FLOPs on 4 tasks but failed strma
 | scale-up LR 5e-6: otr10M7-f2, dense-f2 (4 GPUs: 01M5NFTSY0MJBQNXPNB9HDBERV, 01M5NFVJS7Y4D046KXFE9AFE81); dense-f1, otr10M7-f1 (8 GPUs: 01M5MZYWVPS7TXCFSGKNEQH0V6, 01M5N00AE88VBBGQRQ28F87N6S) | pending (minRuntime capped at Beaker's 8h; resume every 50 steps) |
 | m64-otr10M7-f4-lr2e-06 | 01M5KV36S0MTH0VRZT2WK32QKB: preempted twice at ~1h (step ~100 / ~200), restarted from scratch (no resume point before step 300), cancelled; RELAUNCHED 01M5M8NDSDPCS9YNWBQED7NNJE (minRuntime 3h, resume every 50 steps): FAILED at step 2, NaN grad norm already at step 1 on node 01JRYCX2HZQ2QE60PMHBB7ZM8J (same batch gives CE 0.9751 / grad norm 26.82 on other nodes = bad node); RELAUNCHED 01M5MEB6K9S3H6MQCS9FPPQ4G4: DONE 14:50, 1,872.4 PF (0.405x dense-equivalent); 10 evals launched |
 | m64-dense-f{8,4,2,1}-lr{2e-06,5e-06} (f4/f2/f1 CANCELLED pending, small-first) | 01M5KQZ52Z5MQ3W6N86NKYVW4M, 01M5KR0BQXMHGHHKXQ6QWZGJJR, 01M5KR1S0JRQ8MJ8C2SV7P3H4P, 01M5KR3V9W8Y669X20SJT0RT1P, 01M5KR60YGENAF5XM27F0FV9PM, 01M5KR6VCQNA4ZRWYNPHQAEQF5, 01M5KR7W5JAD0GYBXK9J1FKKBD, 01M5KR95YM906V56JZK1HVNK4Q | pending |
+
+## Seed replicate (2026-10-24 ~05:00): router f4 LR 5e-6 seed 1 agrees with seed 0. vs seed-averaged better-LR dense:
+seed0/seed1 xabsence +0.108/+0.118, outlier +0.071/+0.035, contradiction +0.050/+0.033, hotpotqa +0.018/+0.024,
+oolong +0.021/+0.021, qdmatch +0.011/+0.014, nq +0.002/+0.007, reorder(2k) +0.010/-0.009, strmatch -0.017/-0.016;
+grouping seed 1 pending. Ahead 8/9 with both seeds, mean +0.028.
 
 ## LR-matched read FINAL for the single seed (2026-10-23 ~23:30): all 10 evals in. Task-average +0.034, ahead on 9/10:
 nq +0.005, hotpotqa +0.017, qdmatch_nq +0.022, outlier +0.051, oolong +0.023, contradiction +0.056 (64k +0.105),
