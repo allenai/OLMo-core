@@ -710,6 +710,7 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | mod25L8 (MoD, capacity 0.25, blocks 8-30 alternate) | 905 (0.78) | 0.957 | 0.928 | 0.622 | **0.468** |
 | mass80c20M7 (adaptive: 80% of predicted ‖g‖² per doc, row cap 20%) | 428 (0.37) | 0.941 | 0.918 | 0.585 | 0.571 |
 | **prog4712M7** (freeze [0,4) @25%, [0,7) @50%, [0,12) @75%) | 253 (0.22) | **0.933** | 0.890 | 0.620 | 0.508 |
+| tl16M7 (router fit on ‖dL/dh‖ at block 16, exploration tokens) | 346 (0.30) | 0.919 | 0.910 | 0.628 | 0.726 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
 Per-task routing is neutral on the 4-task mix at matched PF (outlier +0.09 is inside that cell's 0.19 seed spread);
@@ -718,7 +719,9 @@ its case is the 11-task mix. MoD at capacity 0.25 is dense-level on contra / nq 
 no better than the fixed budget at less compute (de16, 0.34x: 0.946 / 0.912 / 0.625 / 0.725); oolong / outlier drop,
 so the predicted-mass cover does not pick the tokens those tasks need -- not a win at this setting. Progressive freeze is the best contra of the freeze family at the lowest PF (0.933 at 0.22x vs fa183
 0.924 at 0.24x and fa92 0.913 at 0.21x), level with no-freeze de0 (0.937, 0.30x) within seed noise; outlier 0.508 is
-low but that cell's seed spread is 0.19 (seed 1 queued). **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
+low but that cell's seed spread is 0.19 (seed 1 queued). Fitting the router on block-16 gradients (tl16M7, exploration tokens only) is neutral at matched PF:
+contra -0.018 (the de0 seeds differ by 0.021), nq / oolong / outlier +0.005-0.04 -- the depth drift of importance does
+not show up as a better pick at this budget. **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
 export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
 parent's checkout unless REPO_OVERRIDE is set (068d3f0ac); LoRA runs use OLMo-core-otr10.
