@@ -253,3 +253,38 @@ def test_all_local_train_window_config():
     assert [win(local, i) for i in range(32)] == [4096] * 32
     for i in local.block_overrides:
         assert local.block_overrides[i].sequence_mixer.rope.scaling.factor == 4.0
+
+
+def test_early_lora_rebuilt_from_keys_and_refuses_partial(tmp_path):
+    """config.json without an early_lora block (router branch <= 1e5a14c85) but lora keys in the checkpoint: the
+    block is rebuilt from the keys + provenance.json; without provenance the eval refuses instead of scoring the
+    base silently."""
+    early_lora = pytest.importorskip("olmo_core.nn.early_lora")
+    from olmo_core.distributed.checkpoint import save_model_and_optim_state
+
+    torch.manual_seed(3)
+    ev.FAMILIES["tiny"] = (lambda v, b: _tiny(v), 1024, "allenai/dolma2-tokenizer")
+    try:
+        cfg = ev.build_cfg("tiny", 4.0, "torch")
+        model = cfg.build(init_device="cpu")
+        model.init_weights(device=torch.device("cpu"))
+        early_lora.install_early_lora(model, 2, 4, 32.0, check_calls=False)
+        with torch.no_grad():
+            for m in model._early_lora["modules"]:
+                m.lora_B.normal_(0, 0.05)
+        model.eval()
+        ck = tmp_path / "ck"
+        save_model_and_optim_state(str(ck / "model_and_optim"), model)
+        json.dump({"model": {"d_model": cfg.d_model, "n_layers": cfg.n_layers, "vocab_size": cfg.vocab_size},
+                   "early_lora": None}, open(ck / "config.json", "w"))
+        with pytest.raises(SystemExit):
+            ev.load_model(str(ck), cfg, "cpu", 64)
+        json.dump({"args": {"st_otr_early_lora": 4, "st_otr_early_lora_scale": 32.0}}, open(ck / "provenance.json", "w"))
+        x = torch.randint(0, 1000, (1, 64))
+        with torch.no_grad():
+            ref = model(x)
+        m2, _ = ev.load_model(str(ck), cfg, "cpu", 64)
+        with torch.no_grad():
+            torch.testing.assert_close(m2(x), ref, rtol=1e-5, atol=1e-5)
+    finally:
+        del ev.FAMILIES["tiny"]

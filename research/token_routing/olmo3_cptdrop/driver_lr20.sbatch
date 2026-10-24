@@ -156,7 +156,9 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
         name="o3cd-DLORA16k${K}lr20-$b"
         run "$name" ARM=OTR OTR_KEEP=1.0 OTR_L=$K OTR_DENSE=0 OTR_EXTRA="--st-otr-early-lora 16 --st-otr-early-lora-scale 32" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 4 + 10)) \
           || { log "FAIL DLORA K=$K at $b: continuing"; break; }
-        grep -q '"early_lora": *{' "$ROOT/runs/$name/config.json" || { log "FAIL $name: config.json has no early_lora block (eval would score a plain model)"; break; }
+        # router branch <= 1e5a14c85 never writes config.json["early_lora"] (SoftToken.export_config defined twice);
+        # eval_devce rebuilds the block from the checkpoint's lora keys + provenance.json and refuses partial loads
+        grep -q '"st_otr_early_lora": *16' "$ROOT/runs/$name/provenance.json" || { log "FAIL $name: provenance.json lacks st_otr_early_lora"; break; }
       done; done ;;
     MODB)
       for b in 12 24 48 120; do

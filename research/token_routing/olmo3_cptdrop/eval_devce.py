@@ -324,14 +324,47 @@ def summarize_repeat(rep_s: np.ndarray, rep_c: np.ndarray) -> dict:
     return {nm: summarize(rep_s[:, [k]], rep_c[:, [k]], [(nm, 0, 1)])["overall"] for k, nm in enumerate(REPEAT_NAMES)}
 
 
+#: Checkpoint parameters a dense dev-CE eval legitimately ignores: the soft-token slot projector (the eval runs the
+#: model dense, without compaction or slots).
+EVAL_UNUSED_PREFIXES = ("pooled_projector.",)
+
+
+def _ckpt_model_keys(ckpt: str) -> set:
+    """Model parameter names stored in the distcp checkpoint (``model.`` prefix stripped)."""
+    from torch.distributed.checkpoint import FileSystemReader
+
+    md = FileSystemReader(find_distcp(ckpt)).read_metadata()
+    return {k[len("model."):] for k in md.state_dict_metadata if k.startswith("model.")}
+
+
 def reinstall_early_lora(ckpt: str, model) -> Optional[dict]:
-    """A low-rank-early-stack run (``--st-otr-early-lora``) records an ``early_lora`` block in its config.json; its
-    checkpoint holds ``lora_A`` / ``lora_B`` keys the base model lacks. Re-install the adapters before the load so the
-    trained model (not the base) is scored. No block -> no-op; the import is lazy (older trees lack the module)."""
+    """A low-rank-early-stack run (``--st-otr-early-lora``) stores ``lora_A`` / ``lora_B`` keys the base model lacks.
+    Re-install the adapters before the load so the trained model (not the base) is scored. The block comes from
+    config.json["early_lora"]; if that is missing (router branch <= 1e5a14c85 never exported it: SoftToken defines
+    export_config twice) but the checkpoint holds lora keys, it is rebuilt from the keys (n_blocks) and
+    provenance.json (rank, scale). No adapters -> no-op; the import is lazy (older trees lack the module)."""
     path = os.path.join(ckpt, "config.json")
     block = json.load(open(path)).get("early_lora") if os.path.isfile(path) else None
     if not block:
-        return None
+        try:
+            lora = [k for k in _ckpt_model_keys(ckpt) if k.endswith(".lora_A")]
+        except (Exception, SystemExit):
+            lora = []
+        if not lora:
+            return None
+        prov_p = os.path.join(ckpt, "provenance.json")
+        prov = json.load(open(prov_p)) if os.path.isfile(prov_p) else {}
+        flat = json.dumps(prov)
+        import re as _re
+
+        r = _re.search(r'"st_otr_early_lora": *(\d+)', flat)
+        sc = _re.search(r'"st_otr_early_lora_scale": *([0-9.eE+-]+)', flat)
+        if r is None or sc is None:
+            raise SystemExit(f"{ckpt}: checkpoint has {len(lora)} lora_A keys but neither config.json nor "
+                             "provenance.json records the adapter rank / scale; refusing to score it as the base")
+        n_blocks = 1 + max(int(k.split(".")[1]) for k in lora if k.startswith("blocks."))
+        block = {"n_blocks": n_blocks, "rank": int(r.group(1)), "scale": float(sc.group(1))}
+        log(f"early_lora block missing from config.json; rebuilt from checkpoint keys + provenance: {block}")
     from olmo_core.nn.early_lora import enable_from_config_block
 
     enable_from_config_block(model, block)
@@ -343,6 +376,19 @@ def load_model(ckpt: str, cfg, device: str, max_len: int):
 
     model = cfg.build(init_device="cpu")
     reinstall_early_lora(ckpt, model)
+    # never score a checkpoint whose parameters the built model would silently skip (distcp loads only the
+    # keys the model asks for): 2026-10-24, LoRA runs scored without their adapters
+    want = set(model.state_dict().keys())
+    try:
+        have = _ckpt_model_keys(ckpt)
+    except (Exception, SystemExit):
+        have = None
+    if have is not None:
+        # soft-token training adds a slot projector the dense eval never uses (slot-less / dense scoring)
+        extra = sorted(k for k in have - want if not k.startswith(EVAL_UNUSED_PREFIXES))
+        if extra:
+            raise SystemExit(f"{ckpt}: checkpoint holds {len(extra)} model keys the eval model lacks "
+                             f"(e.g. {extra[:3]}); refusing to score a partial model")
     t0 = time.time()
     load_model_and_optim_state(find_distcp(ckpt), model)
     load_s = time.time() - t0
