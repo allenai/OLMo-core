@@ -2,7 +2,7 @@
 experiment: mt11_64k
 title: Long-context, large-data 11-task CTC mix (rows to 64k, ~64M tokens/task) -- dense vs the mid-stack online token router at matched FLOPs
 status: active
-updated: 2026-10-23
+updated: 2026-10-25
 branch: prasann/mt11-64k (pushed; based on prasann/flopdrop_clean 177c76b05; worktree .claude/worktrees/mt11-64k)
 launcher: research/token_routing/mt11_64k/launch_mt11_64k.py (state.json beside it)
 records:
@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/m64-q35-4b
-next_step: Seed replicate confirms the LR-matched router win (8/9 tasks, +0.028 over 2 seeds; grouping seed-1 eval pending). Running: router + dense at f2 (4 GPUs) and f1 (4 GPUs, ~10-14 h). When each finishes: `launch_mt11_64k.py status`, `--runs <run> eval`, `collect_m64.py --record`, `make_page.py`, republish; update records/mt11-64k-online-router.md with whether the advantage holds or grows with more data.
+next_step: Done for otr10M7 (record records/mt11-64k-online-router.md). Only the dense-f1 grouping eval is outstanding (does not affect any matched comparison: every router point lies below dense f2). Possible follow-ups (Prasann to choose): otr10M8 on this mix; seeds at f2/f1; a wall-clock-oriented config.
 ---
 
 # mt11_64k
@@ -81,6 +81,22 @@ mid-stack online router matched dense at equal FLOPs on 4 tasks but failed strma
 | scale-up LR 5e-6: otr10M7-f2, dense-f2 (4 GPUs: 01M5NFTSY0MJBQNXPNB9HDBERV, 01M5NFVJS7Y4D046KXFE9AFE81); dense-f1, otr10M7-f1 (8 GPUs: 01M5MZYWVPS7TXCFSGKNEQH0V6, 01M5N00AE88VBBGQRQ28F87N6S) | pending (minRuntime capped at Beaker's 8h; resume every 50 steps) |
 | m64-otr10M7-f4-lr2e-06 | 01M5KV36S0MTH0VRZT2WK32QKB: preempted twice at ~1h (step ~100 / ~200), restarted from scratch (no resume point before step 300), cancelled; RELAUNCHED 01M5M8NDSDPCS9YNWBQED7NNJE (minRuntime 3h, resume every 50 steps): FAILED at step 2, NaN grad norm already at step 1 on node 01JRYCX2HZQ2QE60PMHBB7ZM8J (same batch gives CE 0.9751 / grad norm 26.82 on other nodes = bad node); RELAUNCHED 01M5MEB6K9S3H6MQCS9FPPQ4G4: DONE 14:50, 1,872.4 PF (0.405x dense-equivalent); 10 evals launched |
 | m64-dense-f{8,4,2,1}-lr{2e-06,5e-06} (f4/f2/f1 CANCELLED pending, small-first) | 01M5KQZ52Z5MQ3W6N86NKYVW4M, 01M5KR0BQXMHGHHKXQ6QWZGJJR, 01M5KR1S0JRQ8MJ8C2SV7P3H4P, 01M5KR3V9W8Y669X20SJT0RT1P, 01M5KR60YGENAF5XM27F0FV9PM, 01M5KR6VCQNA4ZRWYNPHQAEQF5, 01M5KR7W5JAD0GYBXK9J1FKKBD, 01M5KR95YM906V56JZK1HVNK4Q | pending |
+
+## FINAL (2026-10-25): router otr10M7 LR 5e-6 vs better-LR dense at matched FLOPs, task-average / tasks ahead:
+f4 seed0 +0.032 9/10, f4 seed1 +0.025 8/10, f2 +0.031 8/10, f1 +0.028 8/10 (all interpolated, none extrapolated).
+Steady ~+0.03 across 4x data, not growing. Same data: router -0.03 vs dense. Wall-clock (4 GPUs) 0.79-0.82x.
+Dense f1 = 18,592 PF; router f1 = 7,439 PF. Full tables: records/mt11-64k-online-router.md.
+
+## Wall-clock, like for like (both f2 runs on 4 H100s, 612 steps): dense 22,979 s (37.5 s/step incl. load) vs router
+18,824 s (30.8 s/step) = 0.82x, at 0.40x the FLOPs. On 8 GPUs the two ran at about the same per-step time (~20 s); with
+fewer GPUs per step the compute share grows and part of the FLOP saving shows up as time. Dense f2 = 9,294 PF.
+(Dense f2's outlier 16k-64k are new experiment bests, 0.745/0.423/0.323: dense keeps improving with data; explained.)
+
+## f2 read (2026-10-24, partial: grouping eval pending): router otr10M7-f2 LR 5e-6, 3,725 PF (0.40x), between dense f8 and
+f4. vs better-LR dense (seed-averaged where replicated): nq -0.003, hotpotqa +0.021, qdmatch -0.001, outlier +0.069, oolong
++0.011, contradiction +0.044, xabsence +0.124, reorder(2k) +0.009, strmatch +0.001 -> avg +0.031, the advantage holds at
+2x the data and strmatch no longer loses. --check flags explained: xabsence 2k = 1.000 is saturation (every arm
+0.999-1.000), xabsence 8k-32k are new experiment bests (most-trained run), reorder 16k 0.000 = the known parse failure.
 
 ## Seed replicate (2026-10-24 ~05:00): router f4 LR 5e-6 seed 1 agrees with seed 0. vs seed-averaged better-LR dense:
 seed0/seed1 xabsence +0.108/+0.118, outlier +0.071/+0.035, contradiction +0.050/+0.033, hotpotqa +0.018/+0.024,

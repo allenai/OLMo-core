@@ -1,14 +1,14 @@
 ---
 title: The mid-stack online token router on the 11-task CTC mix at 64k with ~64M tokens per task
 date: 2026-10-23
-updated: 2026-10-23
+updated: 2026-10-25
 experiment: mt11_64k
 area: token_routing
 kind: result
-status: interim (two seeds at the 1/4-epoch point; 1/2 + full-epoch runs training)
+status: complete for otr10M7 (two seeds at 1/4 epoch, one at 1/2 and full epoch; otr10M8 not run)
 superseded_by: 
 artifact: https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
-summary: On an 11-task 64k mix (662M tokens), the otr10M7 online router at 0.40x dense FLOPs beats the better-LR dense curve at matched LR 5e-6 on 9/10 tasks (seed 0, task-average +0.034) and 8/9 averaged over two seeds (+0.028; xabsence +0.125, contradiction +0.056 rising to +0.105 at 64k, outlier +0.051; strmatch -0.018), gains growing with length; at LR 2e-6 it trails dense-5e-6 everywhere. Single seed, eval_size 500/cell.
+summary: 11-task 64k mix (662M tokens) - the otr10M7 online router (0.40x dense FLOPs/step) beats the better-LR dense curve at matched FLOPs and LR 5e-6 by +0.025 to +0.032 (task-average) at every budget (1/4, 1/2, full epoch; 2 seeds at 1/4), ahead on 8-9/10 tasks; largest xabsence +0.10-0.12, outlier +0.04-0.13, contradiction +0.03-0.06. Same data it trails dense by ~0.03. Wall-clock 0.79-0.82x on 4 GPUs, ~1x on 8. eval_size 500/cell.
 ---
 
 # The mid-stack online token router at 64k, 11 tasks, ~64M tokens per task
@@ -105,6 +105,29 @@ Each router seed vs the seed-averaged better-LR dense curve (f16 seed 0 only), m
 Ahead on 8/9 tasks with both seeds, mean +0.028; the seeds agree in sign everywhere except reorder (a tie). strmatch is
 a small, consistent loss.
 
+## More data: 1/2 and full epoch (LR 5e-6; router and dense on 4 GPUs)
+
+Router minus the better-LR dense curve (seed-averaged where replicated), interpolated in log PF, mean over rungs:
+
+| router run | PF | nq | hotpotqa | qdmatch | outlier | oolong | contra | xabsence | reorder | strmatch | grouping | task-avg | ahead |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| f4 seed 0 | 1,872 | +0.002 | +0.018 | +0.011 | +0.071 | +0.021 | +0.050 | +0.108 | +0.010 | -0.017 | +0.043 | +0.032 | 9/10 |
+| f4 seed 1 | 1,862 | +0.007 | +0.024 | +0.014 | +0.035 | +0.021 | +0.033 | +0.118 | -0.009 | -0.016 | +0.024 | +0.025 | 8/10 |
+| f2 | 3,725 | -0.003 | +0.021 | -0.001 | +0.069 | +0.011 | +0.044 | +0.124 | +0.009 | +0.001 | +0.031 | +0.031 | 8/10 |
+| f1 | 7,439 | -0.012 | +0.001 | +0.011 | +0.125 | -0.004 | +0.031 | +0.099 | +0.001 | +0.002 | +0.023 | +0.028 | 8/10 |
+
+Every router point lies inside the measured dense range (dense f16 1,175 / f8 2,287 / f4 ~4,575 / f2 9,294 / f1 18,592 PF):
+no extrapolation. The advantage is steady at about +0.03 rather than growing with data. outlier at f1 (+0.125;
+16k 0.899, 32k 0.599, above every dense run) is single-seed and outlier's run-to-run noise reaches ±0.13: replicate
+before quoting it alone.
+
+**Same data** (router - dense at LR 5e-6, same rows): -0.035 (f4), -0.031 (f2), -0.034 (f1). The router gives up
+~0.03 for 0.40x the FLOPs; dense needs ~2.5x the FLOPs to buy that 0.03 back, hence the matched-FLOP win.
+
+**Wall-clock**, like for like on 4 H100s: f2 router 18,824 s vs dense 22,979 s (0.82x); f1 38,479 s vs 49,008 s (0.79x).
+On 8 GPUs the per-step times were about equal (~20 s): with fewer GPUs per step the compute share grows and part of the
+FLOP saving shows up as time.
+
 ## Traps hit
 
 - Urgent Beaker jobs were preempted right after their 1 h minRuntime and restarted from scratch (no resume point
@@ -116,5 +139,6 @@ a small, consistent loss.
 
 ## Open
 
-The larger budgets (router + dense at f2 and f1, LR 5e-6, on 4 GPUs because whole 8-GPU nodes queued for 4.5-7 h) are
-training; otr10M8 not yet run. This record is updated when they land.
+- otr10M8 (split after block 8) was not run on this mix; launch_mt11_64k.py has it.
+- Seeds at f2/f1 (single seed there; the f1 outlier jump in particular).
+- A wall-clock-optimal configuration (micro-batch > 1 for short rows, fewer GPUs per run) was not explored.
