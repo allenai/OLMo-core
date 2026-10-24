@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import math
 from types import MethodType
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,7 @@ import torch.nn.functional as F
 
 log = logging.getLogger(__name__)
 
-__all__ = ["install_early_lora", "early_lora_flops_per_token", "enable_from_config_block"]
+__all__ = ["install_early_lora", "early_lora_flops_per_token", "enable_from_config_block", "lora_block_from_checkpoint"]
 
 
 def _lora_hook(mod: nn.Linear, inp, out):
@@ -114,6 +114,35 @@ def early_lora_flops_per_token(model: Any) -> float:
         return 0.0
     r = st["rank"]
     return float(sum(6 * r * (m.in_features + m.out_features) for m in st["modules"]))
+
+
+def lora_block_from_checkpoint(model_path: str) -> Optional[Dict[str, Any]]:
+    """The ``early_lora`` block for a checkpoint whose ``config.json`` lacks one (configs written before 2026-10-24
+    dropped it): None if ``model_and_optim/`` holds no adapter keys; else rebuilt from ``provenance.json``'s args.
+    Raises rather than return None when adapters exist but the block cannot be rebuilt -- a load without them would
+    silently score the frozen base early stack (a DCP load reads only the keys the model asks for)."""
+    import json
+    import os
+    import re
+
+    try:
+        from torch.distributed.checkpoint import FileSystemReader
+
+        keys = list(FileSystemReader(os.path.join(model_path, "model_and_optim")).read_metadata().state_dict_metadata)
+    except Exception:  # no / unreadable DCP metadata: nothing to say
+        return None
+    lora = [k for k in keys if k.endswith(".lora_A")]
+    if not lora:
+        return None
+    blocks = {int(m.group(1)) for k in lora if (m := re.search(r"blocks\.(\d+)\.", k))}
+    try:
+        with open(os.path.join(model_path, "provenance.json")) as f:
+            args = json.load(f)["args"]
+        rank, scale = int(args["st_otr_early_lora"]), float(args["st_otr_early_lora_scale"])
+    except (OSError, KeyError, ValueError) as exc:
+        raise RuntimeError(f"{model_path}: checkpoint holds {len(lora)} LoRA adapters but neither config.json nor "
+                           f"provenance.json describes them ({exc}); refusing to load it as a plain model") from exc
+    return {"n_blocks": max(blocks) + 1, "rank": rank, "scale": scale}
 
 
 def enable_from_config_block(model: Any, block: Dict[str, Any]) -> None:

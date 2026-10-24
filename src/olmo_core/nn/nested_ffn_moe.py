@@ -115,6 +115,11 @@ def post_build_hook_from_config(model_path: str):
     kv_block = cfg.get("kv_route")  # the attention-side router; same "enable before load" need
     bs_block = cfg.get("block_skip")  # per-token block skipping
     lora_block = cfg.get("early_lora")  # low-rank early stack (olmo_core.nn.early_lora)
+    if not lora_block:
+        # configs written before 2026-10-24 dropped the block: rebuild it from the checkpoint (or refuse)
+        from .early_lora import lora_block_from_checkpoint
+
+        lora_block = lora_block_from_checkpoint(model_path)
     if not block and not kv_block and not bs_block and not lora_block:
         return None
 

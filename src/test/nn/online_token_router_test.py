@@ -1272,3 +1272,25 @@ def test_early_lora_validate_and_eval_reinstall(tmp_path):
     hook(model)
     assert model._early_lora["rank"] == 2 and all(hasattr(m, "lora_A") for m in model._early_lora["modules"])
     assert any(k.endswith(".lora_A") for k in model.state_dict())
+
+
+def test_lora_block_from_checkpoint(tmp_path):
+    """A checkpoint holding adapter keys but no config.json block is rebuilt from provenance.json, or refused --
+    never loaded as a plain model."""
+    import json
+
+    import torch.distributed.checkpoint as dcp
+
+    from olmo_core.nn.early_lora import install_early_lora, lora_block_from_checkpoint
+
+    model, _ = _mid_model(3, drop_layer=2, dense_every=0, early_lora=2)
+    install_early_lora(model, 2, 2, scale=8.0)
+    dcp.save({"model": model.state_dict()}, checkpoint_id=str(tmp_path / "model_and_optim"))
+    with pytest.raises(RuntimeError, match="refusing"):
+        lora_block_from_checkpoint(str(tmp_path))
+    (tmp_path / "provenance.json").write_text(json.dumps({"args": {"st_otr_early_lora": 2,
+                                                                   "st_otr_early_lora_scale": 8.0}}))
+    assert lora_block_from_checkpoint(str(tmp_path)) == {"n_blocks": 2, "rank": 2, "scale": 8.0}
+    plain, _ = _mid_model(3, drop_layer=2, dense_every=0)
+    dcp.save({"model": plain.state_dict()}, checkpoint_id=str(tmp_path / "plain" / "model_and_optim"))
+    assert lora_block_from_checkpoint(str(tmp_path / "plain")) is None

@@ -1158,16 +1158,6 @@ class SoftToken(Variant):
     def train_module_overrides(self, o, ctx):
         return {"microbatch_sort_pad_id": ctx.ids.eos}  # length-homogeneous micro-batches
 
-    def export_config(self, o):
-        assert isinstance(o, SoftTokenOptions)
-        if o.st_keep_token_rule == "online" and o.st_otr_early_lora > 0:
-            # the eval re-installs the adapters before its strict load (nested_ffn_moe.post_build_hook_from_config)
-            from olmo_core.nn.online_token_router import parse_mod_layers
-
-            L = parse_mod_layers(o.st_otr_mod_layers)[0] if o.st_otr_mod_layers else o.st_otr_drop_layer
-            return {"early_lora": {"n_blocks": L, "rank": o.st_otr_early_lora, "scale": o.st_otr_early_lora_scale}}
-        return {}
-
     def post_build_model(self, model, o, ctx):
         assert isinstance(o, SoftTokenOptions)
         from olmo_core.nn.pooled_soft_token import parse_keep_token_weights
@@ -1325,7 +1315,16 @@ class SoftToken(Variant):
         return {"online_router": OnlineRouterCallback()}
 
     def export_config(self, o):
+        out: Dict[str, Any] = {}
+        if o.st_keep_token_rule == "online" and o.st_otr_early_lora > 0:
+            # the eval re-installs the adapters before loading (nested_ffn_moe.post_build_hook_from_config); a DCP load
+            # only reads the keys the model asks for, so without this block the adapters would be silently dropped
+            from olmo_core.nn.online_token_router import parse_mod_layers
+
+            L = parse_mod_layers(o.st_otr_mod_layers)[0] if o.st_otr_mod_layers else o.st_otr_drop_layer
+            out["early_lora"] = {"n_blocks": L, "rank": o.st_otr_early_lora, "scale": o.st_otr_early_lora_scale}
         return {
+            **out,
             "softtoken": {
                 "n_random": o.st_n_random,
                 "n_random_range": o.st_n_random_range,
