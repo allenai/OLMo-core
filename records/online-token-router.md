@@ -730,7 +730,7 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | lora64k05M7 (rank 64, keep 5%) | 244 (0.21) | 0.912 | 0.900 | 0.609 | 0.534 |
 | lora64M6 (rank 64, drop at block 6) | 270 (0.23) | 0.715 | 0.874 | 0.595 | 0.344 |
 | lora64M5 (rank 64, drop at block 5) | 253 (0.22) | 0.752 | 0.882 | 0.605 | 0.381 |
-| lora64fa275M7 (rank 64, adapters + blocks 0-6 frozen at 75%) | 267 (0.23) | 0.931 | 0.898 | 0.608 | 0.756 |
+| **lora64fa275M7** (rank 64, adapters + blocks 0-6 frozen at 75%), seeds 0 / 1 | 267 (0.23) | 0.931 / 0.937 | 0.898 / 0.904 | 0.608 / 0.636 | 0.756 / 0.717 |
 | lora64fa183M7 (rank 64, frozen at 50%) | 248 (0.21) | 0.924 | 0.900 | 0.607 | 0.527 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
@@ -768,7 +768,10 @@ freeze_after, after which blocks 0-6 run forward-only) trades smoothly at the Lo
 0.25x 0.939 / 0.904 / 0.623 / 0.686 (2 seeds) -> frozen at 75% 0.23x 0.931 / 0.898 / 0.608 / 0.756 -> at 50% 0.21x
 0.924 / 0.900 / 0.607 / 0.527 (seed 0 each). Frozen at 50% equals the plain warmup-then-freeze fa183 (0.924 / 0.900 /
 0.609 / 0.657 at 0.24x, 60 GiB peak) on contra / nq / oolong at less compute and 12 GiB less peak. (The fa275 oolong@2k
-row was missing from the Lambda results copy -- the node-local eval had it, 0.858 on 500 -- re-copied and added.) Running: lora64f16M7 and
+row was missing from the Lambda results copy -- the node-local eval had it, 0.858 on 500 -- re-copied and added.) **Seed 1 of
+the 75% point (0.937 / 0.904 / 0.636 / 0.717) makes it the best compute + memory point: 2-seed mean 0.934 / 0.901 /
+0.622 / 0.737 at 0.23x and 48.4 GiB, vs the de0 router 0.937 / 0.902 / 0.623 / 0.682 at 0.30x and 60.3 GiB -- the same
+quality at 23% less compute and 20% less peak memory.** Running: lora64f16M7 and
 lora16f16M7 on mt11s720 at 5e-6 (Beaker; evals from an eval worktree at the fixed tip). **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
 export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
