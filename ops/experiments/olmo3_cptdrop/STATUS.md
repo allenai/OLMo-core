@@ -159,6 +159,14 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-24 00:10 exit loss + peak-memory arms (cubbins 4020957, router fcda77090; measured PF; mem = per-step
+  peak excluding warmup step 1 (always full, 35.9) / median): exit W1.0 de8 31/62/124/310 = 366/705/1383/3398 PF ->
+  1.7366/1.7523/1.7603/1.7706 (WORSE with training; short 1.17->1.24); W0.3 1.7310/1.7354/1.7409/1.7450; de0+exit
+  W1.0/0.3 40/80/160 = 386/726/1405 PF -> 1.8476/1.8900/1.9183 / 1.8239/1.8599/1.8816 (worse than the start; mem
+  28.6/28.6); F0.5+exit W1 31/62/124 -> 1.7779/1.8059/1.8018; early-nograd+F0.5 46/92/185 = 280/522/1008 PF ->
+  1.7433/1.7340/1.7263 (m <0.49/<0.26/<0.14; mem 28.6/22.0, peak -19%); early-nograd de0 60/120/240 = 272/493/935 PF
+  -> 1.7804/1.7764/1.7779 (flat; mem 22.0/22.0, -38%). Exit loss bends the SHARED norm + head toward layer-7 states.
+  Peak-memory cuts all cost CE; none beats dense. ctx_gain for these pending (CTX stage of 4020957).
 - TRAP (hit 2026-10-23 08:57-13:50, cost ~5 h of cubbins): cubbins /data hit 100% (109 trainer stepN checkpoints,
   6.8 TB, ~62 GB each, beside every run's ~65 GB model_and_optim export) and OTR10M7ndx10lr20-160 hung at its final
   save with 0% GPU; the 6 h watcher bound expired before anyone looked. Prasann approved deleting every stepN dir of
