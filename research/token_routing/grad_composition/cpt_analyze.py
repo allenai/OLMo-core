@@ -80,7 +80,10 @@ def main():
         for k in ("conc", "pos_share", "doc_share", "xcorr", "contain_mass", "pyr_nested", "own_share", "ctx_share",
                   "own_cos", "own_rank_corr", "am_far_frac", "am_far_pos", "am_far_doc", "agree_g_amfar", "agree_g_dh",
                   "ctx_share_pos", "ce_pos", "doc_cnt"):
-            e[k] = np.nanmean(st[k], 0).tolist()
+            # own / context shares are per-row energy ratios; a few rows with a tiny full gradient at block 0 make
+            # the mean unstable (own and context parts can be anti-aligned), so use the median for those
+            agg = np.nanmedian if k in ("own_share", "ctx_share", "own_cos", "ctx_share_pos", "own_rank_corr") else np.nanmean
+            e[k] = agg(st[k], 0).tolist()
         e["conc_se_b24_10"] = se(st["conc"][:, 24, 3])
         e["xcorr_se_7_24"] = se(st["xcorr"][:, 7, 24])
         ce = c["ce"].astype(np.float32)

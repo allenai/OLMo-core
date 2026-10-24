@@ -19,6 +19,10 @@ def main():
     out = (t.replace("__DATA__", data).replace("__HEAT__", heat).replace("__FINDINGS__", find).replace("__SETUP__", setup)
            .replace("__UPDATED__", datetime.date.today().isoformat())
            .replace("__STATUS__", open(os.path.join(HERE, "artifact_status.html")).read().strip()))
+    cptp = os.path.join(RES, "cpt", "summary.json")
+    cpt = open(cptp).read().replace("</", "<\\/") if os.path.exists(cptp) else "null"
+    cptf = os.path.join(HERE, "artifact_cpt_findings.html")
+    out = out.replace("__CPT__", cpt).replace("__CPT_FINDINGS__", open(cptf).read() if os.path.exists(cptf) else "")
     p = os.path.join(RES, "grad_composition_artifact.html")
     open(p, "w").write(out)
     print(f"wrote {p} ({os.path.getsize(p) / 1e6:.1f} MB)")

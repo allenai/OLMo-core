@@ -172,6 +172,24 @@ td.hl { font-weight: 600; }
   <div class="card"><h3>Hottest tokens by ‖dL/dh<sub>b</sub>‖ in this row</h3><div id="hot-toks" class="toks"></div></div>
 </section>
 
+<section id="cpt">
+  <div class="eyebrow">Addendum · continued pretraining</div>
+  <h2>OLMo 3 7B, 32k continued pretraining on Longmino</h2>
+  __CPT_FINDINGS__
+  <div class="grid2">
+    <div class="card"><h3>Parameter-gradient energy per block</h3><div class="chart" id="cpt-pg"></div><div class="legend" id="cpt-l1"></div></div>
+    <div class="card"><h3>Share of ‖dL/dh<sub>b</sub>‖² in the top 10% of tokens</h3><div class="chart" id="cpt-conc"></div><div class="legend" id="cpt-l2"></div></div>
+    <div class="card"><h3>Spearman of token ‖dL/dh<sub>b</sub>‖ with block 7</h3><div class="chart" id="cpt-x7"></div><div class="legend" id="cpt-l3"></div></div>
+    <div class="card"><h3>Context share of each block's hidden-state gradient</h3><div class="chart" id="cpt-ctx"></div><div class="legend" id="cpt-l4"></div>
+      <div class="note">‖g<sub>full</sub> − g<sub>own</sub>‖² / ‖g<sub>full</sub>‖², where g<sub>own</sub> comes from a second backward with every attention layer's keys and values detached, so it
+      only carries the token's own label. The rest is what the token receives for serving as keys and values to later tokens.</div></div>
+  </div>
+  <div class="card"><h3>Router fidelity and structure, every checkpoint</h3><div class="tblwrap" id="cpt-t1"></div></div>
+  <div class="card"><h3>Long-context gain over the base, by target position and repeat category</h3><div class="tblwrap" id="cpt-t2"></div>
+    <div class="note">CE(base) − CE(checkpoint) per target token. Near repeat: the 4-gram ending at the target last occurred ≤ 4,096 tokens back, within every sliding
+    window. Far-only: it occurred earlier but only further back, so only the 8 full-attention layers can reach it. Novel: it never occurred. ± is the SE over rows.</div></div>
+</section>
+
 <section class="foot" id="setup">
   <h2>Setup, limits, files</h2>
   __SETUP__
@@ -181,6 +199,7 @@ td.hl { font-weight: 600; }
 
 <script type="application/json" id="data">__DATA__</script>
 <script type="application/json" id="heatdata">__HEAT__</script>
+<script type="application/json" id="cptdata">__CPT__</script>
 <script>
 (function(){
 const D = JSON.parse(document.getElementById('data').textContent);
@@ -344,7 +363,8 @@ function fill(){
   document.querySelectorAll('#rowset button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === st.rowset));
 }
 function save(){ try { localStorage.setItem('gc-filters', JSON.stringify(st)); } catch(e) {} }
-document.querySelectorAll('#rowset button').forEach(b => b.addEventListener('click', () => { st.rowset = b.dataset.v; fill(); render(); save(); }));
+document.querySelectorAll('#rowset button').forEach(b => b.addEventListener('click', () => { st.rowset = b.dataset.v; 
+fill(); render(); renderCPT(); save(); }));
 taskSel.addEventListener('change', () => { st.task = taskSel.value; render(); save(); });
 ckSel.addEventListener('change', () => { st.ckpt = ckSel.value; render(); save(); });
 blSel.addEventListener('change', () => { st.block = +blSel.value; render(); save(); });
@@ -432,9 +452,50 @@ function render(){
   if (rec && rec.top) for (const b of Object.keys(rec.top)) tops.innerHTML += `<div style="width:100%"><b style="color:var(--ink)">block ${b}:</b> ` + rec.top[b].map(([pos, tok, cv]) =>
     `<span title="position ${pos}, ${CATS[cv]}">${tok.replace(/[<>&]/g, c => ({'<': '&lt;', '>': '&gt;', '&': '&amp;'}[c])).replace(/\n/g, '⏎') || '∅'} <small style="color:var(--muted)">${CATS[cv]}</small></span>`).join(' ') + '</div>';
 }
-fill(); render();
-let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(render, 150); });
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
-new MutationObserver(render).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+
+// ---- CPT addendum
+function renderCPT(){
+  const el0 = document.getElementById('cptdata'); if (!el0) return;
+  let C; try { C = JSON.parse(el0.textContent); } catch (e) { return; }
+  if (!C || !C.labels) return;
+  const NAMES = {"base": "base (stage 2)", "dlr20-12": "dense 12", "dlr20-48": "dense 48", "dlr20-120": "dense 120", "dlr20-240": "dense 240",
+    "dlr20-480": "dense 480", "otr10m7-310": "router OTR10M7, 310", "stage3": "OLMo stage 3 (ref)"};
+  const dense = C.labels.filter(l => l === 'base' || l.startsWith('dlr20'));
+  const ramp = ['--r250','--r350','--r450','--r550','--r650','--r700'];
+  const col = l => l === 'otr10m7-310' ? css('--router') : l === 'stage3' ? css('--muted') : css(ramp[Math.round(dense.indexOf(l) * (ramp.length - 1) / Math.max(1, dense.length - 1))]);
+  const dsh = l => l === 'stage3' ? '4 3' : '';
+  const ser = f => C.labels.map(l => ({name: NAMES[l] || l, color: col(l), values: f(C.data[l]), dash: dsh(l)}));
+  const leg = id => legend(document.getElementById(id), C.labels.map(l => ({name: NAMES[l] || l, color: col(l), dash: !!dsh(l)})));
+  const B33 = Array.from({length: 33}, (_, i) => i), B32 = B33.slice(0, 32), xt = [0, 4, 8, 12, 16, 20, 24, 28, 32];
+  lineChart(document.getElementById('cpt-pg'), {xs: B32, xticks: [0, 4, 8, 12, 16, 20, 24, 28], vlines: C.full_blocks, xname: 'block', xlabel: 'block', series: ser(e => e.pgrad_block), aria: 'CPT parameter gradient per block'});
+  leg('cpt-l1');
+  lineChart(document.getElementById('cpt-conc'), {xs: B33, xticks: xt, vlines: C.full_blocks, xname: 'block', xlabel: 'block b (input of)', ymin: 0, ymax: 1, series: ser(e => e.conc.map(r => r[3])), aria: 'CPT concentration'});
+  leg('cpt-l2');
+  lineChart(document.getElementById('cpt-x7'), {xs: B33, xticks: xt, vlines: [7], xname: 'block', xlabel: 'block b', ymin: -0.2, ymax: 1, series: ser(e => e.xcorr[7]), aria: 'CPT correlation with block 7'});
+  leg('cpt-l3');
+  lineChart(document.getElementById('cpt-ctx'), {xs: B33, xticks: xt, vlines: C.full_blocks, xname: 'block', xlabel: 'block b (input of)', ymin: 0, ymax: 1, series: ser(e => e.ctx_share), aria: 'CPT context share'});
+  leg('cpt-l4');
+  const P = C.pyr, si = n => C.pyr_sets.indexOf(n), ti = n => C.pyr_tgts.indexOf(n);
+  let h = '<table><thead><tr><th>checkpoint</th><th>rows</th><th>loss</th><th>blocks 0–6 (summed)</th><th>LM head</th><th>top10% @24</th><th>top30% @24</th><th>ρ(7,16)</th><th>ρ(7,24)</th><th>top10%@7 holds G24²</th><th>random 10%</th><th>nested 50/10/3</th><th>context share @7 / @16 / @24</th><th>far attention @7 / @31</th><th>G24² in 0–4k / 16–32k</th></tr></thead><tbody>';
+  for (const l of C.labels) { const e = C.data[l], cm = e.contain_mass, fb = C.full_blocks;
+    const pg06 = e.pgrad_block.slice(0, 7).reduce((a, b) => a + b, 0);
+    h += `<tr><td>${NAMES[l] || l}</td><td>${e.eval_size_rows} ⚠</td><td>${fmt(e.loss, 3)}</td><td>${fmt(pg06)} (${fmt(e.pgrad_0_6_summed)})</td><td>${fmt(e.pgrad_head)}</td>
+      <td>${fmt(e.conc[24][3])}</td><td>${fmt(e.conc[24][5])}</td><td>${fmt(e.xcorr[7][16])}</td><td>${fmt(e.xcorr[7][24])}</td>
+      <td>${fmt(cm[P.indexOf(7)][P.indexOf(24)][2])}</td><td>${fmt(e.pyr_nested[si('random_10pct')][ti('g24')])}</td><td>${fmt(e.pyr_nested[si('nest_3_7_16')][ti('g24')])}</td>
+      <td>${fmt(e.ctx_share[7])} / ${fmt(e.ctx_share[16])} / ${fmt(e.ctx_share[24])}</td><td>${fmt(e.am_far_frac[fb.indexOf(7)])} / ${fmt(e.am_far_frac[fb.indexOf(31)])}</td>
+      <td>${fmt(e.pos_share[24][0])} / ${fmt(e.pos_share[24][3])}</td></tr>`; }
+  document.getElementById('cpt-t1').innerHTML = h + '</tbody></table><div class="note">⚠ eval_size = rows of 32,768 tokens each (below the 500-example default). Token shares of the position bins are 0.125 / 0.125 / 0.25 / 0.5.</div>';
+  const bins = C.pos_edges.slice(0, -1).map((lo, i) => `${lo / 1024}k–${C.pos_edges[i + 1] / 1024}k`);
+  h = '<table><thead><tr><th>checkpoint</th>' + bins.map(b => `<th>${b}: all</th><th>novel</th><th>near</th><th>far-only</th>`).join('') + '</tr></thead><tbody>';
+  for (const l of C.labels) { const g = C.data[l].ce_gain; if (!g) continue;
+    h += `<tr><td>${NAMES[l] || l}</td>` + bins.map((_, b) => ['all', 'novel', 'near', 'far_only'].map(c => { const x = g[`${b}/${c}`];
+      return `<td>${x && x.gain != null ? (x.gain >= 0 ? '+' : '') + fmt(x.gain, 3) + ' <span style="color:var(--muted)">±' + fmt(x.se, 3) + '</span>' : '–'}</td>`; }).join('')).join('') + '</tr>'; }
+  document.getElementById('cpt-t2').innerHTML = h + `</tbody></table><div class="note">Target shares: novel ${fmt(C.rep_share[0])}, near ${fmt(C.rep_share[1])}, far-only ${fmt(C.rep_share[2])}.</div>`;
+}
+
+fill(); render(); renderCPT();
+let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { render(); renderCPT(); }, 150); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { render(); renderCPT(); });
+new MutationObserver(() => { render(); renderCPT(); }).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
 })();
 </script>
