@@ -143,7 +143,7 @@ a { color: inherit; }
     <li><b>At its own learning rate (5e-6), the router matches dense trained on the same data at 0.38× the FLOPs.</b> 4-task mix, 1,464 rows/task, 2 seeds: contradiction / nq / oolong / outlier @8k 0.955 / 0.913 / 0.622 / 0.726 vs dense 0.956 / 0.936 / 0.630 / 0.719. Level on 3 of 4; nq −0.023.</li>
     <li><b>Cheaper variants form one smooth curve at 5e-6</b> (table below). There's no free lunch: each step down in FLOPs costs a little, mostly outlier. Full-context step every 16 instead of 8 is the best trade (0.34×, contradiction −0.009). Freezing the early blocks halfway reaches 0.24× and 47.7 GiB. Its apparent free win at LR 2e-6 was mostly the LR.</li>
     <li><b>At 64k with 10× data the router beats dense, replicated:</b> 2 seeds, ahead on 8 of 9 tasks, +0.028 averaged, at 0.40× FLOPs (¼ epoch, LR 5e-6 for both). ½- and 1-epoch runs are training (≈10–14 h).</li>
-    <li><b>11-task mix:</b> a 16-token floor per document fixes strmatch (2 seeds); the freeze + floor run at 5e-6 is being evaluated. <b>Long-document CPT:</b> every router variant still loses, and the early-exit loss makes it worse; key/value-only dropping would save only 7–15% at 32k, so the CPT line is paused.</li>
+    <li><b>11-task mix, at matched FLOPs (LR 5e-6 for both):</b> freeze-halfway + 16-token floor, with no full-context steps, scores mean9 0.750 at ≈258 PF. Dense reaches 0.750 only at 483 PF, so that is ≈1.9× fewer FLOPs (+0.045 over dense interpolated to 258 PF). On the same data dense is ahead (0.788 at 715 PF). <b>Correction:</b> the earlier "0.730 vs dense 0.741" used dense at LR 2e-6. <b>Long-document CPT:</b> every router variant still loses, and the early-exit loss makes it worse. Label-preserving cuts are screening: freezing, mixture-of-depths, progressive freeze, low-rank early stack.</li>
   </ul>
 </section>
 
@@ -177,7 +177,7 @@ a { color: inherit; }
   <h2>Other tracks</h2>
   <div class="tbl"><table>
     <tr><th>track</th><th>status</th></tr>
-    <tr><td>11-task mix, 720 rows/task</td><td>router + 16-token floor: mean9 0.730 (2 seeds) vs dense 0.741 at 0.49×; strmatch fixed; grouping@8k still −0.08. Floor + freeze: 0.712 at 0.36×.</td></tr>
+    <tr><td>11-task mix, 720 rows/task (LR 5e-6)</td><td>Dense mean9: 0.697 @ 232 PF, 0.750 @ 483, 0.788 @ 715. Freeze-halfway + floor 16 (no full steps): 0.750 @ ≈258 PF, matching dense at ≈1.9× fewer FLOPs. The floor fixes strmatch (2 seeds). Per-task routers are training.</td></tr>
     <tr><td><a href="https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n">64k, 10× data</a></td><td>Router at LR 5e-6 (¼ epoch, 1,872 PF, 0.40× dense for the same rows) beats dense (better LR per cell, matched FLOPs) on 9 of 10 tasks, 2k–64k; one seed. At LR 2e-6 it trailed, so LR matters. Seed replicates and ½ / 1 epoch budgets training.</td></tr>
     <tr><td><a href="https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk">Long-document CPT (OLMo 3 7B)</a></td><td class="neg">Every router variant loses on dev CE. Best: early blocks forward-only, 1.6975 at 1,278 PF; dense needs ≈356 PF for that (median memory −37%, peak unchanged). The early-exit loss <b>hurts</b> and worsens with training (W 1.0: 1.736 → 1.771): decoding block-7 states pulls the shared head away. Every peak-memory cut costs CE; the periodic full-context steps carry most of the learning. Dropping only attention keys/values (labels kept) was scoped and does not pay at 32k: attention is 21% of step FLOPs, so it saves 7–15% and ~0 memory (15–32% at 64k–128k). Paused pending a decision.</td></tr>
     <tr><td><a href="https://claude.ai/artifact/BVaPjZdAKjETHdQDdGqqtQ">Gradient composition</a></td><td>Done. Blocks 0–6 hold 0.42–0.51 of gradient energy at the base, 0.13–0.25 after training (why freezing early helps late, hurts early). Token importance is smooth in position; rescoring at block 16 adds ≈ +0.08 of gradient mass.</td></tr>
@@ -186,12 +186,19 @@ a { color: inherit; }
 </section>
 
 <section>
-  <h2>Training now</h2>
+  <h2>Training now (all without full-context steps, per Prasann)</h2>
   <ul>
-    <li>Beaker: no-full-step router on the 4-task mix at 1,464 rows/task; 11-task 960-row dense ×2 / router ×3 evals.</li>
-    <li>Router session: freeze-halfway seed 1 and at LR 5e-6, freeze at 25% / 75% (4-task, 1,464 rows); freeze + floor seed 1 (11-task).</li>
-        <li>CPT: context-gain eval of the exit-loss and memory arms (drop line paused).</li>
-    <li>64k: seed replicates (router, dense) and ½- and 1-epoch router and dense runs, all LR 5e-6.</li>
+    <li><b>4-task, 1,952 fresh rows/task, LR 5e-6 (Beaker):</b>
+      <ul>
+        <li>no-full-step router; freeze at 50% / 75%; progressive freeze</li>
+        <li>two-stage rescoring (20% → 7% at block 16); router + layer skips; per-document floor 16; per-task router</li>
+        <li>keep by predicted gradient mass (80%, cap 20%); low-rank adapters on blocks 0–6 from step 0; mixture-of-depths 25% (± block-16 target)</li>
+      </ul></li>
+    <li><b>Router session (Lambda, 1,464 rows):</b> the same ideas, a second data point.</li>
+    <li><b>11-task, 720 rows:</b> per-task vs shared router, both with the 16-token floor.</li>
+    <li><b>Fresh 4-task pools, ~8.2k rows/task:</b> building. Next, dense and the cheap arms out to 7,808 rows/task, to measure FLOPs-to-match-dense.</li>
+    <li><b>CPT:</b> gradient analysis; freeze grid without dropping tokens; mixture-of-depths 50% / 25%; progressive freeze; low-rank early stack.</li>
+    <li><b>64k:</b> ½- and 1-epoch router and dense runs.</li>
   </ul>
   <p class="note">Code: branch prasann/flopdrop_clean (research/token_routing/ds64_fast8k/), router claude/online-router-1bc01a. Status: ops/experiments/tokdrop_lr, learned_router, mt11_64k, olmo3_cptdrop. This page is private.</p>
 </section>
