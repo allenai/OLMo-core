@@ -708,11 +708,14 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | otr10M7de0 shared router (2 seeds, reference) | 346 (0.30) | 0.937 | 0.902 | 0.623 | 0.682 |
 | otr10M7de0pt (per-task routers) | 347 (0.30) | 0.941 | 0.890 | 0.616 | 0.773 |
 | mod25L8 (MoD, capacity 0.25, blocks 8-30 alternate) | 905 (0.78) | 0.957 | 0.928 | 0.622 | **0.468** |
+| mass80c20M7 (adaptive: 80% of predicted ‖g‖² per doc, row cap 20%) | 428 (0.37) | 0.941 | 0.918 | 0.585 | 0.571 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
 Per-task routing is neutral on the 4-task mix at matched PF (outlier +0.09 is inside that cell's 0.19 seed spread);
 its case is the 11-task mix. MoD at capacity 0.25 is dense-level on contra / nq / oolong at 0.78x but loses outlier
-(-0.25), and 0.78x is not an aggressive cut. **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
+(-0.25), and 0.78x is not an aggressive cut. Adaptive keep spends more (0.37x: the 80% mass cover keeps more than 10% of most documents) and is
+no better than the fixed budget at less compute (de16, 0.34x: 0.946 / 0.912 / 0.625 / 0.725); oolong / outlier drop,
+so the predicted-mass cover does not pick the tokens those tasks need -- not a win at this setting. **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
 export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
 parent's checkout unless REPO_OVERRIDE is set (068d3f0ac); LoRA runs use OLMo-core-otr10.
