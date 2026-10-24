@@ -1115,3 +1115,39 @@ def test_freeze_schedule_callback_stages():
     assert not any(p.requires_grad for b in blocks[:4] for p in b.parameters())
     assert all(p.requires_grad for b in blocks[4:] for p in b.parameters())
     assert not any(p in opt.state for b in blocks[:4] for p in b.parameters())
+
+
+def test_mass_keep_minimal_cover_per_document():
+    """One dominant token carries a document's predicted mass -> it alone is kept; a uniform document keeps
+    ceil(share x n)."""
+    ids, cid, _ = _row()
+    body = (cid >= 0) & (ids != DS) & (ids != DE)
+    score = torch.zeros(ids.shape)
+    p0 = int((ids[0] == 1004).nonzero()[0])  # a token of doc 0 (10 body tokens)
+    score[0, p0] = 5.0
+    keep = OnlineTokenRouter._mass_keep(score, body, cid, 0.8)
+    d0 = body[0] & (cid[0] == cid[0, p0])
+    assert keep[0][d0].sum() == 1 and keep[0, p0]
+    assert int(keep[0].sum()) == 1 + 32 + 3  # docs of 40 and 3 uniform: ceil(0.8 n)
+    assert not keep[~body].any()
+
+
+@pytest.mark.parametrize("cap,expect", [(1.0, 8 + 32 + 3), (0.1, 6)])
+def test_mass_target_keep_and_cap(cap, expect):
+    torch.manual_seed(0)
+    m = _Emb()
+    ids, cid, labels = _row()
+    r = _router(use_hidden=False, mass_target=0.8, max_keep_frac=cap)
+    r.w = torch.zeros(r.n_features)  # uniform scores
+    r.step = 2
+    keep = r.select(m, ids, cid, labels)
+    assert int(keep.sum()) == expect
+
+
+def test_mass_target_validate():
+    with pytest.raises(ValueError):
+        _router(mass_target=1.5)
+    with pytest.raises(ValueError):
+        _router(mass_target=0.8, score="random")
+    with pytest.raises(ValueError):
+        _router(mass_target=0.8, max_keep_frac=0.0)

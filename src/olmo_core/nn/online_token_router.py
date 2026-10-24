@@ -120,6 +120,16 @@ class OnlineRouterConfig:
     """Warmup-then-freeze: train every block normally for the first ``freeze_after`` optimizer steps, then (from step
     ``freeze_after + 1``) freeze the embeddings and blocks [0, L) and free their gradients and optimizer state
     (:func:`freeze_and_release`, run by the callback); afterwards it behaves as ``freeze_early``. 0 = off."""
+    mass_target: float = 0.0
+    """ADAPTIVE keep by predicted gradient mass: per document, keep the fewest top-scored body tokens whose predicted
+    ||dL/dh||^2 (exp(2 x score); the score predicts the row-centred log gradient norm) covers this share of the
+    document's predicted total, e.g. 0.8 -- easy documents keep few tokens, hard or tiny ones many. Then the
+    ``min_per_doc`` floor, then the per-row ``max_keep_frac`` cap (peak memory). ``keep_frac`` only sizes the
+    exploration draw (``explore_frac`` x ``keep_frac`` x |body|); ``doc_share`` is unused. Learned scorer only.
+    0 = off (fixed ``keep_frac``)."""
+    max_keep_frac: float = 1.0
+    """With ``mass_target``: hard cap on the kept share of each row's body tokens (bounds the kept row, so peak
+    memory); the exploration / forced / floor tokens rank first, the rest by score."""
     freeze_schedule: str = ""
     """PROGRESSIVE freeze, e.g. ``"4:0.25,7:0.5,12:0.75"``: freeze the embeddings + blocks [0, 4) after 25% of the
     optimizer steps, [0, 7) after 50%, [0, 12) after 75% (each releasing those blocks' gradients and optimizer state;
@@ -237,6 +247,10 @@ class OnlineRouterConfig:
                     or not all(0.0 < f < 1.0 and n > 0 for n, f in fs):
                 raise ValueError(f"online router freeze_schedule needs increasing blocks > 0 and increasing fractions "
                                  f"in (0, 1), got {self.freeze_schedule!r}")
+        if not 0.0 <= self.mass_target <= 1.0 or not 0.0 < self.max_keep_frac <= 1.0:
+            raise ValueError("online router mass_target must be in [0, 1] and max_keep_frac in (0, 1]")
+        if self.mass_target > 0 and self.score != "router":
+            raise ValueError("online router mass_target needs the learned scorer (score='router')")
         if self.per_task_key_tokens < 0:
             raise ValueError(f"online router per_task_key_tokens must be >= 0, got {self.per_task_key_tokens}")
 
@@ -789,7 +803,9 @@ class OnlineTokenRouter:
             if c.keep_first > 0:
                 self._stat("forced_frac", float(forced.sum()) / max(1.0, float(body.sum())))
             keep = explore | forced
-            kd = kf * c.doc_share
+            kd = 0.0 if c.mass_target > 0 else kf * c.doc_share
+            if c.mass_target > 0:
+                keep = keep | self._mass_keep(score, body, cid, c.mass_target)
             if kd > 0:
                 # per-document share: each document's own top ceil(kd * |body_d|) by score
                 # (exploration tokens rank first, so they count against their document's share)
@@ -815,11 +831,23 @@ class OnlineTokenRouter:
                 floor = body & (out_f == FREE_CHUNK_ID)
                 self._stat("floor_extra_frac", float((floor & ~keep).sum()) / max(1.0, float(body.sum())))
                 keep = keep | floor
-            # the rest of the budget by score over the whole row
-            left = (k - keep.sum(dim=1)).clamp(min=0)
-            sc = torch.where(body & ~keep, score, torch.full_like(score, -float("inf")))
-            rank_s = (-sc).argsort(dim=1).argsort(dim=1)
-            keep = keep | (body & ~keep & (rank_s < left[:, None]))
+            if c.mass_target > 0:
+                # per-row cap (peak memory): exploration / forced first, then the floor, then by score
+                cap = torch.ceil(n_body.to(torch.float32) * c.max_keep_frac).to(torch.long)
+                pri = torch.where(explore | forced, torch.full_like(score, 2e30), score)
+                if c.min_per_doc > 0:
+                    pri = torch.where(floor & ~(explore | forced), torch.full_like(score, 1e30), pri)
+                pri = torch.where(keep, pri, torch.full_like(score, -float("inf")))
+                rank_c = (-pri).argsort(dim=1).argsort(dim=1)
+                capped = keep & ~(rank_c < cap[:, None])
+                self._stat("mass_capped_frac", float(capped.sum()) / max(1.0, float(body.sum())))
+                keep = keep & ~capped
+            else:
+                # the rest of the budget by score over the whole row
+                left = (k - keep.sum(dim=1)).clamp(min=0)
+                sc = torch.where(body & ~keep, score, torch.full_like(score, -float("inf")))
+                rank_s = (-sc).argsort(dim=1).argsort(dim=1)
+                keep = keep | (body & ~keep & (rank_s < left[:, None]))
         # sample kept tokens for targets: every exploration token first, then random kept ones
         # (mixture-of-depths: every body token keeps a gradient at this layer, so the targets sample all of them)
         pool = body if self.mod_layers else keep
@@ -1007,6 +1035,34 @@ class OnlineTokenRouter:
         self._flop(model, adj)
         self._stat("mod_row_frac", float(counts.sum()) / max(1.0, float(real.sum())) if not dense else 1.0)
         return h, block_kwargs
+
+    @staticmethod
+    def _mass_keep(score: torch.Tensor, body: torch.Tensor, cid: torch.Tensor, share: float) -> torch.Tensor:
+        """(B, T) per-document minimal top-score set whose predicted mass exp(2 x score) covers ``share``."""
+        out = torch.zeros_like(body)
+        B, T = body.shape
+        for b in range(B):
+            idx = body[b].nonzero(as_tuple=True)[0]
+            if idx.numel() == 0:
+                continue
+            d = cid[b, idx].to(torch.long)
+            sc = score[b, idx].to(torch.float64)
+            nd = int(d.max()) + 1
+            mx = torch.full((nd,), -float("inf"), device=sc.device, dtype=sc.dtype).scatter_reduce(0, d, sc,
+                                                                                                    reduce="amax")
+            m = torch.exp(2.0 * (sc - mx[d]))
+            tot = torch.zeros(nd, device=sc.device, dtype=sc.dtype).index_add(0, d, m)
+            # group by document, score descending within it
+            r = (-sc).argsort().argsort().to(torch.float64)
+            order = (d.to(torch.float64) * (idx.numel() + 1) + r).argsort()
+            ms, ds = m[order], d[order]
+            cs = ms.cumsum(0)
+            start = torch.zeros(nd, device=sc.device, dtype=sc.dtype).index_add(0, ds, ms)  # per-doc totals
+            offs = torch.cumsum(start, 0) - start
+            before = cs - ms - offs[ds]  # predicted mass of the doc's higher-scored tokens
+            sel = before < share * tot[ds]
+            out[b, idx[order[sel]]] = True
+        return out
 
     def _block_factors(self, n_blocks: int) -> List[float]:
         """Per-block share of the forward + backward cost this forward pays: 1/3 below ``_nograd_until`` (forward

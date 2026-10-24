@@ -1825,6 +1825,12 @@ def parse_args() -> argparse.Namespace:
                     help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
                     "non-increasing; each stage scored from its own layer by its own router); overrides "
                     "--st-otr-drop-layer / --st-otr-keep-frac")
+    ap.add_argument("--st-otr-mass-target", type=float, default=0.0,
+                    help="online router ADAPTIVE keep: per document, keep the fewest top-scored tokens whose predicted "
+                    "||dL/dh||^2 covers this share (e.g. 0.8); then --st-otr-min-per-doc, then the per-row "
+                    "--st-otr-max-keep-frac cap. --st-otr-keep-frac then only sizes exploration. 0 = fixed keep")
+    ap.add_argument("--st-otr-max-keep-frac", type=float, default=1.0,
+                    help="online router, with --st-otr-mass-target: cap on each row's kept body share (peak memory)")
     ap.add_argument("--st-otr-freeze-schedule", default="",
                     help="online router PROGRESSIVE freeze, e.g. '4:0.25,7:0.5,12:0.75': freeze embeddings + blocks "
                     "[0, 4) after 25%% of the steps, [0, 7) after 50%%, [0, 12) after 75%% (gradients and optimizer state "
