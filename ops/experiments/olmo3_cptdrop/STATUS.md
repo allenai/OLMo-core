@@ -163,6 +163,15 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- GRAD COMPOSITION ON CPT (grad_composition session, cubbins 4021638; 48 dev rows ⚠ eval_size=48; records/grad-composition.md
+  addendum on claude/grad-composition-6f09c7 @36d6c1ce2; artifact https://claude.ai/artifact/BVaPjZdAKjETHdQDdGqqtQ):
+  blocks 0-6 share of param-grad energy 0.42 base -> 0.20 @12 dense steps -> 0.16 @480 (blocks 0-15: 0.67 -> 0.43-0.46);
+  importance FLAT after CPT (top 10% of tokens = 0.62 of G24^2, top 30% = 0.90; top-10% by G7 keeps 0.37, random 0.11,
+  pyramid 50/10/3 0.29) -> any token/depth route needs >= 30%; context (K/V) share of a token's hidden-state gradient
+  0.95 / 0.80 / 0.60 / 0.42 / 0.21 / 0.12 at blocks 0 / 8 / 12 / 16 / 24 / 28 -> KV-only dropping tolerable from ~block
+  20 on; dev-CE gain at >= 4k is 56-66% local 4-gram copying within the last 4k, 6-7% far-only repeats (stage3 vs stage2
+  +0.12 on far-only targets at 16-32k): dev CE barely sees long-range loss. Smoke FRZ (K16, freeze after 5 of 20):
+  froze 3.65B params at step 6, per-step peak 35.8 -> 26.7 GiB, actual/dense 0.773.
 - 2026-10-24: mcfuzz + sneetches staged for this experiment (Prasann via LR-sweep: parallelize): /data/prasann/olmo3_cptdrop/{base/stage2-step47684, data/{train32k_ee,dev32k_1024,short4k_v2}, code_r4780f8a08_o3cd7f406d528, devce_ctx/stage{2,3}*.json}; mcfuzz got the env /data/prasann/conda/envs/corpus-reasoning-olmo copied from sneetches (torch 2.9.1+cu128, flash_attn 2.8.2). Results land in each node's /data/prasann/olmo3_cptdrop/{runs,devce,devce_ctx} -- gather before analysis.
 - SCOPING 2026-10-24 (LR-sweep session's KV-only-drop idea: drop tokens only as keys/values in blocks 7-31): from the
   model's FLOP formula (matches the meter: 52.3 vs 52.45 GFLOP/token) attention = 21.0% of step FLOPs at 32k (full
