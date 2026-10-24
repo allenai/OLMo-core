@@ -580,7 +580,8 @@ oolong / outlier.
 | fa275M7 (75%) | 311 (0.27) | 0.919 | 0.888 | 0.637 | 0.553 |
 | **fa183M7, LR 5e-6**, seeds 0 / 1 | 275 (0.24) | **0.920 / 0.927** | 0.884 / 0.916 | 0.624 / 0.593 | **0.622 / 0.691** |
 | fa92M7, LR 5e-6 | 240 (0.21) | 0.913 | 0.908 | 0.618 | 0.744 |
-| fa275M7, LR 5e-6 | 311 (0.27) | 0.936 | 0.896 | 0.626 | 0.664 |
+| fa275M7, LR 5e-6, seeds 0 / 1 | 311 (0.27) | 0.936 / 0.923 | 0.896 / 0.888 | 0.626 / 0.630 | 0.664 / 0.627 |
+| otr05M7 de0 (keep 5%, no freeze), LR 5e-6 | 304 (0.26) | 0.906 | 0.890 | 0.589 | 0.460 |
 | otr10M7 de8, LR 2e-6 (2 seeds) | 445 (0.39) | 0.927 | 0.907 | 0.643 | 0.581 |
 | **otr10M7 de0 (no freeze), LR 5e-6**, seeds 0 / 1 | 346 (0.30) | **0.947 / 0.926** | 0.902 / 0.902 | 0.610 / 0.636 | 0.673 / 0.690 |
 | **otr10M7 de8, LR 5e-6**, seeds 0 / 1 | 445 (0.38) | **0.957 / 0.953** | 0.912 / 0.914 | 0.616 / 0.627 | 0.703 / 0.749 |
@@ -591,8 +592,11 @@ mean 0.924 / 0.900 / 0.609 / 0.657 vs 0.927 / 0.907 / 0.643 / 0.581 at 0.39x (ou
 0.68-0.69 is the known LR confound on that cell). At LR 5e-6 every freeze point (25 / 50 / 75%, 0.21-0.27x) is at or above otr10M7-at-2e-6 on contra / nq. **LR-matched references (5e-6, 2 seeds each) settle it: most of that gain is the LR, not the freeze.** otr10M7 de8 at
 5e-6 (0.38x), 2-seed mean 0.955 / 0.913 / 0.622 / 0.726 vs dense-s1464 0.956 / 0.936 / 0.630 / 0.719: **level with dense
 on contra / oolong / outlier at 0.38x, -0.023 on nq** -- the router's best point yet. Dropping full steps (de0, 0.30x)
-mean 0.937 / 0.902 / 0.623 / 0.682 (-0.018 contra, -0.044 outlier); freezing on top is then nearly free at 75% (fa275,
-0.27x, contra 0.936, seed 0 only) and -0.013 at 50% (fa183 2-seed mean 0.924, 0.24x), nq / oolong within noise. At
+mean 0.937 / 0.902 / 0.623 / 0.682 (-0.018 contra, -0.044 outlier); freezing on top costs -0.007 / -0.010 / +0.005 /
+-0.036 at 75% (fa275 2-seed mean 0.930 / 0.892 / 0.628 / 0.646, 0.27x) and -0.013 contra at 50% (fa183 2-seed mean
+0.924, 0.24x). **At matched FLOPs, freezing beats a smaller budget:** keep 5% instead of 10% (otr05M7de0, 304 PF, 0.26x)
+scores 0.906 / 0.890 / 0.589 / 0.460, below both freeze arms on every task (outlier -0.19) -- with blocks 0-6 running on
+every token, halving the keep fraction saves only 42 PF, while freezing removes the early stack's backward. At
 matched LR the ladder is one smooth curve: the full-context steps buy contra / outlier, freeze is a cheap
 compute+memory knob (-12 GiB after the freeze). Seed spread on de0 contra is 0.021, larger than the ±0.01 eval SE.
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
