@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+### Fixed
+
+- Activation checkpointing now preserves the RNG state across recomputation whenever dropout is active, attention dropout included, so the recomputed forward replays the forward's dropout masks instead of drawing new ones. Previously the RNG state was preserved only for EMO routing.
+- The torch and flash-attn 2 attention backends no longer apply attention dropout in eval mode.
+
 ## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
 
 ### Added
