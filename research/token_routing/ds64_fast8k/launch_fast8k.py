@@ -220,6 +220,18 @@ ARM_EXTRA.update({
     **{f"fa{pc}M7": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                      "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
                      "--st-otr-freeze-after {FA_STEPS}") for pc in (50, 75)},
+    # overnight 10-24 ideas runnable on router 67a28d605+ (see the summary page): two-stage rescoring (20% from block 7,
+    # rescored to 7% at block 16), bounded-peak periodic steps (every-8 / every-16 steps keep 50%, not full context),
+    # and the router + fixed layer skip in the routed stack
+    "r20to7M7": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.2 "
+                 "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7 "
+                 "--st-otr-stages 7:0.2,16:0.07"),
+    **{f"otr10M7de{e}dk50": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                             f"--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every {e} --st-otr-drop-layer 7 "
+                             "--st-otr-dense-keep-frac 0.5") for e in (8, 16)},
+    "otr10M7de16sk3": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                       "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7 "
+                       "--train-skip-layers 20,24,28"),
     "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     # no full-context steps (peak memory = routed steps), optionally + early-exit LM loss on dropped tokens
