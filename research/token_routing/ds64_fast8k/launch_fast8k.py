@@ -232,6 +232,18 @@ ARM_EXTRA.update({
     "otr10M7de16sk3": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                        "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7 "
                        "--train-skip-layers 20,24,28"),
+    # per-task router (one ridge fit per prompt template; router 56c96377d) and mixture-of-depths (alternate blocks
+    # 8..30 run on c of each document's tokens, the rest pass the residual through; full-row loss)
+    **{f"otr10M7de16f16{t}": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                              "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7 "
+                              "--st-otr-min-per-doc 16" + (" --st-otr-per-task-key-tokens 11" if t else ""))
+       for t in ("", "pt")},
+    "otr10M7de16pt": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                      "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7 "
+                      "--st-otr-per-task-key-tokens 11"),
+    **{f"mod{c}": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 "
+                   f"--st-otr-keep-frac {c / 100} --st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 "
+                   "--st-otr-drop-layer 8 --st-otr-mod-layers 8-31:2") for c in (25, 50)},
     "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     # no full-context steps (peak memory = routed steps), optionally + early-exit LM loss on dropped tokens
