@@ -163,6 +163,16 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-24 06:30 FIRST CPT ARM >= DENSE: LoRA early stack r16 scale 32 (sneetches 4021741; eval re-installs
+  adapters; measured PF; dev32k_1024 1,024 rows). K16 (0.843x/step): 12/24/48/120 = 301/579/1135/2804 PF -> CE
+  1.6991/1.6921/1.6879/1.6841 (m 0.88/0.82/1.19/1.65), ctx 0.064-0.073, far CE 0.511->0.479, short 1.157-1.159, peak =
+  median 30.8 GiB (dense 35.2: -12.5% from step 0). K8 (0.921x): 1.7009/1.6929/1.6880/1.6842 (m 0.75/0.62/1.08/1.45),
+  33.0 GiB. Paired: K16-120 vs dense-120 -0.0013 +-0.0001 at 0.85x FLOPs; K16-48 vs dense-48 -0.0000 +-0.0001. A tie or
+  small win at less compute AND less peak memory; the large m only reflects the flat dense curve. Caveat: dense
+  seed 1 vs 0 at 120 = 0.0000 (the seed apparently doesn't change data order), so run noise is unmeasured.
+  MoD (exports copied mcfuzz -> sneetches): c0.5 12/24/48/120 -> 1.7305/1.7169/1.7050/1.6987 (m <0.45/<0.24/0.16/0.10);
+  c0.25 12/24/48 -> 1.7379/1.7337/1.7214: loses. Next: r64 LoRA K16/K8 and r64 + all-local (sneetches 4030726); dense
+  near/far rescore (cubbins 4034568).
 - TRAP (hit 2026-10-24 01:25): router branch <= 1e5a14c85 never writes config.json["early_lora"] (variants.SoftToken
   defines export_config twice; the later {"softtoken": ...} wins), and DCP loads only the keys the model asks for, so a
   plain-model eval of a LoRA checkpoint silently DROPS the adapters (no strict-load error). DLORA16k16/k8lr20-12 were
