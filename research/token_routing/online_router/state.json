@@ -2143,6 +2143,66 @@
    "train_run": "f8k-mt11-fa247f16M7-s720-tdb-lr2e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evcontra": {
+   "ex": "01M5P4KF2D2KW9QRQAP4361TGX",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evnq": {
+   "ex": "01M5P4M885MR7DD5VBKVA8DT5E",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evoutlier": {
+   "ex": "01M5P4N1JKQAWBZ3NFMY2HWN2G",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "outlier",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evoolong": {
+   "ex": "01M5P4NZPR8XRW5NGXN4VKMMN0",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "oolong",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evhotpotqa": {
+   "ex": "01M5P4PT1R5TTR2531FYXMDCNM",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "hotpotqa",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evqdmatch_nq": {
+   "ex": "01M5P4QP0F4M5WJGWE1B5J93HG",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "qdmatch_nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evxabsence": {
+   "ex": "01M5P4RJB3N5HYRAEHGTVH63J3",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "xabsence",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evreorder": {
+   "ex": "01M5P4SCWC26J78B2GP1WE3BEH",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "reorder",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evstrmatch": {
+   "ex": "01M5P4T5SXK6M4J0FHEREXNNXX",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "strmatch",
+   "suite_rows": true
+  },
+  "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06-evgrouping": {
+   "ex": "01M5P4V4CR193X31VZJT2Y5R9R",
+   "train_run": "f8k-mt11-fa247f16M7sd1-s720-tdb-lr2e-06",
+   "task": "grouping",
+   "suite_rows": true
   }
  },
  "failed_evals": {
