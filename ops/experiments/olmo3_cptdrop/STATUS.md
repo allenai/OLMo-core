@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: cubbins queue (all de0): 4020957 ctx eval (finishing) -> 4021638 grad_composition CPT analysis (other session) -> 4021612 freeze grid (keep 1.0; K 16/8 x 25/50%; 12-120 steps) -> 4021635 MoD c 0.5/0.25 (alternate blocks 8-30) -> 4021649 progressive freeze 4:0.25,7:0.5,12:0.75. Then extend the best cheap arm on fresh rows until it reaches dense's dev CE.
+next_step: 3 nodes in parallel (all de0, keep 1.0 except MoD): cubbins 4021612 freeze grid (K16/8 x 25/50%) | mcfuzz 4021695 (preemptive, --requeue) MoD c0.5/0.25 + progressive freeze | sneetches 4021696 (preemptive, --requeue) LoRA early stack r16 K16/8; code r4780f8a08_o3cd7f406d528 (router branch + o3cd files). Then extend the best cheap arm on fresh rows to FLOPs-to-match-dense.
 ---
 
 # olmo3_cptdrop
@@ -163,6 +163,7 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- 2026-10-24: mcfuzz + sneetches staged for this experiment (Prasann via LR-sweep: parallelize): /data/prasann/olmo3_cptdrop/{base/stage2-step47684, data/{train32k_ee,dev32k_1024,short4k_v2}, code_r4780f8a08_o3cd7f406d528, devce_ctx/stage{2,3}*.json}; mcfuzz got the env /data/prasann/conda/envs/corpus-reasoning-olmo copied from sneetches (torch 2.9.1+cu128, flash_attn 2.8.2). Results land in each node's /data/prasann/olmo3_cptdrop/{runs,devce,devce_ctx} -- gather before analysis.
 - SCOPING 2026-10-24 (LR-sweep session's KV-only-drop idea: drop tokens only as keys/values in blocks 7-31): from the
   model's FLOP formula (matches the meter: 52.3 vs 52.45 GFLOP/token) attention = 21.0% of step FLOPs at 32k (full
   12.3%, SWA 8.7%), 29.8% at 64k, 42.5% at 128k. Keeping 10% of keys in blocks 7-31 saves 7.4-14.5% at 32k,
