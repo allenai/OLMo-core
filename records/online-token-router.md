@@ -680,3 +680,18 @@ All on mt4s488 (122 steps) unless noted, LR 2e-6, eval 8k + 2k × 500 per task, 
 
 **Decision rule.** Promote an arm only if it beats dense at matched PF on all four tasks at 8k by more than the
 seed noise, with `leak_auc` near 0.5 (or no worse than the tier67 rule) and `rank_corr_explore` > 0 throughout.
+
+## New levers, 2026-10-24 (code 076464355; all screens de0 -- no full-context steps, Prasann's rule)
+
+| flag | what | FLOP / memory charge |
+|---|---|---|
+| `--st-otr-mod-layers 8-31:2` | mixture-of-depths: router picks keep_frac of each document at block 8; listed blocks run on those (+ non-body) only, the rest pass the residual; every token reaches the head | each listed block at the kept length; targets over every body token (uncensored) |
+| `--st-otr-per-task-key-tokens 11` | one ridge router per task (key = the row's first 11 tokens = its prompt template; one key per mt4 / mt11 task file, nq + hotpotqa share one) | ~0.2 GB float64 Gram per task at F ~ 5150 |
+| `--st-otr-freeze-schedule 4:0.25,7:0.5,12:0.75` | progressive freeze (grads + Adam state released per stage) | frozen below the drop: 1/3; frozen at/above it: 2/3 (activation grad still needed for the target) |
+| `--st-otr-mass-target 0.8 --st-otr-max-keep-frac 0.2` | adaptive keep: per document the fewest top tokens covering 80% of predicted ‖g‖²; floor; per-row cap (peak memory) | realised keep |
+| `--st-otr-target-layer 16` | fit on ‖dL/dh‖ at block 16: exploration tokens on routed steps (uniform, kept, uncensored); every token under MoD | hook only |
+| `--st-otr-early-lora 16` | blocks [0, L) + embeddings frozen from step 0, rank-16 LoRA on every linear there (scale 32 = adapter LR multiplier); eval re-installs from config.json | blocks [0, L) at 2/3 + 6 r (in + out) per token |
+
+Screens in flight (Lambda, mt4s1464, LR 5e-6, seed 0, vs otr10M7de0 2-seed mean 0.937 / 0.902 / 0.623 / 0.682 at
+0.30x): otr10M7de0pt, mass80c20M7, lora16M7, prog4712M7, tl16M7, mod25L8. The per-task de16 run was cancelled under
+the no-full-step rule; de32 / fa275de16 (launched before it) finish as references only.
