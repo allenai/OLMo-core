@@ -579,11 +579,13 @@ oolong / outlier.
 | fa183M7 (50%), seeds 0 / 1 | 275 (0.24) | 0.898 / 0.881 | 0.884 / 0.890 | 0.647 / 0.666 | 0.556 / 0.491 |
 | fa275M7 (75%) | 311 (0.27) | 0.919 | 0.888 | 0.637 | 0.553 |
 | **fa183M7, LR 5e-6**, seeds 0 / 1 | 275 (0.24) | **0.920 / 0.927** | 0.884 / 0.916 | 0.624 / 0.593 | **0.622 / 0.691** |
+| fa92M7, LR 5e-6 | 240 (0.21) | 0.913 | 0.908 | 0.618 | 0.744 |
+| fa275M7, LR 5e-6 | 311 (0.27) | 0.936 | 0.896 | 0.626 | 0.664 |
 | otr10M7 de8, LR 2e-6 (2 seeds) | 445 (0.39) | 0.927 | 0.907 | 0.643 | 0.581 |
 
 A later freeze buys contradiction smoothly; LR 5e-6 (the 64k study's router LR) matches otr10M7 at 0.24x on two seeds:
 mean 0.924 / 0.900 / 0.609 / 0.657 vs 0.927 / 0.907 / 0.643 / 0.581 at 0.39x (outlier +0.08, oolong -0.03; outlier@2k
-0.68-0.69 is the known LR confound on that cell).
+0.68-0.69 is the known LR confound on that cell). At LR 5e-6 every freeze point (25 / 50 / 75%, 0.21-0.27x) is at or above otr10M7-at-2e-6 on contra / nq. Caveat: that reference is at 2e-6; LR-matched otr10M7 / otr10M7de0 at 5e-6 are running (Lambda) to separate the LR gain from the freeze.
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
 
 ## Long-context screen (ds64 setting) -- CANCELLED 2026-10-22
