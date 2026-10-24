@@ -616,7 +616,8 @@ every token, halving the keep fraction saves only 42 PF, while freezing removes 
 A full step every 16 keeps every task of every-8 except -0.009 contra at 0.34x: the better point. Freeze + every-8
 lands on the same contra / nq / oolong at 0.32-0.35x; outlier there is too noisy to call (fa183de8 seeds 0.513 / 0.699,
 a 0.19 spread -- outlier@8k is the noisiest cell, so read single outlier numbers with care). PF of the freeze + full-step
-arms is conservative (dense steps after the freeze charge the frozen blocks' backward). Contra / nq trade smoothly with
+arms is exact: after the freeze every training forward (full steps included) runs blocks [0, L) forward-only and is
+charged 1/3 there. Contra / nq trade smoothly with
 PF along the whole ladder; at ≤ 0.30x it costs 0.02-0.03 contra. Running: de32 and fa275de16 (seed 0). At
 matched LR the ladder is one smooth curve: the full-context steps buy contra / outlier, freeze is a cheap
 compute+memory knob (-12 GiB after the freeze). Seed spread on de0 contra is 0.021, larger than the ±0.01 eval SE.
