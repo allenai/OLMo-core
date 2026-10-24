@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: SCREEN ANSWERED: no token-drop arm beats dense at 32k or 64k (best m 0.6x at 32k; C ~0.8-1.05x). All training done; cubbins released 15:49. Open: weka cleanup DONE (01M5K5PYHZDQJ7PZRAG7M7RM2G: ~2.0 TB of files freed; empty skeletons with wandb symlinks left); Prasann to pick the next regime (a target where dense keeps improving: 128k eval / longer docs, or another base).
+next_step: [queue: cubbins 4019319 aggressive cuts -> 4019607 exit-loss screen (router fcda77090: W 1.0/0.3 x de8/de0, + dense-keep 0.5)] ROUTER CPT TRACK (2026-10-23, Prasann via LR-sweep session: 'include continued-pretraining on long documents ... I want to get something that works on that as well'): cubbins 4019297 = OTR10M7 (mid-stack online router, keep 0.1 at block 7, dense every 8, no loss on dropped tokens) 31/62/124/310 + no-dense-step 40/80/160 -> EV -> CTX; then 4019313 = aggressive cuts (early-nograd, pyramid 3:0.5,7:0.1,16:0.03, both). Report matched-FLOP dev-CE deltas + peak memory to session 'LR Sweep, Main Runs'.
 ---
 
 # olmo3_cptdrop
@@ -159,6 +159,47 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- SCOPING 2026-10-24 (LR-sweep session's KV-only-drop idea: drop tokens only as keys/values in blocks 7-31): from the
+  model's FLOP formula (matches the meter: 52.3 vs 52.45 GFLOP/token) attention = 21.0% of step FLOPs at 32k (full
+  12.3%, SWA 8.7%), 29.8% at 64k, 42.5% at 128k. Keeping 10% of keys in blocks 7-31 saves 7.4-14.5% at 32k,
+  15-22% at 64k, 27-32% at 128k; memory ~0 (full AC, flash). A key-keep flex mask_mod skips no tiles (scattered
+  keys); savings need compacted K/V = existing kv_route.py path (full-attn layers only, learned-sigmoid router).
+  Recommended: not at 32k; only 64k-128k.
+- RESULT 2026-10-24 00:10 exit loss + peak-memory arms (cubbins 4020957, router fcda77090; measured PF; mem = per-step
+  peak excluding warmup step 1 (always full, 35.9) / median): exit W1.0 de8 31/62/124/310 = 366/705/1383/3398 PF ->
+  1.7366/1.7523/1.7603/1.7706 (WORSE with training; short 1.17->1.24); W0.3 1.7310/1.7354/1.7409/1.7450; de0+exit
+  W1.0/0.3 40/80/160 = 386/726/1405 PF -> 1.8476/1.8900/1.9183 / 1.8239/1.8599/1.8816 (worse than the start; mem
+  28.6/28.6); F0.5+exit W1 31/62/124 -> 1.7779/1.8059/1.8018; early-nograd+F0.5 46/92/185 = 280/522/1008 PF ->
+  1.7433/1.7340/1.7263 (m <0.49/<0.26/<0.14; mem 28.6/22.0, peak -19%); early-nograd de0 60/120/240 = 272/493/935 PF
+  -> 1.7804/1.7764/1.7779 (flat; mem 22.0/22.0, -38%). Exit loss bends the SHARED norm + head toward layer-7 states.
+  Peak-memory cuts all cost CE; none beats dense. ctx_gain for these pending (CTX stage of 4020957).
+- TRAP (hit 2026-10-23 08:57-13:50, cost ~5 h of cubbins): cubbins /data hit 100% (109 trainer stepN checkpoints,
+  6.8 TB, ~62 GB each, beside every run's ~65 GB model_and_optim export) and OTR10M7ndx10lr20-160 hung at its final
+  save with 0% GPU; the 6 h watcher bound expired before anyone looked. Prasann approved deleting every stepN dir of
+  finished runs (exports kept): 5.2 TB free after. driver_lr20 run() now drops stepN of runs without SAVE_INTERVAL
+  once exported; the new watcher flags a run log idle > 30 min. Rerun = cubbins 4020957 (OTRX remainder + OTRY).
+- RESULT 2026-10-23 07:50 aggressive router cuts (cubbins 4019319; router b24c13423; measured PF; peak/median active GiB):
+  early-nograd 46/92/185 = 339/651/1278 PF -> 1.7105/1.7011/1.6975 (m <0.40/0.37/0.22), ctx 0.066/0.069/0.071,
+  mem 35.9/22.0 (best router arm); pyramid 3:0.5,7:0.1,16:0.03 40/80/160 -> 1.7430/1.7101/1.7044 (m <0.39/<0.21/0.15),
+  36.8/27.9; merge-dropped 31/62/124 -> 1.7315/1.7134/1.7083 (= plain OTR), 35.9/28.6; pyramid+nograd 60/120/240 =
+  415/803/1555 PF -> 1.7115/1.7050/1.6989 (m <0.33/0.23/0.17), 36.8/23.7. Peak never drops (every-8 full steps).
+  Queued: 4019607 exit-loss (W 1.0/0.3 x de8/de0, + dense-keep 0.5), then 4019842 early-nograd + dense-keep 0.5 and
+  early-nograd de0. The F-steps are dense_now() steps, so the early stack DOES train on them (router 15bf04ff3 test); only the de0 arm has a frozen early stack. early-nograd + exit loss dropped: exit grads reach only the head.
+- RESULT 2026-10-23 03:40 router CPT (cubbins 4019297; MEASURED flop-meter PF on both sides -- dense is 27.5 PF/step +
+  ~27 PF constant, not the 36.6 table value analyze.py used, which flattered drop arms ~1.2x; verdicts unchanged):
+  OTR10M7lr20 31/62/124/310 steps = 335/643/1258/3083 PF: CE 1.7308/1.7138/1.7079/1.7055 (m <0.41/<0.21/0.12/0.06),
+  ctx_gain 0.0585/0.0672/0.0712/0.0737 (ctx-only m ~0.74-0.79, best of all arms). No-dense-step variant 40/80/160:
+  1.8087/1.8010/1.7961 (collapses: upper stack never sees full context). Worse than dense at every position bin
+  (0-4k 1.6769 vs Dlr20-48 1.6579): trains on 10% of labels. Memory: routed-step median 28.6 GiB vs dense 35.2
+  (-19%), peak 35.9 (set by the every-8 dense steps). Re-measured m (measured PF): IRAND 22/43/65/130/260 <1.25/0.79/
+  0.59/0.37/0.20; SD20 0.61/0.38/0.20; IFL25 <0.41/<0.21/<0.10; Dlr10-120 1.95, Dlr05-120 1.66. Next (LR-sweep
+  session, for Prasann): early-exit LM loss on dropped tokens at the split layer; smaller micro-batch on dense steps.
+- 2026-10-23 router CPT track: online_token_router made marker-free (e0f2ce9ce: block offsets from each 512-block's own
+  first/last token; 2 CPU tests, 23/23 pass), merged by the router session into claude/online-router-1bc01a
+  (717c4d0ff, +early-nograd / stages / dense-tail / keep-first flags). Smoke OTR 20 steps on 8xH200: actual/dense
+  0.407, peak active mem 28.5 GiB/GPU on routed steps vs 35.2 dense. Aggressive-cut job code = router branch
+  717c4d0ff + research/token_routing/olmo3_cptdrop from 961e7b7b5 (staged code_r717c4d0ff_o3cd961e7b7b5; branch not
+  merged into flopdrop_clean). balrog (A100) NOT used: ask Prasann first.
 - FINDING 2026-10-22 08:30 (LR 2e-5, dev32k_1024, 1,024 rows): dense SATURATES almost at once. stage2 1.8477 ->
   Dlr20-12 1.6972 -> 24 1.6912 -> 48 1.6880 -> 120 1.6853 -> 240 1.6827: 12 steps (6.3M tokens) already give
   -0.150 of -0.165, and a 20x compute range (12 -> 240) moves CE 0.015. The gain is uniform across position bins

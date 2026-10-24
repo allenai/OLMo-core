@@ -31,6 +31,8 @@ def family(arm):
         return "online router, mid-stack drop"
     if re.match(r"otr\d+L\d+", arm):
         return "online router, input drop"
+    if re.match(r"(frz|ng|pyr|mrg)\d", arm) or re.search(r"de0$", arm):
+        return "aggressive: no full steps / frozen / pyramid / merge"
     if re.match(r"dh\d+M\d+", arm):
         return "hidden-state-change rule, mid-stack"
     if re.match(r"(rnd|fl)\d+", arm):
@@ -133,7 +135,7 @@ const PR = __DATA__;
 const PCELLS = __CELLS__;
 const FAMC = {"dense": "var(--dense)", "two-tier (gold + decoys at a larger budget)": "var(--teal)", "gold + decoys whole": "var(--warn)",
               "gold-blind": "var(--good)", "gold only whole (shortcut)": "var(--bad)", "+ train-time layer skip": "var(--bar)", "online router, mid-stack drop": "#7b4fd6",
-              "online router, input drop": "#b48ce8", "random / first-last (router's budget)": "#8a8f8c", "hidden-state-change rule, mid-stack": "#c2410c",
+              "online router, input drop": "#b48ce8", "random / first-last (router's budget)": "#8a8f8c", "hidden-state-change rule, mid-stack": "#c2410c", "aggressive: no full steps / frozen / pyramid / merge": "#db2777",
               "dense (pad-free path)": "var(--dense)", "other": "var(--muted)"};
 document.getElementById("pareto-legend__SFX__").innerHTML = Object.entries(FAMC).filter(([f]) => PR.some(r => r.family === f))
   .map(([f, c]) => `<span><span class="sw" style="background:${c}"></span>${f}</span>`).join("");
@@ -215,13 +217,51 @@ INTRO4 = ("Each point is one training run, scored on contradiction, nq, outlier 
           "fresh rows (976 or 1,464 per task), ringed markers on repeated epochs. Rules hit by the 10-21 flag-drop bug are left out.")
 INTRO11 = ("The 11-task fast8k mix (setA tasks, query before AND after the documents), scored on 10 tasks at 8k and 2k with the "
            "CTC-suite eval rows (500 each, no-cot, ctc-spec grading; rerank has no suite rows). Dense is LR 5e-6 only here. "
-           "<b>Reorder (kendall_tau) is near 0 at 8k for every run, dense included: treat that column as broken, not as signal.</b>")
+           "<b>Reorder@8k is left out:</b> the ctc grader scores 0 unless the output is an exact permutation of all 57 ids, and at 8k "
+           "every run, dense included, repeats or invents a few (a lenient Kendall tau over common items would be about 0.20). "
+           "Reorder@2k is kept.")
+
+
+AGGR_RE = re.compile(r"^(frz|ng|pyr|mrg)\d|de0$|f\d+$")
+
+
+def aggressive_table(rows, updated):
+    """The aggressive-cuts screen (online-router session, mt4s488 first): every arm whose name marks a frozen / no-grad
+    early stack, no full-context steps, pyramid drop, merge-instead-of-drop or a per-document floor, plus the otr10M7
+    reference at the same data size, with matched-FLOP deltas against the 4-task dense reference."""
+    pick = [r for r in rows if r["xkey"] == "pf" and (AGGR_RE.search(r["arm"]) or r["arm"] in ("otr10M7", "otr10M8"))
+            and r["rows"] == 488]
+    if not pick:
+        return ""
+    cls = lambda v: "pos" if v >= -0.005 else "mid" if v >= -0.03 else "neg"
+    h = ('<!--AGGR-BEGIN-->\n<section id="aggr">\n  <h2>Aggressive cuts screen (4-task, 488 rows/task)</h2>\n'
+         '  <p>Cheaper variants of the mid-stack router screened small first: frozen or no-grad early blocks (frz / ng), no '
+         'full-context steps (de0), pyramid drops (pyr), merge-instead-of-drop (mrg), per-document token floors (f&lt;K&gt;). '
+         'Δ is against the 4-task dense reference at the same training FLOPs (per cell, the better of dense LR 2e-6 and 5e-6; '
+         '* = below the cheapest dense point, extrapolated). Peak GPU memory per run is reported by the online-router session '
+         '(its record). Updated ' + updated + '.</p>\n  <div class="tbl"><table>\n    <tr><th>arm</th><th class="n">PF</th>'
+         + "".join(f'<th class="n">{c.replace("contradiction", "contra").replace("outlier", "outl")}</th>' for c in
+                   [f"{t}@{r}" for t, r in CELLS]) + '<th class="n">worst</th></tr>\n')
+    for r in sorted(pick, key=lambda r: -(r.get("worst_delta") if r.get("worst_delta") is not None else -9)):
+        cells = ""
+        for t, rr in CELLS:
+            c = r["cells"].get(f"{t}@{rr}")
+            if c is None or "delta" not in c:
+                cells += '<td class="n">…</td>'
+            else:
+                cells += f'<td class="n {cls(c["delta"])}">{c["v"]:.3f} ({c["delta"]:+.3f}{"*" if c["extrap"] else ""})</td>'
+        w = r.get("worst_delta")
+        h += (f'    <tr><td class="mono">{r["arm"]}</td><td class="n">{r["x"]:.0f}</td>{cells}'
+              f'<td class="n {cls(w) if w is not None else ""}">{"" if w is None else f"{w:+.3f}"}</td></tr>\n')
+    return h + '  </table></div>\n</section>\n<!--AGGR-END-->'
 
 
 def section(d, mix, sfx, title, intro, updated, cells=None):
     if cells is None:
         tasks = sorted({p["task"] for p in d["points"] if d["runs"].get(p["run"], {}).get("mix") == mix})
-        cells = [(t, r) for r in ("8k", "2k") for t in tasks]
+        # reorder@8k is excluded: the ctc reorder grader scores 0 unless the output is an exact permutation of all
+        # ids, and at 8k every run (dense included) repeats or invents a few, so the cell is a constant 0
+        cells = [(t, r) for r in ("8k", "2k") for t in tasks if (t, r) != ("reorder", "8k")]
     rows = build(d, mix, cells)
     frag = (FRAGMENT.replace("__DATA__", json.dumps(rows, separators=(",", ":")))
             .replace("__CELLS__", json.dumps([f"{t}@{r}" for t, r in cells])).replace("__UPDATED__", updated)
@@ -247,6 +287,12 @@ def main():
         assert page.count(a.after) == 1, "insertion point not found"
         head, tail = a.after.split("\n\n", 1)
         page = page.replace(a.after, f"{head}\n\n{frag}\n\n{tail}")
+    ag = aggressive_table(rows, a.updated)
+    if ag:
+        if "<!--AGGR-BEGIN-->" in page:
+            page = re.sub(r"<!--AGGR-BEGIN-->.*?<!--AGGR-END-->", lambda m: ag, page, flags=re.S)
+        else:
+            page = page.replace("<!--PARETO-BEGIN-->", ag + "\n\n<!--PARETO-BEGIN-->", 1)
     if any(r.get("mix") == "mt11" and r["arm"] == "dense" for r in d["runs"].values()):
         frag11, rows11 = section(d, "mt11", "11", "Cross-task Pareto, 11-task mix (10 tasks scored)", INTRO11, a.updated)
         if "<!--PARETO11-BEGIN-->" in page:

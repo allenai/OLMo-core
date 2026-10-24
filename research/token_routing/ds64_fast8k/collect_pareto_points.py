@@ -41,11 +41,11 @@ def parse_name(run):
         tag = lambda pre: next((int(t[len(pre):]) for t in after if re.fullmatch(pre + r"\d+", t)), 0)
         return dict(mix=mix, rows=int(rows or 488), arm="-".join(before), lr=float(lr.group(1)), campaign=camp,
                     seed=seed, epochs=tag("ep") or 1, max_steps=tag("s"))
-    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:st(\d+))?-(tdb|tdc|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
+    m = re.match(r"f8k-(mt\d+)-(.+)-[sf](\d+)(?:x(\d+))?(?:st(\d+))?-(tdb|tdc|tde|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
     if m:
-        mix, arm, rows, steps, camp, lr = m.groups()
+        mix, arm, rows, ep, steps, camp, lr = m.groups()
         seed = int(re.search(r"sd(\d+)$", arm).group(1)) if re.search(r"sd\d+$", arm) else 0
-        return dict(mix=mix, rows=int(rows), arm=arm, lr=float(lr), campaign=camp, seed=seed, epochs=1,
+        return dict(mix=mix, rows=int(rows), arm=arm, lr=float(lr), campaign=camp, seed=seed, epochs=int(ep or 1),
                     max_steps=int(steps or 0))
     return None
 
@@ -93,7 +93,16 @@ def _ops_scores(run):
     out = subprocess.run([OPS, "result", "show", "--train-run", run, "--json"], capture_output=True, text=True,
                          timeout=60).stdout
     rows = json.loads(out) if out.strip().startswith("[") else []
-    return {(r["task"], r["rung"]): (r["value"], r["eval_size"]) for r in rows}
+    # other sessions record probes against the same train run (grad_composition: 64-row held-out evals at 8k), so
+    # keep the largest eval per (task, rung) and never let a sub-500 probe shadow the 500-row suite eval
+    best = {}
+    for r in rows:
+        if str(r.get("metric", "")).startswith("gradcomp_") or r.get("experiment") == "grad_composition":
+            continue  # gradient statistics, not task scores
+        k = (r["task"], r["rung"])
+        if k not in best or (r["eval_size"] or 0) > best[k][1]:
+            best[k] = (r["value"], r["eval_size"] or 0)
+    return best
 
 
 def _beaker_train(ex):
@@ -116,7 +125,7 @@ def beaker_runs():
     srcs = []
     st_path = os.path.join(HERE, "state.json")
     if os.path.exists(st_path):
-        srcs += [(k, v) for k, v in json.load(open(st_path))["runs"].items() if "-tdc" in k]
+        srcs += [(k, v) for k, v in json.load(open(st_path))["runs"].items() if "-tdc" in k or "-tde" in k]
     try:
         rs = subprocess.run(["git", "-C", HERE, "show", ":".join(ROUTER_STATE)], capture_output=True, text=True,
                             timeout=60).stdout

@@ -2,8 +2,8 @@
 experiment: tokdrop_lr
 title: LR ablation for token-drop training — dense vs gold_fl20p8_noslot (gfl20p8ns) × LR {5e-6, 1.5e-5, 5e-5}, ONE multi-task job per (arm, LR) on contradiction+nq+outlier+oolong (fast8k mt4 shard), Qwen3.5-4B base
 status: active
-updated: 2026-10-21
-branch: prasann/flopdrop_clean @ 9bdff38d0 (pushed)
+updated: 2026-10-23
+branch: prasann/flopdrop_clean @ b84afc2a2 (pushed); Beaker -tde runs pinned at origin/claude/online-router-1bc01a 67a28d605
 launcher: research/token_routing/ds64_fast8k/launch_fast8k.py (env F8K_SUFFIX=-lra, OPS_EXPERIMENT=tokdrop_lr)
 records:
   - records/flopdrop-final-figures-plan.md
@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/RFpSfNnqnz8M9ygi8kK1U5
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-lra-q35-4b
-next_step: Round 5 (lrc, true two-tier + floor rules after the option-field fix) training on Lambda; evals auto-queued (batched decode). Then matched-FLOP table via collect_rule_screen.py, ops result add for all screen rows, artifact update. LABEL WARNING: lrb runs named tier33*/tier67* actually ran gold+decoys WHOLE with rest at --st-keep-token-k (kept_doc_k dropped); gbfl20m32p8/m48p8 (lrb) are plain gbfl20p8 repeats (floor dropped).
+next_step: (10-23) LEAD = mid-stack online router (otr10M7: keep 10% after block 7, gnorm target, full-context step every 8): >= dense at matched FLOPs on mt4 (3 seeds, s1464/s1952). 11-task: fails strmatch (-0.11..-0.25) and grouping@8k; per-doc floor f8/f16 screening (router session). AGGRESSIVE (FLOPs+memory, Prasann 10-23): mt4s488 screen at matched FLOPs: otr10M7de0 (no full steps) worst -0.057 vs otr10M7 -0.081 = free at small scale; frozen/no-grad early stack -0.13 contra@2k; pyramid -0.16; merge -0.09. In flight (Beaker -tde, pinned router branch): otr10M7de0 s1464, otr10M7de0xl3 s1464 (early-exit LM loss W0.3), otr10M7de0xl3/xl10 s488; mt11 s960 dense x2 / otr10M7 / otr10M8 / otr10M7gold evals. CPT track (olmo3_cptdrop, artifact 4tZKEXtpSpg5ax6B1YeoLk): router loses to dense on dev CE at every budget; exit-loss screen queued there. 64k study: experiment mt11_64k. Hourly cron check-in drives this.
 ---
 
 # tokdrop_lr
