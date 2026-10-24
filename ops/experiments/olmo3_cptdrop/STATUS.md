@@ -163,6 +163,13 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- TRAP (hit 2026-10-24 01:25): router branch <= 1e5a14c85 never writes config.json["early_lora"] (variants.SoftToken
+  defines export_config twice; the later {"softtoken": ...} wins), and DCP loads only the keys the model asks for, so a
+  plain-model eval of a LoRA checkpoint silently DROPS the adapters (no strict-load error). DLORA16k16/k8lr20-12 were
+  scored that way (1.7086 / 1.7020: INVALID, deleted). Fixed 8d4c861f8: eval_devce rebuilds the block from the lora
+  keys + provenance.json and refuses any checkpoint with model keys the eval model lacks (pooled_projector.* allowed:
+  every softtoken run carries it, dense eval never uses it). Checked on base / stage3 / dense / OTR / IRAND / SD20 / MoD /
+  LoRA checkpoints. Router session told. LoRA relaunched: sneetches 4021741.
 - GRAD COMPOSITION ON CPT (grad_composition session, cubbins 4021638; 48 dev rows ⚠ eval_size=48; records/grad-composition.md
   addendum on claude/grad-composition-6f09c7 @36d6c1ce2; artifact https://claude.ai/artifact/BVaPjZdAKjETHdQDdGqqtQ):
   blocks 0-6 share of param-grad energy 0.42 base -> 0.20 @12 dense steps -> 0.16 @480 (blocks 0-15: 0.67 -> 0.43-0.46);
