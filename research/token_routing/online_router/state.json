@@ -511,6 +511,30 @@
    "lr": 5e-06,
    "mix": "mt11",
    "seed": 0
+  },
+  "f8k-mt11-prog4712f16M7-s720-tdb-lr5e-06": {
+   "ex": "01M5PN5JK7TW87AQFGZFDQ3RZE",
+   "arm": "prog4712f16M7",
+   "budget": "s720",
+   "lr": 5e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-otr10M7f16pt-s720-tdb-lr5e-06": {
+   "ex": "01M5PN6C2217KZWD5R4B51ZMRA",
+   "arm": "otr10M7f16pt",
+   "budget": "s720",
+   "lr": 5e-06,
+   "mix": "mt11",
+   "seed": 0
+  },
+  "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06": {
+   "ex": "01M5PN75823ZV8Q7TJJPJ80BSC",
+   "arm": "prog4712f16M7pt",
+   "budget": "s720",
+   "lr": 5e-06,
+   "mix": "mt11",
+   "seed": 0
   }
  },
  "evals": {
