@@ -70,6 +70,11 @@ log() { echo "[driver $(date '+%F %T')] $*"; }
 run() {
   local name=$1; shift
   if [ -f "$ROOT/runs/$name/model_and_optim/.metadata" ]; then log "SKIP $name (export exists)"; return 0; fi
+  # a run without its export but with stepN dirs was cut by a preemption/requeue (run_arm refuses a silent resume):
+  # clear it and start over, unless it saves branch points (SAVE_INTERVAL), which must be resumed by hand
+  if ls -d "$ROOT/runs/$name"/step* >/dev/null 2>&1 && ! printf '%s\n' "$@" | grep -q '^SAVE_INTERVAL='; then
+    log "CLEAR partial $name (no export; restarting after a requeue)"; rm -rf -- "$ROOT/runs/$name" "$ROOT/work/$name"
+  fi
   log "START $name"; env "$@" RUN="$name" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1; local rc=$?
   log "END $name rc=$rc"
   # a run without SAVE_INTERVAL is never branched from: drop its final trainer checkpoint (model + optimizer +
