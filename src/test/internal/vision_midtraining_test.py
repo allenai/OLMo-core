@@ -1529,6 +1529,18 @@ def test_merged_stage_v6_caps_the_repeated_sources(merged_stage, monkeypatch):
     assert config.dataset.target_loss_mass["text_midtraining"] == 0.9
 
 
+def test_merged_stage_passes_text_document_masking(merged_stage):
+    """The 256K text stage's document masking reaches the text replay; off by default."""
+    default = merged_stage.build().dataset.sources["text_midtraining"]
+    assert default.document_masking is False and default.chunked_source is None
+    replay = merged_stage.build(
+        "--recipe.text_document_masking=true",
+        "--recipe.text_chunked_source=0",
+        "--recipe.text_chunk_length=8192",
+    ).dataset.sources["text_midtraining"]
+    assert (replay.document_masking, replay.chunked_source, replay.chunk_length) == (True, 0, 8192)
+
+
 def test_annotation_documents_needs_stage1_data(mixed_recipe):
     with pytest.raises(OLMoConfigurationError, match="annotation_documents"):
         mixed_recipe.build("--recipe.annotation_documents=true")

@@ -234,6 +234,16 @@ class MixedMidtrainingRecipeConfig(Config):
     balance_vit_crops: bool = False
     """Share each micro-batch's image crops evenly among all ranks for the vision encoder (see
     :attr:`~olmo_core.train.train_module.transformer.multimodal_train_module.MultimodalOLMoDDPTrainModuleConfig.balance_vit_crops`)."""
+    text_document_masking: bool = False
+    """Isolate the documents of each text instance from one another, as the text team's 256K stage
+    does (scaling-ladders ``hero_mt_lc_256k``): segments end after every EOS and, in instances of
+    :attr:`text_chunked_source`, at every :attr:`text_chunk_length` boundary; a padding run is
+    one segment (see :class:`~olmo_core.data.multimodal.pretraining_replay.ComposableTextReplayConfig`).
+    Composable text sources only."""
+    text_chunked_source: int | None = None
+    """The interleaved text source's child whose instances are concatenated chunks (MT: 0)."""
+    text_chunk_length: int | None = None
+    """Their chunk length (MT: 8,192)."""
     annotation_documents: bool = False
     """With ``stage1_v3`` or ``stage1_v4`` visual data, keep every annotation of a drawn image, each
     as its own document sharing the image's crops (``annotation_sampling="documents"``), instead
@@ -1120,6 +1130,9 @@ def build_config(
             work_dir=str(text["data_loader"]["work_dir"]),
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
+            document_masking=recipe.text_document_masking,
+            chunked_source=recipe.text_chunked_source,
+            chunk_length=recipe.text_chunk_length,
         )
         masked_text = True
     else:
@@ -1150,9 +1163,12 @@ def build_config(
     )
     documents = recipe.annotation_documents or recipe.visual_data in ("stage1_v5", "stage1_v6")
     if stage1_v3:
-        if documents and recipe.sequence_length != 65536:
+        # The documents means were measured at 65,536 tokens, where no draw reached the
+        # budget (the largest, a PixMo-Points image's documents, is 26,864 tokens), so they
+        # hold at any longer sequence (the 256K stage) too.
+        if documents and recipe.sequence_length < 65536:
             raise OLMoConfigurationError(
-                "recipe.annotation_documents is calibrated at 65,536 tokens only, not "
+                "recipe.annotation_documents is calibrated at 65,536 tokens and longer, not "
                 f"{recipe.sequence_length}"
             )
         means = dict(
