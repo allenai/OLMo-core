@@ -2418,6 +2418,24 @@
    "train_run": "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06",
    "task": "grouping",
    "suite_rows": true
+  },
+  "f8k-mt11-lora16f16M7-s720-tdb-lr5e-06-evcontra": {
+   "ex": "01M5PXN7YYNDF6J6DXAVH3ZWQD",
+   "train_run": "f8k-mt11-lora16f16M7-s720-tdb-lr5e-06",
+   "task": "contra",
+   "suite_rows": true
+  },
+  "f8k-mt11-lora16f16M7-s720-tdb-lr5e-06-evnq": {
+   "ex": "01M5PXP390TNNQ2A6RSBSHJCWC",
+   "train_run": "f8k-mt11-lora16f16M7-s720-tdb-lr5e-06",
+   "task": "nq",
+   "suite_rows": true
+  },
+  "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06-evcontra": {
+   "ex": "01M5PXPJSTNP8JSB7Z3FKAZKHB",
+   "train_run": "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06",
+   "task": "contra",
+   "suite_rows": true
   }
  },
  "failed_evals": {
