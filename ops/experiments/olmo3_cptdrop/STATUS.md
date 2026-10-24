@@ -173,8 +173,9 @@ See `next_step` above.
   1.6991/1.6921/1.6879/1.6841 (m 0.88/0.82/1.19/1.65), ctx 0.064-0.073, far CE 0.511->0.479, short 1.157-1.159, peak =
   median 30.8 GiB (dense 35.2: -12.5% from step 0). K8 (0.921x): 1.7009/1.6929/1.6880/1.6842 (m 0.75/0.62/1.08/1.45),
   33.0 GiB. Paired: K16-120 vs dense-120 -0.0013 +-0.0001 at 0.85x FLOPs; K16-48 vs dense-48 -0.0000 +-0.0001. A tie or
-  small win at less compute AND less peak memory; the large m only reflects the flat dense curve. Caveat: dense
-  seed 1 vs 0 at 120 = 0.0000 (the seed apparently doesn't change data order), so run noise is unmeasured.
+  small win at less compute AND less peak memory; the large m only reflects the flat dense curve. Run-to-run
+  noise: dense seed 1 vs 0 at 120 (different data order: --seed shifts the loader seed 34521+seed; first train losses
+  differ) = 0.0000 +-0.0001 on dev CE (ctx_gain 0.0750 vs 0.0743), so the LoRA -0.0013 is ~13x run noise.
   MoD (exports copied mcfuzz -> sneetches): c0.5 12/24/48/120 -> 1.7305/1.7169/1.7050/1.6987 (m <0.45/<0.24/0.16/0.10);
   c0.25 12/24/48 -> 1.7379/1.7337/1.7214: loses. Next: r64 LoRA K16/K8 and r64 + all-local (sneetches 4030726); dense
   near/far rescore (cubbins 4034568).
