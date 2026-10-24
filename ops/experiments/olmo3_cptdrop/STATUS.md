@@ -163,6 +163,11 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-24 07:30 freeze grid (cubbins 4021612; keep 1.0 warmup-then-freeze of embeddings + blocks [0,K)):
+  K16 f25 12/24/48/120 = 278/529/1030/2534 PF -> 1.7094/1.7049/1.6980/1.6881 (m 0.50/0.36/0.27/0.53); K16 f50 ->
+  1.7085/1.7010/1.6921/1.6858 (m 0.49/0.42/0.42/1.01); K8 f25 -> 1.7056/1.6992/1.6924/1.6860 (m 0.56/0.44/0.38/0.91);
+  K8 f50 -> 1.7064/1.6975/1.6905/1.6851 (m 0.52/0.45/0.63/1.15). Peak 35.9 GiB (pre-freeze); median 26.7 (K16 f25) /
+  31.0 (K8 f25). Loses at 12-48 steps, ties only at 120; LoRA r16 K16 beats it at every budget at the same FLOPs.
 - RESULT 2026-10-24 06:30 FIRST CPT ARM >= DENSE: LoRA early stack r16 scale 32 (sneetches 4021741; eval re-installs
   adapters; measured PF; dev32k_1024 1,024 rows). K16 (0.843x/step): 12/24/48/120 = 301/579/1135/2804 PF -> CE
   1.6991/1.6921/1.6879/1.6841 (m 0.88/0.82/1.19/1.65), ctx 0.064-0.073, far CE 0.511->0.479, short 1.157-1.159, peak =
