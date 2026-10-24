@@ -27,6 +27,9 @@
 #        0.5) at 46 / 92 / 185 -- the periodic F-steps still count as dense steps, so blocks [0, 7) get full forward +
 #        backward there (router 15bf04ff3 test pins it) -- and no periodic steps (de0, early stack frozen after step 1)
 #        at 60 / 120 / 240
+#   FRZ  dense CPT + warmup-then-freeze of embeddings + blocks [0, K) (no token drop: the router at keep 1.0 is
+#        only the carrier for --st-otr-freeze-after; frozen blocks run forward-only and lose their optimizer state):
+#        K 8 / 16 x freeze after 25% / 50% of the steps, at 12 / 24 / 48 / 120 steps; 20-step smoke first
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
 #   IFS  IFLlr20-215 (saves every 48) + branches 54 / 108: I-fl 25% at dense-equivalent 12 / 24 / 48 steps
@@ -117,6 +120,13 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
         run "o3cd-OTR10M7ndnglr20-$b" ARM=OTR OTR_DENSE=0 OTR_EXTRA="--st-otr-early-nograd" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 10 + 10)) \
           || { log "FAIL ndng at $b: continuing"; break; }
       done ;;
+    FRZ)
+      run o3cd-FRZsmoke ARM=OTR OTR_KEEP=1.0 OTR_L=16 OTR_DENSE=0 OTR_EXTRA="--st-otr-freeze-after 5" MAX_STEPS_TOTAL=20 SMOKE=1 NOWANDB=1 EXPECTED_MIN=15 || exit 60
+      for K in 16 8; do for f in 25 50; do for b in 12 24 48 120; do
+        n=$(( (b * f + 50) / 100 )); [ $n -lt 1 ] && n=1
+        run "o3cd-DFRZk${K}f${f}lr20-$b" ARM=OTR OTR_KEEP=1.0 OTR_L=$K OTR_DENSE=0 OTR_EXTRA="--st-otr-freeze-after $n" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 4 + 10)) \
+          || { log "FAIL DFRZ K=$K f=$f at $b: continuing"; break; }
+      done; done; done ;;
     SEED)
       run o3cd-Dlr20-120-s1 ARM=D MAX_STEPS_TOTAL=120 SEED=1 EXPECTED_MIN=30 || exit 14 ;;
     IRS)
@@ -141,7 +151,7 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
       done ;;
     EV)
       SPECS=""
-      for r in OTR10M7ngf50lr20-46 OTR10M7ngf50lr20-92 OTR10M7ngf50lr20-185 OTR10M7ndnglr20-60 OTR10M7ndnglr20-120 OTR10M7ndnglr20-240 OTR10M7f50x10lr20-31 OTR10M7f50x10lr20-62 OTR10M7f50x10lr20-124 OTR10M7ndx10lr20-40 OTR10M7ndx10lr20-80 OTR10M7ndx10lr20-160 OTR10M7ndx03lr20-40 OTR10M7ndx03lr20-80 OTR10M7ndx03lr20-160 OTR10M7x10lr20-31 OTR10M7x10lr20-62 OTR10M7x10lr20-124 OTR10M7x10lr20-310 OTR10M7x03lr20-31 OTR10M7x03lr20-62 OTR10M7x03lr20-124 OTR10M7x03lr20-310 OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
+      for r in $(for K in 16 8; do for f in 25 50; do for b in 12 24 48 120; do echo DFRZk${K}f${f}lr20-$b; done; done; done) OTR10M7ngf50lr20-46 OTR10M7ngf50lr20-92 OTR10M7ngf50lr20-185 OTR10M7ndnglr20-60 OTR10M7ndnglr20-120 OTR10M7ndnglr20-240 OTR10M7f50x10lr20-31 OTR10M7f50x10lr20-62 OTR10M7f50x10lr20-124 OTR10M7ndx10lr20-40 OTR10M7ndx10lr20-80 OTR10M7ndx10lr20-160 OTR10M7ndx03lr20-40 OTR10M7ndx03lr20-80 OTR10M7ndx03lr20-160 OTR10M7x10lr20-31 OTR10M7x10lr20-62 OTR10M7x10lr20-124 OTR10M7x10lr20-310 OTR10M7x03lr20-31 OTR10M7x03lr20-62 OTR10M7x03lr20-124 OTR10M7x03lr20-310 OTR10M7mglr20-31 OTR10M7mglr20-62 OTR10M7mglr20-124 OTR10M7nglr20-46 OTR10M7nglr20-92 OTR10M7nglr20-185 OTRpyrlr20-40 OTRpyrlr20-80 OTRpyrlr20-160 OTRpyrnglr20-60 OTRpyrnglr20-120 OTRpyrnglr20-240 OTR10M7lr20-31 OTR10M7lr20-62 OTR10M7lr20-124 OTR10M7lr20-310 OTR10M7ndlr20-40 OTR10M7ndlr20-80 OTR10M7ndlr20-160 Dlr20-4 Dlr20-8 IRANDlr20-22 IRANDlr20-43 SD20lr20-65 SD20lr20-130 SD20lr20-260 Dlr10-12 Dlr05-120 Dlr20-12 Dlr20-24 Dlr20-48 DB8lr20-12 DB8lr20-24 DB8lr20-48 Dlr20-120-s1 IRANDlr20-65 IRANDlr20-130 IRANDlr20-260 IFLlr20-54 IFLlr20-108 IFLlr20-215 Dlr10-120 Dlr20-480 IRANDlr20-650 IRANDlr20-1300 IRANDlr20-2600 HOlr20-120 HOlr20-240 HOlr20-480; do
         [ -f "$ROOT/runs/o3cd-$r/model_and_optim/.metadata" ] && [ ! -f "$ROOT/devce/${r}_dev32k_1024.json" ] && SPECS="$SPECS $r:runs/o3cd-$r:4"
       done
       log "EV specs:$SPECS"
