@@ -697,4 +697,6 @@ seed noise, with `leak_auc` near 0.5 (or no worse than the tier67 rule) and `ran
 
 Screens in flight (Lambda, mt4s1464, LR 5e-6, seed 0, vs otr10M7de0 2-seed mean 0.937 / 0.902 / 0.623 / 0.682 at
 0.30x): otr10M7de0pt, mass80c20M7, lora16M7, prog4712M7, tl16M7, mod25L8. The per-task de16 run was cancelled under
-the no-full-step rule; de32 / fa275de16 (launched before it) finish as references only.
+the no-full-step rule; de32 / fa275de16 (launched before it) are references only: otr10M7de32 (0.32x) 0.927 / 0.906 /
+0.616 / 0.558, fa275M7de16 (0.31x) 0.929 / 0.910 / 0.637 / 0.737 (seed 0 each, 8k, eval_size 500) -- neither beats the
+de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
