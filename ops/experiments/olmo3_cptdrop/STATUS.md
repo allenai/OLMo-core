@@ -159,6 +159,12 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- SCOPING 2026-10-24 (LR-sweep session's KV-only-drop idea: drop tokens only as keys/values in blocks 7-31): from the
+  model's FLOP formula (matches the meter: 52.3 vs 52.45 GFLOP/token) attention = 21.0% of step FLOPs at 32k (full
+  12.3%, SWA 8.7%), 29.8% at 64k, 42.5% at 128k. Keeping 10% of keys in blocks 7-31 saves 7.4-14.5% at 32k,
+  15-22% at 64k, 27-32% at 128k; memory ~0 (full AC, flash). A key-keep flex mask_mod skips no tiles (scattered
+  keys); savings need compacted K/V = existing kv_route.py path (full-attn layers only, learned-sigmoid router).
+  Recommended: not at 32k; only 64k-128k.
 - RESULT 2026-10-24 00:10 exit loss + peak-memory arms (cubbins 4020957, router fcda77090; measured PF; mem = per-step
   peak excluding warmup step 1 (always full, 35.9) / median): exit W1.0 de8 31/62/124/310 = 366/705/1383/3398 PF ->
   1.7366/1.7523/1.7603/1.7706 (WORSE with training; short 1.17->1.24); W0.3 1.7310/1.7354/1.7409/1.7450; de0+exit
