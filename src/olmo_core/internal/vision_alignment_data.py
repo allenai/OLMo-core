@@ -534,4 +534,176 @@ STAGE1_V3_MEAN_LOSS_WEIGHTS: dict[str, float] = {
 """Calibration of the stage-1 v3 sources as the alignment recipe builds them for a document-mode
 LM (:func:`build_stage1_v3_sources` with ``annotation_sampling="one"``, dolma2 tokenizer at the
 pinned revision, 8,192 tokens): :meth:`MultimodalMixtureConfig.estimate_mean_loss_weights` with
-128 samples per source, seed 0. Perception and joint build the same sources."""
+128 samples per source, seed 0. Perception and joint build the same sources. Measured again at
+65,536 tokens (2026-10-10): every source's mean is identical, since no sampled example reaches
+8,192 tokens, so these means hold for the merged mid-training + long-context stage too."""
+
+STAGE1_V3_SOURCE_SIZES: dict[str, int] = {
+    "pixmo_caption": 714_165,
+    "pixmo_transcript": 714_165,
+    "pixmo_points_v2": 220_290,
+    "pixmo_count_v2": 36_901,
+    "cosyn_point_v2": 68_051,
+    "olmocr_documents": 218_831,
+    "olmocr_books": 15_134,
+    "olmocr_loc_transcripts": 9_712,
+    "olmocr_national_archives": 9_810,
+    "text_rich_chart": 353_439,
+    "text_rich_diagram": 142_534,
+    "text_rich_doc": 438_267,
+    "text_rich_graphic": 87_212,
+    "text_rich_table": 315_515,
+    "textocr": 21_749,
+    "nvidia_synth_en": 1_460_304,
+    "synth_receipts_en": 16_437,
+    "cosyn_chart_exp": 116_814,
+    "cosyn_chemical_exp": 8_942,
+    "cosyn_diagram_exp": 34_963,
+    "cosyn_document": 71_282,
+    "cosyn_math_exp": 66_714,
+    "cosyn_music_exp": 11_969,
+    "cosyn_table_exp": 46_518,
+    "dv_qa": 200_000,
+    "figure_qa": 100_000,
+    "plot_qa": 157_070,
+    "pixmo_clocks": 800_269,
+}
+"""Examples (rows) of each stage-1 v3 source as :func:`build_stage1_v3_sources` builds them from
+the default artifacts (``len`` of each built dataset, 2026-10-11)."""
+
+STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS: dict[str, float] = {
+    **STAGE1_V3_MEAN_LOSS_WEIGHTS,
+    "cosyn_chart_exp": 440.2109375,
+    "cosyn_chemical_exp": 285.0546875,
+    "cosyn_diagram_exp": 339.9453125,
+    "cosyn_document": 48.203125,
+    "cosyn_music_exp": 254.953125,
+    "cosyn_point_v2": 98.96875,
+    "cosyn_table_exp": 443.421875,
+    "dv_qa": 26.140625,
+    "figure_qa": 40.5703125,
+    "pixmo_points_v2": 375.5078125,
+    "plot_qa": 122.75,
+    "text_rich_chart": 633.125,
+    "text_rich_diagram": 692.6640625,
+    "text_rich_doc": 854.109375,
+    "text_rich_graphic": 528.171875,
+    "text_rich_table": 794.71875,
+}
+"""Calibration of the stage-1 v3 sources at 65,536 tokens when every annotation of a drawn image is
+its own document sharing the image's crops (``annotation_sampling="documents"``), for the
+multi-annotation sources with more than one annotation per image; the others keep
+:data:`STAGE1_V3_MEAN_LOSS_WEIGHTS`. Same probe (128 rows per source, seed 0, dolma2 at the pinned
+revision), measured 2026-10-20. Documents per draw: PixMo-Points 15.5, PlotQA 20, FigureQA 13.5,
+DVQA 11.4, CoSyn QA 6.3-9.5, CoSyn point 4.5, text-rich captions 3."""
+
+STAGE1_V5_POINTING_SCALE: float = 32.64 / 39.39
+"""PixMo-Points v2 tokens per unit of loss with one annotation per example (32.64: the v3 merged
+stage's logged draws, 4,181 steps) over every annotation as a document (39.39: the documents
+calibration probe). Images with many annotations, which carry more short negative answers, weigh
+more as documents, so pointing takes 21% more positions per unit of loss; scaling its loss share
+by this factor keeps pointing's positions per step, and so the text's, as in v3."""
+
+_V5_TARGETS = {
+    name: share * (STAGE1_V5_POINTING_SCALE if name == "pixmo_points_v2" else 1.0)
+    for name, share in STAGE1_V3_LOSS_TARGETS.items()
+}
+STAGE1_V5_LOSS_TARGETS: dict[str, float] = {
+    name: share / sum(_V5_TARGETS.values()) for name, share in _V5_TARGETS.items()
+}
+"""Target loss mass of each stage-1 v5 source: the v3 targets with PixMo-Points v2 scaled by
+:data:`STAGE1_V5_POINTING_SCALE`, renormalized. v5 trains every annotation of a drawn image as its
+own document (``annotation_sampling="documents"``) with
+:data:`STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS`; chosen 2026-10-20."""
+
+STAGE1_V6_LOSS_TARGETS: dict[str, float] = {
+    "pixmo_caption": 0.09168047944625687,
+    "pixmo_transcript": 0.09926026569499166,
+    "pixmo_points_v2": 0.09706423230611089,
+    "pixmo_count_v2": 0.0007793197483872145,
+    "cosyn_point_v2": 0.009104939182771337,
+    "olmocr_documents": 0.05966574922157764,
+    "olmocr_books": 0.012759101298233131,
+    "olmocr_loc_transcripts": 0.005997456729084796,
+    "olmocr_national_archives": 0.006797825866820085,
+    "text_rich_chart": 0.11486514715240281,
+    "text_rich_diagram": 0.0380182187458612,
+    "text_rich_doc": 0.1684955245061594,
+    "text_rich_graphic": 0.022751318945827253,
+    "text_rich_table": 0.13622745918986678,
+    "textocr": 0.0019007510168207087,
+    "nvidia_synth_en": 0.03762859250617401,
+    "synth_receipts_en": 0.006359550974269873,
+    "cosyn_chart_exp": 0.027380603499477497,
+    "cosyn_chemical_exp": 0.004495485480977172,
+    "cosyn_diagram_exp": 0.010597928615332885,
+    "cosyn_document": 0.00232688263352371,
+    "cosyn_math_exp": 0.017595904258143346,
+    "cosyn_music_exp": 0.004670482673349251,
+    "cosyn_table_exp": 0.017940240118627205,
+    "dv_qa": 0.0004317455382692933,
+    "figure_qa": 0.00044912952328374206,
+    "plot_qa": 0.0039311617004130816,
+    "pixmo_clocks": 0.0008245034269871309,
+}
+"""Target loss mass of each stage-1 v6 source: the v5 split with PixMo-Cap's caption and transcript
+and PixMo-Count capped at 10 epochs over a 20,000-step run (v5 drew them 21.3, 20.5 and 23.7 times),
+their loss moved to the large OCR sources (text-rich doc, table and chart and NVIDIA synthetic up
+1.99x, olmOCR documents down 0.78x) in the ratio that keeps the vision share's loss and positions
+per step those of v5, so the text and the step time are unchanged. Solved 2026-10-23 from v5's
+logged per-source loss, positions and draws (4,181 logged steps; ``v6_mixture.json``). The v5 hero
+showed training loss on the capped sources collapsing while their held-out loss rose (memorization);
+the OCR sources had headroom (1.2-7.5 epochs) and kept improving. v6 trains every annotation as a
+document, as v5 does."""
+
+STAGE1_V4_EPOCHS: dict[str, float] = {
+    "pixmo_caption": 3.7,
+    "pixmo_transcript": 3.6,
+    "pixmo_points_v2": 10.0,
+    "pixmo_count_v2": 4.1,
+    "cosyn_point_v2": 2.0,
+    "olmocr_documents": 5.0,
+    "olmocr_books": 5.1,
+    "olmocr_loc_transcripts": 4.8,
+    "olmocr_national_archives": 6.8,
+    "text_rich_chart": 2.2,
+    "text_rich_diagram": 3.2,
+    "text_rich_doc": 1.9,
+    "text_rich_graphic": 4.7,
+    "text_rich_table": 2.3,
+    "textocr": 4.8,
+    "nvidia_synth_en": 1.0,
+    "synth_receipts_en": 6.3,
+    "cosyn_chart_exp": 2.0,
+    "cosyn_chemical_exp": 2.0,
+    "cosyn_diagram_exp": 2.0,
+    "cosyn_document": 2.0,
+    "cosyn_math_exp": 1.8,
+    "cosyn_music_exp": 2.0,
+    "cosyn_table_exp": 2.0,
+    "dv_qa": 2.8,
+    "figure_qa": 4.1,
+    "plot_qa": 2.0,
+    "pixmo_clocks": 0.3,
+}
+"""Passes over each source in the stage-1 v4 vision mixture of the merged mid-training +
+long-context stage (one pass over its text, about 10,100 steps; chosen 2026-10-11). Starting from
+the v3 loss split at 98% text (where single-annotation draws cycled PixMo-Points 53 times and the
+CoSyn sets 14-31 times): PixMo-Points to 10, PlotQA and the CoSyn sets to 2 (CoSyn math stays at
+1.8), NVIDIA's synthetic set up to 1 and olmOCR documents up to 5, like the other olmOCR sets;
+every other source keeps its pass count."""
+
+_V4_LOSS_MASS = {
+    name: STAGE1_V4_EPOCHS[name] * STAGE1_V3_SOURCE_SIZES[name] * STAGE1_V3_MEAN_LOSS_WEIGHTS[name]
+    for name in STAGE1_V3_SOURCES
+}
+STAGE1_V4_VISUAL_LOSS_MASS: float = sum(_V4_LOSS_MASS.values())
+"""Supervised-loss mass (loss tokens) of one run of the v4 vision mixture."""
+STAGE1_V4_LOSS_TARGETS: dict[str, float] = {
+    name: mass / STAGE1_V4_VISUAL_LOSS_MASS for name, mass in _V4_LOSS_MASS.items()
+}
+"""Loss share of each source within the v4 vision mixture: passes x rows x mean loss weight per
+example, normalized, so the mixture samples each source in proportion to passes x rows
+(:meth:`MultimodalMixtureConfig.sampling_weights` divides a source's share by its mean). By
+group: caption 34.9%, OCR 60.5%, pointing and counting 2.2%, academic QA 2.3%, clocks 0.1%
+(v3: 39.2 / 39.5 / 12.6 / 8.6 / 0.1)."""

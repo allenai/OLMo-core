@@ -9,8 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `balance_vit_crops` to `MultimodalOLMoDDPTrainModuleConfig` and the mixed mid-training recipe (off by default): the vision encoder's image crops are shared evenly among the ranks (`olmo_core.nn.vision.crop_balance`) instead of every rank waiting for the one holding the most. Features and summed gradients are unchanged up to floating-point rounding; on the v4 merged mid-training mixture at 16 GPUs a step takes 35.7 s instead of 58.7 s.
+- Added `batch_prefetch_process` to `MixtureDataLoaderConfig` and the mixed mid-training recipe (off by default; turn it on, with `prefetch_processes`): the rank batches ahead are built in a forked child process (`BatchProcessPrefetcher`), outside the trainer's interpreter lock, and handed over through shared memory, with the same batches and checkpointed state. Building a batch also makes fewer large fresh allocations: the buffered packer's knapsack keeps one DP table per thread, and the mixed mid-training recipe sets `defer_packed_image_copy`.
+- Added `prefetch_processes` to `MixtureDataLoaderConfig` and the mixed mid-training recipe (off by default; turn it on, with `batch_prefetch_process`): examples load in forked worker processes instead of threads, so a page fault on a memory-mapped source (which holds the interpreter lock until the page arrives) stalls one worker instead of every loading thread and, in a batch prefetch process, the hand-over of finished batches.
 - Added Ulysses context parallelism for `KimiDeltaAttention` (`apply_cp`), mirroring the `GatedDeltaNet` all-to-all head/sequence exchange, with the in-kernel gate parameters sliced to each rank's heads.
 - Added a Ulysses context-parallel parity test for the recurrent mixers (`GatedDeltaNet`, `KimiDeltaAttention`) that compares per-stage activations, outputs, and gradients against a single-process reference, including packed documents that straddle the CP split, plus a model-level gradient-parity test for `gdn` and `kda` under Ulysses CP.
+- Added `olmo_core.kernels.layer_norm`: LayerNorm with an affine weight and bias as Triton kernels whose gradients stay at memory bandwidth for any number of rows. The vision encoder's blocks use it.
+
+### Changed
+
+- The vision encoder's self-attention projects q, k and v in one matmul and hands them to the attention as strided views (no head-transposed copies), trying cuDNN's attention first on SM100 GPUs; `VIT_CROP_MICROBATCH` defaults to no chunking. Parameters and checkpoints are unchanged.
+- The vision connector gathers the pooled patches with one `index_select` and computes the pooling attention over each group's few patches as elementwise ops. With compact images and host-side indices, `MultimodalLM.encode_images` pools only the valid rows; the `connector output RMS` diagnostic now covers those rows only.
 
 ## [v3.0.0](https://github.com/allenai/Olmo-core/releases/tag/v3.0.0) - 2026-09-30
 
@@ -31,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve OLMoDDP inference rounding in newly exported HF models, including packed dense/shared projections, packed SwiGLU, and architecture-specific BF16 TransformerEngine index-map combination; serialize the mode and retain legacy HF configs' existing numerics. CUDA inference without Triton uses the Torch activation fallback.
+- Allow experiment workloads to configure the distributed timeout for long rank-zero dataset preparation while preserving the 15-minute default.
+- Preserve 16-byte parameter alignment in OLMoDDP flat model buffers so compiled kernels remain valid after small BF16 parameters are packed.
+- Keep no-EP and rowwise-NVSHMEM shared-expert CUDA stream switching outside compiled graphs to avoid Torch 2.13 backward failures after a separately compiled loss, while retaining compiled expert math and stream overlap.
 - Metadata-backed packed datasets now include sidecar content hashes in packing-cache keys and dataset fingerprints, invalidating stale boundaries even after same-size corrections. Document lengths preserve EOS/BOS padding segmentation. Local array-backed defaults are unchanged (https://github.com/allenai/Olmo-core/pull/843).
 - Apply opt-in Q/K gain expansion to eval-only and model-only DDP checkpoint loads, and reject forced expert assignments and biased KDA convolutions during HF export.
 - Validate normalization throughout MoE HF exports, preserve attention-only gates and resolved EOS/padding IDs, and reject unsupported shared-expert routing before conversion.
