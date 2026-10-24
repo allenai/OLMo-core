@@ -244,6 +244,10 @@ ARM_EXTRA.update({
     **{f"mod{c}": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 "
                    f"--st-otr-keep-frac {c / 100} --st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 "
                    "--st-otr-drop-layer 8 --st-otr-mod-layers 8-31:2") for c in (25, 50)},
+    # progressive freeze (router bf671531e): embeddings + blocks [0,3) frozen at 25% of steps, [0,7) at 50%; no full steps
+    "pfz37M7": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
+                "--st-otr-freeze-schedule 3:0.25,7:0.5"),
     "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     # no full-context steps (peak memory = routed steps), optionally + early-exit LM loss on dropped tokens
