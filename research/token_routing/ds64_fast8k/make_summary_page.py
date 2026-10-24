@@ -161,6 +161,7 @@ a { color: inherit; }
 <section class="box">
   <h2>Bottom line (2026-10-24)</h2>
   <ul>
+    <li><b>Best combination so far (1 seed): rank-64 adapters on blocks 0–6, frozen at 75%, plus two-stage keep (20% of tokens from block 7, rescored to 7% at block 16), no full-context steps.</b> 4-task mix, 1,464 rows/task: 0.941 / 0.928 / 0.593 / 0.811 at 0.24× dense FLOPs and 48.9 GiB peak memory, against 0.937 / 0.902 / 0.623 / 0.682 at 0.30× and 60.3 GiB for the plain no-full-step router. Two-stage keep alone (seed 1): 0.956 / 0.916 / 0.658 / 0.817 at 0.31×. Second seed, 11-task and fresh-data (to 7,808 rows/task) runs are training.</li>
     <li><b>New best, compute and memory (2 seeds): router with low-rank adapters on blocks 0–6, no full-context steps.</b> Blocks 0–6 are frozen from step 0 and train through rank-64 adapters; the router keeps 10% of tokens for blocks 7–31. 4-task mix, 1,464 rows/task, LR 5e-6: 0.939 / 0.904 / 0.623 / 0.686, against 0.937 / 0.902 / 0.623 / 0.682 for the same router without adapters. That is the same quality at 0.25× dense FLOPs (vs 0.30×) and 48.4 GiB peak memory (vs 60.3), the first cut that lowers the peak from step 0. Rank 16 is worse (0.924 / 0.882 / 0.605 / 0.579). Fresh-data runs out to 7,808 rows/task and CPT runs are queued.</li>
     <li><b>At its own learning rate (5e-6), the router matches dense trained on the same data at 0.38× the FLOPs.</b> 4-task mix, 1,464 rows/task, 2 seeds: contradiction / nq / oolong / outlier @8k 0.955 / 0.913 / 0.622 / 0.726 vs dense 0.956 / 0.936 / 0.630 / 0.719. Level on 3 of 4; nq −0.023.</li>
     <li><b>Cheaper variants form one smooth curve at 5e-6</b> (table below). There's no free lunch: each step down in FLOPs costs a little, mostly outlier. Full-context step every 16 instead of 8 is the best trade (0.34×, contradiction −0.009). Freezing the early blocks halfway reaches 0.24× and 47.7 GiB. Its apparent free win at LR 2e-6 was mostly the LR.</li>
@@ -186,7 +187,7 @@ a { color: inherit; }
     <tr><th>variant (LR 5e-6, one seed)</th><th class="n">PF</th><th class="n">mean Δ</th><th class="n">worst Δ</th><th>worst cell</th></tr>
     __SCREEN1952__
   </table></div>
-  <p class="note">Δ vs dense at the same training PF (per cell, the better of dense LR 2e-6 / 5e-6, interpolated in log PF; dense on these rows costs 1,541 PF). Every run's weakest cell is outlier@2k (dense ≈0.80 there), the noisiest cell (seed spread up to 0.19). Fresh-data runs out to 7,808 rows/task are training.</p>
+  <p class="note">Δ vs dense at the same training PF (per cell, the better of dense LR 2e-6 / 5e-6, interpolated in log PF; dense on these rows costs 1,541 PF). Every run's weakest cell is outlier@2k (dense ≈0.80 there), the noisiest cell (seed spread up to 0.19). Fresh-data runs out to 7,808 rows/task are training. <b>Caveat:</b> "within noise of dense" is against the dense curve. Against the same router, layer skips are a small loss (2 seeds at 1,464 rows: −0.03 contradiction, −0.09 outlier for 4% less compute), because only the kept 10% of tokens run blocks 20+.</p>
 </section>
 
 <section>
