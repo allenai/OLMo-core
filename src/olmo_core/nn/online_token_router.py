@@ -1060,7 +1060,7 @@ class OnlineTokenRouter:
             start = torch.zeros(nd, device=sc.device, dtype=sc.dtype).index_add(0, ds, ms)  # per-doc totals
             offs = torch.cumsum(start, 0) - start
             before = cs - ms - offs[ds]  # predicted mass of the doc's higher-scored tokens
-            sel = before < share * tot[ds]
+            sel = before < (share - 1e-9) * tot[ds]  # tolerance: the offset subtraction leaves a rounding residue
             out[b, idx[order[sel]]] = True
         return out
 
