@@ -100,8 +100,12 @@ def post_build_hook_from_config(model_path: str):
     block the CTC-suite / ffnmoe trainers write), or ``None`` for a checkpoint without one.
 
     Evaluators call this so a routed checkpoint is scored WITH its router (the deployed model)
-    without per-run flags -- and a checkpoint that has router keys but is loaded without the hook
-    would fail the strict load, so this cannot silently score a dense model either.
+    without per-run flags. A DCP load reads only the keys the MODEL asks for, so a checkpoint whose
+    extra parameters (router, adapters) are not installed would load WITHOUT error and silently score
+    the bare backbone: the returned hook therefore always ends with a key guard that refuses any
+    checkpoint holding model keys the built model lacks (``pooled_projector`` excepted -- every
+    soft-token run carries it and the evaluated model never uses it). It is ``None`` only when there
+    is no config.json.
     """
     import json
     import os
@@ -120,10 +124,10 @@ def post_build_hook_from_config(model_path: str):
         from .early_lora import lora_block_from_checkpoint
 
         lora_block = lora_block_from_checkpoint(model_path)
-    if not block and not kv_block and not bs_block and not lora_block:
-        return None
 
-    def hook(model):
+    def _enable(model):
+        if not (block or kv_block or bs_block or lora_block):
+            return
         if lora_block:
             from .early_lora import enable_from_config_block as enable_lora
 
@@ -153,7 +157,33 @@ def post_build_hook_from_config(model_path: str):
             model._nested_ffn_moe["widths"],
         )
 
+    def hook(model):
+        _enable(model)
+        guard_checkpoint_keys(model, model_path)
+
     return hook
+
+
+def guard_checkpoint_keys(model, model_path: str) -> None:
+    """Refuse to load a checkpoint whose ``model.*`` keys include parameters the built model lacks
+    (``pooled_projector`` excepted): a DCP load would silently drop them."""
+    import os
+
+    try:
+        from torch.distributed.checkpoint import FileSystemReader
+
+        keys = FileSystemReader(os.path.join(model_path, "model_and_optim")).read_metadata().state_dict_metadata
+    except Exception:  # no / unreadable DCP metadata (e.g. an HF directory): nothing to check
+        return
+    ck = {k[len("model."):] for k in keys if k.startswith("model.")}
+    have = set(model.state_dict().keys())
+    extra = sorted(k for k in ck - have if "pooled_projector" not in k)
+    if extra:
+        raise RuntimeError(
+            f"{model_path}: the checkpoint holds {len(extra)} model keys the eval model lacks (e.g. "
+            f"{extra[:3]}); loading would silently drop them. Record the variant in config.json "
+            "(variants.export_record) or install it before the load."
+        )
 
 
 #: Router bias on the full rung at init, in logit units. Large enough that ``softmax`` puts
