@@ -556,6 +556,7 @@ not better than drop at 10%. (6) the per-document floor gains ≈ +0.035-0.04 co
 | prog4712f16M7 (progressive freeze + floor 16), LR 5e-6 | 243 (0.34) | 0.928 | 0.273 | 0.671 | 0.893 | 0.731 |
 | prog4712f16M7pt (+ per-task routers), LR 5e-6 | 244 (0.34) | 0.951 | 0.309 | 0.637 | 0.901 | 0.737 |
 | lora16f16M7 (LoRA r16 early stack + floor 16), LR 5e-6 | 260 (0.36) | 0.827 | 0.254 | 0.588 | 0.907 | 0.716 |
+| **lora64f16M7 (LoRA r64 early stack + floor 16), LR 5e-6** | 265 (0.37) | **0.927** | 0.284 | **0.738** | 0.909 | **0.748** |
 | otr10M7hdr8 (first 8 tokens kept) | 314 (0.44) | 0.744 | 0.306 | 0.648 | 0.835 | 0.711 |
 | otr10M7ds0 / ds50 (global budget) | 293 | 0.770 / 0.769 | | | | 0.696 / 0.697 |
 | rnd10M7 (random) | 295 | 0.793 | 0.353 | 0.466 | 0.803 | 0.691 |
@@ -573,7 +574,10 @@ So fa247f16M7 at 5e-6 (0.750 at 258 PF) is +0.047 over dense interpolated to its
 its FLOPs** (−0.038 vs dense on the same 720 rows/task; single seed, eval_size 500 per task). **New levers on mt11s720 at 5e-6 (seed 0, vs dense interpolated to their PF ≈ 0.699-0.703):** progressive
 freeze + floor 0.731 (+0.032), + per-task routers 0.737 (+0.038; strmatch +0.023 and grouping +0.036 over the shared
 router -- the tasks per-task routing was meant to help, single seed), LoRA r16 + floor 0.716 (+0.013; strmatch 0.827).
-None beats the single freeze fa247f16M7 (0.750, +0.047). Running: lora64f16M7 (rank 64 was the better LoRA on mt4). Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
+None beats the single freeze fa247f16M7 (0.750, +0.047). **LoRA rank 64 + floor (lora64f16M7) ties it: mean9 0.748 at
+0.37x (+0.044 vs dense interpolated to 265 PF), strmatch 0.927, xabsence 0.738 -- the same mt11 quality as the best freeze
+arm with the ~48 GiB peak of the LoRA stack (vs 60 GiB for any warmup-then-freeze arm before its freeze).** Rank 16's
+strmatch collapse (0.827) was the rank, not LoRA. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
 Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
 0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
