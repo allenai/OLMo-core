@@ -45,6 +45,7 @@ import csv
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -212,6 +213,13 @@ ARM_EXTRA.update({
     "otr10M7gold": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                     "--st-otr-explore-frac 0.1 --st-otr-doc-share 0.5 --st-otr-dense-every 8 --st-otr-drop-layer 7 "
                     "--st-otr-use-gold"),
+    "otr10M7de16": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 16 --st-otr-drop-layer 7"),
+    # warmup-then-freeze, no full steps: fa<P>M7 freezes embeddings + blocks 0-6 after P% of the run's steps
+    # (FA_STEPS fills in the step count per budget at launch)
+    **{f"fa{pc}M7": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                     "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
+                     "--st-otr-freeze-after {FA_STEPS}") for pc in (50, 75)},
     "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     # no full-context steps (peak memory = routed steps), optionally + early-exit LM loss on dropped tokens
@@ -325,10 +333,17 @@ def parse_budget(task, budget):
     cut at ``<steps>`` optimizer steps (the dense matched-FLOP curve). Returns (data dir, examples, max_steps)."""
     if budget.startswith("s"):
         rows, _, steps = budget[1:].partition("@")
+        rows = rows.split("x")[0]  # s1952x2 = two epochs over mt4s1952 (see budget_epochs)
         n = int(rows) * len(MT_TASKS.get(task, [task]))
         return f"{SHARDS}/{task}s{rows}", n, int(steps or 0)
     base, _, steps = budget.partition("@")  # 16M@31 = the g16M pool cut at 31 steps (per-task dense curve)
     return f"{SHARDS}/{task}_g{base}", EXAMPLES.get(base.split("_")[0], 0), int(steps or 0)
+
+
+def budget_epochs(budget):
+    """``s<rows>x<E>`` trains E epochs over the first-N shard (more data for cheap arms once fresh rows run out)."""
+    m = re.fullmatch(r"s\d+x(\d+)(?:@\d+)?", budget)
+    return int(m.group(1)) if m else 1
 
 
 def arm_args(task, arm, budget):
@@ -347,7 +362,12 @@ def arm_args(task, arm, budget):
     if recipe in DENSE_EXTRA:
         return "full", data, common, DENSE_EXTRA[recipe]
     if recipe in ARM_EXTRA:
-        return "softtoken", data, common, f"{ARM_EXTRA[recipe]} --attn-backend {SOFT_BACKEND}"
+        extra = ARM_EXTRA[recipe]
+        if "{FA_STEPS}" in extra:  # freeze after a fixed share of this budget's optimizer steps
+            _, n, cut = parse_budget(task, budget)
+            total = cut or budget_epochs(budget) * -(-n // GLOBAL_BATCH)
+            extra = extra.replace("{FA_STEPS}", str(total * int(re.match(r"fa(\d+)", recipe).group(1)) // 100))
+        return "softtoken", data, common, f"{extra} --attn-backend {SOFT_BACKEND}"
     raise SystemExit(f"unknown arm {arm} (known: dense, {', '.join(ARM_EXTRA)}, "
                      f"plus the -warm variants {', '.join(WARM_FROM)})")
 
@@ -380,7 +400,7 @@ def do_launch(args, mode):
             cmd = [sys.executable, "-u", LAUNCHER, "--task", args.task, "--variant", variant,
                    "--model-family", "qwen3_5", "--model-scale", SCALE, "--data-root", data,
                    "--run-name", name, "--exact-run-name", "--num-nodes", str(NODES),
-                   "--num-gpus", str(GPUS), "--epochs", "1", "--lr", str(args.lr),
+                   "--num-gpus", str(GPUS), "--epochs", str(budget_epochs(budget)), "--lr", str(args.lr),
                    "--cluster", CLUSTER, "--wandb-group", args.wandb_group, "--priority", "urgent",
                    "--no-follow", "--no-compile"] + largs + (["--extra-args", extra] if extra else []) + [mode]
             print(" ".join(cmd), flush=True)
@@ -392,7 +412,7 @@ def do_launch(args, mode):
             if mode == "launch":
                 st["runs"][name] = {"ex": ex, "task": args.task, "arm": arm, "budget": budget,
                                     "steps_expected": (parse_budget(args.task, budget)[2]
-                                                       or -(-parse_budget(args.task, budget)[1] // GLOBAL_BATCH)),
+                                                       or budget_epochs(budget) * -(-parse_budget(args.task, budget)[1] // GLOBAL_BATCH)),
                                     "gpus": GPUS * NODES, "state": "S" if ex else "LAUNCH-FAILED"}
                 save_state(st)
                 rows.append((args.task, arm, budget, name, rc, (ex or "") + " " + tail))
