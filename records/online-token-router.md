@@ -711,6 +711,7 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | mass80c20M7 (adaptive: 80% of predicted ‖g‖² per doc, row cap 20%) | 428 (0.37) | 0.941 | 0.918 | 0.585 | 0.571 |
 | **prog4712M7** (freeze [0,4) @25%, [0,7) @50%, [0,12) @75%) | 253 (0.22) | **0.933** | 0.890 | 0.620 | 0.508 |
 | tl16M7 (router fit on ‖dL/dh‖ at block 16, exploration tokens) | 346 (0.30) | 0.919 | 0.910 | 0.628 | 0.726 |
+| **lora16M7** (blocks 0-6 + embeddings frozen from step 0, rank-16 LoRA, scale 32) | 278 (0.24) | **0.939** | 0.872 | 0.615 | 0.566 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
 Per-task routing is neutral on the 4-task mix at matched PF (outlier +0.09 is inside that cell's 0.19 seed spread);
@@ -721,7 +722,12 @@ so the predicted-mass cover does not pick the tokens those tasks need -- not a w
 0.924 at 0.24x and fa92 0.913 at 0.21x), level with no-freeze de0 (0.937, 0.30x) within seed noise; outlier 0.508 is
 low but that cell's seed spread is 0.19 (seed 1 queued). Fitting the router on block-16 gradients (tl16M7, exploration tokens only) is neutral at matched PF:
 contra -0.018 (the de0 seeds differ by 0.021), nq / oolong / outlier +0.005-0.04 -- the depth drift of importance does
-not show up as a better pick at this budget. **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
+not show up as a better pick at this budget. **The LoRA early stack is the one lever that cuts PEAK memory: 48.1 GiB for the whole run vs 60.3 GiB for
+de0 and for every warmup-then-freeze arm before its freeze (prog4712M7 peaks at 60.3, ends at 41.5).** At 0.24x it holds
+contra (0.939 vs de0 0.937 at 0.30x), loses nq (-0.03) and outlier (-0.12, seed noise up to 0.19), seed 0 only. Its
+evals re-installed the adapters (logged in all four; checkpoint-side rebuild, since this run's config.json predates
+1f626f71d). Next: seed 1 (Lambda) and lora16f16M7 on mt11s720 at 5e-6 (Beaker; evals from an eval worktree at the
+fixed tip). **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
 export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
 parent's checkout unless REPO_OVERRIDE is set (068d3f0ac); LoRA runs use OLMo-core-otr10.
