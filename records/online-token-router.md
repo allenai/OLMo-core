@@ -709,7 +709,7 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | otr10M7de0pt (per-task routers) | 347 (0.30) | 0.941 | 0.890 | 0.616 | 0.773 |
 | mod25L8 (MoD, capacity 0.25, blocks 8-30 alternate) | 905 (0.78) | 0.957 | 0.928 | 0.622 | **0.468** |
 | mass80c20M7 (adaptive: 80% of predicted ‖g‖² per doc, row cap 20%) | 428 (0.37) | 0.941 | 0.918 | 0.585 | 0.571 |
-| **prog4712M7** (freeze [0,4) @25%, [0,7) @50%, [0,12) @75%) | 253 (0.22) | **0.933** | 0.890 | 0.620 | 0.508 |
+| prog4712M7 (freeze [0,4) @25%, [0,7) @50%, [0,12) @75%), seeds 0 / 1 | 253 (0.22) | 0.933 / 0.919 | 0.890 / 0.906 | 0.620 / 0.647 | 0.508 / 0.602 |
 | tl16M7 (router fit on ‖dL/dh‖ at block 16, exploration tokens) | 346 (0.30) | 0.919 | 0.910 | 0.628 | 0.726 |
 | **lora16M7** (blocks 0-6 + embeddings frozen from step 0, rank-16 LoRA, scale 32) | 278 (0.24) | **0.939** | 0.872 | 0.615 | 0.566 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
@@ -720,7 +720,10 @@ its case is the 11-task mix. MoD at capacity 0.25 is dense-level on contra / nq 
 no better than the fixed budget at less compute (de16, 0.34x: 0.946 / 0.912 / 0.625 / 0.725); oolong / outlier drop,
 so the predicted-mass cover does not pick the tokens those tasks need -- not a win at this setting. Progressive freeze is the best contra of the freeze family at the lowest PF (0.933 at 0.22x vs fa183
 0.924 at 0.24x and fa92 0.913 at 0.21x), level with no-freeze de0 (0.937, 0.30x) within seed noise; outlier 0.508 is
-low but that cell's seed spread is 0.19 (seed 1 queued). Fitting the router on block-16 gradients (tl16M7, exploration tokens only) is neutral at matched PF:
+low but that cell's seed spread is 0.19. **Seed 1 (0.919 / 0.906 / 0.647 / 0.602) takes the 2-seed mean to
+0.926 / 0.898 / 0.634 / 0.555 at 0.22x -- the same as single-step fa183 (0.924 / 0.900 / 0.609 / 0.657 at 0.24x) on
+contra / nq, +0.025 oolong, -0.10 outlier: seed 0's contra lead was noise.** Progressive freezing saves 0.02x and ends at
+41.5 GiB, but does not beat the single freeze. Fitting the router on block-16 gradients (tl16M7, exploration tokens only) is neutral at matched PF:
 contra -0.018 (the de0 seeds differ by 0.021), nq / oolong / outlier +0.005-0.04 -- the depth drift of importance does
 not show up as a better pick at this budget. **The LoRA early stack is the one lever that cuts PEAK memory: 48.1 GiB for the whole run vs 60.3 GiB for
 de0 and for every warmup-then-freeze arm before its freeze (prog4712M7 peaks at 60.3, ends at 41.5).** At 0.24x it holds
