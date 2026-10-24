@@ -120,6 +120,12 @@ class OnlineRouterConfig:
     """Warmup-then-freeze: train every block normally for the first ``freeze_after`` optimizer steps, then (from step
     ``freeze_after + 1``) freeze the embeddings and blocks [0, L) and free their gradients and optimizer state
     (:func:`freeze_and_release`, run by the callback); afterwards it behaves as ``freeze_early``. 0 = off."""
+    freeze_schedule: str = ""
+    """PROGRESSIVE freeze, e.g. ``"4:0.25,7:0.5,12:0.75"``: freeze the embeddings + blocks [0, 4) after 25% of the
+    optimizer steps, [0, 7) after 50%, [0, 12) after 75% (each releasing those blocks' gradients and optimizer state;
+    run by the callback). Frozen blocks below the drop layer run forward-only (charged 1/3); frozen blocks at or above
+    it still pass the activation gradient down to the router's target hook, so they skip only their weight gradient
+    (charged 2/3, at the kept length). Exclusive with ``freeze_after`` / ``freeze_early``. Empty = off."""
     dense_tail_frac: float = 0.0
     """Train the LAST ``dense_tail_frac`` of the optimizer steps uncompressed (full context, every token, every block),
     e.g. 0.1; combine with ``dense_every=0`` for "routed, then a dense tail". Needs the total step count (set by
@@ -222,6 +228,15 @@ class OnlineRouterConfig:
                                  f"{ml[0]}, got {self.drop_layer}")
             if self.stages or self.merge_dropped or self.exit_loss_weight > 0:
                 raise ValueError("online router mod_layers is exclusive with stages / merge_dropped / exit_loss_weight")
+        if self.freeze_schedule:
+            fs = parse_freeze_schedule(self.freeze_schedule)
+            if self.freeze_after or self.freeze_early or self.drop_layer <= 0:
+                raise ValueError("online router freeze_schedule needs the mid-stack drop and is exclusive with "
+                                 "freeze_after / freeze_early")
+            if [n for n, _ in fs] != sorted({n for n, _ in fs}) or [f for _, f in fs] != sorted({f for _, f in fs}) \
+                    or not all(0.0 < f < 1.0 and n > 0 for n, f in fs):
+                raise ValueError(f"online router freeze_schedule needs increasing blocks > 0 and increasing fractions "
+                                 f"in (0, 1), got {self.freeze_schedule!r}")
         if self.per_task_key_tokens < 0:
             raise ValueError(f"online router per_task_key_tokens must be >= 0, got {self.per_task_key_tokens}")
 
@@ -358,6 +373,17 @@ def parse_stages(spec: str) -> List[Tuple[int, float]]:
     return out
 
 
+def parse_freeze_schedule(spec: str) -> List[Tuple[int, float]]:
+    """``"4:0.25,7:0.5"`` -> ``[(4, 0.25), (7, 0.5)]`` (blocks frozen, share of the optimizer steps)."""
+    out = []
+    for part in [p for p in spec.split(",") if p.strip()]:
+        n, frac = part.split(":")
+        out.append((int(n), float(frac)))
+    if not out:
+        raise ValueError(f"empty freeze_schedule {spec!r}")
+    return out
+
+
 def parse_mod_layers(spec: str) -> List[int]:
     """``"8-31:2"`` -> ``[8, 10, ..., 30]``; ``"8,12,16"`` and mixes (``"8-15:2,20"``) also work. Sorted, unique."""
     out: Set[int] = set()
@@ -451,7 +477,9 @@ class OnlineTokenRouter:
         self.n_features = self.n_scalar + self.hdim * (1 + int(cfg.use_query))
         self.step = 0
         self.total_steps: Optional[int] = None  # set by the callback (dense_tail_frac)
-        self._nograd_fwd = False  # this forward runs blocks [0, drop_layer) forward-only (early_nograd)
+        self._nograd_fwd = False  # this forward runs blocks [0, _nograd_until) forward-only (early_nograd / freeze)
+        self._nograd_until = 0
+        self.frozen_blocks = 0  # leading blocks frozen so far by freeze_schedule (set by the callback)
         self._exit: Optional[Dict[str, Any]] = None  # this forward's dropped-token hidden states for the exit loss
         self._calls = 0
         self.w: Optional[torch.Tensor] = None
@@ -698,8 +726,14 @@ class OnlineTokenRouter:
         full = torch.zeros_like(input_ids, dtype=torch.bool)
         if mid:
             self._mid = {"fp": fp, "ids": ids, "cid": cid, "Tr": Tr}
-            self._nograd_fwd = bool(model.training and (self.cfg.freeze_early
-                                                        or (self.cfg.early_nograd and not self.dense_now())))
+            L0 = self.cfg.drop_layer
+            if model.training and self.frozen_blocks > 0:
+                self._nograd_until = min(self.frozen_blocks, L0)
+            elif model.training and (self.cfg.freeze_early or (self.cfg.early_nograd and not self.dense_now())):
+                self._nograd_until = L0
+            else:
+                self._nograd_until = 0
+            self._nograd_fwd = self._nograd_until > 0
             full[:, :Tr] = fp["body"]
             return full
         keep, entry = self._choose(model, fp, ids, cid)
@@ -918,14 +952,16 @@ class OnlineTokenRouter:
         L0 = self.cfg.drop_layer
         head = int(model.lm_head.num_flops_per_token(0)) if model.lm_head is not None else 0
         adj = 0.0
-        # early_nograd: blocks [0, L0) ran forward-only on this routed forward (1/3 of forward + backward)
-        early = 1.0 / 3.0 if self._nograd_fwd else 1.0
+        # early_nograd / freeze: blocks below _nograd_until ran forward-only (1/3 of forward + backward); frozen blocks
+        # at or above L0 skipped only their weight gradient (2/3)
+        fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
             fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
             if self.stage_idx == 0:
-                actual = early * L * sum(fb[:L0]) + Lk * (sum(fk) + head)
+                actual = (L * sum(f * x for f, x in zip(fac[:L0], fb[:L0]))
+                          + Lk * (sum(f * x for f, x in zip(fac[L0:], fk)) + head))
                 adj += actual - L * (sum(fb) + head)
             else:
                 # a later pyramid stage: the earlier stages already charged blocks >= L0 at THIS stage's entry length L
@@ -935,6 +971,7 @@ class OnlineTokenRouter:
         if self._next is not None:
             self._next._mid = self._stash_for_next(fp, ids, cid, Tr, Tw, order, valid)
             self._next._nograd_fwd = False
+            self._next._nograd_until = 0
             self._next._ignore_index = getattr(self, "_ignore_index", -100)
         return h_new, kw
 
@@ -952,20 +989,30 @@ class OnlineTokenRouter:
         skip = ld.skipped() if (ld is not None and model.training) else frozenset()
         blocks = [b if i not in skip else None for i, b in enumerate(model.blocks.values())]
         L0, mods = self.cfg.drop_layer, [i for i in self.mod_layers if i < len(blocks)]
-        early = 1.0 / 3.0 if self._nograd_fwd else 1.0
+        fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
         adj = 0.0
+        ms = set(mods)
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             if dense:
                 Lk = L
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
-            adj += (early - 1.0) * L * sum(fb[:L0])
-            for i in mods:
-                if blocks[i] is not None:
-                    adj += Lk * int(blocks[i].num_flops_per_token(int(Lk))) - L * fb[i]
+            for i, b in enumerate(blocks):
+                if b is None:
+                    continue
+                if i in ms:
+                    adj += fac[i] * Lk * int(b.num_flops_per_token(int(Lk))) - L * fb[i]
+                else:
+                    adj += (fac[i] - 1.0) * L * fb[i]
         self._flop(model, adj)
         self._stat("mod_row_frac", float(counts.sum()) / max(1.0, float(real.sum())) if not dense else 1.0)
         return h, block_kwargs
+
+    def _block_factors(self, n_blocks: int) -> List[float]:
+        """Per-block share of the forward + backward cost this forward pays: 1/3 below ``_nograd_until`` (forward
+        only), 2/3 for frozen blocks at or above the drop layer (no weight gradient), else 1."""
+        nu, L0, P = self._nograd_until, self.cfg.drop_layer, self.frozen_blocks
+        return [1.0 / 3.0 if i < nu else (2.0 / 3.0 if L0 <= i < P else 1.0) for i in range(n_blocks)]
 
     def mod_block(self, block, h: torch.Tensor, kwargs: Dict[str, Any]) -> torch.Tensor:
         """Run one LISTED block under mixture-of-depths: on the kept tokens only (gathered at their original

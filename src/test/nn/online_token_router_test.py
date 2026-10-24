@@ -1040,3 +1040,78 @@ def test_per_task_routers_learn_opposite_rules():
     assert keep[:2][(ids[:2] == QTOK) & body[:2]].all()
     assert not keep[2:][(ids[2:] == QTOK) & body[2:]].any()
     assert r.metrics()["online_router/task_routers"] == 2.0
+
+
+def test_freeze_schedule_validate():
+    with pytest.raises(ValueError):
+        _router(drop_layer=3, freeze_schedule="4:0.5,2:0.75")
+    with pytest.raises(ValueError):
+        _router(drop_layer=3, freeze_schedule="2:0.5", freeze_after=4)
+    with pytest.raises(ValueError):
+        _router(freeze_schedule="2:0.5")  # needs the mid-stack drop
+    _router(drop_layer=3, freeze_schedule="1:0.25,4:0.5")
+
+
+@pytest.mark.parametrize("frozen", [1, 4])
+def test_progressive_freeze_grads_and_flops_cpu(frozen):
+    """drop_layer 3 on a 6-block model with blocks [0, frozen) frozen: blocks below min(frozen, 3) run forward-only
+    (no grad, charged 1/3), frozen blocks >= 3 get no weight gradient but pass the activation gradient to the target
+    hook (charged 2/3 at the kept length), the rest train; the target hook still fires."""
+    from olmo_core.nn.online_token_router import freeze_and_release
+
+    model, router = _mid_model(6, drop_layer=3, dense_every=0, freeze_schedule="1:0.25,4:0.5")
+    blocks = list(model.blocks.values())
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    ids, cid, labels = _row(B=1)
+    router.begin_step(1, model=model)
+    model(ids, labels=labels).loss.backward()  # warmup, nothing frozen
+    freeze_and_release(model, frozen)
+    router.frozen_blocks = frozen
+    model.zero_grad(set_to_none=True)
+    router.begin_step(2, model=model)
+    flops.clear()
+    router.metrics()
+    model(ids, labels=labels).loss.backward()
+    assert all(p.grad is None for b in blocks[:frozen] for p in b.parameters())
+    assert all(p.grad is not None for b in blocks[frozen:] for p in b.parameters())
+    e = router._pending[-1]
+    assert e["target"] is not None and torch.isfinite(e["target"]).all()
+    real = int((ids != PH).sum())
+    m = router.metrics()
+    kept = int(round(m["online_router/mid_row_frac"] * real))
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    nu = min(frozen, 3)
+    fac = [1 / 3 if i < nu else (2 / 3 if 3 <= i < frozen else 1.0) for i in range(6)]
+    expect = (sum(fac[i] * real * f(blocks[i], real) for i in range(3))
+              + sum(fac[i] * kept * f(blocks[i], kept) for i in range(3, 6)) + kept * head
+              - real * (sum(f(b, real) for b in blocks) + head))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)
+
+
+def test_freeze_schedule_callback_stages():
+    """The callback freezes the deepest stage whose step share has passed, once, and releases optimizer state."""
+    from types import SimpleNamespace
+
+    from olmo_core.train.callbacks.online_router import OnlineRouterCallback
+
+    model, router = _mid_model(6, drop_layer=3, dense_every=0, freeze_schedule="1:0.25,4:0.5")
+    opt = torch.optim.AdamW(model.parameters())
+    model(_row()[0], labels=_row()[2]).loss.backward()
+    opt.step()
+    tr = SimpleNamespace(global_step=0, max_steps=8, train_module=SimpleNamespace(model=model, optim=opt))
+    cb = OnlineRouterCallback()
+    cb.trainer = tr
+    cb.pre_train()
+    blocks = list(model.blocks.values())
+    seen = []
+    for step in range(1, 9):
+        tr.global_step = step
+        cb.pre_step({})
+        seen.append(router.frozen_blocks)
+    assert seen == [0, 0, 1, 1, 4, 4, 4, 4]
+    assert not any(p.requires_grad for b in blocks[:4] for p in b.parameters())
+    assert all(p.requires_grad for b in blocks[4:] for p in b.parameters())
+    assert not any(p in opt.state for b in blocks[:4] for p in b.parameters())

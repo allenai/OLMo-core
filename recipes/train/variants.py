@@ -282,6 +282,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_dense_every: int = 0
     st_otr_samples_per_row: int = 2048
     st_otr_proj_dim: int = 0
+    st_otr_freeze_schedule: str = ""
     st_otr_mod_layers: str = ""
     st_otr_per_task_key_tokens: int = 0
     st_otr_log_every: int = 10
@@ -1047,6 +1048,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         dense_every=o.st_otr_dense_every,
         samples_per_row=o.st_otr_samples_per_row,
         proj_dim=o.st_otr_proj_dim,
+        freeze_schedule=o.st_otr_freeze_schedule,
         mod_layers=o.st_otr_mod_layers,
         per_task_key_tokens=o.st_otr_per_task_key_tokens,
         seed=ctx.seed,

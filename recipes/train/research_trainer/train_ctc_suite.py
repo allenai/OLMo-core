@@ -1825,6 +1825,10 @@ def parse_args() -> argparse.Namespace:
                     help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
                     "non-increasing; each stage scored from its own layer by its own router); overrides "
                     "--st-otr-drop-layer / --st-otr-keep-frac")
+    ap.add_argument("--st-otr-freeze-schedule", default="",
+                    help="online router PROGRESSIVE freeze, e.g. '4:0.25,7:0.5,12:0.75': freeze embeddings + blocks "
+                    "[0, 4) after 25%% of the steps, [0, 7) after 50%%, [0, 12) after 75%% (gradients and optimizer state "
+                    "released at each stage); exclusive with --st-otr-freeze-after / --st-otr-freeze-early")
     ap.add_argument("--st-otr-mod-layers", default="",
                     help="online router MIXTURE-OF-DEPTHS, e.g. '8-31:2' (blocks 8, 10, ..., 30): at the first listed "
                     "block the router picks --st-otr-keep-frac of each document's tokens; the listed blocks run on "

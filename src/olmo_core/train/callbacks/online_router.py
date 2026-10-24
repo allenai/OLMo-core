@@ -51,6 +51,24 @@ class OnlineRouterCallback(Callback):
                 log.info("[online-router] step %d: froze embeddings + blocks [0, %d) (%.0fM params) and released "
                          "their optimizer state", self.trainer.global_step, router0.cfg.drop_layer, n / 1e6)
 
+        sched = str(getattr(router0.cfg, "freeze_schedule", "") or "")
+        if sched:
+            # progressive freeze: the deepest stage whose step share has passed
+            from olmo_core.nn.online_token_router import freeze_and_release, parse_freeze_schedule
+
+            total = int(router0.total_steps or self.trainer.max_steps or 0)
+            want = max([n for n, f in parse_freeze_schedule(sched) if self.trainer.global_step > int(round(f * total))],
+                       default=0)
+            if want > router0.frozen_blocks:
+                n = freeze_and_release(self.trainer.train_module.model, want,
+                                       getattr(self.trainer.train_module, "optim", None))
+                router0.frozen_blocks = want
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                if get_rank() == 0:
+                    log.info("[online-router] step %d: progressive freeze -> embeddings + blocks [0, %d) frozen "
+                             "(%.0fM params), optimizer state released", self.trainer.global_step, want, n / 1e6)
+
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
         router = self._router()

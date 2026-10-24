@@ -1758,16 +1758,18 @@ class Transformer(nn.Module):
         ld_skip = ld.skipped() if ld is not None else frozenset()
         # online router early_nograd: on routed forwards blocks [0, otr_layer) run forward-only
         otr_nograd = otr_layer > 0 and bool(getattr(otr, "_nograd_fwd", False))
+        # the no-grad prefix ends at the drop layer, or earlier when a progressive freeze has frozen fewer blocks
+        otr_nograd_end = int(getattr(otr, "_nograd_until", 0) or otr_layer) if otr_nograd else -1
         grad_was = torch.is_grad_enabled()
         if otr_nograd:
             torch.set_grad_enabled(False)
         for block_key, block in self.blocks.items():
             block_idx = int(block_key)
+            if otr_nograd and block_idx == otr_nograd_end:
+                torch.set_grad_enabled(grad_was)
+                # a fresh leaf: the router's target hook at the split reads dL/dh at or above here
+                h = h.detach().requires_grad_(grad_was)
             if block_idx in otr_stages:
-                if otr_nograd and block_idx == otr_layer:
-                    torch.set_grad_enabled(grad_was)
-                    # a fresh leaf: the router's target hook at the split reads dL/dh here
-                    h = h.detach().requires_grad_(grad_was)
                 # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
                 h, all_block_kwargs = otr_stages[block_idx].mid_compact(self, h, all_block_kwargs)
             if block_idx in ld_skip:
