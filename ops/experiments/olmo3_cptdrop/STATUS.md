@@ -159,6 +159,11 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- TRAP (hit 2026-10-23 08:57-13:50, cost ~5 h of cubbins): cubbins /data hit 100% (109 trainer stepN checkpoints,
+  6.8 TB, ~62 GB each, beside every run's ~65 GB model_and_optim export) and OTR10M7ndx10lr20-160 hung at its final
+  save with 0% GPU; the 6 h watcher bound expired before anyone looked. Prasann approved deleting every stepN dir of
+  finished runs (exports kept): 5.2 TB free after. driver_lr20 run() now drops stepN of runs without SAVE_INTERVAL
+  once exported; the new watcher flags a run log idle > 30 min. Rerun = cubbins 4020957 (OTRX remainder + OTRY).
 - RESULT 2026-10-23 07:50 aggressive router cuts (cubbins 4019319; router b24c13423; measured PF; peak/median active GiB):
   early-nograd 46/92/185 = 339/651/1278 PF -> 1.7105/1.7011/1.6975 (m <0.40/0.37/0.22), ctx 0.066/0.069/0.071,
   mem 35.9/22.0 (best router arm); pyramid 3:0.5,7:0.1,16:0.03 40/80/160 -> 1.7430/1.7101/1.7044 (m <0.39/<0.21/0.15),
