@@ -2370,6 +2370,12 @@
    "train_run": "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06",
    "task": "nq",
    "suite_rows": true
+  },
+  "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06-evoutlier": {
+   "ex": "01M5PXE3PQMY2EVVEFP6426PE4",
+   "train_run": "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06",
+   "task": "outlier",
+   "suite_rows": true
   }
  },
  "failed_evals": {
@@ -3037,6 +3043,14 @@
    "slurm": 114359,
    "arm": "lora64M7",
    "seed": 1,
+   "commit": "076464355",
+   "dir": "OLMo-core-otr9",
+   "lr": "5e-06"
+  },
+  "f8k-mt4s1464-lora128M7-lro-lr5e-06-lam": {
+   "slurm": 114360,
+   "arm": "lora128M7",
+   "seed": 0,
    "commit": "076464355",
    "dir": "OLMo-core-otr9",
    "lr": "5e-06"
