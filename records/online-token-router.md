@@ -780,3 +780,15 @@ export_config twice, so the early_lora block never reached config.json and a DCP
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
 parent's checkout unless REPO_OVERRIDE is set (068d3f0ac); LoRA runs use OLMo-core-otr10.
 
+**Parent's mt4s1952 winners re-run at mt4s1464 (LR 5e-6, de0, 8k, eval_size 500):**
+
+| arm | PF (x dense) | contra | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| otr10M7de0 (reference, 2 seeds) | 346 (0.30) | 0.937 | 0.902 | 0.623 | 0.682 |
+| otr10M7de0sk3 (+ --train-skip-layers 20,24,28), seeds 0 / 1 | 333 (0.29) | 0.915 / 0.900 | 0.898 / 0.920 | 0.618 / 0.615 | 0.639 / 0.537 |
+
+sk3 2-seed mean 0.908 / 0.909 / 0.617 / 0.588: -0.03 contra and -0.09 outlier vs the plain router for 4% less compute
+-- past block 7 only the kept 10% run the upper blocks, so skipping three of them saves little. (The parent's
+s1952 result compared sk3 with the DENSE curve at matched PF, where it was within noise; against the same router it is
+a small loss here.) r20to7 seeds and the LoRA combinations are running.
+
