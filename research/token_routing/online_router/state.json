@@ -2804,6 +2804,14 @@
    "commit": "9ccee22f5",
    "dir": "OLMo-core-otr7",
    "lr": "5e-06"
+  },
+  "f8k-mt4s1464-fa183M7de8-s1-lro-lr5e-06-lam": {
+   "slurm": 114267,
+   "arm": "fa183M7de8",
+   "seed": 1,
+   "commit": "9ccee22f5",
+   "dir": "OLMo-core-otr7",
+   "lr": "5e-06"
   }
  }
 }
