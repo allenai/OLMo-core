@@ -3238,6 +3238,22 @@
    "commit": "076464355",
    "dir": "OLMo-core-otr9",
    "lr": "5e-06"
+  },
+  "f8k-mt4s1464-lora64M5-lro-lr5e-06-lam": {
+   "slurm": 114379,
+   "arm": "lora64M5",
+   "seed": 0,
+   "commit": "076464355",
+   "dir": "OLMo-core-otr9",
+   "lr": "5e-06"
+  },
+  "f8k-mt4s1464-lora64M6-lro-lr5e-06-lam": {
+   "slurm": 114380,
+   "arm": "lora64M6",
+   "seed": 0,
+   "commit": "076464355",
+   "dir": "OLMo-core-otr9",
+   "lr": "5e-06"
   }
  }
 }
