@@ -585,6 +585,9 @@ oolong / outlier.
 | otr10M7 de8, LR 2e-6 (2 seeds) | 445 (0.39) | 0.927 | 0.907 | 0.643 | 0.581 |
 | **otr10M7 de0 (no freeze), LR 5e-6**, seeds 0 / 1 | 346 (0.30) | **0.947 / 0.926** | 0.902 / 0.902 | 0.610 / 0.636 | 0.673 / 0.690 |
 | **otr10M7 de8, LR 5e-6**, seeds 0 / 1 | 445 (0.38) | **0.957 / 0.953** | 0.912 / 0.914 | 0.616 / 0.627 | 0.703 / 0.749 |
+| otr10M7 de16 (full step every 16), LR 5e-6 | 395 (0.34) | 0.939 | 0.918 | 0.607 | 0.709 |
+| fa275M7 de8 (freeze 75% + full step every 8), LR 5e-6 | 409 (0.35) | 0.957 | 0.918 | 0.625 | 0.652 |
+| fa183M7 de8 (freeze 50% + full step every 8), LR 5e-6 | 373 (0.32) | 0.941 | 0.904 | 0.618 | 0.513 |
 | dense-s1464, LR 5e-6 | ≈ 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
 A later freeze buys contradiction smoothly; LR 5e-6 (the 64k study's router LR) matches otr10M7 at 0.24x on two seeds:
@@ -596,7 +599,13 @@ mean 0.937 / 0.902 / 0.623 / 0.682 (-0.018 contra, -0.044 outlier); freezing on 
 -0.036 at 75% (fa275 2-seed mean 0.930 / 0.892 / 0.628 / 0.646, 0.27x) and -0.013 contra at 50% (fa183 2-seed mean
 0.924, 0.24x). **At matched FLOPs, freezing beats a smaller budget:** keep 5% instead of 10% (otr05M7de0, 304 PF, 0.26x)
 scores 0.906 / 0.890 / 0.589 / 0.460, below both freeze arms on every task (outlier -0.19) -- with blocks 0-6 running on
-every token, halving the keep fraction saves only 42 PF, while freezing removes the early stack's backward. At
+every token, halving the keep fraction saves only 42 PF, while freezing removes the early stack's backward.
+**Full-context steps on top of the freeze (single seed, seed 1 running for fa275de8 / de16):** they buy contra but
+not outlier once the early stack is frozen -- fa275M7de8 (0.35x) 0.957 / 0.918 / 0.625 / 0.652 matches otr10M7 de8 on
+contra / nq / oolong but is -0.07 on outlier; fa183M7de8 (0.32x) is 0.941 / 0.904 / 0.618 / 0.513, outlier -0.14 below
+plain fa183 (0.657). Halving the full steps instead (de16, 0.34x: 0.939 / 0.918 / 0.607 / 0.709) keeps outlier but loses
+the contra gain. PF of the freeze+de8 arms is conservative (dense steps after the freeze charge the frozen blocks'
+backward). Outlier@8k is the noisiest cell (seed spread up to 0.05). At
 matched LR the ladder is one smooth curve: the full-context steps buy contra / outlier, freeze is a cheap
 compute+memory knob (-12 GiB after the freeze). Seed spread on de0 contra is 0.021, larger than the ±0.01 eval SE.
 The freeze point trades smoothly: fa30 / fa61 / no freeze = contra 0.589 / 0.616 / 0.663 at 84 / 96 / 120 PF.
