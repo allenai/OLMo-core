@@ -11,6 +11,10 @@ attention on 8), no dropping. Reported:
                  row length are omitted, so a 4k row has one bin = overall)
   per_row        per row and per bin: loss sum + token count, so paired deltas between two
                  checkpoints (``compare_devce.py``) get a per-row standard error
+  repeat         CE by target type (grad_composition's ``repeat_category``, N=4, FAR=4096): novel (the 4-gram
+                 ending at the target never occurred earlier in the row), near (its last earlier occurrence ends
+                 <= 4096 back, inside every sliding window) and far (it occurred only > 4096 back). Near = local
+                 copying; far = long-range use.
   ctx_gain       (``--ctx-window W``) long-context use, separated from domain adaptation: the last W/2 targets
                  of each row scored twice, with the full row as context and with only the last W tokens
                  (each target then sees W/2..W tokens back). gain = CE_window - CE_full on the same targets
@@ -193,6 +197,26 @@ def load_shard(shard: str, max_rows: Optional[int], family: str, row_start: int 
     return rows, masks, meta
 
 
+REPEAT_N, REPEAT_FAR = 4, 4096
+REPEAT_NAMES = ("novel", "near", "far")
+
+
+def repeat_category(ids) -> np.ndarray:
+    """(L,) int8 per TARGET index j (same convention as ``row_token_ce``): 0 novel, 1 near repeat (the 4-gram
+    ``ids[j-3 : j+1]`` last occurred ending <= REPEAT_FAR positions earlier), 2 far-only (only earlier than that).
+    Copied from research/token_routing/grad_composition/cpt_analyze.py (branch claude/grad-composition-6f09c7)."""
+    L = len(ids)
+    cat = np.zeros(L, dtype=np.int8)
+    last = {}
+    for j in range(REPEAT_N - 1, L):
+        key = tuple(ids[j - REPEAT_N + 1 : j + 1])
+        p = last.get(key)
+        if p is not None:
+            cat[j] = 1 if j - p <= REPEAT_FAR else 2
+        last[key] = j
+    return cat
+
+
 def bins_for(L: int, edges: Sequence[int] = BIN_EDGES) -> List[Tuple[str, int, int]]:
     """[(name, lo, hi)] target-position bins clipped to a row of length ``L``."""
     out = []
@@ -233,6 +257,8 @@ def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1,
     sums = np.zeros((n, len(bins)), dtype=np.float64)
     cnts = np.zeros((n, len(bins)), dtype=np.int64)
     ctx = np.zeros((n, 3), dtype=np.float64)
+    rep_s = np.zeros((n, 3), dtype=np.float64)
+    rep_c = np.zeros((n, 3), dtype=np.int64)
     if ctx_window and not (0 < ctx_window < L and ctx_window % 2 == 0):
         raise SystemExit(f"--ctx-window {ctx_window} must be even and < row length {L}")
     t0 = time.time()
@@ -240,6 +266,12 @@ def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1,
         x = torch.from_numpy(rows[i]).to(device)
         m = torch.from_numpy(masks[i]).to(device)
         ce = row_token_ce(model, x, m).cpu().numpy().astype(np.float64)
+        cat = repeat_category(rows[i].tolist())
+        okr = ~np.isnan(ce)
+        for k in range(3):
+            sel = okr & (cat == k)
+            rep_s[i, k] = ce[sel].sum()
+            rep_c[i, k] = int(sel.sum())
         if ctx_window:
             W, T = ctx_window, ctx_window // 2
             cw = row_token_ce(model, x[L - W:], m[L - W:]).cpu().numpy().astype(np.float64)[W - T:]
@@ -255,7 +287,7 @@ def score_rows(model, rows: np.ndarray, masks: np.ndarray, device, log_every=(1,
             el = time.time() - t0
             log(f"row {i + 1}/{n} running CE {sums[: i + 1].sum() / max(cnts[: i + 1].sum(), 1):.4f} "
                 f"({el:.0f}s, {el / (i + 1):.2f}s/row, ETA {el / (i + 1) * (n - i - 1):.0f}s)")
-    return {"bins": bins, "sums": sums, "cnts": cnts, "ctx": ctx if ctx_window else None,
+    return {"bins": bins, "sums": sums, "cnts": cnts, "ctx": ctx if ctx_window else None, "rep_s": rep_s, "rep_c": rep_c,
             "score_seconds": time.time() - t0}
 
 
@@ -285,6 +317,11 @@ def summarize(sums: np.ndarray, cnts: np.ndarray, bins) -> dict:
     out = {"overall": one(sums.sum(1), cnts.sum(1))}
     out["bins"] = {name: one(sums[:, b], cnts[:, b]) for b, (name, _, _) in enumerate(bins)}
     return out
+
+
+def summarize_repeat(rep_s: np.ndarray, rep_c: np.ndarray) -> dict:
+    """CE by target type (novel / near / far), with the same fields as a position bin."""
+    return {nm: summarize(rep_s[:, [k]], rep_c[:, [k]], [(nm, 0, 1)])["overall"] for k, nm in enumerate(REPEAT_NAMES)}
 
 
 def reinstall_early_lora(ckpt: str, model) -> Optional[dict]:
@@ -344,6 +381,7 @@ def main(argv=None):
     log(f"loaded {find_distcp(a.ckpt)} in {load_s:.0f}s (yarn={a.yarn_factor}, {a.attn_backend}, {device})")
     sc = score_rows(model, rows, masks, device, ctx_window=a.ctx_window)
     summ = summarize(sc["sums"], sc["cnts"], sc["bins"])
+    summ["repeat"] = summarize_repeat(sc["rep_s"], sc["rep_c"])
     if a.ctx_window:
         summ["ctx_gain"] = summarize_ctx(sc["ctx"], a.ctx_window)
     out = {
@@ -353,6 +391,7 @@ def main(argv=None):
         "summary": summ,
         "bins": [{"name": nm, "lo": lo, "hi": hi} for nm, lo, hi in sc["bins"]],
         "per_row": {"loss_sum": sc["sums"].tolist(), "tokens": sc["cnts"].tolist(),
+                    "repeat_loss_sum": sc["rep_s"].tolist(), "repeat_tokens": sc["rep_c"].tolist(),
                     **({"ctx_full_win_cnt": sc["ctx"].tolist()} if a.ctx_window else {})},
         "ctx_window": a.ctx_window,
         "row_ids": list(range(a.row_start, a.row_start + n)),
@@ -372,6 +411,7 @@ def main(argv=None):
     o = summ["overall"]
     log(f"SUMMARY {a.label or a.ckpt}: overall CE {o['ce']:.4f} ({o['tokens']} tokens, eval_size={n} rows) | "
         + " ".join(f"{k} {v['ce']:.4f}" for k, v in summ["bins"].items())
+        + " | " + " ".join(f"{k} {v['ce']:.4f}" for k, v in summ["repeat"].items() if v["ce"] is not None)
         + (f" | ctx_gain@{a.ctx_window} {summ['ctx_gain']['gain']:+.4f}" if a.ctx_window else ""))
     log(f"timing: load {load_s:.0f}s, score {sc['score_seconds']:.0f}s; wrote {a.out}")
     return out

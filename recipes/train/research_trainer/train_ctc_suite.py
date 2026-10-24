@@ -512,6 +512,10 @@ def build_model_config(opts: argparse.Namespace) -> TransformerConfig:
                 f"--rope-yarn-factor is only wired for olmo3 scale '7b' (got {opts.model_scale!r})"
             )
         qwen_kwargs["yarn_factor"] = float(opts.rope_yarn_factor)
+    if getattr(opts, "olmo3_train_window", 0):
+        if factory is not olmo3_7B_ctc_swa:
+            raise SystemExit("--olmo3-train-window is only wired for olmo3 scale '7b'")
+        qwen_kwargs["train_window"] = int(opts.olmo3_train_window)
     model_config = factory(**qwen_kwargs)
     variant.apply_model_config(
         model_config, vopts, variant_context(opts, mix_total_forwards=opts._mix_total_forwards)
@@ -1938,6 +1942,11 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--epochs", type=int, default=NUM_EPOCHS)
     ap.add_argument("--lr", type=float, default=LR)
+    ap.add_argument(
+        "--olmo3-train-window", type=int, default=0,
+        help="olmo3 7b: train ALL layers with this sliding window (the 8 full-attention layers too; all-local "
+        "training). Same checkpoint shape; evals run the native full layers. 0 = off",
+    )
     ap.add_argument(
         "--weight-decay", type=float, default=0.0, help="AdamW weight decay (embeddings stay at 0)"
     )

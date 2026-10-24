@@ -218,3 +218,38 @@ def test_early_lora_reinstalled_before_load(tmp_path):
         assert ev.reinstall_early_lora(str(tmp_path), base) is None  # no config.json -> no-op
     finally:
         del ev.FAMILIES["tiny"]
+
+
+def test_repeat_category_and_bins():
+    ids = [5, 6, 7, 8, 9, 5, 6, 7, 8] + [100 + i for i in range(5000)] + [5, 6, 7, 8]
+    cat = ev.repeat_category(ids)
+    assert cat[:8].tolist() == [0] * 8
+    assert cat[8] == 1  # 4-gram 5,6,7,8 last ended at index 3, 5 back
+    assert cat[-1] == 2  # same 4-gram, last ended at index 8, > 4096 back
+    assert int((cat == 2).sum()) == 1 and int((cat == 1).sum()) == 1
+    # summarize_repeat: per-type CE = sum / count
+    rs = np.array([[1.0, 2.0, 3.0], [1.0, 2.0, 0.0]])
+    rc = np.array([[2, 4, 3], [2, 4, 0]])
+    s = ev.summarize_repeat(rs, rc)
+    assert abs(s["novel"]["ce"] - 0.5) < 1e-12 and abs(s["near"]["ce"] - 0.5) < 1e-12 and abs(s["far"]["ce"] - 1.0) < 1e-12
+
+
+def test_all_local_train_window_config():
+    """--olmo3-train-window 4096: every layer windowed (the 8 full-attention ones too), YaRN still on those 8."""
+    import sys as _s
+    _s.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "recipes", "train", "research_trainer"))
+    from olmo3_configs import olmo3_7B_ctc_swa
+
+    native = olmo3_7B_ctc_swa(vocab_size=100352, yarn_factor=4.0)
+    local = olmo3_7B_ctc_swa(vocab_size=100352, yarn_factor=4.0, train_window=4096)
+    assert sorted(native.block_overrides) == sorted(local.block_overrides) == [3, 7, 11, 15, 19, 23, 27, 31]
+
+    def win(cfg, i):
+        blk = (cfg.block_overrides or {}).get(i, cfg.block)
+        sw = blk.sequence_mixer.sliding_window
+        return -1 if sw is None or not sw.should_use_swa(i, cfg.n_layers) else sw._get_window_size(i, cfg.n_layers)
+
+    assert [win(native, i) for i in range(32)] == [(-1 if i % 4 == 3 else 4096) for i in range(32)]
+    assert [win(local, i) for i in range(32)] == [4096] * 32
+    for i in local.block_overrides:
+        assert local.block_overrides[i].sequence_mixer.rope.scaling.factor == 4.0

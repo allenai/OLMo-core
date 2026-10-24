@@ -115,6 +115,10 @@ def olmo3_7B_ctc_swa(**kwargs) -> TransformerConfig:
     # (8192 -> 65536). Continued pretraining from the 8k stage-2 checkpoint picks its own
     # (olmo3_cptdrop: x4 for 32k); <= 1 means plain RoPE, as stage 2 itself was trained.
     yarn_factor = float(kwargs.pop("yarn_factor", _YARN_FACTOR))
+    # train_window > 0: ALL-LOCAL training -- the 8 full-attention layers also get a sliding window of this size
+    # (olmo3_cptdrop: dev-CE gain is mostly local copying). YaRN stays on exactly those layers; the checkpoint has
+    # the same parameters, and the eval builds the native config (full attention on those 8 layers).
+    train_window = int(kwargs.pop("train_window", 0) or 0)
     # Native architecture: SWA pattern [4096, 4096, 4096, -1], YaRN on the full-attention layers.
     config = TransformerConfig.olmo3_7B(**kwargs)
     if yarn_factor > 1:
@@ -126,6 +130,18 @@ def olmo3_7B_ctc_swa(**kwargs) -> TransformerConfig:
                 old_context_len=_YARN_OLD_CONTEXT,
             )
         )
+    if train_window > 0:
+        from olmo_core.nn.attention import SlidingWindowAttentionConfig
+
+        mixers = [config.block.sequence_mixer] + [b.sequence_mixer for b in (config.block_overrides or {}).values()]
+        for mixer in mixers:
+            mixer.sliding_window = SlidingWindowAttentionConfig(
+                pattern=[train_window],
+                force_full_attention_on_first_layer=False,
+                force_full_attention_on_last_layer=False,
+            )
+        if document_chunked:
+            raise ValueError("train_window (all-local) does not combine with document_chunked")
     if not document_chunked:
         return config
 
