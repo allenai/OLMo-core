@@ -248,6 +248,18 @@ ARM_EXTRA.update({
     "pfz37M7": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                 "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
                 "--st-otr-freeze-schedule 3:0.25,7:0.5"),
+    # NO full-context steps anywhere (Prasann 2026-10-24: "avoid mixing with dense steps completely"): de0 versions of
+    # the overnight ideas
+    "r20to7M7de0": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.2 "
+                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
+                    "--st-otr-stages 7:0.2,16:0.07"),
+    "otr10M7de0sk3": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                      "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7 "
+                      "--train-skip-layers 20,24,28"),
+    **{f"otr10M7de0{v}": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
+                          "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 0 --st-otr-drop-layer 7"
+                          + x) for v, x in (("pt", " --st-otr-per-task-key-tokens 11"), ("f16", " --st-otr-min-per-doc 16"),
+                                             ("f16pt", " --st-otr-min-per-doc 16 --st-otr-per-task-key-tokens 11"))},
     "otr10M7de4": ("--st-keep-token-rule online --st-drop-slots --st-keep-prob 0.0 --st-otr-keep-frac 0.1 "
                    "--st-otr-explore-frac 0.1 --st-otr-doc-share 1.0 --st-otr-dense-every 4 --st-otr-drop-layer 7"),
     # no full-context steps (peak memory = routed steps), optionally + early-exit LM loss on dropped tokens
