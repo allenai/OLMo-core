@@ -1,7 +1,7 @@
 ---
 experiment: mt11_64k
 title: Long-context, large-data 11-task CTC mix (rows to 64k, ~64M tokens/task) -- dense vs the mid-stack online token router at matched FLOPs
-status: active
+status: complete
 updated: 2026-10-25
 branch: prasann/mt11-64k (pushed; based on prasann/flopdrop_clean 177c76b05; worktree .claude/worktrees/mt11-64k)
 launcher: research/token_routing/mt11_64k/launch_mt11_64k.py (state.json beside it)
@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/5LcLKC8bT6MDfz6JcLLQ9n
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/m64-q35-4b
-next_step: Done for otr10M7 (record records/mt11-64k-online-router.md). Only the dense-f1 grouping eval is outstanding (does not affect any matched comparison: every router point lies below dense f2). Possible follow-ups (Prasann to choose): otr10M8 on this mix; seeds at f2/f1; a wall-clock-oriented config.
+next_step: Complete for otr10M7: all 15 finished training runs evaluated on all 10 tasks and recorded (record records/mt11-64k-online-router.md, artifact current). Possible follow-ups for Prasann to choose: otr10M8 on this mix; seed-1 replicates at f2/f1 (the f1 outlier +0.125 is single-seed); a wall-clock-oriented configuration.
 ---
 
 # mt11_64k
