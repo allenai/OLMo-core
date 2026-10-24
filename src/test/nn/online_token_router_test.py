@@ -1263,7 +1263,8 @@ def test_early_lora_validate_and_eval_reinstall(tmp_path):
     from olmo_core.nn.nested_ffn_moe import post_build_hook_from_config
 
     with pytest.raises(ValueError):
-        _router(drop_layer=2, early_lora=4, freeze_after=10)
+        _router(drop_layer=2, early_lora=4, freeze_early=True)
+    _router(drop_layer=2, early_lora=4, freeze_after=10)  # LoRA, then freeze the adapters too
     with pytest.raises(ValueError):
         _router(early_lora=4)  # needs the mid-stack drop
     (tmp_path / "config.json").write_text(json.dumps({"early_lora": {"n_blocks": 1, "rank": 2, "scale": 8.0}}))
@@ -1294,3 +1295,39 @@ def test_lora_block_from_checkpoint(tmp_path):
     plain, _ = _mid_model(3, drop_layer=2, dense_every=0)
     dcp.save({"model": plain.state_dict()}, checkpoint_id=str(tmp_path / "plain" / "model_and_optim"))
     assert lora_block_from_checkpoint(str(tmp_path / "plain")) is None
+
+
+def test_early_lora_then_freeze_after_cpu():
+    """early_lora + freeze_after: after the freeze the adapters get no gradient, blocks [0, L) run forward-only (1/3)
+    and the adapters are charged forward-only too."""
+    from olmo_core.nn.early_lora import early_lora_flops_per_token, install_early_lora
+    from olmo_core.nn.online_token_router import freeze_and_release
+
+    model, router = _mid_model(4, drop_layer=2, dense_every=0, early_lora=4, freeze_after=1)
+    mods = install_early_lora(model, 2, 4, scale=8.0)
+    ids, cid, labels = _row(B=1)
+    router.begin_step(1, model=model)
+    model(ids, labels=labels).loss.backward()
+    assert all(m.lora_A.grad is not None for m in mods)
+    freeze_and_release(model, 2)  # what the callback does after freeze_after steps
+    router.cfg.freeze_early = True
+    model.zero_grad(set_to_none=True)
+    blocks = list(model.blocks.values())
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    router.begin_step(2, model=model)
+    flops.clear()
+    router.metrics()
+    model(ids, labels=labels).loss.backward()
+    assert all(m.lora_A.grad is None and m.lora_B.grad is None for m in mods)
+    assert all(p.grad is not None for b in blocks[2:] for p in b.parameters())
+    real = int((ids != PH).sum())
+    kept = int(round(router.metrics()["online_router/mid_row_frac"] * real))
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    expect = (early_lora_flops_per_token(model) / 3 * real
+              + real * (1 / 3) * (f(blocks[0], real) + f(blocks[1], real))
+              + kept * (f(blocks[2], kept) + f(blocks[3], kept) + head)
+              - real * (sum(f(b, real) for b in blocks) + head))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)

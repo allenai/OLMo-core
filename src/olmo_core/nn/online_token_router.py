@@ -123,8 +123,9 @@ class OnlineRouterConfig:
     early_lora: int = 0
     """Low-rank early stack (:mod:`olmo_core.nn.early_lora`, installed by the recipe): blocks [0, drop_layer) train
     only rank-``early_lora`` adapters from step 0. Charged: those blocks at 2/3 (the activation gradient still runs
-    down to block 0 for the adapters; no base weight gradient) plus the adapters' own cost. Exclusive with every
-    freeze / early_nograd option. 0 = off."""
+    down to block 0 for the adapters; no base weight gradient) plus the adapters' own cost. With ``freeze_after`` the
+    adapters freeze too at that step, and from then on blocks [0, drop_layer) run forward-only (1/3, adapters forward
+    only). Exclusive with freeze_early / freeze_schedule / early_nograd. 0 = off."""
     target_layer: int = 0
     """Read the router's gradient targets at block ``target_layer`` (> ``drop_layer``) instead of at the drop layer,
     e.g. 16: the importance that matters late in training sits deeper. Features still come from the drop layer. With
@@ -266,9 +267,9 @@ class OnlineRouterConfig:
         if self.early_lora:
             if self.early_lora < 0 or self.drop_layer <= 0:
                 raise ValueError("online router early_lora needs rank > 0 and the mid-stack drop (drop_layer > 0)")
-            if self.freeze_early or self.freeze_after or self.freeze_schedule or self.early_nograd:
-                raise ValueError("online router early_lora is exclusive with freeze_early / freeze_after / "
-                                 "freeze_schedule / early_nograd")
+            if self.freeze_early or self.freeze_schedule or self.early_nograd:
+                raise ValueError("online router early_lora is exclusive with freeze_early / freeze_schedule / "
+                                 "early_nograd (freeze_after is allowed: LoRA from step 0, then the adapters freeze too)")
         if self.target_layer:
             if self.drop_layer <= 0 or self.target_layer <= self.drop_layer:
                 raise ValueError("online router target_layer must be > drop_layer (> 0)")
@@ -1019,7 +1020,7 @@ class OnlineTokenRouter:
         fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
         if self.stage_idx == 0 and model.training:
-            adj += self.lora_flops_per_token(model) * float(real.sum())
+            adj += self._lora_charge(model) * float(real.sum())
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
             fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
@@ -1058,7 +1059,7 @@ class OnlineTokenRouter:
         L0, mods = self.cfg.drop_layer, [i for i in self.mod_layers if i < len(blocks)]
         fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
-        adj = self.lora_flops_per_token(model) * float(real.sum()) if model.training else 0.0
+        adj = self._lora_charge(model) * float(real.sum()) if model.training else 0.0
         ms = set(mods)
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             if dense:
@@ -1113,6 +1114,10 @@ class OnlineTokenRouter:
 
             st["fpt"] = early_lora_flops_per_token(model)
         return float(st["fpt"])
+
+    def _lora_charge(self, model) -> float:
+        """Adapter FLOPs per token for this forward: forward + backward, or forward only (1/3) once frozen."""
+        return self.lora_flops_per_token(model) * (1.0 / 3.0 if self._nograd_fwd else 1.0)
 
     def _block_factors(self, n_blocks: int) -> List[float]:
         """Per-block share of the forward + backward cost this forward pays: 1/3 below ``_nograd_until`` (forward
