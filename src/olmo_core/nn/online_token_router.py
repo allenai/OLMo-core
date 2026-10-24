@@ -120,6 +120,12 @@ class OnlineRouterConfig:
     """Warmup-then-freeze: train every block normally for the first ``freeze_after`` optimizer steps, then (from step
     ``freeze_after + 1``) freeze the embeddings and blocks [0, L) and free their gradients and optimizer state
     (:func:`freeze_and_release`, run by the callback); afterwards it behaves as ``freeze_early``. 0 = off."""
+    target_layer: int = 0
+    """Read the router's gradient targets at block ``target_layer`` (> ``drop_layer``) instead of at the drop layer,
+    e.g. 16: the importance that matters late in training sits deeper. Features still come from the drop layer. With
+    the drop, only the full-context (``dense_every``) steps fit -- there every token reaches that block; routed steps
+    add no targets (the kept tokens alone would be a censored sample). With ``mod_layers`` every token reaches it on
+    every step, so every step fits. Targets gnorm / gxh only. 0 = the drop layer."""
     mass_target: float = 0.0
     """ADAPTIVE keep by predicted gradient mass: per document, keep the fewest top-scored body tokens whose predicted
     ||dL/dh||^2 (exp(2 x score); the score predicts the row-centred log gradient norm) covers this share of the
@@ -251,6 +257,14 @@ class OnlineRouterConfig:
             raise ValueError("online router mass_target must be in [0, 1] and max_keep_frac in (0, 1]")
         if self.mass_target > 0 and self.score != "router":
             raise ValueError("online router mass_target needs the learned scorer (score='router')")
+        if self.target_layer:
+            if self.drop_layer <= 0 or self.target_layer <= self.drop_layer:
+                raise ValueError("online router target_layer must be > drop_layer (> 0)")
+            if self.target not in ("gnorm", "gxh") or self.stages:
+                raise ValueError("online router target_layer needs target gnorm / gxh and a single stage")
+            if not self.mod_layers and self.dense_every <= 0:
+                raise ValueError("online router target_layer with the drop fits on the full-context steps only: "
+                                 "set dense_every > 0")
         if self.per_task_key_tokens < 0:
             raise ValueError(f"online router per_task_key_tokens must be >= 0, got {self.per_task_key_tokens}")
 
@@ -508,6 +522,7 @@ class OnlineTokenRouter:
         self._row_task: Optional[torch.Tensor] = None  # this forward's (B,) task keys
         self.mod_layers: List[int] = parse_mod_layers(cfg.mod_layers) if cfg.mod_layers else []
         self._mod: Optional[Dict[str, Any]] = None  # this forward's mixture-of-depths gather
+        self._tap: Optional[Dict[str, Any]] = None  # target entry waiting for block target_layer
         self._proj: Optional[torch.Tensor] = None
         self._pending: List[Dict[str, Any]] = []
         self._current: Optional[Dict[str, Any]] = None
@@ -881,6 +896,7 @@ class OnlineTokenRouter:
         st, self._mid = getattr(self, "_mid", None), None
         self._mid_gather = None
         self._mod = None
+        self._tap = None
         if st is None:
             return h, block_kwargs
         fp, ids, cid, Tr = st["fp"], st["ids"], st["cid"], st["Tr"]
@@ -958,7 +974,11 @@ class OnlineTokenRouter:
         entry["cols"] = newcol[rows, pos]
         if dh_all is not None:
             entry["dh"] = dh_all[rows, pos]
-        self._register_target(model, entry, h_new)
+        if self.cfg.target_layer:
+            # targets from a deeper block: only where every token gets there (full-context steps)
+            self._tap = entry if entry["dense"] else None
+        else:
+            self._register_target(model, entry, h_new)
         self._exit = None
         if self.cfg.exit_loss_weight > 0 and not entry["dense"]:
             dropped = real & body & ~keep_body
@@ -1011,7 +1031,10 @@ class OnlineTokenRouter:
         rows, pos = entry["rows"], entry["pos"]
         entry["ok"] = real[rows, pos]
         entry["cols"] = pos
-        self._register_target(model, entry, h)
+        if self.cfg.target_layer:
+            self._tap = entry  # every token reaches the deeper block under mixture-of-depths
+        else:
+            self._register_target(model, entry, h)
         self._exit = None
         ld = getattr(model, "_layer_drop", None)
         skip = ld.skipped() if (ld is not None and model.training) else frozenset()
@@ -1069,6 +1092,15 @@ class OnlineTokenRouter:
         only), 2/3 for frozen blocks at or above the drop layer (no weight gradient), else 1."""
         nu, L0, P = self._nograd_until, self.cfg.drop_layer, self.frozen_blocks
         return [1.0 / 3.0 if i < nu else (2.0 / 3.0 if L0 <= i < P else 1.0) for i in range(n_blocks)]
+
+    def tap_target(self, model, h: torch.Tensor, block_idx: int) -> torch.Tensor:
+        """At the input of block ``target_layer``: register this forward's pending target hook there."""
+        e, self._tap = self._tap, None
+        if e is not None and block_idx == self.cfg.target_layer and h.requires_grad:
+            self._register_target(model, e, h)
+        elif e is not None:
+            self._tap = e
+        return h
 
     def mod_block(self, block, h: torch.Tensor, kwargs: Dict[str, Any]) -> torch.Tensor:
         """Run one LISTED block under mixture-of-depths: on the kept tokens only (gathered at their original

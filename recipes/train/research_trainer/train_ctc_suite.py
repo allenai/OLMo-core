@@ -1825,6 +1825,10 @@ def parse_args() -> argparse.Namespace:
                     help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
                     "non-increasing; each stage scored from its own layer by its own router); overrides "
                     "--st-otr-drop-layer / --st-otr-keep-frac")
+    ap.add_argument("--st-otr-target-layer", type=int, default=0,
+                    help="online router: read the gradient targets at this deeper block (e.g. 16) instead of the drop "
+                    "layer; with the drop only the full-context (--st-otr-dense-every) steps fit, with "
+                    "--st-otr-mod-layers every step does. 0 = the drop layer")
     ap.add_argument("--st-otr-mass-target", type=float, default=0.0,
                     help="online router ADAPTIVE keep: per document, keep the fewest top-scored tokens whose predicted "
                     "||dL/dh||^2 covers this share (e.g. 0.8); then --st-otr-min-per-doc, then the per-row "

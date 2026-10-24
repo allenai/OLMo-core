@@ -1754,6 +1754,7 @@ class Transformer(nn.Module):
         otr_stages = {r.cfg.drop_layer: r for r in otr.chain()} if otr_layer > 0 else {}
         # online router mixture-of-depths: the listed blocks run on the router's kept tokens only
         otr_mod = frozenset(otr.mod_layers) if otr_layer > 0 and getattr(otr, "mod_layers", None) else frozenset()
+        otr_tap = int(getattr(otr.cfg, "target_layer", 0) or 0) if otr_layer > 0 else 0
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
         # online router early_nograd: on routed forwards blocks [0, otr_layer) run forward-only
@@ -1772,6 +1773,8 @@ class Transformer(nn.Module):
             if block_idx in otr_stages:
                 # online router, mid-stack drop: dropped tokens skip blocks [otr_layer, n_layers)
                 h, all_block_kwargs = otr_stages[block_idx].mid_compact(self, h, all_block_kwargs)
+            if otr_tap and block_idx == otr_tap:
+                h = otr.tap_target(self, h, block_idx)  # type: ignore[union-attr]
             if block_idx in ld_skip:
                 # whole-block skip (olmo_core.nn.layer_drop): identity, forward never called
                 if capture_layers is not None and block_idx in capture_layers:

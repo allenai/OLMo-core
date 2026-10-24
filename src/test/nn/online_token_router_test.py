@@ -1151,3 +1151,49 @@ def test_mass_target_validate():
         _router(mass_target=0.8, score="random")
     with pytest.raises(ValueError):
         _router(mass_target=0.8, max_keep_frac=0.0)
+
+
+def test_target_layer_validate():
+    with pytest.raises(ValueError):
+        _router(drop_layer=3, target_layer=2, dense_every=4)
+    with pytest.raises(ValueError):
+        _router(drop_layer=3, target_layer=5, dense_every=0)  # the drop needs full-context steps to fit
+    with pytest.raises(ValueError):
+        _router(drop_layer=3, target_layer=5, dense_every=4, target="dh")
+    _router(drop_layer=3, target_layer=5, dense_every=4)
+    _router(mod_layers="3,5", target_layer=4)
+
+
+def test_target_layer_reads_deeper_gradient_cpu():
+    """target_layer 4 with the drop at 2: on a full-context step the target is log ||dL/dh|| at block 4's INPUT (for the
+    sampled tokens); a routed step adds no target entry."""
+    model, router = _mid_model(6, drop_layer=2, target_layer=4, dense_every=2, explore_frac=0.0)
+    ids, cid, labels = _row(B=1)
+    cap = {}
+
+    def pre(m, a):
+        a[0].retain_grad()
+        cap["h"] = a[0]
+
+    hk = list(model.blocks.values())[4].register_forward_pre_hook(pre)
+    router.begin_step(1, model=model)  # warmup = full context
+    model(ids, labels=labels).loss.backward()
+    e = router._pending[-1]
+    g = cap["h"].grad[e["rows"], e["cols"]]
+    assert torch.allclose(e["target"], torch.log(g.norm(dim=-1) + 1e-12), atol=1e-5)
+    router.begin_step(2, model=model)  # dense_every 2: full context again
+    model(ids, labels=labels).loss.backward()
+    assert len(router._pending) == 1 and router._pending[0]["target"] is not None
+    router.begin_step(3, model=model)  # routed
+    model(ids, labels=labels).loss.backward()
+    assert len(router._pending) == 0
+    hk.remove()
+
+
+def test_target_layer_with_mixture_of_depths_fits_every_step_cpu():
+    model, router = _mid_model(6, mod_layers="2-5:2", target_layer=3, dense_every=0)
+    ids, cid, labels = _row(B=1)
+    for step in (1, 2, 3):
+        router.begin_step(step, model=model)
+        model(ids, labels=labels).loss.backward()
+        assert len(router._pending) == 1 and torch.isfinite(router._pending[0]["target"]).all()

@@ -283,6 +283,7 @@ class SoftTokenOptions(VariantOptions):
     st_otr_samples_per_row: int = 2048
     st_otr_proj_dim: int = 0
     st_otr_freeze_schedule: str = ""
+    st_otr_target_layer: int = 0
     st_otr_mass_target: float = 0.0
     st_otr_max_keep_frac: float = 1.0
     st_otr_mod_layers: str = ""
@@ -1051,6 +1052,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         samples_per_row=o.st_otr_samples_per_row,
         proj_dim=o.st_otr_proj_dim,
         freeze_schedule=o.st_otr_freeze_schedule,
+        target_layer=o.st_otr_target_layer,
         mass_target=o.st_otr_mass_target,
         max_keep_frac=o.st_otr_max_keep_frac,
         mod_layers=o.st_otr_mod_layers,
