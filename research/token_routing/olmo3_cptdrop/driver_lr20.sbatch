@@ -56,7 +56,13 @@ run() {
   local name=$1; shift
   if [ -f "$ROOT/runs/$name/model_and_optim/.metadata" ]; then log "SKIP $name (export exists)"; return 0; fi
   log "START $name"; env "$@" RUN="$name" bash "$ARM_SH" > "$ROOT/logs/$name.log" 2>&1; local rc=$?
-  log "END $name rc=$rc"; return $rc
+  log "END $name rc=$rc"
+  # a run without SAVE_INTERVAL is never branched from: drop its final trainer checkpoint (model + optimizer +
+  # trainer state, ~110 GB) once the export exists (2026-10-23: 109 of them filled cubbins /data and hung a save)
+  if [ $rc -eq 0 ] && [ -f "$ROOT/runs/$name/model_and_optim/.metadata" ] && ! printf '%s\n' "$@" | grep -q '^SAVE_INTERVAL='; then
+    for d in "$ROOT/runs/$name"/step[0-9]*; do [ -d "$d" ] && rm -rf -- "$d"; done
+  fi
+  return $rc
 }
 for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
   case $st in
