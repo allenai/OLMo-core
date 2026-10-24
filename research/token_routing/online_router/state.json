@@ -526,7 +526,8 @@
    "budget": "s720",
    "lr": 5e-06,
    "mix": "mt11",
-   "seed": 0
+   "seed": 0,
+   "cancelled": "duplicate of parent f8k-mt11-otr10M7de0f16pt-s720-tde-lr5e-06"
   },
   "f8k-mt11-prog4712f16M7pt-s720-tdb-lr5e-06": {
    "ex": "01M5PN75823ZV8Q7TJJPJ80BSC",
