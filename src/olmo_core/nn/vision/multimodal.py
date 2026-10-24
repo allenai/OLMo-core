@@ -201,6 +201,57 @@ class MultimodalLMConfig(Config):
         )
 
     @classmethod
+    def molmo2_0_6B(
+        cls, *, rope_theta: int = 1_000_000, response_residual_dropout: float = 0.0, **kwargs
+    ) -> "MultimodalLMConfig":
+        """
+        The Molmo2 architecture on a Qwen3-0.6B LM: the shared Molmo2 vision stack, with a
+        connector MLP as wide as the LM's feed-forward (3,072), the rule the released 4B
+        (9,728) and 8B (12,288) follow. There is no released Molmo2 at this size, so this is
+        for training from base weights only.
+
+        :param rope_theta: RoPE base. ``1_000_000``, Qwen3-0.6B's.
+        """
+        return cls._molmo2_like(
+            TransformerConfig.qwen3_0_6B(
+                vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+                n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
+                rope_theta=rope_theta,
+                rope_full_precision=True,
+                attn_backend=_molmo2_attn_backend(),
+                dtype=DType.float32,
+            ),
+            connector_mlp_hidden_size=3072,
+            response_residual_dropout=response_residual_dropout,
+            **kwargs,
+        )
+
+    @classmethod
+    def molmo2_1_7B(
+        cls, *, rope_theta: int = 1_000_000, response_residual_dropout: float = 0.0, **kwargs
+    ) -> "MultimodalLMConfig":
+        """
+        The Molmo2 architecture on a Qwen3-1.7B LM, built like :meth:`molmo2_0_6B` with a
+        6,144-wide connector MLP (the LM's feed-forward width). There is no released Molmo2 at
+        this size, so this is for training from base weights only.
+
+        :param rope_theta: RoPE base. ``1_000_000``, Qwen3-1.7B's.
+        """
+        return cls._molmo2_like(
+            TransformerConfig.qwen3_1_7B(
+                vocab_size=MOLMO2_BASE_VOCAB_SIZE,
+                n_extra_vocab=MOLMO2_N_EXTRA_TOKENS,
+                rope_theta=rope_theta,
+                rope_full_precision=True,
+                attn_backend=_molmo2_attn_backend(),
+                dtype=DType.float32,
+            ),
+            connector_mlp_hidden_size=6144,
+            response_residual_dropout=response_residual_dropout,
+            **kwargs,
+        )
+
+    @classmethod
     def molmo2_8B(
         cls, *, rope_theta: int = 1_000_000, response_residual_dropout: float = 0.0, **kwargs
     ) -> "MultimodalLMConfig":
