@@ -564,7 +564,10 @@ keep 0.3, trained otr10M8-s480: router 0.08 / oracle 0.55 / random 0.09 on strma
 ⚠ 12 rows / task). A per-document floor of 16 tokens fixes it (0.922; `--check` flags the new high) and brings the mean
 to otr30M8's at 12% less compute; seed 1 replicates it (strmatch 0.907, mean 0.735; 2-seed mean 0.730 vs dense 0.741 at 0.49x). Combining both levers (fa247f16M7: early stack frozen after 247 of 495 steps, optimizer state released, 63.3 -> 50.9 GiB on H100; floor 16; no full steps) keeps the fix (strmatch 0.905) at 0.36x: mean 0.712, above otr10M7's 0.699 at 0.41x. Seed 1 replicates (strmatch 0.920, mean 0.722; 2-seed mean 0.717). At LR 5e-6 the same arm scores mean 0.750
 (strmatch 0.933, xabsence 0.686, contra 0.897) at 0.36x -- above dense-s720 at 2e-6 (0.741), but dense mt11 has only
-been run at 2e-6, so the LR-matched dense reference (dense mt11s720 at 5e-6) is still needed before calling it. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
+been run at 2e-6 in this table. **LR-matched dense exists (parent, Lambda `f8k-mt11s{240,480,720}-dense-lrg-lr5e-06-lam`,
+research/token_routing/ds64_fast8k/results/pareto_points.json): mean9 0.697 @ 232 PF, 0.750 @ 483 PF, 0.788 @ 715 PF.
+So fa247f16M7 at 5e-6 (0.750 at 258 PF) is +0.047 over dense interpolated to its PF and matches dense-s480 at 0.53x
+its FLOPs** (−0.038 vs dense on the same 720 rows/task; single seed, eval_size 500 per task). Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
 Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
 0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
