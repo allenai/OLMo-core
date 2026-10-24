@@ -106,6 +106,16 @@ _STAGE1_V3_MEANS = {8192: STAGE1_V3_MEAN_LOSS_WEIGHTS, 65536: STAGE1_V3_MEAN_LOS
 """Stage-1 v3 means by the sequence lengths they were measured at (identical at both)."""
 
 
+def _stage1_v3_means_length(sequence_length: int) -> int | None:
+    """The calibrated length whose stage-1 v3 means hold at ``sequence_length``: itself, or
+    65,536 for longer sequences (the 256K stage). The means were identical at 8,192 and 65,536
+    because no sampled example (nor documents-mode draw, at most 26,864 tokens) reached the
+    budget, so a longer budget truncates nothing either."""
+    if sequence_length in _STAGE1_V3_MEANS:
+        return sequence_length
+    return 65536 if sequence_length > 65536 else None
+
+
 @dataclass
 class MixedMidtrainingRecipeConfig(Config):
     """Inputs for a multimodal continuation of a joint-alignment checkpoint.
@@ -1174,7 +1184,7 @@ def build_config(
         means = dict(
             STAGE1_V3_DOCUMENTS_MEAN_LOSS_WEIGHTS
             if documents
-            else _STAGE1_V3_MEANS.get(recipe.sequence_length, {})
+            else _STAGE1_V3_MEANS.get(_stage1_v3_means_length(recipe.sequence_length) or 0, {})
         )
         recipe.visual_example_weights = {}
         recipe.visual_loss_shares = dict(
@@ -1264,7 +1274,7 @@ def build_config(
         )
     reusable_visual_calibration = (
         stage1_v3
-        and recipe.sequence_length in _STAGE1_V3_MEANS
+        and _stage1_v3_means_length(recipe.sequence_length) is not None
         and tokenizer == TokenizerConfig.dolma2()
         and revision == _DOLMA2_REVISION
     ) or (
