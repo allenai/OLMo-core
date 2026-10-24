@@ -1032,6 +1032,7 @@ def test_per_task_routers_learn_opposite_rules():
     e["target"] = torch.where(e["rows"] < 2, q, -q)
     r._pending.append(e)
     r._current = None
+    r.metrics()  # reset the per-step means (step 1 had no task fits yet)
     r.begin_step(2, model=m)
     assert set(r.task_w) == set(keys.tolist())
     keep = r.select(m, ids, cid, labels)
