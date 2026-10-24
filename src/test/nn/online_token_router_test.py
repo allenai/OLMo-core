@@ -1019,22 +1019,23 @@ def test_per_task_routers_learn_opposite_rules():
     keep it in task A and drop it in task B."""
     torch.manual_seed(0)
     m = _Emb()
-    ids, cid, labels = _row(B=2)
-    ids[1, :3] = torch.tensor([4, 5, 6])  # task B's prompt template
+    ids, cid, labels = _row(B=4)
+    ids[2:, :3] = torch.tensor([4, 5, 6])  # rows 2-3: task B's prompt template
     r = _router(use_hidden=False, doc_share=0.0, per_task_key_tokens=3)
     keys = r.task_keys(ids)
-    assert keys[0] != keys[1] and torch.equal(r.task_keys(ids[[0, 0]]), keys[[0, 0]])
+    assert keys[0] == keys[1] and keys[2] == keys[3] and keys[0] != keys[2]
     r.begin_step(1, model=m)
     r.select(m, ids, cid, labels)
     e = r._current
     e["ok"] = torch.ones_like(e["rows"], dtype=torch.bool)
     q = torch.log1p(9.0 * (ids[e["rows"], e["pos"]] == QTOK).float())
-    e["target"] = torch.where(e["rows"] == 0, q, -q)
+    e["target"] = torch.where(e["rows"] < 2, q, -q)
     r._pending.append(e)
     r._current = None
     r.begin_step(2, model=m)
     assert set(r.task_w) == set(keys.tolist())
     keep = r.select(m, ids, cid, labels)
-    assert keep[0][ids[0] == QTOK].all()
-    assert not keep[1][ids[1] == QTOK].any()
+    body = (cid >= 0) & (ids != DS) & (ids != DE)
+    assert keep[:2][(ids[:2] == QTOK) & body[:2]].all()
+    assert not keep[2:][(ids[2:] == QTOK) & body[2:]].any()
     assert r.metrics()["online_router/task_routers"] == 2.0
