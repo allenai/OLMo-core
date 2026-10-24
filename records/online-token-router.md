@@ -700,3 +700,20 @@ Screens in flight (Lambda, mt4s1464, LR 5e-6, seed 0, vs otr10M7de0 2-seed mean 
 the no-full-step rule; de32 / fa275de16 (launched before it) are references only: otr10M7de32 (0.32x) 0.927 / 0.906 /
 0.616 / 0.558, fa275M7de16 (0.31x) 0.929 / 0.910 / 0.637 / 0.737 (seed 0 each, 8k, eval_size 500) -- neither beats the
 de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
+
+**Screen results so far (8k contra / nq / oolong / outlier, eval_size 500, seed 0):**
+
+| arm | PF (x dense) | contra | nq | oolong | outlier |
+|---|---|---|---|---|---|
+| otr10M7de0 shared router (2 seeds, reference) | 346 (0.30) | 0.937 | 0.902 | 0.623 | 0.682 |
+| otr10M7de0pt (per-task routers) | 347 (0.30) | 0.941 | 0.890 | 0.616 | 0.773 |
+| mod25L8 (MoD, capacity 0.25, blocks 8-30 alternate) | 905 (0.78) | 0.957 | 0.928 | 0.622 | **0.468** |
+| dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
+
+Per-task routing is neutral on the 4-task mix at matched PF (outlier +0.09 is inside that cell's 0.19 seed spread);
+its case is the 11-task mix. MoD at capacity 0.25 is dense-level on contra / nq / oolong at 0.78x but loses outlier
+(-0.25), and 0.78x is not an aggressive cut. **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
+export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
+eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
+parent's checkout unless REPO_OVERRIDE is set (068d3f0ac); LoRA runs use OLMo-core-otr10.
+
