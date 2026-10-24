@@ -114,10 +114,15 @@ def post_build_hook_from_config(model_path: str):
     block = cfg.get("ffn_moe")
     kv_block = cfg.get("kv_route")  # the attention-side router; same "enable before load" need
     bs_block = cfg.get("block_skip")  # per-token block skipping
-    if not block and not kv_block and not bs_block:
+    lora_block = cfg.get("early_lora")  # low-rank early stack (olmo_core.nn.early_lora)
+    if not block and not kv_block and not bs_block and not lora_block:
         return None
 
     def hook(model):
+        if lora_block:
+            from .early_lora import enable_from_config_block as enable_lora
+
+            enable_lora(model, lora_block)
         if kv_block:
             from .attention.kv_route import enable_from_config_block
 

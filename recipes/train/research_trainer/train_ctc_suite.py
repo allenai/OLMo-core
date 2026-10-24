@@ -1825,6 +1825,11 @@ def parse_args() -> argparse.Namespace:
                     help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
                     "non-increasing; each stage scored from its own layer by its own router); overrides "
                     "--st-otr-drop-layer / --st-otr-keep-frac")
+    ap.add_argument("--st-otr-early-lora", type=int, default=0,
+                    help="online router: LOW-RANK early stack -- blocks [0, drop_layer) + embeddings frozen from step 0, "
+                    "every linear in those blocks gets a rank-R LoRA adapter (no base grads / Adam state). 0 = off")
+    ap.add_argument("--st-otr-early-lora-scale", type=float, default=32.0,
+                    help="early LoRA output scale (acts as the adapters' LR multiplier under Adam; default 32)")
     ap.add_argument("--st-otr-target-layer", type=int, default=0,
                     help="online router: read the gradient targets at this deeper block (e.g. 16) instead of the drop "
                     "layer; with the drop only the full-context (--st-otr-dense-every) steps fit, with "

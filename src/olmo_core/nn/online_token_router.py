@@ -120,12 +120,18 @@ class OnlineRouterConfig:
     """Warmup-then-freeze: train every block normally for the first ``freeze_after`` optimizer steps, then (from step
     ``freeze_after + 1``) freeze the embeddings and blocks [0, L) and free their gradients and optimizer state
     (:func:`freeze_and_release`, run by the callback); afterwards it behaves as ``freeze_early``. 0 = off."""
+    early_lora: int = 0
+    """Low-rank early stack (:mod:`olmo_core.nn.early_lora`, installed by the recipe): blocks [0, drop_layer) train
+    only rank-``early_lora`` adapters from step 0. Charged: those blocks at 2/3 (the activation gradient still runs
+    down to block 0 for the adapters; no base weight gradient) plus the adapters' own cost. Exclusive with every
+    freeze / early_nograd option. 0 = off."""
     target_layer: int = 0
     """Read the router's gradient targets at block ``target_layer`` (> ``drop_layer``) instead of at the drop layer,
     e.g. 16: the importance that matters late in training sits deeper. Features still come from the drop layer. With
-    the drop, only the full-context (``dense_every``) steps fit -- there every token reaches that block; routed steps
-    add no targets (the kept tokens alone would be a censored sample). With ``mod_layers`` every token reaches it on
-    every step, so every step fits. Targets gnorm / gxh only. 0 = the drop layer."""
+    the drop, routed steps fit on the EXPLORATION tokens only -- a uniform random sample of the body that is kept, so
+    it reaches that block uncensored (the router's own picks would be a censored sample); full-context steps, if any,
+    fit on every sampled token. With ``mod_layers`` every token reaches it on every step. Needs ``explore_frac > 0``
+    with the drop. Targets gnorm / gxh only. 0 = the drop layer."""
     mass_target: float = 0.0
     """ADAPTIVE keep by predicted gradient mass: per document, keep the fewest top-scored body tokens whose predicted
     ||dL/dh||^2 (exp(2 x score); the score predicts the row-centred log gradient norm) covers this share of the
@@ -257,14 +263,20 @@ class OnlineRouterConfig:
             raise ValueError("online router mass_target must be in [0, 1] and max_keep_frac in (0, 1]")
         if self.mass_target > 0 and self.score != "router":
             raise ValueError("online router mass_target needs the learned scorer (score='router')")
+        if self.early_lora:
+            if self.early_lora < 0 or self.drop_layer <= 0:
+                raise ValueError("online router early_lora needs rank > 0 and the mid-stack drop (drop_layer > 0)")
+            if self.freeze_early or self.freeze_after or self.freeze_schedule or self.early_nograd:
+                raise ValueError("online router early_lora is exclusive with freeze_early / freeze_after / "
+                                 "freeze_schedule / early_nograd")
         if self.target_layer:
             if self.drop_layer <= 0 or self.target_layer <= self.drop_layer:
                 raise ValueError("online router target_layer must be > drop_layer (> 0)")
             if self.target not in ("gnorm", "gxh") or self.stages:
                 raise ValueError("online router target_layer needs target gnorm / gxh and a single stage")
-            if not self.mod_layers and self.dense_every <= 0:
-                raise ValueError("online router target_layer with the drop fits on the full-context steps only: "
-                                 "set dense_every > 0")
+            if not self.mod_layers and self.explore_frac <= 0:
+                raise ValueError("online router target_layer with the drop fits on the exploration tokens: "
+                                 "set explore_frac > 0")
         if self.per_task_key_tokens < 0:
             raise ValueError(f"online router per_task_key_tokens must be >= 0, got {self.per_task_key_tokens}")
 
@@ -975,8 +987,10 @@ class OnlineTokenRouter:
         if dh_all is not None:
             entry["dh"] = dh_all[rows, pos]
         if self.cfg.target_layer:
-            # targets from a deeper block: only where every token gets there (full-context steps)
-            self._tap = entry if entry["dense"] else None
+            # targets from a deeper block: on routed steps only the exploration tokens (uniform, kept) are uncensored
+            if not entry["dense"]:
+                entry["ok"] = entry["ok"] & entry["explore"]
+            self._tap = entry
         else:
             self._register_target(model, entry, h_new)
         self._exit = None
@@ -1004,6 +1018,8 @@ class OnlineTokenRouter:
         # at or above L0 skipped only their weight gradient (2/3)
         fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
+        if self.stage_idx == 0 and model.training:
+            adj += self.lora_flops_per_token(model) * float(real.sum())
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             fb = [int(b.num_flops_per_token(int(L))) if b is not None else 0 for b in blocks]
             fk = [int(b.num_flops_per_token(int(Lk))) if b is not None else 0 for b in blocks[L0:]]
@@ -1042,7 +1058,7 @@ class OnlineTokenRouter:
         L0, mods = self.cfg.drop_layer, [i for i in self.mod_layers if i < len(blocks)]
         fac = self._block_factors(len(blocks))
         self._stat("early_nograd", float(self._nograd_fwd))
-        adj = 0.0
+        adj = self.lora_flops_per_token(model) * float(real.sum()) if model.training else 0.0
         ms = set(mods)
         for L, Lk in zip(real.sum(dim=1).tolist(), counts.tolist()):
             if dense:
@@ -1087,11 +1103,24 @@ class OnlineTokenRouter:
             out[b, idx[order[sel]]] = True
         return out
 
+    @staticmethod
+    def lora_flops_per_token(model) -> float:
+        st = getattr(model, "_early_lora", None)
+        if not st:
+            return 0.0
+        if "fpt" not in st:
+            from .early_lora import early_lora_flops_per_token
+
+            st["fpt"] = early_lora_flops_per_token(model)
+        return float(st["fpt"])
+
     def _block_factors(self, n_blocks: int) -> List[float]:
         """Per-block share of the forward + backward cost this forward pays: 1/3 below ``_nograd_until`` (forward
         only), 2/3 for frozen blocks at or above the drop layer (no weight gradient), else 1."""
         nu, L0, P = self._nograd_until, self.cfg.drop_layer, self.frozen_blocks
-        return [1.0 / 3.0 if i < nu else (2.0 / 3.0 if L0 <= i < P else 1.0) for i in range(n_blocks)]
+        lora = self.cfg.early_lora > 0 and self.stage_idx == 0
+        return [1.0 / 3.0 if i < nu else (2.0 / 3.0 if (L0 <= i < P or (lora and i < L0)) else 1.0)
+                for i in range(n_blocks)]
 
     def tap_target(self, model, h: torch.Tensor, block_idx: int) -> torch.Tensor:
         """At the input of block ``target_layer``: register this forward's pending target hook there."""

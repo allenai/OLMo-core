@@ -1157,17 +1157,17 @@ def test_target_layer_validate():
     with pytest.raises(ValueError):
         _router(drop_layer=3, target_layer=2, dense_every=4)
     with pytest.raises(ValueError):
-        _router(drop_layer=3, target_layer=5, dense_every=0)  # the drop needs full-context steps to fit
+        _router(drop_layer=3, target_layer=5, explore_frac=0.0)  # the drop fits on the exploration tokens
     with pytest.raises(ValueError):
-        _router(drop_layer=3, target_layer=5, dense_every=4, target="dh")
-    _router(drop_layer=3, target_layer=5, dense_every=4)
+        _router(drop_layer=3, target_layer=5, explore_frac=0.2, target="dh")
+    _router(drop_layer=3, target_layer=5, explore_frac=0.2)
     _router(mod_layers="3,5", target_layer=4)
 
 
 def test_target_layer_reads_deeper_gradient_cpu():
-    """target_layer 4 with the drop at 2: on a full-context step the target is log ||dL/dh|| at block 4's INPUT (for the
-    sampled tokens); a routed step adds no target entry."""
-    model, router = _mid_model(6, drop_layer=2, target_layer=4, dense_every=2, explore_frac=0.0)
+    """target_layer 4 with the drop at 2: the target is log ||dL/dh|| at block 4's INPUT (for the sampled tokens); on
+    a routed step only the exploration tokens count (uncensored)."""
+    model, router = _mid_model(6, drop_layer=2, target_layer=4, dense_every=0, explore_frac=0.5)
     ids, cid, labels = _row(B=1)
     cap = {}
 
@@ -1181,12 +1181,13 @@ def test_target_layer_reads_deeper_gradient_cpu():
     e = router._pending[-1]
     g = cap["h"].grad[e["rows"], e["cols"]]
     assert torch.allclose(e["target"], torch.log(g.norm(dim=-1) + 1e-12), atol=1e-5)
-    router.begin_step(2, model=model)  # dense_every 2: full context again
+    assert e["ok"].all()  # warmup = full context: every sampled token
+    router.begin_step(2, model=model)  # routed
     model(ids, labels=labels).loss.backward()
-    assert len(router._pending) == 1 and router._pending[0]["target"] is not None
-    router.begin_step(3, model=model)  # routed
-    model(ids, labels=labels).loss.backward()
-    assert len(router._pending) == 0
+    e = router._pending[-1]
+    assert torch.equal(e["ok"], e["explore"]) and e["explore"].any() and not e["explore"].all()
+    g = cap["h"].grad[e["rows"], e["cols"]]
+    assert torch.allclose(e["target"][e["ok"]], torch.log(g.norm(dim=-1) + 1e-12)[e["ok"]], atol=1e-5)
     hk.remove()
 
 
@@ -1197,3 +1198,77 @@ def test_target_layer_with_mixture_of_depths_fits_every_step_cpu():
         router.begin_step(step, model=model)
         model(ids, labels=labels).loss.backward()
         assert len(router._pending) == 1 and torch.isfinite(router._pending[0]["target"]).all()
+
+
+def test_early_lora_identity_init_grads_and_flops_cpu():
+    """early_lora 4 on blocks [0, 2) of a 4-block model: the untrained adapters reproduce the base exactly; the base
+    weights of blocks 0-1 and the embeddings get no gradient while their adapters and blocks 2-3 do; the FLOP
+    adjustment charges blocks 0-1 at 2/3 plus the adapters' 6 r (in + out) per token."""
+    from olmo_core.nn.early_lora import early_lora_flops_per_token, install_early_lora
+
+    model, router = _mid_model(4, drop_layer=2, dense_every=0, early_lora=4)
+    ids, cid, labels = _row(B=1)
+    model.eval()
+    ref = model(ids, labels=labels).loss
+    mods = install_early_lora(model, 2, 4, scale=8.0)
+    assert torch.allclose(model(ids, labels=labels).loss, ref, atol=1e-6)
+    model.train()
+    blocks = list(model.blocks.values())
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    router.begin_step(1, model=model)
+    model(ids, labels=labels).loss.backward()
+    model.zero_grad(set_to_none=True)
+    router.begin_step(2, model=model)
+    flops.clear()
+    router.metrics()
+    model(ids, labels=labels).loss.backward()
+    assert all(m.weight.grad is None and m.lora_A.grad is not None and m.lora_B.grad is not None for m in mods)
+    assert all(p.grad is None for p in model.embeddings.parameters())
+    assert all(p.grad is not None for b in blocks[2:] for p in b.parameters())
+    real = int((ids != PH).sum())
+    kept = int(round(router.metrics()["online_router/mid_row_frac"] * real))
+    head = int(model.lm_head.num_flops_per_token(0))
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    expect = (early_lora_flops_per_token(model) * real
+              + real * (2 / 3) * (f(blocks[0], real) + f(blocks[1], real))
+              + kept * (f(blocks[2], kept) + f(blocks[3], kept) + head)
+              - real * (sum(f(b, real) for b in blocks) + head))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)
+
+
+def test_early_lora_reset_and_dead_adapter_check():
+    from olmo_core.nn.early_lora import install_early_lora
+
+    model, router = _mid_model(3, drop_layer=1, dense_every=0, early_lora=2)
+    mods = install_early_lora(model, 1, 2)
+    m = mods[0]
+    with torch.no_grad():
+        m.lora_B.fill_(7.0)
+    m.reset_parameters()  # what init_weights calls on a meta-built model
+    assert torch.equal(m.lora_B, torch.zeros_like(m.lora_B)) and torch.isfinite(m.lora_A).all()
+    # an adapted linear that the forward never calls -> loud failure, not a silent no-op adapter
+    model2, _ = _mid_model(3, drop_layer=1, dense_every=0, early_lora=2)
+    list(model2.blocks.values())[0].unused = torch.nn.Linear(8, 8)
+    install_early_lora(model2, 1, 2)
+    ids, cid, labels = _row()
+    with pytest.raises(RuntimeError, match="never ran"):
+        model2(ids, labels=labels)
+
+
+def test_early_lora_validate_and_eval_reinstall(tmp_path):
+    import json
+
+    from olmo_core.nn.nested_ffn_moe import post_build_hook_from_config
+
+    with pytest.raises(ValueError):
+        _router(drop_layer=2, early_lora=4, freeze_after=10)
+    with pytest.raises(ValueError):
+        _router(early_lora=4)  # needs the mid-stack drop
+    (tmp_path / "config.json").write_text(json.dumps({"early_lora": {"n_blocks": 1, "rank": 2, "scale": 8.0}}))
+    hook = post_build_hook_from_config(str(tmp_path))
+    model, _ = _mid_model(3, drop_layer=1, dense_every=0)
+    hook(model)
+    assert model._early_lora["rank"] == 2 and all(hasattr(m, "lora_A") for m in model._early_lora["modules"])
+    assert any(k.endswith(".lora_A") for k in model.state_dict())

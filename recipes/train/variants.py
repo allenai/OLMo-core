@@ -284,6 +284,8 @@ class SoftTokenOptions(VariantOptions):
     st_otr_proj_dim: int = 0
     st_otr_freeze_schedule: str = ""
     st_otr_target_layer: int = 0
+    st_otr_early_lora: int = 0
+    st_otr_early_lora_scale: float = 32.0
     st_otr_mass_target: float = 0.0
     st_otr_max_keep_frac: float = 1.0
     st_otr_mod_layers: str = ""
@@ -1053,6 +1055,7 @@ def build_online_router(o: SoftTokenOptions, ctx: VariantContext, d_model: int) 
         proj_dim=o.st_otr_proj_dim,
         freeze_schedule=o.st_otr_freeze_schedule,
         target_layer=o.st_otr_target_layer,
+        early_lora=o.st_otr_early_lora,
         mass_target=o.st_otr_mass_target,
         max_keep_frac=o.st_otr_max_keep_frac,
         mod_layers=o.st_otr_mod_layers,
@@ -1155,6 +1158,16 @@ class SoftToken(Variant):
     def train_module_overrides(self, o, ctx):
         return {"microbatch_sort_pad_id": ctx.ids.eos}  # length-homogeneous micro-batches
 
+    def export_config(self, o):
+        assert isinstance(o, SoftTokenOptions)
+        if o.st_keep_token_rule == "online" and o.st_otr_early_lora > 0:
+            # the eval re-installs the adapters before its strict load (nested_ffn_moe.post_build_hook_from_config)
+            from olmo_core.nn.online_token_router import parse_mod_layers
+
+            L = parse_mod_layers(o.st_otr_mod_layers)[0] if o.st_otr_mod_layers else o.st_otr_drop_layer
+            return {"early_lora": {"n_blocks": L, "rank": o.st_otr_early_lora, "scale": o.st_otr_early_lora_scale}}
+        return {}
+
     def post_build_model(self, model, o, ctx):
         assert isinstance(o, SoftTokenOptions)
         from olmo_core.nn.pooled_soft_token import parse_keep_token_weights
@@ -1216,6 +1229,14 @@ class SoftToken(Variant):
             slot_stop_ids=(None if o.st_slot_mode == "mean" else build_slot_stop_set(o, ctx)),
             cat_keep=resolve_cat_keep(o),
         )
+        if online and o.st_otr_early_lora > 0:
+            from olmo_core.nn.early_lora import install_early_lora
+
+            r = model._online_token_router
+            mods = install_early_lora(model, r.cfg.drop_layer, o.st_otr_early_lora, o.st_otr_early_lora_scale)
+            print(f"[variants] online router early LoRA: blocks [0, {r.cfg.drop_layer}) + embeddings frozen, "
+                  f"{len(mods)} linears get rank-{o.st_otr_early_lora} adapters (scale {o.st_otr_early_lora_scale})",
+                  flush=True)
         if online and o.st_otr_freeze_early:
             from olmo_core.nn.online_token_router import freeze_early_blocks
 
@@ -1344,7 +1365,7 @@ VARIANTS: Dict[str, Variant] = {
 VARIANTS["dense"] = VARIANTS["full"]
 
 #: Every export key, ``None`` unless an active variant fills it (train_ctc_suite's config.json).
-EXPORT_KEYS = ("ffn_token_drop", "ffn_moe", "kv_route", "block_skip", "softtoken")
+EXPORT_KEYS = ("ffn_token_drop", "ffn_moe", "kv_route", "block_skip", "softtoken", "early_lora")
 
 
 def get_variant(name: str) -> Variant:
@@ -1425,6 +1446,8 @@ def tolerant_base_load(base_checkpoint: str, model, save_folder: str) -> None:
         "bskip_routers.",
         "pooled_projector.",
         "._pooled_projector",
+        ".lora_A",
+        ".lora_B",
     )
     bad = [k for k in missing if not any(a in k for a in allowed)]
     if bad:
