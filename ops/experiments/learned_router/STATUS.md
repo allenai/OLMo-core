@@ -25,7 +25,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BRAYbDr5uLW7KdZzeh2yL1
 wandb_group: https://wandb.ai/prasanns-allen-institute-for-ai/memory-networks/groups/f8k-otr (online); https://wandb.ai/prasann-uc-berkeley-electrical-engineering-computer-sciences/memory-networks/groups/router-e2e (frozen)
-next_step: ONLINE ROUTER (2026-10-23). Best compute+memory: warmup-then-freeze (--st-otr-freeze-after, no full steps). mt4s1464 sweep (Lambda): freeze at 25 / 50 / 75% = 0.21 / 0.24 / 0.27x dense, contra 0.878 / 0.890 (2 seeds) / 0.919; at LR 5e-6 the 50% freeze reaches contra 0.920, outlier 0.622 at 0.24x (otr10M7 de8: 0.927 / 0.581 at 0.39x). Per-doc floor 16 fixes mt11 strmatch (2 seeds); freeze+floor keeps it at 0.36x. IN FLIGHT: fa247f16M7 seed 1 on mt11s720 (Beaker). Next: seed repeat of fa183 LR 5e-6, and freeze + floor at LR 5e-6 on mt11s720. CPT track: exit loss / dense-keep-frac at fcda77090 (the CPT session). Code: claude/online-router-1bc01a.
+next_step: ONLINE ROUTER (2026-10-23). Best compute+memory: warmup-then-freeze (--st-otr-freeze-after, no full steps) at LR 5e-6: freeze at 50% of mt4s1464 = 0.24x dense, 47.7 GiB after the freeze, 2-seed mean 0.924/0.900/0.609/0.657 vs otr10M7 de8 (LR 2e-6, 0.39x) 0.927/0.907/0.643/0.581. Freeze point sweep at 2e-6: 25/50/75% = contra 0.878/0.890/0.919. Per-doc floor 16 fixes mt11 strmatch (2 seeds); freeze+floor keeps it at 0.36x. IN FLIGHT (Beaker): fa247f16M7 seed 1 (2e-6) and at LR 5e-6 on mt11s720. CPT track: exit loss / dense-keep-frac at fcda77090. Code: claude/online-router-1bc01a.
 ---
 
 # learned_router
