@@ -140,6 +140,7 @@ a { color: inherit; }
 <section class="box">
   <h2>Bottom line (2026-10-24)</h2>
   <ul>
+    <li><b>New best, compute and memory (2 seeds): router with low-rank adapters on blocks 0–6, no full-context steps.</b> Blocks 0–6 are frozen from step 0 and train through rank-64 adapters; the router keeps 10% of tokens for blocks 7–31. 4-task mix, 1,464 rows/task, LR 5e-6: 0.939 / 0.904 / 0.623 / 0.686, against 0.937 / 0.902 / 0.623 / 0.682 for the same router without adapters. That is the same quality at 0.25× dense FLOPs (vs 0.30×) and 48.4 GiB peak memory (vs 60.3), the first cut that lowers the peak from step 0. Rank 16 is worse (0.924 / 0.882 / 0.605 / 0.579). Fresh-data runs out to 7,808 rows/task and CPT runs are queued.</li>
     <li><b>At its own learning rate (5e-6), the router matches dense trained on the same data at 0.38× the FLOPs.</b> 4-task mix, 1,464 rows/task, 2 seeds: contradiction / nq / oolong / outlier @8k 0.955 / 0.913 / 0.622 / 0.726 vs dense 0.956 / 0.936 / 0.630 / 0.719. Level on 3 of 4; nq −0.023.</li>
     <li><b>Cheaper variants form one smooth curve at 5e-6</b> (table below). There's no free lunch: each step down in FLOPs costs a little, mostly outlier. Full-context step every 16 instead of 8 is the best trade (0.34×, contradiction −0.009). Freezing the early blocks halfway reaches 0.24× and 47.7 GiB. Its apparent free win at LR 2e-6 was mostly the LR.</li>
     <li><b>At 64k with 10× data the router beats dense, replicated:</b> 2 seeds, ahead on 8 of 9 tasks, +0.028 averaged, at 0.40× FLOPs (¼ epoch, LR 5e-6 for both). ½- and 1-epoch runs are training (≈10–14 h).</li>
@@ -169,8 +170,14 @@ a { color: inherit; }
     <tr><td>+ freeze blocks 0–6 at 75%</td><td class="n">0.27</td><td class="n">0.930</td><td class="n">0.892</td><td class="n">0.628</td><td class="n">0.646</td><td class="n">2</td></tr>
     <tr><td>+ freeze at 50% (47.7 GiB after)</td><td class="n">0.24</td><td class="n">0.924</td><td class="n">–</td><td class="n">–</td><td class="n">–</td><td class="n">2</td></tr>
     <tr><td>router, keep 5% (budget control)</td><td class="n">0.26</td><td class="n">0.906</td><td class="n">0.890</td><td class="n">0.589</td><td class="n neg">0.460</td><td class="n">1</td></tr>
-  </table></div>
-  <p class="note">8k rung, eval_size 500 each, no-cot. From the router session's record (records/online-token-router.md); seed spread on outlier is up to 0.19, so outlier differences under ~0.1 are noise. At matched FLOPs, freezing beats simply keeping fewer tokens (keep 5% loses outlier). Earlier screen at 488 rows: freezing from step 0, pyramids and merging all lose; the early-exit loss is a no-op on SFT rows (only answer tokens are labelled), so it is CPT-only.</p>
+      <tr><td><b>router, no full steps + rank-64 adapters on blocks 0–6</b></td><td class="n">0.25</td><td class="n">0.939</td><td class="n">0.904</td><td class="n">0.623</td><td class="n">0.686</td><td class="n">2</td></tr>
+    <tr><td>… rank-16 adapters</td><td class="n">0.24</td><td class="n">0.924</td><td class="n">0.882</td><td class="n">0.605</td><td class="n">0.579</td><td class="n">2</td></tr>
+    <tr><td>progressive freeze (0–3 @25%, 0–6 @50%, 0–11 @75%)</td><td class="n">0.22</td><td class="n">0.926</td><td class="n">0.898</td><td class="n">0.634</td><td class="n">0.555</td><td class="n">2</td></tr>
+    <tr><td>per-task router (no full steps)</td><td class="n">0.30</td><td class="n">0.941</td><td class="n">0.890</td><td class="n">0.616</td><td class="n">0.773</td><td class="n">1</td></tr>
+    <tr><td>keep by predicted gradient mass (80%, cap 20%)</td><td class="n">0.37</td><td class="n">0.941</td><td class="n">0.918</td><td class="n">0.585</td><td class="n">0.571</td><td class="n">1</td></tr>
+    <tr><td>mixture-of-depths, 25% on alternate blocks 8–30</td><td class="n">0.78</td><td class="n">0.957</td><td class="n">0.928</td><td class="n">0.622</td><td class="n neg">0.468</td><td class="n">1</td></tr>
+</table></div>
+  <p class="note">Peak memory per GPU (H100): 60.3 GiB for every arm without adapters, including the freeze arms before they freeze; 48.1–48.4 GiB with adapters. 8k rung, eval_size 500 each, no-cot. From the router session's record (records/online-token-router.md); seed spread on outlier is up to 0.19, so outlier differences under ~0.1 are noise. At matched FLOPs, freezing beats simply keeping fewer tokens (keep 5% loses outlier). Earlier screen at 488 rows: freezing from step 0, pyramids and merging all lose; the early-exit loss is a no-op on SFT rows (only answer tokens are labelled), so it is CPT-only.</p>
 </section>
 
 <section>
