@@ -726,6 +726,8 @@ de0 two-seed mean at 0.30x by more than seed noise on contra / nq.
 | lora16x128M7 (rank 16, scale 128) | 278 (0.24) | 0.929 | 0.882 | 0.620 | 0.523 |
 | **lora64M7** (rank 64, scale 32; peak 48.4 GiB), seeds 0 / 1 | 286 (0.25) | 0.945 / 0.933 | 0.912 / 0.896 | 0.638 / 0.607 | 0.642 / 0.730 |
 | lora128M7 (rank 128, scale 32) | 297 (0.26) | 0.919 | 0.910 | 0.588 | 0.703 |
+| lora64k07M7 (rank 64, keep 7%) | 261 (0.23) | 0.929 | 0.892 | 0.620 | 0.650 |
+| lora64k05M7 (rank 64, keep 5%) | 244 (0.21) | 0.912 | 0.900 | 0.609 | 0.534 |
 | dense-s1464 | 1154 (1.0) | 0.956 | 0.936 | 0.630 | 0.719 |
 
 Per-task routing is neutral on the 4-task mix at matched PF (outlier +0.09 is inside that cell's 0.19 seed spread);
@@ -751,7 +753,10 @@ reference (0.937 / 0.902 / 0.623 / 0.682 at 0.30x, 60.3 GiB) on contra / nq / oo
 less compute and 12 GiB less peak memory.** **Seed 1 (0.933 / 0.896 / 0.607 / 0.730; adapters re-installed in all four
 evals, peak 48.4 GiB) confirms it: 2-seed mean 0.939 / 0.904 / 0.623 / 0.686 at 0.25x vs de0 0.937 / 0.902 / 0.623 /
 0.682 at 0.30x -- identical quality on every task, 17% less compute, 12 GiB (20%) less peak memory from step 0.** Rank
-saturates at 64: lora128M7 (0.919 / 0.910 / 0.588 / 0.703 at 0.26x, seed 0) is no better. Running: lora64f16M7 and
+saturates at 64: lora128M7 (0.919 / 0.910 / 0.588 / 0.703 at 0.26x, seed 0) is no better. Cutting the budget under LoRA r64 trades
+smoothly but saves little: 10% -> 7% -> 5% keep is 0.25x -> 0.23x -> 0.21x for contra 0.939 -> 0.929 -> 0.912 and
+outlier 0.686 -> 0.650 -> 0.534 (the 0.02-0.04x saved is small because blocks 0-6 still run on every token). LoRA at 5%
+beats no-LoRA at 5% (otr05M7de0: 0.906 / 0.890 / 0.589 / 0.460 at 0.26x) on every task at less compute. Running: lora64f16M7 and
 lora16f16M7 on mt11s720 at 5e-6 (Beaker; evals from an eval worktree at the fixed tip). **LoRA eval trap fixed (1f626f71d, 984825862):** SoftToken defined
 export_config twice, so the early_lora block never reached config.json and a DCP load silently drops adapter keys; the
 eval hook now rebuilds the block from the checkpoint (or refuses) and guards every checkpoint key. Lambda evals run the
