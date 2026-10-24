@@ -48,6 +48,8 @@
 #        48 / 120 steps (the only peak-memory lever so far x the attention-FLOP lever)
 #   REP  rescore the dense reference curve + stage2 / stage3 with the current eval (near / far repeat CE + ctx_gain)
 #        into devce_rep/ (the original dense evals predate the repeat bins)
+#   LORAFZ LoRA r64 K16, then adapters + blocks [0,16) frozen at 75% of the steps (router branch >= 5e1202e4b; best
+#        SFT compute + memory point), at 48 / 120 steps
 #   LORAS1 seed-1 (different data order) rerun of LoRA r16 K16 at 48 / 120 steps: is the arm itself stable?
 #   SEED Dlr20-120-s1 (seed noise of the dense reference at LR 2e-5; was 0.009 nats at 2.07e-4)
 #   IRS  IRANDlr20-260 (saves every 58) + branches 65 / 130: I-rand at dense-equivalent 12 / 24 / 48 steps
@@ -209,6 +211,12 @@ for st in ${STAGES:-DC SB IRS IFS EV SEED IR HO D480 EV CTX}; do
         bash "$CODE/research/token_routing/olmo3_cptdrop/devce_multi.sh" > "$ROOT/logs/devce-rep-$SLURM_JOB_ID.log" 2>&1 \
         || log "WARN: rescore had failures"
       grep -h "merged" "$ROOT/logs/devce-rep-$SLURM_JOB_ID.log" ;;
+    LORAFZ)
+      for b in 48 120; do
+        n=$(( b * 3 / 4 ))
+        run "o3cd-DLORA64k16fa75lr20-$b" ARM=OTR OTR_KEEP=1.0 OTR_L=16 OTR_DENSE=0 OTR_EXTRA="--st-otr-early-lora 64 --st-otr-early-lora-scale 32 --st-otr-freeze-after $n" MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 4 + 10)) \
+          || { log "FAIL DLORA64 fa75 at $b: continuing"; break; }
+      done ;;
     LORAS1)
       for b in 48 120; do
         run "o3cd-DLORA16k16lr20-$b-s1" ARM=OTR OTR_KEEP=1.0 OTR_L=16 OTR_DENSE=0 OTR_EXTRA="--st-otr-early-lora 16 --st-otr-early-lora-scale 32" SEED=1 MAX_STEPS_TOTAL=$b EXPECTED_MIN=$((b / 4 + 10)) \
