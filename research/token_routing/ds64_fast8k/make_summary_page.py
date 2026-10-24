@@ -81,6 +81,27 @@ def chart(pts, field, title, ylo, yhi):
             f'aria-label="{html.escape(title)}">{"".join(g)}</svg></figure>')
 
 
+SCREEN_LABEL = {
+    "otr10M7de0": "router, no full steps", "otr10M7de0sk3": "+ skip blocks 20/24/28", "r20to7M7de0": "two-stage: 20% at 7 → 7% at 16",
+    "otr10M7de0pt": "per-task router", "fa50M7": "freeze blocks 0–6 at 50%", "fa75M7": "freeze blocks 0–6 at 75%",
+    "pfz37M7": "progressive freeze (0–2 @25%, 0–6 @50%)", "lora16M7": "rank-16 adapters on blocks 0–6", "lora64M7": "rank-64 adapters on blocks 0–6",
+    "mass80c20M7": "keep by predicted gradient mass", "otr10M7de0f16": "16-token floor per doc", "mod25": "mixture-of-depths 25%",
+    "mod25t16": "mixture-of-depths 25%, block-16 target", "lora64fa75M7": "rank-64 adapters, frozen at 75%"}
+
+
+def screen_table(d, tag):
+    """matched-FLOP rows for one budget tag (e.g. 's1952-tde', 'f3904-tde'), sorted by worst-cell delta."""
+    rows = [r for r in build(d, "mt4") if r["xkey"] == "pf" and tag in r["run"] and r.get("complete") and "mean_delta" in r]
+    out = []
+    for r in sorted(rows, key=lambda r: -r["worst_delta"]):
+        w = min(((v.get("delta", 9), k) for k, v in r["cells"].items()))
+        cls = lambda v: "pos" if v >= 0.02 else ("neg" if v <= -0.03 else "tie")
+        out.append(f'<tr><td>{html.escape(SCREEN_LABEL.get(r["arm"], r["arm"]))}</td><td class="n">{r["x"]:.0f}</td>'
+                   f'<td class="n {cls(r["mean_delta"])}">{r["mean_delta"]:+.3f}</td><td class="n {cls(r["worst_delta"])}">{r["worst_delta"]:+.3f}</td>'
+                   f'<td>{w[1].replace("@", " @")}</td></tr>')
+    return "\n".join(out) or '<tr><td colspan="5">no complete runs yet</td></tr>'
+
+
 def best_table(pts):
     pick = {}
     for p in pts:  # most-trained point per recipe
@@ -160,6 +181,15 @@ a { color: inherit; }
 </section>
 
 <section>
+  <h2>Overnight screen: 1,952 fresh rows/task, no full-context steps, matched FLOPs</h2>
+  <div class="tbl"><table>
+    <tr><th>variant (LR 5e-6, one seed)</th><th class="n">PF</th><th class="n">mean Δ</th><th class="n">worst Δ</th><th>worst cell</th></tr>
+    __SCREEN1952__
+  </table></div>
+  <p class="note">Δ vs dense at the same training PF (per cell, the better of dense LR 2e-6 / 5e-6, interpolated in log PF; dense on these rows costs 1,541 PF). Every run's weakest cell is outlier@2k (dense ≈0.80 there), the noisiest cell (seed spread up to 0.19). Fresh-data runs out to 7,808 rows/task are training.</p>
+</section>
+
+<section>
   <h2>Cheaper variants at LR 5e-6 (FLOPs and memory)</h2>
   <div class="tbl"><table>
     <tr><th>variant (4-task, 1,464 rows/task)</th><th class="n">FLOPs × dense</th><th class="n">contra</th><th class="n">nq</th><th class="n">oolong</th><th class="n">outlier</th><th class="n">seeds</th></tr>
@@ -230,7 +260,7 @@ def main():
     pts = key_points(d)
     charts = (chart(pts, "md", "Mean Δ vs dense (8 cells)", -0.10, 0.10)
               + chart(pts, "wd", "Worst-cell Δ vs dense", -0.15, 0.05))
-    page = (PAGE.replace("__CHARTS__", charts).replace("__BEST__", best_table(pts))
+    page = (PAGE.replace("__SCREEN1952__", screen_table(d, "s1952-tde")).replace("__CHARTS__", charts).replace("__BEST__", best_table(pts))
             .replace("__UPDATED__", a.updated or "today"))
     open(os.path.join(a.out_dir, "index.html"), "w").write(page)
     det = open(a.page).read()
