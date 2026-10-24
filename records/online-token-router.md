@@ -557,6 +557,7 @@ not better than drop at 10%. (6) the per-document floor gains ≈ +0.035-0.04 co
 | prog4712f16M7pt (+ per-task routers), LR 5e-6 | 244 (0.34) | 0.951 | 0.309 | 0.637 | 0.901 | 0.737 |
 | lora16f16M7 (LoRA r16 early stack + floor 16), LR 5e-6 | 260 (0.36) | 0.827 | 0.254 | 0.588 | 0.907 | 0.716 |
 | **lora64f16M7 (LoRA r64 early stack + floor 16), LR 5e-6** | 265 (0.37) | **0.927** | 0.284 | **0.738** | 0.909 | **0.748** |
+| lora64fa371f16M7 (LoRA r64 + floor 16, frozen at 75%), LR 5e-6 | 253 (0.35) | 0.952 | 0.274 | 0.617 | 0.893 | 0.735 |
 | otr10M7hdr8 (first 8 tokens kept) | 314 (0.44) | 0.744 | 0.306 | 0.648 | 0.835 | 0.711 |
 | otr10M7ds0 / ds50 (global budget) | 293 | 0.770 / 0.769 | | | | 0.696 / 0.697 |
 | rnd10M7 (random) | 295 | 0.793 | 0.353 | 0.466 | 0.803 | 0.691 |
@@ -577,7 +578,9 @@ router -- the tasks per-task routing was meant to help, single seed), LoRA r16 +
 None beats the single freeze fa247f16M7 (0.750, +0.047). **LoRA rank 64 + floor (lora64f16M7) ties it: mean9 0.748 at
 0.37x (+0.044 vs dense interpolated to 265 PF), strmatch 0.927, xabsence 0.738 -- the same mt11 quality as the best freeze
 arm with the ~48 GiB peak of the LoRA stack (vs 60 GiB for any warmup-then-freeze arm before its freeze).** Rank 16's
-strmatch collapse (0.827) was the rank, not LoRA. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
+strmatch collapse (0.827) was the rank, not LoRA. Freezing that LoRA stack at 75% (lora64fa371f16M7) gives mean9 0.735 at 0.35x (+0.034 vs dense
+interpolated to 253 PF): -0.013 vs unfrozen LoRA, almost all of it xabsence (0.617 vs 0.738; strmatch up to 0.952) --
+single seed, one task, so not a call that freezing hurts the 11-task mix. Global budget: no collapse (leak_auc 0.58 vs 0.49 per-document) but no gain.
 Promoted: otr10M7f8 / f16 to mt4s1464 (Lambda), f16 seed 1 on mt11s720. otr10M7f8 at mt4s1464 (467 PF): 0.931 / 0.892 /
 0.616 / 0.679 vs otr10M7 (2 seeds, ≈ 445 PF) 0.927 / 0.907 / 0.643 / 0.581 -- with more training the floor's mt4 gain
 vanishes (contra level; the rest within seed noise): it matters for tiny documents (strmatch) and early in training.
