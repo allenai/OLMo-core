@@ -11,7 +11,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/4tZKEXtpSpg5ax6B1YeoLk
 wandb_group:
-next_step: 3 nodes in parallel (all de0, keep 1.0 except MoD): cubbins 4021612 freeze grid (K16/8 x 25/50%) | mcfuzz 4021695 (preemptive, --requeue) MoD c0.5/0.25 + progressive freeze | sneetches 4021696 (preemptive, --requeue) LoRA early stack r16 K16/8; code r4780f8a08_o3cd7f406d528 (router branch + o3cd files). Then extend the best cheap arm on fresh rows to FLOPs-to-match-dense.
+next_step: running in parallel: cubbins 4021612 freeze grid -> 4021707 LOC (all-local --olmo3-train-window 4096: dense + K8 f25 freeze) | mcfuzz 4021695 MoD c0.5/0.25 + progressive freeze -> 4021708 MoD c0.35 | sneetches 4021696 LoRA r16 K16/8. Evals from a7ad63878 add near/far repeat CE; the three running jobs use older eval code -> rescore their exports with the new eval for near/far bins. Then extend the best cheap arm on fresh rows to FLOPs-to-match-dense.
 ---
 
 # olmo3_cptdrop
