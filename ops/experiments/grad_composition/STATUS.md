@@ -2,9 +2,9 @@
 experiment: grad_composition
 title: Per-token x per-block gradient / activation composition of the answer loss over CTC fine-tuning (Qwen3.5-4B), to guide train-time token / layer router design
 status: done
-updated: 2026-10-23
+updated: 2026-10-24
 branch: claude/grad-composition-6f09c7
-launcher: research/token_routing/grad_composition/run_probe_lambda.sbatch (Lambda node02, 1 A100) and launch.py (Beaker jupiter, 1 H100)
+launcher: research/token_routing/grad_composition/launch.py (Beaker, SFT), run_probe_lambda.sbatch (Lambda), run_cpt_probe.sbatch (cubbins 8xH200, CPT)
 records:
   - records/grad-composition.md
 results:
@@ -12,7 +12,7 @@ results:
 artifacts:
   - https://claude.ai/artifact/BVaPjZdAKjETHdQDdGqqtQ
 wandb_group:
-next_step: v2 COMPLETE (2026-10-23; record + artifact current). Proposed follow-ups: grad_fidelity.py on strmatch / grouping rows with the trained router; a short-document token floor in the online router tested on mt11 strmatch; generation-level look at grouping (router vs dense have equal TF CE there).
+next_step: SFT v2 + CPT addendum COMPLETE (2026-10-24; record, artifact v3, ops gradcomp_* / gradcomp_cpt_*). Proposed follow-ups: grad_fidelity.py on strmatch / grouping with the trained router; short-document token floor; CPT late-block KV-only dropping arm (context share <= 0.27 from block 20).
 ---
 
 # grad_composition
@@ -48,6 +48,10 @@ later layers, gradient vs activation targets, and why strmatch / grouping resist
   dense LR 2e-6 165/330/495, router otr10M8 330/495). Lambda pass = replication (base identical; dense-366 is a separate
   training run, within 0.03 / 0.08). LR 2e-6 control: the router's cross-layer stability is mostly the LR; its forward
   adaptation (+0.02 vs +0.20 dCE) and early-heavy gradient (0.31 vs 0.22) are router effects.
+- 2026-10-24 (parent via CPT Run Iteration, Prasann): same analysis on OLMo 3 7B 32k CPT (token dropping keeps losing
+  there). Agent: cpt_probe.py (full pass + a second backward with K/V detached = own-label vs context split), cubbins job
+  4021638 (CPT session made its freeze grid 4021612 wait for it), dev32k_1024 rows 0-47 (⚠ 48 rows), 8 checkpoints:
+  stage2 base, Dlr20-12/48/120/240/480, OTR10M7lr20-310, stage3. Findings: record "Addendum"; 209 ops rows gradcomp_cpt_*.
 - 2026-10-23 (agent): key numbers recorded with `ops result add --check` (913 rows, metrics gradcomp_*; a duplicate add
   was removed under the results lock).
 
@@ -61,6 +65,10 @@ later layers, gradient vs activation targets, and why strmatch / grouping resist
 | base / dense 366 / dense LR2e-6 / router | mt4 pooled, 8k | fwd ablation keep 10%/doc before block 7, dCE: gradient +0.13 / +0.23 / +0.20 / +0.02; activation +0.47 / +0.50 / +0.64 / +0.52; random +0.35 / +0.66 / +0.73 / +0.46 | 64/task ⚠ | ±0.02-0.05 | no-cot (TF CE) | gradcomp_abl_dce_keep10pct_b7_* |
 | mt11 dense 495 vs router 495 | strmatch 8k | oracle gradient keep dCE +0.67 vs +0.08; TF CE 0.034 vs 0.111; doc share of G^2 at block 24 0.24 vs 0.39 | 37 ⚠ eval_size=37 | ±0.05-0.1 | no-cot | record findings 6 |
 | mt11 dense 495 vs router 495 | grouping 8k | TF CE 0.325 vs 0.329 (no loss gap; router's eval deficit is generation-only) | 34 ⚠ eval_size=34 | ±0.03 | no-cot | record finding 7 |
+
+| CPT base -> dense 12 / 480 | OLMo 3 7B, Longmino dev 32k | blocks 0-6 param-grad share 0.42 -> 0.20 / 0.16; top 10% of tokens hold G24^2 0.87 -> 0.63 / 0.62; top-10%@7 keep holds G24^2 0.79 -> 0.39 / 0.37 (random 0.11) | 48 rows ⚠ | ±0.01-0.02 | no-cot (TF grad) | ops gradcomp_cpt_*; record addendum |
+| CPT dense 480 | OLMo 3 7B, dev 32k | context share of hidden-state gradient @ block 0 / 8 / 16 / 24: 0.95 / 0.80 / 0.42 / 0.21 (median over rows) | 48 rows ⚠ | row IQR ~±0.05 | no-cot | record addendum |
+| CPT dense 480 vs base | OLMo 3 7B, dev 32k | CE gain 0-4k +0.169, 16-32k +0.167; of the >=4k gain 0.56 from near (<=4k) 4-gram repeats, 0.07 from far-only repeats | 48 rows ⚠ | ±0.01 | no-cot (TF CE) | ops gradcomp_cpt_ce_gain_vs_base_* |
 
 ## Next step
 v2 is complete. Follow-ups (each its own run, not started): grad_fidelity.py on strmatch / grouping rows with the
