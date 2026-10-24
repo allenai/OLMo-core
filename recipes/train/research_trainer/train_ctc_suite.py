@@ -1825,6 +1825,14 @@ def parse_args() -> argparse.Namespace:
                     help="online router pyramid drop, e.g. '3:0.5,7:0.1,16:0.03' (layer:keep of the body, absolute and "
                     "non-increasing; each stage scored from its own layer by its own router); overrides "
                     "--st-otr-drop-layer / --st-otr-keep-frac")
+    ap.add_argument("--st-otr-mod-layers", default="",
+                    help="online router MIXTURE-OF-DEPTHS, e.g. '8-31:2' (blocks 8, 10, ..., 30): at the first listed "
+                    "block the router picks --st-otr-keep-frac of each document's tokens; the listed blocks run on "
+                    "those (+ every non-document token) only and the rest pass the residual through; every token "
+                    "reaches the head (no label dropped). Sets --st-otr-drop-layer to the first listed block")
+    ap.add_argument("--st-otr-per-task-key-tokens", type=int, default=0,
+                    help="online router: a separate ridge router per task in a mixed batch, keyed on each row's first "
+                    "N tokens (its prompt template; 11 identifies every CTC mix task). 0 = one shared router")
     ap.add_argument("--st-otr-keep-first", type=int, default=0,
                     help="online router: always keep each document's first K body tokens (its header / id span); "
                     "they count against the budget and the router picks the rest")

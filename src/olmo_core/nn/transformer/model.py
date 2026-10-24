@@ -1752,6 +1752,8 @@ class Transformer(nn.Module):
         otr_layer = otr.cfg.drop_layer if otr is not None else 0
         # pyramid: every stage's drop layer -> its router (one entry without stages)
         otr_stages = {r.cfg.drop_layer: r for r in otr.chain()} if otr_layer > 0 else {}
+        # online router mixture-of-depths: the listed blocks run on the router's kept tokens only
+        otr_mod = frozenset(otr.mod_layers) if otr_layer > 0 and getattr(otr, "mod_layers", None) else frozenset()
         ld = self._layer_drop if self.training else None
         ld_skip = ld.skipped() if ld is not None else frozenset()
         # online router early_nograd: on routed forwards blocks [0, otr_layer) run forward-only
@@ -1813,6 +1815,8 @@ class Transformer(nn.Module):
                 h = block_skip_forward(
                     block, h, {**all_block_kwargs, **block_kwargs, **extra}, p_skip, keep_skip
                 )
+            elif block_idx in otr_mod:
+                h = otr.mod_block(block, h, {**all_block_kwargs, **block_kwargs, **extra})  # type: ignore[union-attr]
             else:
                 h = block(h, **all_block_kwargs, **block_kwargs, **extra)
             if ld is not None and ld.rescale:

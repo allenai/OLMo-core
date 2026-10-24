@@ -914,3 +914,127 @@ def test_early_nograd_trains_early_blocks_on_dense_keep_frac_steps_cpu():
     assert got[2][0] and got[2][2] == 0.0 and got[2][1] < 1.0, got[2]   # periodic step: routed at F, early blocks train
     assert not got[3][0] and got[3][2] == 1.0, got[3]                   # ordinary routed step: early blocks forward-only
     assert got[2][1] > got[3][1]                                        # F = 0.5 keeps more than keep_frac = 0.25
+
+
+def test_parse_mod_layers():
+    from olmo_core.nn.online_token_router import parse_mod_layers
+
+    assert parse_mod_layers("8-31:2") == list(range(8, 31, 2))
+    assert parse_mod_layers("8,12,16") == [8, 12, 16]
+    assert parse_mod_layers("2-5:2,9") == [2, 4, 9]
+    with pytest.raises(ValueError):
+        parse_mod_layers("0,2")
+
+
+def test_mixture_of_depths_cpu():
+    """mod_layers '2-5:2' on a 6-block model: drop_layer becomes 2; on a routed step blocks 2 and 4 run on the kept
+    tokens only while 0, 1, 3, 5 and the head see the full row (no label dropped); every block trains; the targets at
+    block 2 sample every body token (none censored); the FLOP adjustment charges blocks 2 and 4 at the kept length;
+    and a dense step reproduces the full model's loss."""
+    model, router = _mid_model(6, mod_layers="2-5:2", dense_every=0)
+    assert router.cfg.drop_layer == 2 and router.mod_layers == [2, 4]
+    blocks = list(model.blocks.values())
+    widths = {}
+    hooks = [b.register_forward_pre_hook(lambda m, a, i=i: widths.__setitem__(i, a[0].shape[1]))
+             for i, b in enumerate(blocks)]
+    flops = []
+    orig = router._flop
+    router._flop = lambda m, v: (flops.append(float(v)), orig(m, v))
+    ids, cid, labels = _row(B=1)
+    T = ids.shape[1]
+    body = int(((cid >= 0) & (ids != DS) & (ids != DE)).sum())
+
+    def step(n):
+        model.zero_grad(set_to_none=True)
+        router.begin_step(n, model=model)
+        flops.clear()
+        widths.clear()
+        router.metrics()
+        out = model(ids, labels=labels)
+        assert torch.isfinite(out.loss)
+        out.loss.backward()
+
+    step(1)  # warmup: dense
+    assert all(widths[i] == T for i in range(6))
+    step(2)  # routed
+    assert widths[2] < T and widths[4] < T and widths[2] == widths[4]
+    assert all(widths[i] == T for i in (0, 1, 3, 5))
+    assert all(p.grad is not None for b in blocks for p in b.parameters())
+    e = router._pending[-1]
+    assert e["target"] is not None and torch.isfinite(e["target"]).all() and e["ok"].all()
+    assert int(e["rows"].numel()) == body  # samples_per_row 64 >= body: every body token, kept or not
+    m = router.metrics()
+    kept = int(round(m["online_router/mod_row_frac"] * T))
+    assert kept == widths[2]
+    f = lambda b, n: int(b.num_flops_per_token(int(n)))
+    expect = sum(kept * f(blocks[i], kept) - T * f(blocks[i], T) for i in (2, 4))
+    assert any(abs(v - expect) < 1e-6 * max(1.0, abs(expect)) for v in flops), (expect, flops)
+    for h in hooks:
+        h.remove()
+    router.cfg.dense_every = 1
+    router.begin_step(3, model=model)
+    model.eval()
+    ref = model(ids, labels=labels).loss
+    model.train()
+    assert torch.allclose(model(ids, labels=labels).loss, ref, atol=1e-5)
+
+
+def test_mod_block_scatters_kept_tokens_only():
+    """mod_block runs the block on the gathered kept columns (at their original positions) and leaves every other
+    column, including the padded gather slots, untouched."""
+    r = _router(mod_layers="1")
+    h = torch.randn(2, 6, 4)
+    order = torch.tensor([[1, 4, 0, 2], [0, 5, 1, 2]])
+    valid = torch.tensor([[True, True, False, False], [True, True, True, False]])
+    pos = torch.tensor([[1, 4, 5, 5], [0, 5, 1, 5]])
+    r._mod = {"order": order, "valid": valid, "pos": pos}
+    seen = {}
+
+    def block(x, **kw):
+        seen["pos"] = kw["position_ids"]
+        return x + 1.0
+
+    out = r.mod_block(block, h, {})
+    assert torch.equal(seen["pos"], pos)
+    ran = torch.zeros(2, 6, dtype=torch.bool)
+    ran[0, [1, 4]] = True
+    ran[1, [0, 5, 1]] = True
+    assert torch.allclose(out[ran], h[ran] + 1.0)
+    assert torch.equal(out[~ran], h[~ran])
+
+
+def test_mod_layers_validate():
+    with pytest.raises(ValueError):
+        OnlineRouterConfig(mod_layers="4,6", drop_layer=2).validate()
+    with pytest.raises(ValueError):
+        _router(mod_layers="4,6", stages="4:0.5")
+    with pytest.raises(ValueError):
+        _router(mod_layers="4,6", exit_loss_weight=1.0)
+    assert _router(mod_layers="4,6").cfg.drop_layer == 4
+
+
+def test_per_task_routers_learn_opposite_rules():
+    """per_task_key_tokens: two rows with different prompt prefixes (two tasks) whose targets reward the query-matching
+    token in one task and penalise it in the other. A shared router would average the rules away; per-task routers
+    keep it in task A and drop it in task B."""
+    torch.manual_seed(0)
+    m = _Emb()
+    ids, cid, labels = _row(B=2)
+    ids[1, :3] = torch.tensor([4, 5, 6])  # task B's prompt template
+    r = _router(use_hidden=False, doc_share=0.0, per_task_key_tokens=3)
+    keys = r.task_keys(ids)
+    assert keys[0] != keys[1] and torch.equal(r.task_keys(ids[[0, 0]]), keys[[0, 0]])
+    r.begin_step(1, model=m)
+    r.select(m, ids, cid, labels)
+    e = r._current
+    e["ok"] = torch.ones_like(e["rows"], dtype=torch.bool)
+    q = torch.log1p(9.0 * (ids[e["rows"], e["pos"]] == QTOK).float())
+    e["target"] = torch.where(e["rows"] == 0, q, -q)
+    r._pending.append(e)
+    r._current = None
+    r.begin_step(2, model=m)
+    assert set(r.task_w) == set(keys.tolist())
+    keep = r.select(m, ids, cid, labels)
+    assert keep[0][ids[0] == QTOK].all()
+    assert not keep[1][ids[1] == QTOK].any()
+    assert r.metrics()["online_router/task_routers"] == 2.0
