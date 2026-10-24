@@ -138,13 +138,12 @@ a { color: inherit; }
 </header>
 
 <section class="box">
-  <h2>Bottom line</h2>
+  <h2>Bottom line (2026-10-24)</h2>
   <ul>
-    <li><b>The mid-stack online router is the method.</b> Every token runs the first 7 of 32 blocks. A linear router, refit each step to predict each token's gradient norm, keeps 10% of each document's tokens for the remaining 25 blocks. On the 4-task mix with 1,464–1,952 rows/task, all 11 runs (2 split depths, up to 3 seeds) are within noise of dense at matched FLOPs in every cell (worst −0.002 to −0.030) and ahead on average (+0.02 to +0.065), at about 0.39× dense's FLOPs. The best fixed keep rule only ties on average and misses a cell by −0.06.</li>
-    <li><b>Cheaper still: freeze the early blocks halfway.</b> Train every block for the first half, then freeze blocks 0–6 and drop their optimizer state, with no full-context steps. That costs 0.24× dense's FLOPs and 12 GiB less memory per GPU after the freeze, and is level with dense on contradiction/nq and ahead on oolong/outlier (one seed). Freezing from step 0, pyramids and merging lose.</li>
-    <li><b>The 11-task mix works once each document keeps at least 16 tokens.</b> strmatch's ~25-token documents were starved by a 10% cut. The floor fixes it (strmatch 0.79 → 0.91–0.92, 2 seeds). Mean over 9 tasks: 0.730 vs dense 0.741 at 0.49×; with the freeze, 0.712 at 0.36×. Grouping@8k is still behind.</li>
-    <li><b>It scales to 64k:</b> on the 11-task mix with rows up to 64k and 10× the data, the router at LR 5e-6 (¼ epoch, 0.40× dense's FLOPs for those rows) beats dense at its better LR on 9 of 10 tasks at matched FLOPs (one seed; replicates and larger budgets training).</li>
-    <li><b>Not yet:</b> on long-document CPT (OLMo 3 7B) every router variant loses to dense on dev CE. The early-exit loss on dropped tokens (it only matters where every token is a label) is the fix being screened there.</li>
+    <li><b>At its own learning rate (5e-6), the router matches dense trained on the same data at 0.38× the FLOPs.</b> 4-task mix, 1,464 rows/task, 2 seeds: contradiction / nq / oolong / outlier @8k 0.955 / 0.913 / 0.622 / 0.726 vs dense 0.956 / 0.936 / 0.630 / 0.719. Level on 3 of 4; nq −0.023.</li>
+    <li><b>Cheaper variants form one smooth curve at 5e-6</b> (table below). There's no free lunch: each step down in FLOPs costs a little, mostly outlier. Full-context step every 16 instead of 8 is the best trade (0.34×, contradiction −0.009). Freezing the early blocks halfway reaches 0.24× and 47.7 GiB. Its apparent free win at LR 2e-6 was mostly the LR.</li>
+    <li><b>At 64k with 10× data the router beats dense, replicated:</b> 2 seeds, ahead on 8 of 9 tasks, +0.028 averaged, at 0.40× FLOPs (¼ epoch, LR 5e-6 for both). ½- and 1-epoch runs are training (≈10–14 h).</li>
+    <li><b>11-task mix:</b> a 16-token floor per document fixes strmatch (2 seeds); the freeze + floor run at 5e-6 is being evaluated. <b>Long-document CPT:</b> every router variant still loses; the early-exit loss screen is late (disk full, then a possible hang).</li>
   </ul>
 </section>
 
@@ -160,18 +159,18 @@ a { color: inherit; }
 </section>
 
 <section>
-  <h2>Cheaper variants (FLOPs and memory)</h2>
+  <h2>Cheaper variants at LR 5e-6 (FLOPs and memory)</h2>
   <div class="tbl"><table>
-    <tr><th>variant</th><th class="n">FLOPs × dense</th><th class="n">peak GiB/GPU</th><th>result</th></tr>
-    <tr><td>router (full-context step every 8)</td><td class="n">0.39</td><td class="n">60</td><td>reference; ≥ dense at 1,464+ rows</td></tr>
-    <tr><td>no full-context steps</td><td class="n">0.31</td><td class="n">60</td><td>free at 488 rows (worst −0.057 vs −0.081)</td></tr>
-    <tr><td><b>freeze blocks 0–6 halfway</b> (1,464 rows)</td><td class="n">0.24</td><td class="n">47.7</td><td><b>level with dense on contra/nq, ahead on oolong/outlier</b>; −0.03 contra vs router</td></tr>
-    <tr><td>freeze blocks 0–6 from step 0 / no-grad</td><td class="n">0.19</td><td class="n">47.7 / 53</td><td class="neg">loses: contra −0.24 vs router</td></tr>
-    <tr><td>pyramid (50% at 3, 10% at 7, 3% at 16)</td><td class="n">0.17</td><td class="n">53</td><td class="neg">loses contradiction</td></tr>
-    <tr><td>merge dropped tokens into a summary</td><td class="n">0.28</td><td class="n">60</td><td>no better than dropping</td></tr>
-    <tr><td>early-exit LM loss on dropped tokens</td><td class="n">≈0.31</td><td class="n">≤60</td><td>CPT only (in SFT the dropped tokens carry no labels, so it is a no-op); screening on cubbins</td></tr>
+    <tr><th>variant (4-task, 1,464 rows/task)</th><th class="n">FLOPs × dense</th><th class="n">contra</th><th class="n">nq</th><th class="n">oolong</th><th class="n">outlier</th><th class="n">seeds</th></tr>
+    <tr><td>dense, same data</td><td class="n">1.00</td><td class="n">0.956</td><td class="n">0.936</td><td class="n">0.630</td><td class="n">0.719</td><td class="n">1</td></tr>
+    <tr><td>router, full-context step every 8</td><td class="n">0.38</td><td class="n">0.955</td><td class="n">0.913</td><td class="n">0.622</td><td class="n">0.726</td><td class="n">2</td></tr>
+    <tr><td><b>router, full step every 16</b></td><td class="n">0.34</td><td class="n">0.946</td><td class="n">0.912</td><td class="n">0.625</td><td class="n">0.725</td><td class="n">2</td></tr>
+    <tr><td>router, no full-context steps</td><td class="n">0.30</td><td class="n">0.937</td><td class="n">0.902</td><td class="n">0.623</td><td class="n">0.682</td><td class="n">2</td></tr>
+    <tr><td>+ freeze blocks 0–6 at 75%</td><td class="n">0.27</td><td class="n">0.930</td><td class="n">0.892</td><td class="n">0.628</td><td class="n">0.646</td><td class="n">2</td></tr>
+    <tr><td>+ freeze at 50% (47.7 GiB after)</td><td class="n">0.24</td><td class="n">0.924</td><td class="n">–</td><td class="n">–</td><td class="n">–</td><td class="n">2</td></tr>
+    <tr><td>router, keep 5% (budget control)</td><td class="n">0.26</td><td class="n">0.906</td><td class="n">0.890</td><td class="n">0.589</td><td class="n neg">0.460</td><td class="n">1</td></tr>
   </table></div>
-  <p class="note">488 rows/task unless noted; one seed; from the router session's record (records/online-token-router.md, "Screen results"). Peak memory on H100.</p>
+  <p class="note">8k rung, eval_size 500 each, no-cot. From the router session's record (records/online-token-router.md); seed spread on outlier is up to 0.19, so outlier differences under ~0.1 are noise. At matched FLOPs, freezing beats simply keeping fewer tokens (keep 5% loses outlier). Earlier screen at 488 rows: freezing from step 0, pyramids and merging all lose; the early-exit loss is a no-op on SFT rows (only answer tokens are labelled), so it is CPT-only.</p>
 </section>
 
 <section>
