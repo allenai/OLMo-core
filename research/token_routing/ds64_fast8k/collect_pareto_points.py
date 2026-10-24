@@ -41,7 +41,7 @@ def parse_name(run):
         tag = lambda pre: next((int(t[len(pre):]) for t in after if re.fullmatch(pre + r"\d+", t)), 0)
         return dict(mix=mix, rows=int(rows or 488), arm="-".join(before), lr=float(lr.group(1)), campaign=camp,
                     seed=seed, epochs=tag("ep") or 1, max_steps=tag("s"))
-    m = re.match(r"f8k-(mt\d+)-(.+)-s(\d+)(?:x(\d+))?(?:st(\d+))?-(tdb|tdc|tde|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
+    m = re.match(r"f8k-(mt\d+)-(.+)-[sf](\d+)(?:x(\d+))?(?:st(\d+))?-(tdb|tdc|tde|otr)-lr(\d[\d.]*(?:e-\d+)?)$", run)
     if m:
         mix, arm, rows, ep, steps, camp, lr = m.groups()
         seed = int(re.search(r"sd(\d+)$", arm).group(1)) if re.search(r"sd\d+$", arm) else 0

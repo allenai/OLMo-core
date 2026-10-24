@@ -331,6 +331,9 @@ def parse_budget(task, budget):
     """``8M``/``16M``/... -> the ``<task>_g<budget>`` pool shard (``16M@31``: cut at 31 steps; ``16M_eg``: the oolong eg pool). ``s<rows>[@<steps>]`` -> the merged
     first-N shard ``<task>s<rows>`` (rows per task; mt4s488 is a prefix of mt4s976, of mt4s1464), optionally
     cut at ``<steps>`` optimizer steps (the dense matched-FLOP curve). Returns (data dir, examples, max_steps)."""
+    if budget.startswith("f") and budget[1:2].isdigit():  # f<rows>: first-N of the FRESH pools (build_mt4_fresh_beaker.sh)
+        rows, _, steps = budget[1:].partition("@")
+        return f"{SHARDS}/{task}f{rows}", int(rows) * len(MT_TASKS.get(task, [task])), int(steps or 0)
     if budget.startswith("s"):
         rows, _, steps = budget[1:].partition("@")
         rows = rows.split("x")[0]  # s1952x2 = two epochs over mt4s1952 (see budget_epochs)
