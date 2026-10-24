@@ -32,6 +32,14 @@ TOK=$WEKA/hf_tokenizers/Qwen3.5-0.8B-Base
 $PYB -m pip install -q -e . -e ./ctc 2>&1 | tail -2
 $PYB -c "import numpy, transformers, torch, olmo_core, ctc.data.cli" || { echo "!!! deps missing"; exit 1; }
 if [ "$MERGE" = 1 ]; then
+  for T in contradiction nq outlier oolong; do  # train/eval overlap of each fresh pool (must be ~0) before merging
+    for RUNG in 8192 2048; do
+      $PYB research/token_routing/ds64_fast2k/fast2k_stats.py --arm-jsonl $F/pool_fresh_$T/$T/train.jsonl \
+        --shard-dir $F/shards/${T}_fresh --eval-jsonl $WEKA/outlier_lengthmix/eval_rungs/$T/rung_$RUNG.jsonl \
+        --out $F/shards/${T}_fresh/fast8k_stats_$RUNG.json > /tmp/st.json || { echo "!!! stats failed $T $RUNG"; exit 1; }
+      $PYB -c "import json,sys;d=json.load(open(\"/tmp/st.json\"));o=d.get(\"overlap\",d);print(\"[overlap] $T $RUNG\",{k:v for k,v in o.items() if \"overlap\" in k})"
+    done
+  done
   for R in $ROWS; do
     OUT=$F/shards/mt4f$R
     if [ -s $OUT/metadata.json ]; then echo "[skip] $OUT"; continue; fi
