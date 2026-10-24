@@ -163,6 +163,12 @@ softdetach won on an already-long-trained Qwen3.5-4B before dense overtook it ne
 See `next_step` above.
 
 ## Open issues / traps
+- RESULT 2026-10-24 10:50 all-local training LOSES (cubbins 4021707; --olmo3-train-window 4096; eval full): dense
+  12/24/48/120 = 323/621/1217/3005 PF -> 1.7055/1.7037/1.7027/1.7020 (m 0.56/0.33/0.18/0.08); ctx_gain
+  0.049/0.047/0.047/0.044 (dense 0.067-0.075, FALLING with training); far CE 0.566-0.576; + freeze K8 f25 same damage
+  (m <0.48/0.25/0.17/0.08). The 8 full-attention layers unlearn long-range use within 12 steps.
+  LoRA r64: all 16 runs trained on sneetches (4030726), preempted by rhys_gould in the eval stage; exports streamed to
+  cubbins for scoring after the dense rescore 4034568. LoRA seed-1 job 4037547 held until then.
 - RESULT 2026-10-24 07:30 freeze grid (cubbins 4021612; keep 1.0 warmup-then-freeze of embeddings + blocks [0,K)):
   K16 f25 12/24/48/120 = 278/529/1030/2534 PF -> 1.7094/1.7049/1.6980/1.6881 (m 0.50/0.36/0.27/0.53); K16 f50 ->
   1.7085/1.7010/1.6921/1.6858 (m 0.49/0.42/0.42/1.01); K8 f25 -> 1.7056/1.6992/1.6924/1.6860 (m 0.56/0.44/0.38/0.91);
